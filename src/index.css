@@ -1,0 +1,502 @@
+@import "tailwindcss";
+
+/*
+ * Typography — Apple system stack.
+ *
+ * SF Pro on macOS / iOS, Segoe UI Variable on Windows, Inter as a
+ * web fallback when the PWA ships beyond Apple devices. The UI text
+ * reads "native macOS app" without us shipping any web fonts. Mono is
+ * reserved for places where tabular alignment matters (timeline frame
+ * counts, coordinate readouts) — applied per use site via `font-mono`,
+ * not globally.
+ */
+
+/*
+ * Design tokens for the motion-tool UI chrome.
+ *
+ * Two palettes ship: dark and light. They expose the same token names
+ * so components don't branch on theme — they consume `bg-app-bg`,
+ * `text-text-muted`, `border-border`, etc., and the active palette is
+ * chosen by the `data-theme` attribute on <html>.
+ *
+ * The accent token is INTENTIONALLY shared across both themes — designers
+ * coming from Figma / Jitter expect the brand accent to read the same
+ * regardless of canvas background.
+ */
+@theme {
+  /* Dark palette seeded as defaults. The :root + [data-theme] blocks
+     below override these at runtime. Tailwind needs values at build
+     time so utility classes (`bg-app-bg`, `text-text-muted`, etc.)
+     get generated. */
+  --color-app-bg: oklch(0.18 0.004 280);
+  --color-panel: oklch(0.22 0.005 280);
+  --color-panel-raised: oklch(0.26 0.006 280);
+  --color-border: oklch(0.30 0.006 280 / 0.6);
+  --color-border-strong: oklch(0.36 0.008 280 / 0.7);
+  --color-text: oklch(0.94 0.008 280);
+  --color-text-muted: oklch(0.70 0.008 280);
+  --color-text-dim: oklch(0.54 0.006 280);
+  --color-accent: oklch(0.65 0.20 250);
+  --color-accent-soft: oklch(0.65 0.20 250 / 0.20);
+  --color-keyframe: oklch(0.70 0.20 250);
+  --color-keyframe-ring: oklch(0.30 0.10 250);
+  --color-segment-bar: oklch(0.40 0.08 250);
+  --color-segment-bar-ring: oklch(0.30 0.10 250);
+  --color-segment-bar-hover: oklch(0.48 0.10 250);
+  --color-playhead: oklch(0.70 0.20 250);
+
+  /* Apple system font stacks. SF Pro / -apple-system on macOS &
+     iOS; falls back through native faces on Windows (Segoe UI
+     Variable Display) and Linux (Inter). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "SF Pro", "Segoe UI Variable", "Segoe UI", "Helvetica Neue",
+    Arial, "Inter", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro", "Segoe UI Variable Display", "Segoe UI", "Helvetica Neue",
+    Arial, "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas",
+    "Liberation Mono", "Courier New", monospace;
+
+  /* Spacing scale — Gestalt-proximity rad-spacing rule. Each parent
+     level ~1.4× its child, snapped to 4 / 8 px multiples. */
+  --space-tight: 8px;
+  --space-row: 12px;
+  --space-group: 16px;
+  --space-panel: 20px;
+  --space-shell: 24px;
+
+  /* Native-feeling radii. macOS chrome uses ~10px on bars,
+     ~12-14px on sheets/popovers, ~6-8px on small controls. */
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --radius-sheet: 14px;
+}
+
+:root,
+:root[data-theme='dark'] {
+  --color-app-bg: oklch(0.18 0.004 280);
+  --color-panel: oklch(0.22 0.005 280);
+  --color-panel-raised: oklch(0.26 0.006 280);
+  --color-border: oklch(0.30 0.006 280 / 0.6);
+  --color-border-strong: oklch(0.36 0.008 280 / 0.7);
+  --color-text: oklch(0.94 0.008 280);
+  --color-text-muted: oklch(0.70 0.008 280);
+  --color-text-dim: oklch(0.54 0.006 280);
+  --color-accent: oklch(0.65 0.20 250);
+  --color-accent-soft: oklch(0.65 0.20 250 / 0.20);
+  --color-keyframe: oklch(0.70 0.20 250);
+  --color-keyframe-ring: oklch(0.30 0.10 250);
+  --color-segment-bar: oklch(0.40 0.08 250);
+  --color-segment-bar-ring: oklch(0.30 0.10 250);
+  --color-segment-bar-hover: oklch(0.48 0.10 250);
+  --color-playhead: oklch(0.70 0.20 250);
+  --color-checker: rgba(255, 255, 255, 0.05);
+  /* Floating-dock shadow. Two layers: a tight near-shadow that
+     anchors the pill to its background, and a soft far-shadow that
+     gives volume without going inky. Dark theme can carry more
+     opacity because the bg is already near-black; light theme below
+     uses much lighter tints with broader spread to avoid landing as
+     a dark blob on a white panel. */
+  --shadow-dock: 0 2px 6px rgba(0, 0, 0, 0.28), 0 10px 28px rgba(0, 0, 0, 0.42);
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  /* Light palette tuned to feel like macOS Tahoe / Big Sur native
+     panels — slightly warm whites, cool-gray dividers, and system
+     blue accents. */
+  --color-app-bg: oklch(0.98 0.003 280);
+  --color-panel: oklch(0.995 0.002 280);
+  --color-panel-raised: oklch(1.00 0 0);
+  --color-border: oklch(0.86 0.005 280 / 0.7);
+  --color-border-strong: oklch(0.78 0.006 280 / 0.8);
+  --color-text: oklch(0.18 0.008 280);
+  --color-text-muted: oklch(0.42 0.006 280);
+  --color-text-dim: oklch(0.60 0.005 280);
+  /* macOS system blue (~ #007AFF). */
+  --color-accent: oklch(0.62 0.21 250);
+  --color-accent-soft: oklch(0.62 0.21 250 / 0.14);
+  --color-keyframe: oklch(0.55 0.22 250);
+  --color-keyframe-ring: oklch(0.40 0.18 250);
+  --color-segment-bar: oklch(0.86 0.08 250);
+  --color-segment-bar-ring: oklch(0.72 0.12 250);
+  --color-segment-bar-hover: oklch(0.80 0.10 250);
+  --color-playhead: oklch(0.55 0.22 250);
+  --color-checker: rgba(0, 0, 0, 0.04);
+  /* Light theme: three softer layers instead of two heavy ones.
+     Tints are slightly cool to match the panel palette and avoid
+     muddying — pure black at any opacity reads as smoky/dirty on a
+     near-white panel. Wider spread on the far layer fakes the
+     ambient occlusion you'd see from a real elevated surface. */
+  --shadow-dock:
+    0 1px 2px rgba(15, 18, 28, 0.04),
+    0 4px 12px rgba(15, 18, 28, 0.05),
+    0 18px 40px -8px rgba(15, 18, 28, 0.10);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --color-app-bg: oklch(0.98 0.003 280);
+    --color-panel: oklch(0.995 0.002 280);
+    --color-panel-raised: oklch(1.00 0 0);
+    --color-border: oklch(0.86 0.005 280 / 0.7);
+    --color-border-strong: oklch(0.78 0.006 280 / 0.8);
+    --color-text: oklch(0.18 0.008 280);
+    --color-text-muted: oklch(0.42 0.006 280);
+    --color-text-dim: oklch(0.60 0.005 280);
+    --color-accent: oklch(0.62 0.21 250);
+    --color-accent-soft: oklch(0.62 0.21 250 / 0.14);
+    --color-keyframe: oklch(0.55 0.22 250);
+    --color-keyframe-ring: oklch(0.40 0.18 250);
+    --color-segment-bar: oklch(0.86 0.08 250);
+    --color-segment-bar-ring: oklch(0.72 0.12 250);
+    --color-segment-bar-hover: oklch(0.80 0.10 250);
+    --color-playhead: oklch(0.55 0.22 250);
+    --color-checker: rgba(0, 0, 0, 0.04);
+    --shadow-dock:
+      0 1px 2px rgba(15, 18, 28, 0.04),
+      0 4px 12px rgba(15, 18, 28, 0.05),
+      0 18px 40px -8px rgba(15, 18, 28, 0.10);
+    color-scheme: light;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-app-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  /* Tabular numerals + SF Pro stylistic sets at body level keep
+     timeline readouts and frame counters aligned during scrubbing,
+     and turn on the higher-contrast 1/4/6/9 glyph variants designers
+     prefer. */
+  font-feature-settings: 'tnum' on, 'cv11' on, 'ss01' on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.005em;
+  overflow: hidden; /* the app owns the scrolling, not the page */
+}
+
+/* Mac-style thin scrollbars. */
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+
+/*
+ * Export mode.
+ *
+ * Two attributes drive the same set of "hide editor chrome during
+ * export" rules:
+ *
+ *   - `data-export-mode='1'` — primary path, set by App's effect
+ *     whenever a render is in flight (capturePage-driven exports). The
+ *     editor's zoom/pan are also frozen by the orchestrator before the
+ *     attribute flips on, so the artboard sits at native CSS size
+ *     centered in the viewport.
+ *
+ *   - `data-export-recording='1'` — legacy path, set by recordTab.ts
+ *     while getDisplayMedia + MediaRecorder is running. Same goals,
+ *     same rules, only difference is the OS-level browser permission
+ *     prompt that fires before this attribute is set. Kept for the
+ *     web tree where capturePage isn't available.
+ *
+ * Selectors are deliberately broad: hide every <header>, <aside>, the
+ * timeline (which is a <section> wrapped in a footer-style band), and
+ * anything explicitly tagged with `data-export-hide`. The canvas
+ * workspace (<main>) and the artboard div ([data-canvas-root]) stay
+ * visible. The status pill carries `data-export-hide` so the user's
+ * own progress indicator never bleeds into the capture.
+ */
+body[data-export-mode='1'] [data-export-hide],
+body[data-export-recording='1'] [data-export-hide],
+body[data-export-mode='1'] [data-export-hide='1'],
+body[data-export-recording='1'] [data-export-hide='1'] {
+  display: none !important;
+}
+body[data-export-mode='1'] header,
+body[data-export-recording='1'] header,
+body[data-export-mode='1'] aside,
+body[data-export-recording='1'] aside {
+  display: none !important;
+}
+/* Timeline is rendered as a non-aside container; tag the host. */
+body[data-export-mode='1'] [data-timeline-host],
+body[data-export-recording='1'] [data-timeline-host] {
+  display: none !important;
+}
+/* Workspace background fades to a neutral so any scroll-bar-area or
+   margin pixels around the artboard come back as solid black instead
+   of the editor's chrome color (which would look like banding). */
+body[data-export-mode='1'] {
+  background: #000 !important;
+}
+body[data-export-mode='1'] main {
+  background: #000 !important;
+}
+/* Disable user input while a render is running. The orchestrator also
+   captures the cancel token, but blocking pointer events keeps a
+   stray click from selecting layers mid-capture (which would then
+   show selection chrome in the next captured frame). */
+body[data-export-mode='1'] {
+  cursor: none !important;
+  user-select: none !important;
+}
+body[data-export-mode='1'] main {
+  pointer-events: none !important;
+}
+
+/* Pulse keyframe used by the floating REC indicator during tab
+   capture. Hand-rolled so the indicator's animation isn't tied to
+   Tailwind's `animate-pulse`, which fades opacity and doesn't read
+   as a recording dot. */
+@keyframes recPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+/*
+ * Inspector slider — `.hyper-slider` skin for native <input type="range">.
+ *
+ * The track itself is painted via inline style on the input element
+ * (`background: linear-gradient(...)`), so the accent-fill-up-to-thumb
+ * effect needs no pseudo-element trickery. Here we ONLY style the
+ * thumb and remove the default platform chrome.
+ *
+ * Cross-engine quirks: WebKit (Chromium / Electron / Safari) and Firefox
+ * use different pseudo selectors. Both branches duplicate the same
+ * thumb styling so the slider reads identical on every target.
+ */
+.hyper-slider {
+  outline: none;
+}
+.hyper-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-text);
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  transition: transform 80ms;
+}
+.hyper-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.1);
+}
+.hyper-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-text);
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+}
+.hyper-slider::-moz-range-track {
+  background: transparent;
+}
+
+/*
+ * Preset preview animations.
+ *
+ * Each .hm-preset-<id> applies the same animation the preset stamps
+ * onto a real layer — opacity / translate / scale / pop — but as an
+ * infinite loop on a stand-in shape inside the preset button. The
+ * cycle structure is the same for every preset:
+ *
+ *   0–10%   start state (briefly visible so the user reads "begin here")
+ *   10–55%  the actual animation (eased)
+ *   55–88%  hold the end state (the reveal pause — what makes the
+ *           effect READ)
+ *   88–100% snap back to the start state (loop reset; happens while
+ *           subject is at minimum visibility so the snap is unobtrusive)
+ *
+ * Slides translate ±12px to keep the preview compact. Pop borrows the
+ * cubic-bezier(0.34, 1.56, 0.64, 1) overshoot from presets.ts via
+ * `animation-timing-function` on its rule.
+ *
+ * Animations only run while the preset button has `data-preview-on`
+ * attribute (set on hover via the pointerenter/leave handlers in
+ * PresetsPanel) so the panel stays still when the user isn't shopping
+ * — 13 simultaneous infinite animations would otherwise burn frames
+ * the user can't see anyway.
+ */
+
+.hm-preset-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Force full width — flex items with `display: flex` themselves
+     can collapse to content width in some browsers when no explicit
+     width is set. Without this, the stage shrinks to fit the 14px
+     subject and the slide animations clip immediately. */
+  width: 100%;
+}
+
+.hm-preset-subject {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--color-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  animation-duration: 1.8s;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+  /* No animation runs until the parent button gets data-preview-on=1.
+     Default state shows the subject at REST (centered, opaque), so
+     the static thumbnail still looks like "this is the layer". */
+  animation-play-state: paused;
+}
+
+[data-preview-on='1'] .hm-preset-subject {
+  animation-play-state: running;
+}
+
+/* Default ease for in animations. Out animations override below. */
+.hm-preset-subject {
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ============================================================
+   IN animations
+   ============================================================ */
+
+@keyframes hm-fade-in {
+  0%, 10%   { opacity: 0; }
+  55%, 88%  { opacity: 1; }
+  100%      { opacity: 0; }
+}
+.hm-preset-fade-in { animation-name: hm-fade-in; }
+
+@keyframes hm-slide-in-up {
+  0%, 10%   { opacity: 0; transform: translateY(12px); }
+  55%, 88%  { opacity: 1; transform: translateY(0); }
+  100%      { opacity: 0; transform: translateY(12px); }
+}
+.hm-preset-slide-in-up { animation-name: hm-slide-in-up; }
+
+@keyframes hm-slide-in-down {
+  0%, 10%   { opacity: 0; transform: translateY(-12px); }
+  55%, 88%  { opacity: 1; transform: translateY(0); }
+  100%      { opacity: 0; transform: translateY(-12px); }
+}
+.hm-preset-slide-in-down { animation-name: hm-slide-in-down; }
+
+@keyframes hm-slide-in-left {
+  0%, 10%   { opacity: 0; transform: translateX(12px); }
+  55%, 88%  { opacity: 1; transform: translateX(0); }
+  100%      { opacity: 0; transform: translateX(12px); }
+}
+.hm-preset-slide-in-left { animation-name: hm-slide-in-left; }
+
+@keyframes hm-slide-in-right {
+  0%, 10%   { opacity: 0; transform: translateX(-12px); }
+  55%, 88%  { opacity: 1; transform: translateX(0); }
+  100%      { opacity: 0; transform: translateX(-12px); }
+}
+.hm-preset-slide-in-right { animation-name: hm-slide-in-right; }
+
+@keyframes hm-scale-in {
+  0%, 10%   { opacity: 0; transform: scale(0.4); }
+  55%, 88%  { opacity: 1; transform: scale(1); }
+  100%      { opacity: 0; transform: scale(0.4); }
+}
+.hm-preset-scale-in { animation-name: hm-scale-in; }
+
+@keyframes hm-pop {
+  0%, 10%   { opacity: 0; transform: scale(0.4); }
+  55%, 88%  { opacity: 1; transform: scale(1); }
+  100%      { opacity: 0; transform: scale(0.4); }
+}
+.hm-preset-pop {
+  animation-name: hm-pop;
+  /* Springy overshoot — same bezier the preset stamps onto the
+     keyframe in src/anim/presets.ts. Visual matches behavior. */
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ============================================================
+   OUT animations
+   ============================================================ */
+
+/* Out animations use ease-in so the subject "leaves" the stage. */
+.hm-preset-fade-out,
+.hm-preset-slide-out-up,
+.hm-preset-slide-out-down,
+.hm-preset-slide-out-left,
+.hm-preset-slide-out-right,
+.hm-preset-scale-out {
+  animation-timing-function: cubic-bezier(0.7, 0, 0.84, 0);
+}
+
+@keyframes hm-fade-out {
+  0%, 10%   { opacity: 1; }
+  55%, 88%  { opacity: 0; }
+  100%      { opacity: 1; }
+}
+.hm-preset-fade-out { animation-name: hm-fade-out; }
+
+@keyframes hm-slide-out-up {
+  0%, 10%   { opacity: 1; transform: translateY(0); }
+  55%, 88%  { opacity: 0; transform: translateY(-12px); }
+  100%      { opacity: 1; transform: translateY(0); }
+}
+.hm-preset-slide-out-up { animation-name: hm-slide-out-up; }
+
+@keyframes hm-slide-out-down {
+  0%, 10%   { opacity: 1; transform: translateY(0); }
+  55%, 88%  { opacity: 0; transform: translateY(12px); }
+  100%      { opacity: 1; transform: translateY(0); }
+}
+.hm-preset-slide-out-down { animation-name: hm-slide-out-down; }
+
+@keyframes hm-slide-out-left {
+  0%, 10%   { opacity: 1; transform: translateX(0); }
+  55%, 88%  { opacity: 0; transform: translateX(-12px); }
+  100%      { opacity: 1; transform: translateX(0); }
+}
+.hm-preset-slide-out-left { animation-name: hm-slide-out-left; }
+
+@keyframes hm-slide-out-right {
+  0%, 10%   { opacity: 1; transform: translateX(0); }
+  55%, 88%  { opacity: 0; transform: translateX(12px); }
+  100%      { opacity: 1; transform: translateX(0); }
+}
+.hm-preset-slide-out-right { animation-name: hm-slide-out-right; }
+
+@keyframes hm-scale-out {
+  0%, 10%   { opacity: 1; transform: scale(1); }
+  55%, 88%  { opacity: 0; transform: scale(0.4); }
+  100%      { opacity: 1; transform: scale(1); }
+}
+.hm-preset-scale-out { animation-name: hm-scale-out; }

@@ -1,0 +1,50 @@
+hyper-motion (Electron desktop wrapper)
+Copyright 2026 Siddharth Ponnapalli
+
+This product is licensed under the Apache License, Version 2.0 (the
+"License"). You may not use this product except in compliance with the
+License. You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+or in the LICENSE file at the root of this repository.
+
+---
+
+This product includes the following third-party software, each
+licensed under its own terms. Full license texts ship inside
+node_modules/<package>/ after `pnpm install`.
+
+Runtime dependencies (same as the web tree):
+  - React, React-DOM (MIT)              https://github.com/facebook/react
+  - Yjs (MIT)                           https://github.com/yjs/yjs
+  - y-indexeddb (MIT)                   https://github.com/yjs/y-indexeddb
+  - Yoga Layout (MIT)                   https://github.com/facebook/yoga
+  - PixiJS (MIT)                        https://github.com/pixijs/pixijs
+  - Zustand (MIT)                       https://github.com/pmndrs/zustand
+  - Immer (MIT)                         https://github.com/immerjs/immer
+  - mp4-muxer (MIT)                     https://github.com/Vanilagy/mp4-muxer
+  - gifenc (MIT)                        https://github.com/mattdesl/gifenc
+  - FFmpeg.wasm (LGPL-2.1 + MIT shim)   https://github.com/ffmpegwasm/ffmpeg.wasm
+
+Electron-specific dependencies:
+  - Electron (MIT)                      https://github.com/electron/electron
+  - electron-builder (MIT)              https://github.com/electron-userland/electron-builder
+  - vite-plugin-electron (MIT)          https://github.com/electron-vite/vite-plugin-electron
+
+Distributed Electron binaries also include Chromium (BSD-3-Clause) and
+Node.js (MIT). Their full license texts live inside the bundled app at
+Resources/LICENSES.chromium.html and similar paths.
+
+Build-time dependencies:
+  - Vite (MIT)                          https://github.com/vitejs/vite
+  - TypeScript (Apache-2.0)             https://github.com/microsoft/TypeScript
+  - Tailwind CSS (MIT)                  https://github.com/tailwindlabs/tailwindcss
+  - ESLint (MIT)                        https://github.com/eslint/eslint
+
+A complete machine-readable list of dependencies and their pinned
+versions is maintained in pnpm-lock.yaml.
+
+The Apache 2.0 license requires that any redistribution of this work
+(or derivative works) preserve the LICENSE and NOTICE files. See
+§4(a)–(d) of LICENSE for the full conditions.

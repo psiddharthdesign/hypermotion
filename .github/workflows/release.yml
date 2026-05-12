@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Avoid concurrent releases for the same tag clobbering each other.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Get pnpm store
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          # Unsigned build for v0.1.0 — users see Gatekeeper warning on
+          # first open, can right-click → Open to bypass. Once an Apple
+          # Developer cert is wired up, add CSC_LINK + CSC_KEY_PASSWORD
+          # secrets and set CSC_IDENTITY_AUTO_DISCOVERY=true.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm run build:mac
+
+      - name: Build app (Windows)
+        if: matrix.os == 'windows-latest'
+        run: pnpm run build:win
+
+      - name: Upload artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/latest-mac.yml
+          if-no-files-found: error
+
+      - name: Upload artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-build
+          path: dist-release/
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: dist-release/
+
+      - name: List downloaded files
+        run: ls -la dist-release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-release/*.dmg
+            dist-release/*.exe
+            dist-release/*.blockmap
+            dist-release/latest-mac.yml
+            dist-release/latest.yml
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            See [RELEASES.md](./RELEASES.md) for the full release notes.
+
+            ## Install
+
+            **macOS:** download the `.dmg`, open it, drag hyper-motion into
+            Applications. On first launch macOS will warn this is from an
+            unidentified developer — right-click the app → Open to bypass.
+            (We'll sign + notarize once an Apple Developer cert is wired up.)
+
+            **Windows:** download the `.exe` and run it.
+
+            Both builds are unsigned for the v0.1.x research-preview series.

@@ -1,0 +1,55 @@
+{
+  "name": "@psiddharthdesign/hypermotion",
+  "version": "0.1.0",
+  "description": "CLI + MCP server for hyper-motion. Drives renders programmatically and lets AI agents (Claude Code, Codex) script motion sequences.",
+  "license": "Apache-2.0",
+  "author": "Siddharth Ponnapalli",
+  "homepage": "https://hypermotion.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/psiddharthdesign/hypermotion.git",
+    "directory": "cli"
+  },
+  "type": "module",
+  "bin": {
+    "hypermotion": "./bin/hypermotion.mjs",
+    "hypermotion-mcp": "./bin/hypermotion-mcp.mjs"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "pnpm run build",
+    "test": "echo 'no tests yet — coming soon' && exit 0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "~5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "hypermotion",
+    "hyper-motion",
+    "motion",
+    "animation",
+    "cli",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "codex"
+  ]
+}

@@ -1,0 +1,13 @@
+@psiddharthdesign/hypermotion (CLI + MCP server)
+Copyright 2026 Siddharth Ponnapalli
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE
+for the full text.
+
+Third-party dependencies:
+  - @modelcontextprotocol/sdk (MIT)  https://github.com/modelcontextprotocol/typescript-sdk
+  - commander (MIT)                  https://github.com/tj/commander.js
+  - zod (MIT)                        https://github.com/colinhacks/zod
+  - typescript (Apache-2.0)          https://github.com/microsoft/TypeScript
+
+Full pinned versions in pnpm-lock.yaml.
