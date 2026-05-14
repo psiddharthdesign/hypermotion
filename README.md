@@ -24,10 +24,42 @@ validated it yet — that's the next milestone. Expect rough edges.
 Download the latest release from
 [github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases).
 
-- **macOS:** open the `.dmg`, drag to Applications. On first launch
-  right-click → Open to bypass the Gatekeeper warning (the v0.1.x series
-  ships unsigned).
-- **Windows:** download the `.exe` and run it.
+### macOS
+
+```sh
+# 1. Open the .dmg and drag hyper-motion to /Applications
+# 2. Run this once in Terminal — strips the download quarantine attribute:
+xattr -cr /Applications/hyper-motion.app
+
+# 3. Open the app from Applications
+```
+
+**Why step 2?** hyper-motion v0.1.x ships unsigned. macOS Sequoia / Sonoma
+flag any unsigned download as "damaged and can't be opened" before they
+even check what's inside. `xattr -cr` removes the
+`com.apple.quarantine` attribute that Safari / Brave / Chrome adds to
+downloaded files — once that's gone, the app opens normally. This is a
+one-time setup per install. Apple Developer signing + notarization
+(which removes this step entirely) is on the v0.2 roadmap.
+
+### Windows
+
+Download the `.exe` and run it. Windows SmartScreen will warn — click
+**"More info"** → **"Run anyway"**. Unsigned on Windows too for the
+v0.1.x series.
+
+### Build from source
+
+If you'd like to skip the install warnings entirely, build locally — no
+quarantine attribute is added to locally-built apps.
+
+```sh
+git clone https://github.com/psiddharthdesign/hypermotion.git
+cd hypermotion
+pnpm install
+pnpm build:dir
+open release/mac-arm64/hyper-motion.app
+```
 
 ## What's in v0.1.0
 

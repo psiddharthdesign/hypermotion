@@ -126,15 +126,30 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            See [RELEASES.md](./RELEASES.md) for the full release notes.
+            See [RELEASES.md](https://github.com/psiddharthdesign/hypermotion/blob/main/RELEASES.md) for the full release notes.
 
-            ## Install
+            ## Install on macOS
 
-            **macOS:** download the `.dmg`, open it, drag hyper-motion into
-            Applications. On first launch macOS will warn this is from an
-            unidentified developer — right-click the app → Open to bypass.
-            (We'll sign + notarize once an Apple Developer cert is wired up.)
+            1. Download `hyper-motion-*-arm64.dmg` (Apple Silicon) or `hyper-motion-*.dmg` (Intel).
+            2. Open the DMG and drag **hyper-motion** to **Applications**.
+            3. **One-time setup** — open Terminal and run:
+               ```sh
+               xattr -cr /Applications/hyper-motion.app
+               ```
+            4. Open **hyper-motion** from Applications.
 
-            **Windows:** download the `.exe` and run it.
+            **Why step 3?** hyper-motion v0.1.x ships unsigned. macOS Sequoia/Sonoma flag
+            unsigned apps from the internet as "damaged" unless you remove the quarantine
+            attribute, which is what `xattr -cr` does. Apple Developer signing (which
+            removes this step entirely) is on the v0.2 roadmap.
 
-            Both builds are unsigned for the v0.1.x research-preview series.
+            ## Install on Windows
+
+            Download `hyper-motion Setup *.exe` and run it. Windows SmartScreen will warn
+            you — click **"More info"** → **"Run anyway"**. The v0.1.x series is unsigned
+            on Windows too.
+
+            ---
+
+            Both builds are unsigned for the v0.1.x research-preview series. If you'd like
+            to skip these install warnings, you can also [build from source](https://github.com/psiddharthdesign/hypermotion#build-from-source).
