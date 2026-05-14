@@ -54,10 +54,14 @@ jobs:
       - name: Build app (macOS)
         if: matrix.os == 'macos-latest'
         env:
-          # Unsigned build for v0.1.0 — users see Gatekeeper warning on
-          # first open, can right-click → Open to bypass. Once an Apple
-          # Developer cert is wired up, add CSC_LINK + CSC_KEY_PASSWORD
-          # secrets and set CSC_IDENTITY_AUTO_DISCOVERY=true.
+          # Ad-hoc signing path: package.json -> build.mac.identity = "-"
+          # tells electron-builder to use codesign's ad-hoc identity
+          # (free, self-applied, no Apple Developer cert needed). The
+          # resulting DMG opens with the friendly "unidentified
+          # developer" dialog instead of the harsher "damaged" message.
+          # When a real Developer ID cert is wired up, add CSC_LINK +
+          # CSC_KEY_PASSWORD secrets and replace identity with the
+          # full team name; also re-enable hardenedRuntime.
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm run build:mac
 
