@@ -19,7 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # Windows is paused for the v0.1.x research-preview series — the
+        # build worked but we aren't advertising it yet. Add `windows-latest`
+        # back here when we're ready to ship Windows binaries.
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -104,11 +107,8 @@ jobs:
           name: macos-build
           path: dist-release/
 
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-build
-          path: dist-release/
+      # Windows artifact download is paused for the v0.1.x series — see
+      # the build matrix above. Re-add when Windows builds resume.
 
       - name: List downloaded files
         run: ls -la dist-release/
@@ -118,10 +118,8 @@ jobs:
         with:
           files: |
             dist-release/*.dmg
-            dist-release/*.exe
             dist-release/*.blockmap
             dist-release/latest-mac.yml
-            dist-release/latest.yml
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
@@ -130,26 +128,29 @@ jobs:
 
             ## Install on macOS
 
-            1. Download `hyper-motion-*-arm64.dmg` (Apple Silicon) or `hyper-motion-*.dmg` (Intel).
-            2. Open the DMG and drag **hyper-motion** to **Applications**.
-            3. **One-time setup** — open Terminal and run:
-               ```sh
-               xattr -cr /Applications/hyper-motion.app
-               ```
-            4. Open **hyper-motion** from Applications.
+            v0.1.x ships unsigned, so macOS will block the first open with a
+            "damaged" dialog. Two-step setup, then it opens normally forever:
 
-            **Why step 3?** hyper-motion v0.1.x ships unsigned. macOS Sequoia/Sonoma flag
-            unsigned apps from the internet as "damaged" unless you remove the quarantine
-            attribute, which is what `xattr -cr` does. Apple Developer signing (which
-            removes this step entirely) is on the v0.2 roadmap.
+            **1. Download and drag to Applications**
 
-            ## Install on Windows
+            Pick `hyper-motion-*-arm64.dmg` (Apple Silicon) or `hyper-motion-*.dmg`
+            (Intel). Open the DMG, drag **hyper-motion** to **Applications**.
 
-            Download `hyper-motion Setup *.exe` and run it. Windows SmartScreen will warn
-            you — click **"More info"** → **"Run anyway"**. The v0.1.x series is unsigned
-            on Windows too.
+            **2. Open Terminal and run these two lines:**
+
+            ```sh
+            xattr -cr /Applications/hyper-motion.app
+            codesign --force --deep --sign - /Applications/hyper-motion.app
+            ```
+
+            This strips macOS's download quarantine and re-applies an ad-hoc signature
+            locally. After this, double-click the app and it opens.
+
+            **Why?** Apple requires paid Developer signing + notarization for downloads
+            to skip the warning entirely. Planned for v0.2. If you'd rather skip these
+            steps, [build from source](https://github.com/psiddharthdesign/hypermotion#build-from-source)
+            — locally-built apps never get the quarantine flag.
 
             ---
 
-            Both builds are unsigned for the v0.1.x research-preview series. If you'd like
-            to skip these install warnings, you can also [build from source](https://github.com/psiddharthdesign/hypermotion#build-from-source).
+            Windows build is not shipping yet — coming in a later v0.1.x release.

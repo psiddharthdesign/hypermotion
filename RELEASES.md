@@ -81,7 +81,8 @@ preview — expect rough edges, but the foundation is solid.
 
 - Built on Electron 33 with contextIsolation on, nodeIntegration off.
 - `webContents.capturePage` IPC bridge for HQ export.
-- macOS `.dmg` and Windows `.exe` via electron-builder.
+- macOS `.dmg` via electron-builder. Windows `.exe` builds but isn't
+  shipping yet — coming in a later v0.1.x release.
 - GitHub Actions release workflow that builds both on push of a
   `v*` tag.
 - Currently unsigned — Gatekeeper warning on first open is expected

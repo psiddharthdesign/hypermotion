@@ -2,7 +2,7 @@
 
 > A motion design tool with Figma's layout brain.
 
-[hypermotion.app](https://hypermotion.app) · open source · Apache 2.0 · Mac and Windows
+[hypermotion.app](https://hypermotion.app) · open source · Apache 2.0 · macOS (Windows coming soon)
 
 Jitter excels at the timeline. Figma excels at layout. hyper-motion is
 the first to bring them together. Auto-layout containers that push
@@ -19,39 +19,38 @@ in/out presets, easing curves, 3D camera with depth-of-field, MP4 / WebM
 The semantic-layout-animation bet works end-to-end. Real users haven't
 validated it yet — that's the next milestone. Expect rough edges.
 
-## Install
+## Install (macOS)
 
-Download the latest release from
-[github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases).
+Download the latest `.dmg` from
+[github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases)
+— pick `*-arm64.dmg` for Apple Silicon or `*.dmg` for Intel.
 
-### macOS
+The v0.1.x series ships unsigned, so macOS will block the first open
+with a "damaged" dialog. Two-step setup, then it opens normally forever:
 
 ```sh
-# 1. Open the .dmg and drag hyper-motion to /Applications
-# 2. Run this once in Terminal — strips the download quarantine attribute:
+# 1. Open the .dmg and drag hyper-motion to /Applications, then run:
 xattr -cr /Applications/hyper-motion.app
+codesign --force --deep --sign - /Applications/hyper-motion.app
 
-# 3. Open the app from Applications
+# 2. Double-click the app from /Applications. Done.
 ```
 
-**Why step 2?** hyper-motion v0.1.x ships unsigned. macOS Sequoia / Sonoma
-flag any unsigned download as "damaged and can't be opened" before they
-even check what's inside. `xattr -cr` removes the
-`com.apple.quarantine` attribute that Safari / Brave / Chrome adds to
-downloaded files — once that's gone, the app opens normally. This is a
-one-time setup per install. Apple Developer signing + notarization
-(which removes this step entirely) is on the v0.2 roadmap.
+**Why?** macOS Sequoia / Sonoma flag any unsigned download as
+"damaged" before they even check what's inside. `xattr -cr` strips the
+`com.apple.quarantine` attribute that Safari / Brave / Chrome add to
+downloaded files, and `codesign --force --deep --sign -` re-applies an
+ad-hoc signature **locally** (which Gatekeeper trusts in a way it
+doesn't trust the downloaded signature). Apple Developer signing +
+notarization — which removes both steps entirely — is on the v0.2
+roadmap.
 
-### Windows
-
-Download the `.exe` and run it. Windows SmartScreen will warn — click
-**"More info"** → **"Run anyway"**. Unsigned on Windows too for the
-v0.1.x series.
+> Windows build is not shipping yet. Coming in a later v0.1.x release.
 
 ### Build from source
 
-If you'd like to skip the install warnings entirely, build locally — no
-quarantine attribute is added to locally-built apps.
+Build locally to skip the install warnings entirely — locally-built apps
+never get the quarantine flag.
 
 ```sh
 git clone https://github.com/psiddharthdesign/hypermotion.git

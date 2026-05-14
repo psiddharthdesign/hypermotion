@@ -14,9 +14,20 @@ author scenes from scratch (see [Roadmap](#roadmap)).
 
 ### 1. Install the desktop app
 
-Download the latest `.dmg` (Mac) or `.exe` (Windows) from
+Download the latest `.dmg` from
 [github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases)
-and install it the usual way.
+and install it. v0.1.x is unsigned — after dragging to `/Applications`,
+run:
+
+```sh
+xattr -cr /Applications/hyper-motion.app
+codesign --force --deep --sign - /Applications/hyper-motion.app
+```
+
+Then double-click. Full reasoning + alternatives in the
+[main README's install section](https://github.com/psiddharthdesign/hypermotion#install-macos).
+
+Windows build is not shipping yet — coming in a later v0.1.x release.
 
 The CLI uses the installed desktop app to actually run renders — it
 doesn't ship its own render engine. If the app isn't installed, the CLI
