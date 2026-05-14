@@ -95,6 +95,24 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   const bridge = window.hypermotion
   if (!bridge) return
 
+  // WebM goes through the tab-capture path (getDisplayMedia +
+  // MediaRecorder), which requires a user gesture on macOS Chromium.
+  // In headless mode there's no gesture — the call hangs forever.
+  // Fail fast with a clear message so the agent can fall back to MP4
+  // or GIF instead of waiting out the 5-minute CLI timeout. Rebuilding
+  // WebM on top of capturePage (frame-by-frame WebM encoding) is the
+  // proper fix; tracked for v0.1.1.
+  //
+  // This check sits BEFORE the inFlight guard so a WebM rejection
+  // doesn't consume the queue slot — other renders can proceed.
+  if (req.format === 'webm') {
+    await bridge.invoke(
+      'export:headless-error',
+      'WebM is not supported in headless mode yet (the tab-capture pipeline requires a user gesture). Use --format mp4 or --format gif instead, or run the WebM export from the desktop app GUI. Fixed in v0.1.1.',
+    )
+    return
+  }
+
   if (inFlight) {
     await bridge.invoke(
       'export:headless-error',

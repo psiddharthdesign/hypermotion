@@ -518,6 +518,22 @@ ipcMain.handle(
 ipcMain.handle('export:headless-error', (_e, message: string) => {
   // eslint-disable-next-line no-console
   console.error(`[headless] renderer reported error: ${message}`)
+  // Drop an error sentinel at `<output>.error` so the CLI driver
+  // doesn't poll forever waiting for `<output>.done`. Without this,
+  // the CLI hits its 5-minute timeout and the agent never gets a
+  // proper rejection — observed as "the call is stuck."
+  if (headlessRequest?.outputPath) {
+    try {
+      const errorPath = `${headlessRequest.outputPath}.error`
+      fs.writeFileSync(
+        errorPath,
+        JSON.stringify({ ts: Date.now(), message }),
+      )
+    } catch {
+      /* best effort — if even the error write fails, the CLI will
+         eventually hit its timeout and surface that instead. */
+    }
+  }
   if (isHeadlessOnly) app.exit(1)
   else headlessRequest = null
 })

@@ -48,11 +48,13 @@ const POST_EXIT_GRACE_MS = 1500
 
 export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<void> {
   const sentinelPath = `${req.outputPath}.done`
+  const errorPath = `${req.outputPath}.error`
 
-  // Clean slate — remove any stale output / sentinel from previous runs
+  // Clean slate — remove any stale output / sentinels from previous runs
   // so we can't false-positive on old data.
   cleanFile(req.outputPath)
   cleanFile(sentinelPath)
+  cleanFile(errorPath)
 
   // Use `--key=value` form (not `--key value`) for every value flag.
   // Electron's `second-instance` event delivers argv pre-processed by
@@ -118,6 +120,20 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       // Render complete. Remove the sentinel so subsequent runs start clean.
       cleanFile(sentinelPath)
       return
+    }
+    if (fs.existsSync(errorPath)) {
+      // Renderer reported an error. Surface it and bail — no point
+      // continuing to poll, the render isn't going to finish.
+      let message = 'Render failed (no details available)'
+      try {
+        const raw = fs.readFileSync(errorPath, 'utf-8')
+        const data = JSON.parse(raw) as { message?: string }
+        if (data.message) message = data.message
+      } catch {
+        /* best effort — fall through with the generic message */
+      }
+      cleanFile(errorPath)
+      throw new Error(message)
     }
     // If the child exited with a non-zero code AND no sentinel has
     // appeared after the grace window, the render failed.
