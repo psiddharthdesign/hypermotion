@@ -52,11 +52,9 @@ preview — expect rough edges, but the foundation is solid.
 
 ### Export
 
-- **MP4** — native pixel-correct path. `webContents.capturePage` (in
-  the desktop wrapper) or WebCodecs (browser) walks frames offscreen at
-  the chosen resolution, pipes into mp4-muxer. Levels picked
-  automatically; 4K supported when running on a high-DPR display or
-  inside the desktop wrapper.
+- **MP4** — native pixel-correct path. `webContents.capturePage` walks
+  frames offscreen at the chosen resolution and pipes into mp4-muxer.
+  Levels picked automatically; 4K supported on high-DPR displays.
 - **WebM** — fast tab-capture path. `getDisplayMedia` + MediaRecorder,
   real-time speed.
 - **GIF** — gifenc, 720p · 24fps default; quality picker applies.
@@ -79,14 +77,15 @@ preview — expect rough edges, but the foundation is solid.
 - Canvas pan/zoom with selection scroll-into-view on the Layers panel.
 - Resizable Layers + Inspector sidebars (persisted widths).
 
-### Desktop wrapper
+### Desktop app
 
-- Electron 33, contextIsolation on, nodeIntegration off.
+- Built on Electron 33 with contextIsolation on, nodeIntegration off.
 - `webContents.capturePage` IPC bridge for HQ export.
 - macOS `.dmg` and Windows `.exe` via electron-builder.
 - GitHub Actions release workflow that builds both on push of a
   `v*` tag.
-- Currently unsigned — Gatekeeper warning on first open is expected.
+- Currently unsigned — Gatekeeper warning on first open is expected
+  until an Apple Developer cert is wired up.
 
 ### CLI / MCP server
 

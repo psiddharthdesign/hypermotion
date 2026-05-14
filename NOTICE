@@ -1,4 +1,4 @@
-hyper-motion (Electron desktop wrapper)
+hyper-motion
 Copyright 2026 Siddharth Ponnapalli
 
 This product is licensed under the Apache License, Version 2.0 (the
@@ -15,7 +15,7 @@ This product includes the following third-party software, each
 licensed under its own terms. Full license texts ship inside
 node_modules/<package>/ after `pnpm install`.
 
-Runtime dependencies (same as the web tree):
+Runtime dependencies:
   - React, React-DOM (MIT)              https://github.com/facebook/react
   - Yjs (MIT)                           https://github.com/yjs/yjs
   - y-indexeddb (MIT)                   https://github.com/yjs/y-indexeddb
@@ -27,7 +27,7 @@ Runtime dependencies (same as the web tree):
   - gifenc (MIT)                        https://github.com/mattdesl/gifenc
   - FFmpeg.wasm (LGPL-2.1 + MIT shim)   https://github.com/ffmpegwasm/ffmpeg.wasm
 
-Electron-specific dependencies:
+Desktop runtime dependencies:
   - Electron (MIT)                      https://github.com/electron/electron
   - electron-builder (MIT)              https://github.com/electron-userland/electron-builder
   - vite-plugin-electron (MIT)          https://github.com/electron-vite/vite-plugin-electron

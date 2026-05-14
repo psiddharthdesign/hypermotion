@@ -17,7 +17,7 @@
  *    in the Electron renderer returns empty under default permissions)
  *  - a generic invoke pinhole for future channels
  */
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 const clipboard = {
   readText: (): Promise<string> =>
@@ -41,6 +41,20 @@ contextBridge.exposeInMainWorld('hypermotion', {
   // future feature.
   invoke: (channel: string, ...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args),
+  // Event subscription. Returns an unsubscribe function. Used by the
+  // headless export driver to receive `export:headless-trigger` events
+  // when the running editor handles a second-instance render request.
+  on: (
+    channel: string,
+    listener: (...args: unknown[]) => void,
+  ): (() => void) => {
+    const wrapped = (_event: IpcRendererEvent, ...args: unknown[]) =>
+      listener(...args)
+    ipcRenderer.on(channel, wrapped)
+    return () => {
+      ipcRenderer.removeListener(channel, wrapped)
+    }
+  },
 })
 
 declare global {
@@ -58,6 +72,10 @@ declare global {
         writeText: (text: string) => Promise<void>
       }
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+      on: (
+        channel: string,
+        listener: (...args: unknown[]) => void,
+      ) => () => void
     }
   }
 }

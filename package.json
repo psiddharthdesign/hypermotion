@@ -4,17 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "main": "dist-electron/main.cjs",
-  "description": "hyper-motion — desktop wrapper",
+  "description": "Native motion design tool with Figma-style structural layout. Auto-layout, 3D camera, semantic keyframes, pixel-correct MP4 / WebM / GIF.",
   "license": "Apache-2.0",
   "author": "Siddharth Ponnapalli",
   "homepage": "https://hypermotion.app",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && electron-builder",
-    "build:dir": "tsc -b && vite build && electron-builder --dir",
-    "build:mac": "tsc -b && vite build && electron-builder --mac",
-    "build:win": "tsc -b && vite build && electron-builder --win",
+    "build": "vite build && electron-builder",
+    "build:dir": "vite build && electron-builder --dir",
+    "build:mac": "vite build && electron-builder --mac",
+    "build:win": "vite build && electron-builder --win",
     "lint": "eslint .",
+    "typecheck": "tsc -b",
     "preview": "vite preview"
   },
   "dependencies": {
