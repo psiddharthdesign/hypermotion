@@ -25,8 +25,20 @@ import fs from 'node:fs'
 
 export async function locateDesktopApp(): Promise<string | null> {
   const override = process.env.HYPERMOTION_APP_PATH
-  if (override && fs.existsSync(override)) {
-    return override
+  if (override) {
+    if (fs.existsSync(override)) {
+      return override
+    }
+    // Loud failure — silently falling through when the user set an
+    // explicit override usually means a typo or a build that hasn't
+    // happened yet. Telling them is more helpful than searching elsewhere.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[locator] HYPERMOTION_APP_PATH is set but the file does not exist:\n` +
+        `          ${override}\n` +
+        `          Check the path, or unset the var to fall back to OS search.`,
+    )
+    return null
   }
 
   switch (os.platform()) {

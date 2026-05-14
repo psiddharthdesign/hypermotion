@@ -3,29 +3,26 @@
 /**
  * Renderer-side handler for headless export mode.
  *
- * Invoked when the Electron binary was launched with `--render --out <path>`
- * (see `electron/main.ts` for the argv parser). At startup we ask the main
- * process whether there's a pending headless request; if so, we wait for
- * the scene to hydrate from IndexedDB, kick off the existing export
- * pipeline with an `onBlob` interceptor, and ship the rendered bytes
- * back to the main process via IPC. Main writes the file, app exits.
+ * Two entry paths:
  *
- * v0.1.0 scope: renders the user's CURRENT scene (whatever was last
- * persisted to IndexedDB by the desktop app). A `.arnimotion` file format
- * for rendering arbitrary scene files is on the v0.1.1 roadmap.
+ *  1. **Boot-time** — the binary was launched with `--render` and no
+ *     other instance was running, so we became the first instance. On
+ *     startup we ask main for the pending headless request and run it.
+ *     After the export completes, main exits the process.
  *
- * Wire diagram:
+ *  2. **Second-instance** — another hyper-motion is already running (the
+ *     user's editor). The single-instance lock in main.ts forwarded the
+ *     new argv via the `second-instance` event. Main dispatches an
+ *     `export:headless-trigger` IPC event to this renderer. We run the
+ *     export against the currently-loaded scene, write the file, drop a
+ *     sentinel, then return to normal editor operation.
  *
- *   CLI (`@psiddharthdesign/hypermotion`)
- *     → spawns Electron with --out --format --quality --fps --headless
- *     → main.ts parses, exposes request via `export:headless-request`
- *     → this file reads the request, waits for `apiReady`
- *     → calls exportScene({ ...opts, onBlob: shipBytes })
- *     → shipBytes posts bytes via `export:headless-done`
- *     → main.ts writes to <out>, app.exit(0)
+ * In both paths the actual render is identical — call the existing
+ * `exportScene()` with an `onBlob` interceptor that ships bytes back to
+ * main via `export:headless-done`.
  *
- * Errors at any step post `export:headless-error` instead. Main logs
- * the message and app.exit(1).
+ * v0.1.0 scope: renders the user's CURRENT scene from IndexedDB. The
+ * `.arnimotion` file format work in v0.1.1 will honor `--scene <path>`.
  */
 
 import {
@@ -37,24 +34,22 @@ import {
 } from '@/export'
 import { apiReady } from '@/scene'
 
-// Renderer-side ambient type. `window.hypermotion` is exposed by
-// electron/preload.ts at runtime via contextBridge; the matching
-// `declare global` block over there lives in the main-tsconfig
-// project, not this one, so we re-declare it locally to keep this
-// renderer-side TS project clean. Mirrors the pattern used in
-// `src/ui/hooks/useFigmaPaste.ts`.
+// Renderer-side ambient type. Mirrors the bridge surface in
+// `electron/preload.ts` — re-declared locally because preload's
+// `declare global` lives in a separate TS project from the renderer.
 declare global {
   interface Window {
     hypermotion?: {
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+      on?: (
+        channel: string,
+        listener: (...args: unknown[]) => void,
+      ) => () => void
     }
   }
 }
 
 interface HeadlessRequest {
-  // scenePath kept on the protocol for forward compat with the file
-  // format work in v0.1.1. v0.1.0 ignores it and always renders the
-  // current IndexedDB scene.
   scenePath?: string
   outputPath: string
   format: ExportFormatId
@@ -64,24 +59,50 @@ interface HeadlessRequest {
 
 /**
  * Boot the headless export handler. Safe to call unconditionally — it
- * no-ops when not running under the desktop wrapper or when no headless
- * request is pending.
+ * no-ops when not running under the desktop wrapper. Handles both the
+ * boot-time pending-request flow and the second-instance trigger flow.
  */
 export async function bootHeadlessExport(): Promise<void> {
   const bridge = window.hypermotion
-  if (!bridge) {
-    return // web build — never headless
-  }
+  if (!bridge) return // web build — never headless
 
+  // Subscribe FIRST so we don't miss a trigger that arrives between
+  // app startup and our boot-time check.
+  bridge.on?.('export:headless-trigger', (req) => {
+    void runHeadlessRender(req as HeadlessRequest)
+  })
+
+  // Check for a boot-time request (first-instance headless launch).
   let req: HeadlessRequest | null = null
   try {
     req = (await bridge.invoke('export:headless-request')) as HeadlessRequest | null
   } catch {
     return // main process doesn't have the handler — older binary
   }
-  if (!req) {
-    return // normal interactive launch
+  if (req) {
+    await runHeadlessRender(req)
   }
+}
+
+let inFlight = false
+
+/**
+ * Drive a single headless render against the currently-loaded scene.
+ * Serialized — a second trigger arriving while one render is running
+ * is reported back as an error rather than racing the orchestrator.
+ */
+async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
+  const bridge = window.hypermotion
+  if (!bridge) return
+
+  if (inFlight) {
+    await bridge.invoke(
+      'export:headless-error',
+      'Another headless render is already in flight. Try again in a moment.',
+    )
+    return
+  }
+  inFlight = true
 
   // eslint-disable-next-line no-console
   console.log('[headless] export requested:', req)
@@ -96,10 +117,8 @@ export async function bootHeadlessExport(): Promise<void> {
         `${meta.duration.toFixed(2)}s @ ${meta.frameRate}fps`,
     )
 
-    // Let the React tree mount + first layout pass settle. The export
-    // pipeline drives the timeline via the anim engine and reads from
-    // the live DOM via capturePage; we need at least one rendered frame
-    // before we start asking for captures.
+    // Let one or two frames settle so the editor DOM reflects the
+    // current playhead before capturePage runs.
     await waitForFrames(3)
 
     await exportScene({
@@ -110,16 +129,14 @@ export async function bootHeadlessExport(): Promise<void> {
       format: getExportFormat(req.format),
       quality: getExportQuality(req.quality),
       exportFps: req.fps,
-      // Force the captureRect path for MP4/GIF — we're inside Electron
-      // and want pixel-correct output, not the tab-capture fallback.
-      // WebM uses tab capture regardless (orchestrator decides by format).
       pipeline: 'native',
-      // Headless interceptor: take the Blob, hand bytes off to main.
       onBlob: async (blob) => {
         const buf = await blob.arrayBuffer()
         const bytes = new Uint8Array(buf)
         // eslint-disable-next-line no-console
-        console.log(`[headless] ✓ rendered ${bytes.byteLength} bytes — shipping to main`)
+        console.log(
+          `[headless] ✓ rendered ${bytes.byteLength} bytes — shipping to main`,
+        )
         await bridge.invoke('export:headless-done', {
           bytes,
           outputPath: req.outputPath,
@@ -133,8 +150,10 @@ export async function bootHeadlessExport(): Promise<void> {
     try {
       await bridge.invoke('export:headless-error', message)
     } catch {
-      // bridge might be torn down already — best effort.
+      /* bridge torn down — best effort */
     }
+  } finally {
+    inFlight = false
   }
 }
 

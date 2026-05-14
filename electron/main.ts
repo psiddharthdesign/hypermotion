@@ -28,6 +28,33 @@ import path from 'node:path'
 import fs from 'node:fs'
 
 /**
+ * Single-instance lock.
+ *
+ * Without this, every `hypermotion render` CLI invocation spawns a brand
+ * new Electron process. If the user already has the editor open, the new
+ * process tries to grab the IndexedDB LevelDB lock, can't, and hangs
+ * forever in `apiReady`. Same problem for any second launch — duplicate
+ * editor windows.
+ *
+ * With this, the OS hands our argv to the running instance via the
+ * `second-instance` event below, and this process exits immediately. The
+ * running instance reads the headless render flags from the forwarded
+ * argv and runs the export against its currently-loaded scene, then
+ * writes both the output file and a `<output>.done` sentinel that the
+ * CLI driver polls for.
+ *
+ * If no instance is running yet, we become the first instance and the
+ * original headless flow (off-screen window, render, exit) applies.
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  // Argv has already been delivered to the running instance by the OS.
+  // Exit immediately so we don't double-register IPC handlers or do
+  // anything else duplicative.
+  app.exit(0)
+}
+
+/**
  * Headless render mode — entry point for the CLI / MCP server.
  *
  * When the desktop binary is launched with `--render --out <out>` (plus
@@ -56,13 +83,34 @@ interface HeadlessRequest {
 }
 
 function parseHeadlessArgs(argv: string[]): HeadlessRequest | null {
-  // The `--render` flag is the trigger; presence alone signals headless
-  // mode. `--out` carries the output path, all other flags are optional.
-  if (!argv.includes('--render')) return null
+  // `--render` is the trigger. Accept both bare (`--render`) and
+  // `=true` (`--render=true`) for forward-compat with the
+  // `--key=value`-only path discussed below.
+  if (!argv.includes('--render') && !argv.some((a) => a.startsWith('--render='))) {
+    return null
+  }
 
+  // Accept BOTH `--key=value` (single arg) and `--key value` (two args).
+  //
+  // The `=` form is what we now always emit from the CLI driver because
+  // Electron's `second-instance` event delivers argv that's been
+  // pre-processed by Chromium's CommandLine class — that processing
+  // drops bare values between `--key` switches but preserves
+  // `--key=value` intact. We keep the two-arg fallback so older CLI
+  // versions and ad-hoc terminal invocations still work.
   function flag(name: string): string | undefined {
+    const eqPrefix = `${name}=`
+    const eqArg = argv.find((a) => a.startsWith(eqPrefix))
+    if (eqArg) return eqArg.slice(eqPrefix.length)
     const i = argv.indexOf(name)
-    return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
+    if (i >= 0 && i + 1 < argv.length) {
+      const next = argv[i + 1]
+      // Guard against the same Chromium argv collapse: if the "value"
+      // is actually the next flag, treat the value as missing rather
+      // than misinterpreting `--out --format` as outputPath="--format".
+      if (!next.startsWith('--')) return next
+    }
+    return undefined
   }
 
   const outputPath = flag('--out')
@@ -89,6 +137,17 @@ function inferFormat(outPath: string): 'mp4' | 'webm' | 'gif' {
 }
 
 let headlessRequest: HeadlessRequest | null = null
+
+/**
+ * Mode flag — `true` when the binary was launched with `--render` at
+ * boot (no GUI, off-screen, exit-when-done). `false` when we're the
+ * persistent editor instance handling a render via `second-instance`
+ * event forwarding.
+ *
+ * The headless-done IPC handler reads this to decide whether to call
+ * app.exit(0) (headless mode) or just reset state (editor mode).
+ */
+let isHeadlessOnly = false
 
 // `__dirname` is provided by the CJS module wrapper at runtime — Vite
 // compiles this file to dist-electron/main.cjs in CJS format. If we
@@ -428,15 +487,30 @@ ipcMain.handle(
   async (_e, payload: { bytes: Uint8Array; outputPath: string }) => {
     try {
       fs.writeFileSync(payload.outputPath, Buffer.from(payload.bytes))
+      // Sentinel — CLI driver polls `<output>.done` to know the render
+      // is complete. Used in BOTH modes so the CLI doesn't need to know
+      // whether we were headless-only or running in a live editor.
+      const sentinel = `${payload.outputPath}.done`
+      fs.writeFileSync(
+        sentinel,
+        JSON.stringify({ ts: Date.now(), bytes: payload.bytes.length }),
+      )
       // eslint-disable-next-line no-console
       console.log(`[headless] wrote ${payload.outputPath}`)
-      app.exit(0)
+      if (isHeadlessOnly) {
+        app.exit(0)
+      } else {
+        // Editor mode — running instance handled a second-instance render.
+        // Reset state, keep the user's editor session alive.
+        headlessRequest = null
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(
         `[headless] failed to write output: ${err instanceof Error ? err.message : err}`,
       )
-      app.exit(1)
+      if (isHeadlessOnly) app.exit(1)
+      else headlessRequest = null
     }
   },
 )
@@ -444,7 +518,8 @@ ipcMain.handle(
 ipcMain.handle('export:headless-error', (_e, message: string) => {
   // eslint-disable-next-line no-console
   console.error(`[headless] renderer reported error: ${message}`)
-  app.exit(1)
+  if (isHeadlessOnly) app.exit(1)
+  else headlessRequest = null
 })
 
 // macOS: keep the app running with no windows so Cmd+N / dock click can
@@ -454,12 +529,14 @@ app.whenReady().then(() => {
   // Headless render branch — when the binary was launched with --render,
   // skip the menu + visible window entirely. The renderer carries out the
   // export and signals completion via IPC; the app exits when done.
-  headlessRequest = parseHeadlessArgs(process.argv)
-  if (headlessRequest) {
+  const parsed = parseHeadlessArgs(process.argv)
+  if (parsed) {
+    isHeadlessOnly = true
+    headlessRequest = parsed
     // eslint-disable-next-line no-console
     console.log(
-      `[headless] rendering ${headlessRequest.scenePath} → ${headlessRequest.outputPath} ` +
-        `(${headlessRequest.format} · ${headlessRequest.quality} · ${headlessRequest.fps}fps)`,
+      `[headless] rendering ${parsed.scenePath} → ${parsed.outputPath} ` +
+        `(${parsed.format} · ${parsed.quality} · ${parsed.fps}fps)`,
     )
     createMainWindow()
     if (mainWindow) {
@@ -472,6 +549,38 @@ app.whenReady().then(() => {
 
   buildAppMenu()
   createMainWindow()
+})
+
+/**
+ * Second-instance handler. Fires when another hyper-motion process tries
+ * to launch — either a normal re-launch (user double-clicks the dock
+ * icon) or the CLI calling us with `--render` flags.
+ *
+ * Normal re-launch → focus our existing window.
+ * --render flags    → dispatch a headless render in the renderer of our
+ *                    existing window. After completion, the IPC handler
+ *                    writes the file + sentinel; the editor stays open.
+ */
+app.on('second-instance', (_event, argv) => {
+  const req = parseHeadlessArgs(argv)
+  if (req) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[main] received second-instance render request → ${req.outputPath} ` +
+        `(${req.format} · ${req.quality} · ${req.fps}fps)`,
+    )
+    if (!mainWindow) return
+    headlessRequest = req
+    // Notify renderer to run a fresh export now. headlessExport.ts has a
+    // listener on this channel that calls into runHeadlessRender(req).
+    mainWindow.webContents.send('export:headless-trigger', req)
+    return
+  }
+  // Plain re-launch — focus the existing window.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
 })
 
 app.on('window-all-closed', () => {

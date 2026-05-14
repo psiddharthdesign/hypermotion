@@ -3,24 +3,29 @@
 /**
  * Drive the installed hyper-motion desktop app in headless render mode.
  *
- * Spawns the Electron binary with command-line flags that the desktop
- * app's `electron/main.ts` recognizes:
+ * Wire diagram:
  *
- *   --render             flag — go into headless render mode
- *   --out <outPath>      output file
- *   --format <fmt>       mp4 | webm | gif
- *   --quality <q>        comp | 720p | 2k | 4k
- *   --fps <n>            frame rate
- *   --scene <path>       (v0.1.1) path to a .arnimotion file. Ignored in
- *                        v0.1.0 — the desktop app's current IndexedDB
- *                        scene is rendered instead.
+ *   1. CLI deletes any stale `<output>` and `<output>.done` from a
+ *      previous run.
+ *   2. CLI spawns the .app binary with `--render --out <path> ...`.
+ *   3. Inside the binary, `app.requestSingleInstanceLock()` either
+ *      succeeds (we're the first instance) or fails (another hyper-motion
+ *      is already running). Either way the running app ends up handling
+ *      the render:
+ *        - First-instance: this process stays alive, renders, exits 0.
+ *        - Lock-fail: this process exits immediately; the OS forwarded
+ *          our argv to the running app via `second-instance` event.
+ *   4. The running app writes the output file, then writes a sentinel
+ *      at `<output>.done` containing `{"ts":..., "bytes":...}`.
+ *   5. CLI polls for the sentinel. When it appears, render is done.
+ *      CLI cleans up the sentinel and returns success.
  *
- * The app opens an off-screen window, runs the export pipeline, ships
- * bytes to its main process via IPC, writes the file, and exits with
- * code 0 (success) or non-zero with an error message on stderr.
+ * This is the v0.1.0 fix for IndexedDB lock contention — the running
+ * editor can stay open and still serve CLI render requests.
  */
 
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 
 export interface HeadlessRenderRequest {
   appPath: string
@@ -32,62 +37,125 @@ export interface HeadlessRenderRequest {
   scenePath?: string
 }
 
+// Maximum wait for a render to complete. 5 minutes is generous — even
+// a 60-second 4K render finishes in under 2 minutes.
+const RENDER_TIMEOUT_MS = 5 * 60 * 1000
+// How often we poll for the sentinel file.
+const POLL_INTERVAL_MS = 250
+// Grace period after child exit before deciding the render failed.
+// Gives the OS time to flush the sentinel write if it raced with exit.
+const POST_EXIT_GRACE_MS = 1500
+
 export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const args: string[] = [
-      '--render',
-      '--out',
-      req.outputPath,
-      '--format',
-      req.format,
-      '--quality',
-      req.quality,
-      '--fps',
-      String(req.fps),
-    ]
-    if (req.scenePath) {
-      args.push('--scene', req.scenePath)
+  const sentinelPath = `${req.outputPath}.done`
+
+  // Clean slate — remove any stale output / sentinel from previous runs
+  // so we can't false-positive on old data.
+  cleanFile(req.outputPath)
+  cleanFile(sentinelPath)
+
+  // Use `--key=value` form (not `--key value`) for every value flag.
+  // Electron's `second-instance` event delivers argv pre-processed by
+  // Chromium's CommandLine class, which drops bare values between
+  // switches. `--key=value` survives that round-trip; `--key value`
+  // collapses to just `--key`. The `=` form also works fine for the
+  // direct first-instance launch path.
+  const args: string[] = [
+    '--render',
+    `--out=${req.outputPath}`,
+    `--format=${req.format}`,
+    `--quality=${req.quality}`,
+    `--fps=${req.fps}`,
+  ]
+  if (req.scenePath) {
+    args.push(`--scene=${req.scenePath}`)
+  }
+
+  const child = spawn(req.appPath, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: process.env.HYPERMOTION_VERBOSE ? '1' : '',
+    },
+  })
+
+  let stderr = ''
+  let exitCode: number | null = null
+  let exitSignal: NodeJS.Signals | null = null
+  let exitedAt = 0
+  // Closure-assigned values use a wrapper object so TS narrows them
+  // correctly in the polling loop below. With `let`-declared bare
+  // values, TS narrows the closure-set state to `never` after the
+  // initial null assignment because it can't see across the callback
+  // boundary.
+  const errorRef: { current: Error | null } = { current: null }
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    process.stdout.write(chunk)
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString()
+    if (process.env.HYPERMOTION_VERBOSE) {
+      process.stderr.write(chunk)
+    }
+  })
+  child.on('error', (err) => {
+    errorRef.current = err
+  })
+  child.on('exit', (code, signal) => {
+    exitCode = code
+    exitSignal = signal
+    exitedAt = Date.now()
+  })
+
+  // Poll for the sentinel. The render is complete when it appears.
+  const start = Date.now()
+  while (Date.now() - start < RENDER_TIMEOUT_MS) {
+    if (errorRef.current) {
+      throw new Error(`Failed to spawn desktop app: ${errorRef.current.message}`)
+    }
+    if (fs.existsSync(sentinelPath)) {
+      // Render complete. Remove the sentinel so subsequent runs start clean.
+      cleanFile(sentinelPath)
+      return
+    }
+    // If the child exited with a non-zero code AND no sentinel has
+    // appeared after the grace window, the render failed.
+    if (
+      exitedAt > 0 &&
+      Date.now() - exitedAt > POST_EXIT_GRACE_MS &&
+      exitCode !== null &&
+      exitCode !== 0
+    ) {
+      const tail = stderr.trim().split('\n').slice(-8).join('\n')
+      throw new Error(
+        `Desktop app exited with code ${exitCode}. Last stderr:\n${
+          tail || '(no output)'
+        }`,
+      )
+    }
+    if (exitSignal && Date.now() - exitedAt > POST_EXIT_GRACE_MS) {
+      throw new Error(`Desktop app was killed by signal ${exitSignal}`)
     }
 
-    const child = spawn(req.appPath, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        // Electron emits chatty logs by default; quiet them unless the
-        // user opts in. Set HYPERMOTION_VERBOSE=1 to see everything.
-        ELECTRON_ENABLE_LOGGING: process.env.HYPERMOTION_VERBOSE ? '1' : '',
-      },
-    })
+    await sleep(POLL_INTERVAL_MS)
+  }
 
-    let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => {
-      // Stream stdout straight through — the desktop app emits progress
-      // lines like `[headless] export requested: …` that the CLI passes
-      // along so the user sees what's happening.
-      process.stdout.write(chunk)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-      if (process.env.HYPERMOTION_VERBOSE) {
-        process.stderr.write(chunk)
-      }
-    })
+  throw new Error(
+    `Render timed out after ${RENDER_TIMEOUT_MS / 1000}s. ` +
+      `Make sure the desktop app is responsive. Set HYPERMOTION_VERBOSE=1 ` +
+      `to see the app's stderr and diagnose where it's stuck.`,
+  )
+}
 
-    child.on('error', (err) => {
-      reject(new Error(`Failed to spawn desktop app: ${err.message}`))
-    })
+function cleanFile(p: string): void {
+  try {
+    if (fs.existsSync(p)) fs.unlinkSync(p)
+  } catch {
+    /* best-effort */
+  }
+}
 
-    child.on('exit', (code, signal) => {
-      if (code === 0) {
-        resolve()
-        return
-      }
-      if (signal) {
-        reject(new Error(`Desktop app was killed by signal ${signal}`))
-        return
-      }
-      const tail = stderr.trim().split('\n').slice(-8).join('\n')
-      reject(new Error(`Desktop app exited with code ${code}. Last stderr:\n${tail || '(no output)'}`))
-    })
-  })
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
