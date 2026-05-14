@@ -55,19 +55,24 @@ Download the latest release from
 See [RELEASES.md](./RELEASES.md) for the full v0.1.0 notes and the
 v0.1.1 roadmap.
 
-## CLI / MCP
+## CLI + AI agents
+
+hyper-motion ships a CLI and an MCP server so you can drive renders from
+a script, a CI job, or an AI coding agent (Claude Code, Codex, Cursor,
+etc.).
 
 ```sh
 pnpm add -g @psiddharthdesign/hypermotion
 
-# render the current scene
+# render the current scene from the terminal
 hypermotion render -o demo.mp4 -q 4k
 
 # wire it into Claude Code
-claude mcp add hypermotion -- hypermotion-mcp
+claude mcp add -s user hypermotion -- hypermotion-mcp
 ```
 
-Full docs at [cli/README.md](./cli/README.md).
+Full guide — install, all CLI flags, every supported agent, what works
+today vs. roadmap, troubleshooting — in **[AGENTS.md](./AGENTS.md)**.
 
 ## Build from source
 

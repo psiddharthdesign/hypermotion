@@ -2,7 +2,13 @@
 
 CLI + MCP server for [hyper-motion](https://hypermotion.app). Render the
 current desktop scene from the terminal, and let AI coding agents
-(Claude Code, Codex) drive renders programmatically.
+(Claude Code, Codex, Cursor, etc.) drive renders programmatically.
+
+> **Comprehensive guide** — install steps, all flags, every supported
+> agent, what works today vs. roadmap, and troubleshooting — lives at
+> [AGENTS.md](https://github.com/psiddharthdesign/hypermotion/blob/main/AGENTS.md)
+> in the main repo. The summary below is a quick-reference; AGENTS.md
+> is the source of truth.
 
 ## Install
 
