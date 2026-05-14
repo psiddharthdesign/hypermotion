@@ -24,3 +24,14 @@ export { useSceneAPI, useSceneVersion } from './hooks'
 // callers (the headless export driver) that need the API without going
 // through SceneProvider context.
 export { apiReady } from './internals'
+
+// `.hype` file format primitives — Yjs bytes ↔ Y.Doc, plus the JSON
+// view used by the CLI and the agent authoring API.
+export {
+  sceneToBytes,
+  applyBytesToScene,
+  readScene,
+  sceneToJson,
+  sceneToJsonString,
+  applyJsonToScene,
+} from './file'

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hyper Motion Import</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI',
+          system-ui, sans-serif;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--figma-color-bg, #ffffff);
+        color: var(--figma-color-text, #1e1e1e);
+      }
+      h1 {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      p {
+        margin: 0 0 12px;
+        color: var(--figma-color-text-secondary, #6b6b6b);
+      }
+      .count {
+        font-variant-numeric: tabular-nums;
+        color: var(--figma-color-text, #1e1e1e);
+      }
+      button {
+        width: 100%;
+        height: 36px;
+        border: none;
+        border-radius: 6px;
+        background: var(--figma-color-bg-brand, #0d99ff);
+        color: var(--figma-color-text-onbrand, #ffffff);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      button:disabled {
+        background: var(--figma-color-bg-disabled, #e5e5e5);
+        color: var(--figma-color-text-disabled, #999999);
+        cursor: not-allowed;
+      }
+      button:not(:disabled):hover {
+        filter: brightness(1.05);
+      }
+      .status {
+        margin-top: 10px;
+        min-height: 1.4em;
+        color: var(--figma-color-text-secondary, #6b6b6b);
+      }
+      .status.success {
+        color: var(--figma-color-text-success, #14ae5c);
+      }
+      .status.error {
+        color: var(--figma-color-text-danger, #f24822);
+      }
+      .hint {
+        margin-top: 14px;
+        font-size: 11px;
+        color: var(--figma-color-text-tertiary, #9b9b9b);
+      }
+      kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        border: 1px solid var(--figma-color-border, #d6d6d6);
+        border-radius: 3px;
+        background: var(--figma-color-bg-secondary, #f5f5f5);
+        font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+        font-size: 10.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hyper Motion</h1>
+    <p>
+      <span class="count" id="count">No selection</span> ready to copy.
+    </p>
+    <button id="copy" disabled>Copy to Hyper Motion</button>
+    <div class="status" id="status"></div>
+    <p class="hint">
+      Open the Hyper Motion editor and press <kbd>⌘V</kbd> to paste.
+      Auto layout, gradients, text, and image fills come along.
+    </p>
+    <!-- INLINE_SCRIPT -->
+  </body>
+</html>

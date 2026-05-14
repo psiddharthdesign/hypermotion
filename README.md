@@ -60,6 +60,23 @@ pnpm build:dir
 open release/mac-arm64/hyper-motion.app
 ```
 
+## Figma plugin
+
+Copy frames, text, layout, and strokes from Figma straight into
+hyper-motion. The plugin source lives in
+[`figma-plugin/`](./figma-plugin) inside this repo.
+
+```sh
+cd figma-plugin
+pnpm install
+pnpm build
+# Then in Figma: Plugins → Development → Import plugin from manifest…
+# → point at figma-plugin/manifest.json
+```
+
+Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
+Figma Community publish (one-click install) is on the v0.2 roadmap.
+
 ## What's in v0.1.0
 
 - **Semantic keyframes.** Animate variant, opacity, scale, rotation, gap,
