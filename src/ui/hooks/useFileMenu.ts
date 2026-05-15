@@ -3,9 +3,8 @@
 import { useEffect } from 'react'
 import { useSceneAPI } from '@/scene'
 import { sceneDoc } from '@/scene/internals'
-import { sceneToBytes } from '@/scene/file'
+import { sceneToBytes, loadSceneIntoDoc } from '@/scene/file'
 import { createSampleScene } from '@/scene/sample'
-import * as Y from 'yjs'
 
 /**
  * Mount listeners for File menu events from the Electron main process.
@@ -61,16 +60,12 @@ export function useFileMenu(): void {
           | { path: string; bytes: Uint8Array }
           | null
         if (!result) return
-        // Replace the doc state: clear current nodes, apply bytes.
-        // Y.applyUpdate merges into the existing doc — clearing nodes
-        // first means the file's state is what shows up.
-        sceneDoc.transact(() => {
-          for (const id of api.getAllNodeIds()) {
-            api.deleteNode(id)
-          }
-        })
-        // Apply outside the transaction so the update is honored cleanly.
-        Y.applyUpdate(sceneDoc, new Uint8Array(result.bytes))
+        // `loadSceneIntoDoc` materializes the bytes in a side doc and
+        // mirrors them into our sceneDoc atomically — avoids the CRDT
+        // merge anomalies that the earlier delete-then-applyUpdate path
+        // exhibited (e.g. `meta.canvas` ending up undefined after a
+        // round-trip, which crashed Canvas reading `meta.canvas.width`).
+        loadSceneIntoDoc(sceneDoc, new Uint8Array(result.bytes))
         currentPath = result.path
       })()
     })

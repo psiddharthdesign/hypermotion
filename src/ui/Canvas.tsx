@@ -153,6 +153,12 @@ export function Canvas() {
 
   const workspaceRef = useRef<HTMLDivElement>(null)
   const meta = api.getMeta()
+  // Defensive defaults — if a `.hype` load somehow leaves `meta.canvas`
+  // undefined (we saw this when `Y.applyUpdate` was used directly instead
+  // of `loadSceneIntoDoc`), fall back to the seed dimensions so the
+  // component renders an empty artboard instead of crashing the whole app.
+  const canvasWidth = meta.canvas?.width ?? 960
+  const canvasHeight = meta.canvas?.height ?? 540
   const rootId = api.getRoot() || null
   // Root appearance drives the canvas box itself — fill paints the
   // artboard background, corner radius rounds the box. Without this,
@@ -185,8 +191,8 @@ export function Canvas() {
 
   // --- layout solve ----------------------------------------------------
   const container = useMemo(
-    () => ({ width: meta.canvas.width, height: meta.canvas.height }),
-    [meta.canvas.width, meta.canvas.height],
+    () => ({ width: canvasWidth, height: canvasHeight }),
+    [canvasWidth, canvasHeight],
   )
   const solved = useLayout(rootId, container)
   // Mirror the latest solve into a module-scope cache so out-of-tree
@@ -289,15 +295,15 @@ export function Canvas() {
     // composition for a freelook camera. The renderer's parent
     // wrapper carries `perspective(...)` so these rotations actually
     // foreshorten layers instead of shearing them flat.
-    const w = meta.canvas.width
-    const h = meta.canvas.height
+    const w = canvasWidth
+    const h = canvasHeight
     return (
       `translate(${w / 2}px, ${h / 2}px) ` +
       `scale(${s}, ${s}) ` +
       `rotateX(${-rX}deg) rotateY(${-rY}deg) rotateZ(${-rZ}deg) ` +
       `translate(${-cx}px, ${-cy}px)`
     )
-  }, [camera, cameraAnim, cameraScaleFromZ, meta.canvas.width, meta.canvas.height])
+  }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
 
   // Inherited-from-ancestor effects per node, so a parent's animated
   // translate / opacity / scale also moves the children that sit beside
@@ -351,10 +357,10 @@ export function Canvas() {
       // frame the camera wrapper sits in (origin = artboard top-left).
       let x =
         (clientX - rect.left - rect.width / 2 - view.panX) / view.zoom +
-        meta.canvas.width / 2
+        canvasWidth / 2
       let y =
         (clientY - rect.top - rect.height / 2 - view.panY) / view.zoom +
-        meta.canvas.height / 2
+        canvasHeight / 2
       // Step 2 — invert the camera transform if one is active.
       //
       // Forward (cameraTransform above):
@@ -370,8 +376,8 @@ export function Canvas() {
         const camR = cameraAnim?.rotation ?? camera.transform.rotation
         const camSx = cameraAnim?.scaleX ?? camera.transform.scaleX
         const camSy = cameraAnim?.scaleY ?? camera.transform.scaleY
-        const W = meta.canvas.width
-        const H = meta.canvas.height
+        const W = canvasWidth
+        const H = canvasHeight
         // translate(-W/2, -H/2)
         let px = x - W / 2
         let py = y - H / 2
@@ -395,8 +401,8 @@ export function Canvas() {
       view.panX,
       view.panY,
       view.zoom,
-      meta.canvas.width,
-      meta.canvas.height,
+      canvasWidth,
+      canvasHeight,
       camera,
       cameraAnim,
     ],
@@ -722,14 +728,14 @@ export function Canvas() {
         <div
           className="relative border border-border-strong shadow-2xl"
           style={{
-            width: meta.canvas.width,
-            height: meta.canvas.height,
+            width: canvasWidth,
+            height: canvasHeight,
             // Nudge the canvas box so its center aligns with the transform
             // origin when zoom=1 and pan=(0,0). Combined with the `left-1/2
             // top-1/2` above, the scene sits centered in the workspace by
             // default; pan modifies translate from there.
-            marginLeft: -meta.canvas.width / 2,
-            marginTop: -meta.canvas.height / 2,
+            marginLeft: -canvasWidth / 2,
+            marginTop: -canvasHeight / 2,
             overflow: 'hidden',
             // Workspace panel color as the always-present fallback.
             // The camera's own viewport background (when set) paints
@@ -812,8 +818,8 @@ export function Canvas() {
                   style={{
                     left: 0,
                     top: 0,
-                    width: meta.canvas.width,
-                    height: meta.canvas.height,
+                    width: canvasWidth,
+                    height: canvasHeight,
                     background: sceneFill,
                     borderRadius: Math.max(0, sceneCorner),
                   }}
@@ -851,10 +857,10 @@ export function Canvas() {
           className="pointer-events-none absolute"
           data-export-hide="1"
           style={{
-            left: -meta.canvas.width / 2,
-            top: -meta.canvas.height / 2,
-            width: meta.canvas.width,
-            height: meta.canvas.height,
+            left: -canvasWidth / 2,
+            top: -canvasHeight / 2,
+            width: canvasWidth,
+            height: canvasHeight,
           }}
         >
           {/* Camera viewfinder gizmo. Drawn OUTSIDE the camera-transform
@@ -867,8 +873,8 @@ export function Canvas() {
             <CameraGizmo
               camera={camera}
               cameraAnim={cameraAnim}
-              canvasWidth={meta.canvas.width}
-              canvasHeight={meta.canvas.height}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
               zoom={view.zoom}
               selected={selection.includes(camera.id)}
             />
@@ -892,8 +898,8 @@ export function Canvas() {
             {solved && (
               <DistanceOverlay
                 solved={solved}
-                canvasWidth={meta.canvas.width}
-                canvasHeight={meta.canvas.height}
+                canvasWidth={canvasWidth}
+                canvasHeight={canvasHeight}
                 zoom={view.zoom}
                 workspaceRef={workspaceRef}
                 view={view}
