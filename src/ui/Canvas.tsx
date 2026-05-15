@@ -1298,7 +1298,10 @@ function NodeView({
   // replacement.
   const ownX = anim?.x ?? node.transform.x
   const ownY = anim?.y ?? node.transform.y
+  const ownZ = anim?.z ?? node.transform.z
   const ownRot = anim?.rotation ?? node.transform.rotation
+  const ownRotX = anim?.rotationX ?? node.transform.rotationX
+  const ownRotY = anim?.rotationY ?? node.transform.rotationY
   const ownSX = anim?.scaleX ?? node.transform.scaleX
   const ownSY = anim?.scaleY ?? node.transform.scaleY
   const ownOp = anim?.opacity ?? node.appearance.opacity
@@ -1398,7 +1401,18 @@ function NodeView({
   }
 
   const parts: string[] = []
-  if (tx !== 0 || ty !== 0) parts.push(`translate(${tx}px, ${ty}px)`)
+  // 3D channels (z, rotationX, rotationY) are node-local, not inherited
+  // — z accumulation through ancestors would require real perspective
+  // math which the canvas doesn't compose today. Visible effect for
+  // translateZ depends on the camera setting a `perspective` on the
+  // canvas root; without it, translateZ is silent. Same caveat for
+  // rotateX / rotateY — they render in 3D space only when perspective
+  // is established.
+  if (tx !== 0 || ty !== 0 || ownZ !== 0) {
+    parts.push(`translate3d(${tx}px, ${ty}px, ${ownZ}px)`)
+  }
+  if (ownRotX !== 0) parts.push(`rotateX(${ownRotX}deg)`)
+  if (ownRotY !== 0) parts.push(`rotateY(${ownRotY}deg)`)
   if (rotation !== 0) parts.push(`rotate(${rotation}deg)`)
   if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`)
   const transform = parts.length > 0 ? parts.join(' ') : undefined

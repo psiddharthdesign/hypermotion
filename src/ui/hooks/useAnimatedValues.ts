@@ -19,7 +19,13 @@ import { getAnimEngine } from '@/anim'
 export interface AnimatedValue {
   x?: number
   y?: number
+  /** Z depth on the camera's optical axis. 0 = focal plane. */
+  z?: number
   rotation?: number
+  /** Pitch (X-axis rotation), degrees. */
+  rotationX?: number
+  /** Yaw (Y-axis rotation), degrees. */
+  rotationY?: number
   scaleX?: number
   scaleY?: number
   opacity?: number

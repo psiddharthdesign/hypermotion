@@ -55,14 +55,15 @@ export function ScalePairField({
   const toggleScaleLinked = useUI((s) => s.toggleScaleLinked)
 
   const commit = (axis: 'x' | 'y', percent: number) => {
+    // The link toggle no longer mirrors edits across axes — it
+    // surprised users who wanted to nudge one channel without losing
+    // the other. The toggle is kept around for a future
+    // ratio-preserving behavior (drag X, Y scales to match the
+    // original aspect) but for now both axes always edit
+    // independently regardless of `scaleLinked`.
     const next = percent / 100
-    if (axis === 'x') {
-      onCommitX(next)
-      if (scaleLinked) onCommitY(next)
-    } else {
-      onCommitY(next)
-      if (scaleLinked) onCommitX(next)
-    }
+    if (axis === 'x') onCommitX(next)
+    else onCommitY(next)
   }
 
   return (
@@ -137,7 +138,10 @@ function PercentField({
     <label
       title={`Scale ${axis}`}
       className={[
-        'inline-flex h-6 min-w-0 flex-1 items-center rounded',
+        // min-w-[56px] floor: enough room for the axis letter, "100", and
+        // the % suffix even when the sidebar is narrow. flex-1 still lets
+        // it grow when there's headroom.
+        'inline-flex h-6 min-w-[56px] flex-1 items-center rounded',
         'border border-transparent hover:border-border',
         'focus-within:border-border-strong focus-within:bg-app-bg',
       ].join(' ')}

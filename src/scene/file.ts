@@ -79,7 +79,12 @@ export function sceneToJsonString(api: SceneAPI): string {
  * Throws so callers don't silently no-op while the implementation is
  * pending.
  */
-export function applyJsonToScene(_doc: Y.Doc, _json: Scene): SceneAPI {
+export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
+  // Touch the params so TS doesn't flag them; full implementation
+  // walks the JSON and recreates nodes / tracks via SceneAPI. Lands
+  // with the v0.1.1 agent authoring API.
+  void doc
+  void json
   throw new Error(
     'applyJsonToScene is not yet implemented in v0.1.0. ' +
       'JSON import lands in v0.1.1 alongside the agent authoring API.',

@@ -1061,7 +1061,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
   }
   const patchTransform = (patch: Partial<Transform>) => {
-    api.setNodeProperty(node.id, 'transform', { ...node.transform, ...patch })
+    // Read the FRESHEST transform from the api at call time, not from
+    // the React closure's `node.transform` snapshot. Two back-to-back
+    // calls (e.g. the linked Scale axes calling onCommitX + onCommitY
+    // synchronously) both read the same stale snapshot otherwise, and
+    // the second overwrites the first. Reading via api.getNode picks
+    // up whatever the previous call just wrote.
+    const current = api.getNode(node.id)?.transform ?? node.transform
+    api.setNodeProperty(node.id, 'transform', { ...current, ...patch })
     stampForPatch('transform', patch)
   }
   const patchAppearance = (patch: Partial<Appearance>) => {

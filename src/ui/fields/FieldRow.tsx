@@ -33,11 +33,11 @@ export function FieldRow({
   keyframe?: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5">
       <div className="flex w-4 shrink-0 items-center justify-center">
         {keyframe}
       </div>
-      <span className="w-[72px] shrink-0 text-[12px] text-text-muted">
+      <span className="w-[56px] shrink-0 text-[12px] text-text-muted">
         {label}
       </span>
       <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
