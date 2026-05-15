@@ -43,8 +43,8 @@ export function NumberField({
   }, [value, focused])
 
   const commit = () => {
-    const parsed = parseFloat(draft)
-    if (!Number.isFinite(parsed)) {
+    const parsed = evaluateExpression(draft)
+    if (parsed == null) {
       setDraft(formatNumber(value))
       return
     }
@@ -93,7 +93,11 @@ export function NumberField({
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
             e.preventDefault()
             const delta = (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : step)
-            const next = clamp((parseFloat(draft) || 0) + delta, min, max)
+            // Resolve the draft (which may be an expression like
+            // `100*2`) before nudging — so ArrowUp on "50+50" jumps
+            // to "101" rather than discarding the math.
+            const current = evaluateExpression(draft) ?? 0
+            const next = clamp(current + delta, min, max)
             setDraft(formatNumber(next))
             onCommit(next)
           }
@@ -131,4 +135,54 @@ function clamp(n: number, min?: number, max?: number): number {
   if (min !== undefined && n < min) return min
   if (max !== undefined && n > max) return max
   return n
+}
+
+/**
+ * Resolve a NumberField draft to a finite number.
+ *
+ * Accepts plain numbers AND arithmetic expressions — typing `100*2`,
+ * `200-50`, `(300+60)/2`, or `1920/16*9` evaluates on commit. This is
+ * the Figma / Sketch / Framer affordance: designers reach for math
+ * in their inputs constantly and shouldn't have to break flow to
+ * open a calculator.
+ *
+ * Safety: we restrict the expression to digits, decimals, whitespace,
+ * parentheses, and the operators `+ - * / %`. Anything else fails the
+ * regex and we return null — so even though we use `new Function` for
+ * evaluation, no identifier reference (e.g. `process`, `globalThis`,
+ * `window.localStorage`) can survive the gate.
+ *
+ * Returns null when the draft isn't a finite number or a safe
+ * expression — the caller falls back to the previous value.
+ */
+function evaluateExpression(text: string): number | null {
+  const trimmed = text.trim()
+  if (trimmed === '') return null
+
+  // Fast path: a plain numeric literal (handles negative, decimal,
+  // leading `+`). Avoids the cost of `new Function` for the common
+  // case where the user just typed digits.
+  const direct = Number(trimmed)
+  if (Number.isFinite(direct)) return direct
+
+  // Whitelist: digits, the four operators, modulo, decimal point,
+  // parens, whitespace. Reject everything else — no letters, no
+  // function calls, no semicolons. The trailing `+` is mandatory in
+  // the character class because `-` and `+` are valid operators.
+  if (!/^[\d+\-*/%().\s]+$/.test(trimmed)) return null
+
+  try {
+    // `new Function` is acceptable here because the regex above has
+    // already proven the body contains nothing identifier-like. Wrap
+    // in `"use strict"` and parens so the parser treats the body as
+    // an expression statement.
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(`"use strict"; return (${trimmed})`) as () => unknown
+    const result = fn()
+    return typeof result === 'number' && Number.isFinite(result) ? result : null
+  } catch {
+    // Syntax error (e.g. unbalanced parens, trailing operator) — fall
+    // back to "invalid input".
+    return null
+  }
 }
