@@ -445,6 +445,28 @@ interface UIState {
   setRulerLabels: (mode: RulerLabelsMode) => void
   /** Cycle the ruler labels mode: both → time → frames → both. */
   cycleRulerLabels: () => void
+  /**
+   * Full filesystem path of the currently-open `.hype` document, or
+   * null if the user hasn't saved yet (acts like Figma's "Untitled").
+   * The TopBar shows `basename(path)` here so the user always sees the
+   * file they're editing.
+   *
+   * Tracked in UI state (not the scene) because the path is a property
+   * of the editing session — a collaborator opening the same doc on
+   * their machine will have a different path. The scene's `meta.name`
+   * is the display name that travels with the doc.
+   */
+  currentFilePath: string | null
+  /**
+   * Epoch ms of the last successful save (or load — opening a file
+   * counts as "everything on disk matches the doc"). Null means the
+   * doc has never been saved. The TopBar renders this as a relative
+   * time (`Saved 2m ago`) and a polling re-render keeps it fresh
+   * without an extra subscription.
+   */
+  lastSavedAt: number | null
+  /** Update the file metadata after a save / open / save-as. */
+  setCurrentFile: (path: string | null, savedAt: number | null) => void
 }
 
 const MIN_ZOOM = 0.05
@@ -673,6 +695,10 @@ export const useUI = create<UIState>((set) => ({
       return { rulerLabels: m }
     })
   },
+  currentFilePath: null,
+  lastSavedAt: null,
+  setCurrentFile: (path, savedAt) =>
+    set({ currentFilePath: path, lastSavedAt: savedAt }),
 }))
 
 function clamp(n: number, lo: number, hi: number): number {

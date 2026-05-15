@@ -44,6 +44,19 @@ export function TopBar() {
   // other state change forces a rerender.
   useSceneVersion()
   const projectName = api.getMeta().name
+  const currentFilePath = useUI((s) => s.currentFilePath)
+  const lastSavedAt = useUI((s) => s.lastSavedAt)
+  // Prefer the on-disk filename when the user has saved or opened a
+  // `.hype` — that's what they care about. Fall back to the scene's
+  // display name, then "Untitled" as a last resort. We strip the
+  // `.hype` extension so the breadcrumb stays compact.
+  const displayName = (() => {
+    if (currentFilePath) {
+      const base = currentFilePath.replace(/^.*[\\/]/, '')
+      return base.replace(/\.hype$/i, '')
+    }
+    return projectName || 'Untitled'
+  })()
 
   const centerZoom = (next: number) =>
     zoomAt(next, window.innerWidth / 2, window.innerHeight / 2)
@@ -87,9 +100,9 @@ export function TopBar() {
           title="Click to rename"
           className="flex h-7 items-center gap-2 rounded-md px-2 text-[12px] text-text hover:bg-panel-raised"
         >
-          <span className="font-medium">{projectName || 'Untitled'}</span>
+          <span className="font-medium">{displayName}</span>
         </button>
-        <SaveStatus />
+        <SaveStatus savedAt={lastSavedAt} />
       </div>
 
       {/* Spacer pushes the right cluster to the trailing edge. */}
@@ -177,16 +190,55 @@ export function TopBar() {
 // scene has loaded.
 // ---------------------------------------------------------------------------
 
-function SaveStatus() {
+function SaveStatus({ savedAt }: { savedAt: number | null }) {
+  // Re-render once a minute so "Saved 2m ago" advances to 3m without
+  // a user action. 60s is the smallest granularity we display past
+  // the "just now" window, so a higher tick rate wastes work.
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (savedAt == null) return
+    const id = setInterval(() => tick((n) => n + 1), 60_000)
+    return () => clearInterval(id)
+  }, [savedAt])
+
+  const unsaved = savedAt == null
   return (
-    <span className="ml-2 flex items-center gap-1.5 text-[11px] text-text-dim">
+    <span
+      className="ml-2 flex items-center gap-1.5 text-[11px] text-text-dim"
+      title={
+        savedAt == null
+          ? 'Not yet saved to disk'
+          : `Last saved ${new Date(savedAt).toLocaleString()}`
+      }
+    >
       <span
         aria-hidden
-        className="block h-1.5 w-1.5 rounded-full bg-[oklch(0.70_0.14_145)]"
+        className={[
+          'block h-1.5 w-1.5 rounded-full',
+          unsaved
+            ? 'bg-[oklch(0.70_0.14_60)]' // amber-ish: needs attention
+            : 'bg-[oklch(0.70_0.14_145)]', // green: safe
+        ].join(' ')}
       />
-      Saved
+      {unsaved ? 'Unsaved' : `Saved ${formatRelativeTime(savedAt)}`}
     </span>
   )
+}
+
+/**
+ * Format an epoch-ms timestamp as a short relative phrase: "just now",
+ * "12s ago", "5m ago", "2h ago", or "3d ago". Designed for the TopBar's
+ * save indicator — tight horizontal budget, frequent re-evaluation. We
+ * floor on the smaller side at each threshold so freshly-saved files
+ * say "just now" rather than "0s ago".
+ */
+function formatRelativeTime(epochMs: number): string {
+  const diff = Math.max(0, Date.now() - epochMs)
+  if (diff < 5_000) return 'just now'
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
+  return `${Math.floor(diff / 86_400_000)}d ago`
 }
 
 // ---------------------------------------------------------------------------

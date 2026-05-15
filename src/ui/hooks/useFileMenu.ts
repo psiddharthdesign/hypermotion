@@ -5,6 +5,7 @@ import { useSceneAPI } from '@/scene'
 import { sceneDoc } from '@/scene/internals'
 import { sceneToBytes, loadSceneIntoDoc } from '@/scene/file'
 import { createSampleScene } from '@/scene/sample'
+import { useUI } from '@/state/ui'
 
 /**
  * Mount listeners for File menu events from the Electron main process.
@@ -34,14 +35,19 @@ declare global {
   }
 }
 
-let currentPath: string | null = null
-
 export function useFileMenu(): void {
   const api = useSceneAPI()
 
   useEffect(() => {
     const bridge = window.hypermotion
     if (!bridge || !bridge.on) return
+
+    // Read currentFilePath from the store at the moment of each event —
+    // not via useUI()/useState so we don't tear the closure or remount
+    // listeners when the path changes.
+    const getPath = () => useUI.getState().currentFilePath
+    const setFile = (path: string | null, savedAt: number | null) =>
+      useUI.getState().setCurrentFile(path, savedAt)
 
     const offNew = bridge.on('file:new', () => {
       // Clear all nodes, reseed with the default sample scene.
@@ -51,7 +57,7 @@ export function useFileMenu(): void {
         }
         createSampleScene(api)
       })
-      currentPath = null
+      setFile(null, null)
     })
 
     const offOpen = bridge.on('file:open', () => {
@@ -66,35 +72,46 @@ export function useFileMenu(): void {
         // exhibited (e.g. `meta.canvas` ending up undefined after a
         // round-trip, which crashed Canvas reading `meta.canvas.width`).
         loadSceneIntoDoc(sceneDoc, new Uint8Array(result.bytes))
-        currentPath = result.path
+        // Opening a file means "doc state == disk state" — bump the
+        // saved timestamp so the TopBar reads "Saved just now" instead
+        // of "Unsaved" right after a fresh open.
+        setFile(result.path, Date.now())
       })()
     })
 
     const offSave = bridge.on('file:save', () => {
       void (async () => {
-        if (!currentPath) {
+        let path = getPath()
+        if (!path) {
           // No path yet — fall through to Save As.
           const chosen = (await bridge.invoke('file:show-save-dialog', {
             suggestedName: `${api.getMeta()?.name || 'Untitled'}.hype`,
           })) as string | null
           if (!chosen) return
-          currentPath = chosen
+          path = chosen
         }
         const bytes = sceneToBytes(sceneDoc)
-        await bridge.invoke('file:write', { path: currentPath, bytes })
+        const ok = (await bridge.invoke('file:write', {
+          path,
+          bytes,
+        })) as boolean
+        if (ok) setFile(path, Date.now())
       })()
     })
 
     const offSaveAs = bridge.on('file:save-as', () => {
       void (async () => {
         const chosen = (await bridge.invoke('file:show-save-dialog', {
-          defaultPath: currentPath ?? undefined,
+          defaultPath: getPath() ?? undefined,
           suggestedName: `${api.getMeta()?.name || 'Untitled'}.hype`,
         })) as string | null
         if (!chosen) return
-        currentPath = chosen
         const bytes = sceneToBytes(sceneDoc)
-        await bridge.invoke('file:write', { path: currentPath, bytes })
+        const ok = (await bridge.invoke('file:write', {
+          path: chosen,
+          bytes,
+        })) as boolean
+        if (ok) setFile(chosen, Date.now())
       })()
     })
 
