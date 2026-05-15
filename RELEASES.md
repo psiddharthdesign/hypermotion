@@ -3,6 +3,91 @@
 Human-friendly release notes. The GitHub Releases page mirrors the entries
 below for the corresponding tag, plus auto-generated commit summaries.
 
+## v0.1.1 — CLI render hardening + Figma plugin docs (2026-05-14)
+
+Focused fix release on top of v0.1.0. CLI render is dramatically more
+reliable when used from AI coding agents, and the Figma plugin is
+documented + bundled in the public repo. Foundation for the v0.1.2
+`.hype` file format work is in place.
+
+### CLI / MCP render reliability
+
+- **Error sentinels** — when the renderer fails (in-flight rejection,
+  unsupported format, runtime error), the main process now writes
+  `<output>.error` next to the expected `<output>.done`. The CLI driver
+  polls for either and surfaces the error to the calling agent in <1s
+  instead of timing out at 5 minutes. Agents adapt; users don't wait.
+- **WebM fail-fast in headless mode** — the tab-capture pipeline
+  (`getDisplayMedia`) requires a user gesture, which doesn't exist when
+  an agent triggers a render. WebM now rejects immediately with a clear
+  message pointing at MP4 or GIF as alternatives. Rebuilding WebM on top
+  of `webContents.capturePage` is on the v0.1.2 roadmap.
+- **`--key=value` argv form** is now the default. Survives Chromium's
+  `CommandLine` round-trip in the second-instance event payload, where
+  bare `--key value` form drops the values. Old `--key value` still
+  parsed for backward compat.
+- **Locator failure is loud** — setting `HYPERMOTION_APP_PATH` to a
+  bogus path used to silently fall through to OS search; now logs a
+  clear error pointing at the bad path.
+
+### Figma plugin
+
+- The `figma-plugin/` source ships in the public repo (was previously
+  only in the dev tree). Users get the plugin on clone.
+- Step-by-step install guide at
+  [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin):
+  build → import manifest → copy frames into hyper-motion.
+- Figma Community publish (one-click install) deferred to v0.2.
+
+### `.hype` file format primitives
+
+- `src/scene/file.ts` exposes `sceneToBytes` / `applyBytesToScene` /
+  `readScene` / `sceneToJson`. Foundation for the v0.1.2 scene authoring
+  API (CLI + MCP scene create/edit/render).
+- `.hype` files are raw `Y.encodeStateAsUpdate(doc)` bytes — preserves
+  the Yjs CRDT structure so collaboration works seamlessly later.
+- `applyJsonToScene` is stubbed (throws explicit "not yet implemented")
+  pending the full agent authoring surface in v0.1.2.
+
+### Distribution
+
+- **macOS-only for v0.1.x.** Windows build pipeline works but isn't
+  shipping yet — release workflow narrowed to `macos-latest`, package
+  metadata + landing copy + docs all reflect this. Windows resumes once
+  signing + the Windows DX has had focused attention.
+- DMG ships **ad-hoc signed**. macOS Sequoia still shows a "damaged"
+  dialog (Apple requires paid Developer notarization for clean opens),
+  so the install path documents the verified two-line workaround:
+  ```sh
+  xattr -cr /Applications/hyper-motion.app
+  codesign --force --deep --sign - /Applications/hyper-motion.app
+  ```
+- Build scripts no longer gate on `tsc -b` — `pnpm typecheck` is a
+  separate command. 49 pre-existing type errors are tracked tech debt,
+  not blockers.
+
+### Landing + docs
+
+- Landing redesigned with the Hers minimal pattern — pure white,
+  left-aligned, generous whitespace, single dark CTA.
+- New `/docs` route with the canonical install guide and the Figma
+  plugin steps; rest of the docs flagged "coming soon" in a grid.
+- AGENTS.md cleaned up to reflect macOS-only and the WebM caveat.
+
+### v0.1.2 roadmap (next)
+
+- `.hype` file save / open in the desktop app (File menu)
+- CLI `scene new / open / info / list / delete / duplicate`
+- CLI `render <scene.hype> -o out.mp4` (currently only renders the
+  current IndexedDB scene)
+- JSON I/O: `export-json` / `import-json` for agent authoring
+- MCP tools: `create_scene`, `import_scene_from_json`, `info_scene`
+  (real, not stub)
+- WebM via `webContents.capturePage` (no more user-gesture dependency)
+- Per-layer blur effect (animatable, decoupled from camera DOF)
+
+---
+
 ## v0.1.0 — first cut (2026-05-12)
 
 The semantic-layout-animation bet works end-to-end. This is a research

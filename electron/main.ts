@@ -19,6 +19,7 @@ import {
   BrowserWindow,
   clipboard,
   desktopCapturer,
+  dialog,
   ipcMain,
   Menu,
   shell,
@@ -209,7 +210,31 @@ function buildAppMenu() {
       : []),
     {
       label: 'File',
-      submenu: [isMac ? { role: 'close' } : { role: 'quit' }],
+      submenu: [
+        {
+          label: 'New Scene',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => mainWindow?.webContents.send('file:new'),
+        },
+        {
+          label: 'Open…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => mainWindow?.webContents.send('file:open'),
+        },
+        { type: 'separator' as const },
+        {
+          label: 'Save',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => mainWindow?.webContents.send('file:save'),
+        },
+        {
+          label: 'Save As…',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => mainWindow?.webContents.send('file:save-as'),
+        },
+        { type: 'separator' as const },
+        isMac ? { role: 'close' as const } : { role: 'quit' as const },
+      ],
     },
     {
       label: 'Edit',
@@ -471,6 +496,97 @@ ipcMain.handle('export:get-zoom-factor', (): number => {
   const wc = mainWindow?.webContents
   return wc ? wc.getZoomFactor() : 1
 })
+
+/**
+ * `.hype` file I/O bridge.
+ *
+ * The renderer holds the Y.Doc and produces / consumes the on-disk bytes
+ * (see `src/scene/file.ts`). Main owns the file dialogs + raw fs reads
+ * because contextIsolation walls renderer off from node's fs module.
+ *
+ * Flow:
+ *   File → Save  → renderer serializes doc to bytes, calls `file:write`
+ *                  with `{ path, bytes }`. Main writes, returns success.
+ *                  If `path` is null, falls through to Save As.
+ *   File → Save As → main shows save dialog, returns chosen path.
+ *                    Renderer then calls `file:write` with the bytes.
+ *   File → Open → main shows open dialog, reads bytes, returns
+ *                 `{ path, bytes }`. Renderer applies to a fresh doc.
+ *
+ * Path tracking (which file the current scene is "saved as") lives in
+ * the renderer; main is stateless.
+ */
+ipcMain.handle(
+  'file:show-save-dialog',
+  async (
+    _e,
+    opts?: { defaultPath?: string; suggestedName?: string },
+  ): Promise<string | null> => {
+    if (!mainWindow) return null
+    const suggested = opts?.suggestedName ?? 'Untitled.hype'
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save scene',
+      defaultPath: opts?.defaultPath ?? suggested,
+      filters: [{ name: 'hyper-motion scene', extensions: ['hype'] }],
+    })
+    return result.canceled || !result.filePath ? null : result.filePath
+  },
+)
+
+ipcMain.handle(
+  'file:show-open-dialog',
+  async (): Promise<{ path: string; bytes: Uint8Array } | null> => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open scene',
+      filters: [{ name: 'hyper-motion scene', extensions: ['hype'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]
+    try {
+      const bytes = fs.readFileSync(filePath)
+      // Buffer → Uint8Array marshals across IPC.
+      return { path: filePath, bytes: new Uint8Array(bytes) }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[file] read failed: ${err instanceof Error ? err.message : err}`)
+      return null
+    }
+  },
+)
+
+ipcMain.handle(
+  'file:write',
+  (_e, payload: { path: string; bytes: Uint8Array }): boolean => {
+    try {
+      fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
+      return true
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[file] write failed: ${err instanceof Error ? err.message : err}`,
+      )
+      return false
+    }
+  },
+)
+
+ipcMain.handle(
+  'file:read',
+  (_e, filePath: string): Uint8Array | null => {
+    try {
+      const bytes = fs.readFileSync(filePath)
+      return new Uint8Array(bytes)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[file] read failed: ${err instanceof Error ? err.message : err}`,
+      )
+      return null
+    }
+  },
+)
 
 /**
  * Headless render IPC handlers.

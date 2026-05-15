@@ -15,6 +15,7 @@ import { SceneProvider, useSceneAPI } from '@/scene'
 import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useFigmaPaste } from '@/ui/hooks/useFigmaPaste'
+import { useFileMenu } from '@/ui/hooks/useFileMenu'
 import {
   migrateCameraScaleToZ,
   normalizeRoot,
@@ -67,6 +68,7 @@ function Shell() {
   useKeyboardShortcuts()
   useAnim()
   useFigmaPaste()
+  useFileMenu()
 
   // Body-level "export mode" toggle. CSS rules in src/index.css key off
   // `data-export-mode='1'` to hide every chrome surface (TopBar, Layers,

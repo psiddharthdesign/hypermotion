@@ -405,13 +405,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // an explicit box is "as wide/tall as the glyphs need".
           size: (y.get('size') as Size) ?? { width: 'hug', height: 'hug' },
           text: (y.get('text') as string) ?? '',
-          fontFamily: (y.get('fontFamily') as string) ?? 'ui-sans-serif',
+          fontFamily: (y.get('fontFamily') as string) ?? 'Inter',
           fontSize: (y.get('fontSize') as number) ?? 16,
           fontWeight: (y.get('fontWeight') as number) ?? 400,
           lineHeight: (y.get('lineHeight') as number) ?? 1.4,
           letterSpacing: (y.get('letterSpacing') as number) ?? 0,
           textAlign: (y.get('textAlign') as 'start' | 'center' | 'end') ?? 'start',
-          color: (y.get('color') as string) ?? 'oklch(0.86 0.012 280)',
+          color: (y.get('color') as string) ?? '#0a0a0c',
         } as Node
       case 'component':
         return {
@@ -624,13 +624,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           const tp = props as Partial<TextNode> | undefined
           y.set('size', tp?.size ?? { width: 'hug', height: 'hug' })
           y.set('text', tp?.text ?? 'Text')
-          y.set('fontFamily', tp?.fontFamily ?? 'ui-sans-serif')
+          y.set('fontFamily', tp?.fontFamily ?? 'Inter')
           y.set('fontSize', tp?.fontSize ?? 16)
           y.set('fontWeight', tp?.fontWeight ?? 400)
           y.set('lineHeight', tp?.lineHeight ?? 1.4)
           y.set('letterSpacing', tp?.letterSpacing ?? 0)
           y.set('textAlign', tp?.textAlign ?? 'start')
-          y.set('color', tp?.color ?? 'oklch(0.86 0.012 280)')
+          y.set('color', tp?.color ?? '#0a0a0c')
         }
         if (kind === 'camera') {
           // Cameras carry no size / layout / fill. They exist at the

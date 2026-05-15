@@ -21,6 +21,13 @@ import { createSampleScene } from '@/scene/sample'
 const doc = new Y.Doc()
 const persistence = persistScene(doc)
 
+/**
+ * Module-scope handle to the active Y.Doc. Exposed for non-React callers
+ * (file save/load via menu, headless export, etc.) that need to read or
+ * mutate the doc directly without going through SceneProvider context.
+ */
+export const sceneDoc = doc
+
 export const apiReady: Promise<SceneAPI> = persistence.whenSynced
   .then(() => {
     try {
