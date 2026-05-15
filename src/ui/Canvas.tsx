@@ -51,7 +51,10 @@ import { FloatingDock } from '@/ui/FloatingDock'
 export interface InheritedAnim {
   x: number
   y: number
+  z: number
   rotation: number
+  rotationX: number
+  rotationY: number
   scaleX: number
   scaleY: number
   opacity: number
@@ -60,7 +63,10 @@ export interface InheritedAnim {
 const IDENTITY_INHERITED: InheritedAnim = {
   x: 0,
   y: 0,
+  z: 0,
   rotation: 0,
+  rotationX: 0,
+  rotationY: 0,
   scaleX: 1,
   scaleY: 1,
   opacity: 1,
@@ -98,12 +104,22 @@ function composeInheritedAnim(
     const effSX = a?.scaleX ?? node.transform.scaleX
     const effSY = a?.scaleY ?? node.transform.scaleY
     const effOp = a?.opacity ?? node.appearance.opacity
+    // 3D channels (z, rotationX, rotationY) are NOT propagated through
+    // the regular-node tree. They live exclusively on the camera, which
+    // applies them as a single transform to the whole scene via the
+    // separate camera path. Letting a regular frame translate or rotate
+    // in 3D would either silently no-op (no perspective context) or
+    // visibly clip children to z<0 — both surprising. Keeping the
+    // surface 2D for everything except the camera.
     const nextInherited: InheritedAnim = isRoot
       ? inherited
       : {
           x: inherited.x + effX,
           y: inherited.y + effY,
+          z: 0,
           rotation: inherited.rotation + effRot,
+          rotationX: 0,
+          rotationY: 0,
           scaleX: inherited.scaleX * effSX,
           scaleY: inherited.scaleY * effSY,
           opacity: inherited.opacity * effOp,
@@ -1298,10 +1314,7 @@ function NodeView({
   // replacement.
   const ownX = anim?.x ?? node.transform.x
   const ownY = anim?.y ?? node.transform.y
-  const ownZ = anim?.z ?? node.transform.z
   const ownRot = anim?.rotation ?? node.transform.rotation
-  const ownRotX = anim?.rotationX ?? node.transform.rotationX
-  const ownRotY = anim?.rotationY ?? node.transform.rotationY
   const ownSX = anim?.scaleX ?? node.transform.scaleX
   const ownSY = anim?.scaleY ?? node.transform.scaleY
   const ownOp = anim?.opacity ?? node.appearance.opacity
@@ -1401,18 +1414,12 @@ function NodeView({
   }
 
   const parts: string[] = []
-  // 3D channels (z, rotationX, rotationY) are node-local, not inherited
-  // — z accumulation through ancestors would require real perspective
-  // math which the canvas doesn't compose today. Visible effect for
-  // translateZ depends on the camera setting a `perspective` on the
-  // canvas root; without it, translateZ is silent. Same caveat for
-  // rotateX / rotateY — they render in 3D space only when perspective
-  // is established.
-  if (tx !== 0 || ty !== 0 || ownZ !== 0) {
-    parts.push(`translate3d(${tx}px, ${ty}px, ${ownZ}px)`)
-  }
-  if (ownRotX !== 0) parts.push(`rotateX(${ownRotX}deg)`)
-  if (ownRotY !== 0) parts.push(`rotateY(${ownRotY}deg)`)
+  // Regular nodes render in 2D space. The 3D channels (z, rotationX,
+  // rotationY) live exclusively on the camera, which applies them as
+  // a separate transform to the whole scene — keeping non-camera Z
+  // out of the per-node transform avoids "negative Z hides the
+  // element entirely" surprises when there's no perspective context.
+  if (tx !== 0 || ty !== 0) parts.push(`translate(${tx}px, ${ty}px)`)
   if (rotation !== 0) parts.push(`rotate(${rotation}deg)`)
   if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`)
   const transform = parts.length > 0 ? parts.join(' ') : undefined

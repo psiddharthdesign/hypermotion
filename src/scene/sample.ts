@@ -170,17 +170,19 @@ export function createSampleScene(api: SceneAPI): void {
     clipsContent: false,
   })
 
-  // Cancel button — ghost style.
+  // Cancel button — ghost style. Width hugs the label so the text
+  // can't wrap mid-word (the earlier fixed 80px clipped "Cancel" into
+  // "Canc/el" at 13px Inter).
   const cancelBtn = api.createNode('frame', footer, {
     name: 'Cancel',
-    size: { width: 80, height: 36 },
+    size: { width: 'hug', height: 36 },
     layout: {
       mode: 'flex',
       direction: 'row',
       justify: 'center',
       align: 'center',
       gap: 0,
-      padding: { top: 0, right: 0, bottom: 0, left: 0 },
+      padding: { top: 0, right: 14, bottom: 0, left: 14 },
       wrap: false,
       columns: 1,
       rowGap: 0,
@@ -204,17 +206,18 @@ export function createSampleScene(api: SceneAPI): void {
     color: '#0a0a0c',
   })
 
-  // Deploy button — primary, dark fill, white text.
+  // Deploy button — primary, dark fill, white text. Same hug-content
+  // sizing as Cancel so the label has room.
   const deployBtn = api.createNode('frame', footer, {
     name: 'Deploy',
-    size: { width: 84, height: 36 },
+    size: { width: 'hug', height: 36 },
     layout: {
       mode: 'flex',
       direction: 'row',
       justify: 'center',
       align: 'center',
       gap: 0,
-      padding: { top: 0, right: 0, bottom: 0, left: 0 },
+      padding: { top: 0, right: 14, bottom: 0, left: 14 },
       wrap: false,
       columns: 1,
       rowGap: 0,

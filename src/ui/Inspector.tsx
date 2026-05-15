@@ -26,6 +26,7 @@ import type {
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import type { SceneAPI } from '@/scene/doc'
 import {
   CheckboxField,
@@ -1033,6 +1034,25 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // invisible-filled parent is still visible at the child level.
   const parent = node.parent ? api.getNode(node.parent) : null
   const parentFillNull = !!parent && 'appearance' in parent && parent.appearance.fill === null
+
+  // Live animated values for this node. When a track is active on a
+  // property, the engine emits the interpolated value every frame —
+  // the Inspector fields should display THAT (not the dormant static
+  // value) so the user sees motion in real time as the playhead moves.
+  // Editing a value here still writes the static + stamps the active
+  // track via `patchTransform` / `stampForPatch`, so types are
+  // consistent in both directions.
+  const animMap = useAnimatedValues([node.id])
+  const anim = animMap[node.id]
+  const liveX = anim?.x ?? node.transform.x
+  const liveY = anim?.y ?? node.transform.y
+  const liveZ = anim?.z ?? node.transform.z
+  const liveRot = anim?.rotation ?? node.transform.rotation
+  const liveRotX = anim?.rotationX ?? node.transform.rotationX
+  const liveRotY = anim?.rotationY ?? node.transform.rotationY
+  const liveSX = anim?.scaleX ?? node.transform.scaleX
+  const liveSY = anim?.scaleY ?? node.transform.scaleY
+  const liveOpacity = anim?.opacity ?? node.appearance.opacity
   // Convenience patchers. Each reads the current group, merges the patch,
   // and writes the whole group back. This is the granularity setNodeProperty
   // accepts today; later we might split groups into nested Y.Maps so
@@ -1173,12 +1193,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             <KeyframeButton
               nodeId={node.id}
               propertyId="transform.x"
-              currentValue={node.transform.x}
+              currentValue={liveX}
             />
           }
         >
           <NumberField
-            value={node.transform.x}
+            value={liveX}
             onCommit={(v) => patchTransform({ x: v })}
           />
         </FieldRow>
@@ -1188,31 +1208,37 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             <KeyframeButton
               nodeId={node.id}
               propertyId="transform.y"
-              currentValue={node.transform.y}
+              currentValue={liveY}
             />
           }
         >
           <NumberField
-            value={node.transform.y}
+            value={liveY}
             onCommit={(v) => patchTransform({ y: v })}
           />
         </FieldRow>
-        <FieldRow
-          label="Z"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.z"
-              currentValue={node.transform.z}
+        {/* Z lives on the camera only. Regular layers render in 2D
+            space — exposing Z on every layer led to "negative Z hides
+            the element entirely" surprises (no perspective context).
+            The camera applies its own Z transform to the whole scene. */}
+        {node.kind === 'camera' && (
+          <FieldRow
+            label="Z"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.z"
+                currentValue={liveZ}
+              />
+            }
+          >
+            <NumberField
+              value={liveZ}
+              onCommit={(v) => patchTransform({ z: v })}
+              step={1}
             />
-          }
-        >
-          <NumberField
-            value={node.transform.z}
-            onCommit={(v) => patchTransform({ z: v })}
-            step={1}
-          />
-        </FieldRow>
+          </FieldRow>
+        )}
         {/* Rotation. Cameras get full 3D — pitch (X), yaw (Y), and roll
             (Z) — so the user can fly the view around in three axes
             instead of just spinning it. Other layers keep the original
@@ -1229,12 +1255,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 <KeyframeButton
                   nodeId={node.id}
                   propertyId="transform.rotationX"
-                  currentValue={node.transform.rotationX}
+                  currentValue={liveRotX}
                 />
               }
             >
               <NumberField
-                value={node.transform.rotationX}
+                value={liveRotX}
                 onCommit={(v) => patchTransform({ rotationX: v })}
                 suffix="°"
               />
@@ -1245,12 +1271,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 <KeyframeButton
                   nodeId={node.id}
                   propertyId="transform.rotationY"
-                  currentValue={node.transform.rotationY}
+                  currentValue={liveRotY}
                 />
               }
             >
               <NumberField
-                value={node.transform.rotationY}
+                value={liveRotY}
                 onCommit={(v) => patchTransform({ rotationY: v })}
                 suffix="°"
               />
@@ -1261,12 +1287,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 <KeyframeButton
                   nodeId={node.id}
                   propertyId="transform.rotation"
-                  currentValue={node.transform.rotation}
+                  currentValue={liveRot}
                 />
               }
             >
               <NumberField
-                value={node.transform.rotation}
+                value={liveRot}
                 onCommit={(v) => patchTransform({ rotation: v })}
                 suffix="°"
               />
@@ -1279,12 +1305,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               <KeyframeButton
                 nodeId={node.id}
                 propertyId="transform.rotation"
-                currentValue={node.transform.rotation}
+                currentValue={liveRot}
               />
             }
           >
             <NumberField
-              value={node.transform.rotation}
+              value={liveRot}
               onCommit={(v) => patchTransform({ rotation: v })}
               suffix="°"
             />
@@ -1300,8 +1326,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           <FieldRow label="Scale">
             <ScalePairField
               nodeId={node.id}
-              scaleX={node.transform.scaleX}
-              scaleY={node.transform.scaleY}
+              scaleX={liveSX}
+              scaleY={liveSY}
               onCommitX={(v) => patchTransform({ scaleX: v })}
               onCommitY={(v) => patchTransform({ scaleY: v })}
             />
@@ -1358,12 +1384,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               <KeyframeButton
                 nodeId={node.id}
                 propertyId="appearance.opacity"
-                currentValue={node.appearance.opacity}
+                currentValue={liveOpacity}
               />
             }
           >
             <NumberField
-              value={node.appearance.opacity}
+              value={liveOpacity}
               onCommit={(v) => patchAppearance({ opacity: v })}
               min={0}
               max={1}

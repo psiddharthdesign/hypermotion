@@ -873,11 +873,54 @@ export function Timeline() {
     return clamp(x / PX_PER_SECOND, viewStart, viewEnd)
   }
 
+  /**
+   * Snap the scrub time to the nearest existing keyframe if within an
+   * 8px tolerance. Hold Alt during the drag to bypass — Figma's
+   * convention for "I want to land exactly where I clicked, not on a
+   * snap target." Computed fresh on each drag rather than memoized at
+   * component scope: keyframes change frequently and the list is short
+   * enough that walking it per pointer-move is well under a frame.
+   */
+  const collectSnapTimes = (): number[] => {
+    const set = new Set<number>()
+    for (const id of api.getAllNodeIds()) {
+      for (const t of api.getTracksForNode(id)) {
+        for (const k of t.keyframes) set.add(k.time)
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b)
+  }
+  const snapTime = (time: number, bypass: boolean, snapTimes: number[]) => {
+    if (bypass) return time
+    const tolSec = 8 / PX_PER_SECOND
+    let nearest = time
+    let nearestDist = Infinity
+    for (const k of snapTimes) {
+      const d = Math.abs(k - time)
+      if (d < nearestDist) {
+        nearestDist = d
+        nearest = k
+      }
+      if (k > time + tolSec) break
+    }
+    return nearestDist <= tolSec ? nearest : time
+  }
+
   const onRulerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId)
     setPlaying(false)
-    setPlayhead(timeFromClientX(e.clientX))
-    const onMove = (ev: PointerEvent) => setPlayhead(timeFromClientX(ev.clientX))
+    // Commit any focused Inspector input BEFORE the playhead moves.
+    // Otherwise the blur fires AFTER `setPlayhead` and the stamp lands
+    // at the new playhead — observed as "a phantom keyframe appears
+    // wherever I move the playhead after editing a value."
+    const focused = document.activeElement as HTMLElement | null
+    if (focused && typeof focused.blur === 'function') focused.blur()
+    // Capture snap targets once at drag start — keyframes don't move
+    // during a scrub, so walking the scene per pointer-move is wasted.
+    const snapTimes = collectSnapTimes()
+    setPlayhead(snapTime(timeFromClientX(e.clientX), e.altKey, snapTimes))
+    const onMove = (ev: PointerEvent) =>
+      setPlayhead(snapTime(timeFromClientX(ev.clientX), ev.altKey, snapTimes))
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
@@ -2177,6 +2220,25 @@ function SegmentRow({
       removeTrack(api, track.id)
       return
     }
+    // Shift / Cmd / Ctrl-click on a segment bar = extend the selection
+    // with every keyframe on this track. Without this, the existing
+    // selection got clobbered by `replaceKfs` below. Toggle semantics:
+    // if ALL of this track's kfs are already in the selection, remove
+    // them; otherwise add them. No drag starts — modifier-clicks are
+    // pure selection gestures.
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      onFocus()
+      const trackKeys = kfs.map((k) => kfKey(track.id, k.id))
+      const allIn = trackKeys.every((k) => selectedKfs.has(k))
+      const next = new Set(selectedKfs)
+      if (allIn) {
+        for (const k of trackKeys) next.delete(k)
+      } else {
+        for (const k of trackKeys) next.add(k)
+      }
+      replaceKfs([...next])
+      return
+    }
     onFocus()
 
     // Two batch sources fold into the same drag, mirroring the
@@ -2510,8 +2572,27 @@ function KeyframeDiamond({
     e.stopPropagation()
     // Shift / Cmd / Ctrl-click = toggle set membership, no drag. Matches
     // Figma's layer-panel instinct users bring over from the canvas.
+    //
+    // For grouped keyframes (Cmd+G groups), toggle the WHOLE group as a
+    // unit — if any member is currently selected, remove them all; if
+    // none are, add them all. Without this, shift-clicking group B
+    // after grabbing group A only added one diamond instead of the
+    // whole sequence the user was trying to extend.
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      toggleKf(trackId, kfId)
+      if (inGroup && groupMembers) {
+        const anyMemberSelected = [...groupMembers].some((k) =>
+          selectedKfs.has(k),
+        )
+        const next = new Set(selectedKfs)
+        if (anyMemberSelected) {
+          for (const k of groupMembers) next.delete(k)
+        } else {
+          for (const k of groupMembers) next.add(k)
+        }
+        replaceKfs([...next])
+      } else {
+        toggleKf(trackId, kfId)
+      }
       return
     }
     // Plain click on a grouped keyframe: replace selection with the

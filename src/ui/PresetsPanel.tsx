@@ -54,6 +54,25 @@ export function PresetsPanel() {
   const staggerDelay = useUI((s) => s.staggerDelay)
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
+  // Timeline selection sources, in order of precedence:
+  //   1. selectedKeyframes — individual diamonds the user marquee'd or
+  //      shift-clicked. Compound keys "trackId:kfId" — we derive track
+  //      IDs to scope the easing to whatever tracks own those kfs.
+  //   2. selectedTrackIds  — whole-track selection (clicked the row
+  //      header / track name). Less common.
+  // Either populated → easing changes scope to those tracks. Both
+  // empty → fall back to "every track on every selected layer."
+  const selectedTrackIds = useUI((s) => s.selectedTrackIds)
+  const selectedKeyframes = useUI((s) => s.selectedKeyframes)
+  const trackFilter = (() => {
+    const set = new Set<string>()
+    for (const k of selectedKeyframes) {
+      const colon = k.indexOf(':')
+      if (colon > 0) set.add(k.slice(0, colon))
+    }
+    for (const id of selectedTrackIds) set.add(id)
+    return set.size > 0 ? set : undefined
+  })()
 
   if (selection.length === 0) {
     return (
@@ -92,7 +111,7 @@ export function PresetsPanel() {
         : playhead
       applyPreset(api, targetId, id, startTime)
     }
-    rewriteEasing(api, targets, easing)
+    rewriteEasing(api, targets, easing, trackFilter)
   }
 
   // Update the easing preset + strength AND push the resulting easing
@@ -105,7 +124,7 @@ export function PresetsPanel() {
     easing: typeof easing
   }) => {
     setEasing(next.presetId, next.strength)
-    rewriteEasing(api, targets, next.easing)
+    rewriteEasing(api, targets, next.easing, trackFilter)
   }
 
   const ins = PRESETS.filter((p) => p.direction === 'in')
@@ -358,26 +377,42 @@ function describeTargets(
 }
 
 /**
- * Rewrite every track/keyframe easing on every target. Kept out of the
- * component body because both the preset stamp and the easing picker
- * call it, and the loop shape is identical.
+ * Rewrite track/keyframe easing.
+ *
+ *   - With `trackIdFilter` set (timeline has a track selection): apply
+ *     ONLY to those tracks, regardless of whose layer they belong to.
+ *     This is the path that solves "I selected a sequence of tracks in
+ *     the timeline and want them all to share an easing curve."
+ *   - Without a filter: apply to every track on every `target` layer.
+ *     Same behavior as before — preset stamps still drive this path.
  */
 function rewriteEasing(
   api: SceneAPI,
   targets: NodeId[],
   easing: EasingKind,
+  trackIdFilter?: ReadonlySet<string>,
 ): void {
-  for (const id of targets) {
-    const tracks = listTracksForNode(api, id)
-    for (const t of tracks) {
-      api.setTrack({
-        ...t,
-        defaultEasing: easing,
-        // Rewrite per-keyframe easingOut too — otherwise the curves
-        // baked in by applyPreset would win over the new
-        // defaultEasing and the user's slider would feel inert.
-        keyframes: t.keyframes.map((k) => ({ ...k, easingOut: easing })),
-      })
+  const writeTrack = (t: ReturnType<typeof listTracksForNode>[number]) => {
+    api.setTrack({
+      ...t,
+      defaultEasing: easing,
+      // Rewrite per-keyframe easingOut too — otherwise the curves
+      // baked in by applyPreset would win over the new defaultEasing
+      // and the user's slider would feel inert.
+      keyframes: t.keyframes.map((k) => ({ ...k, easingOut: easing })),
+    })
+  }
+  if (trackIdFilter && trackIdFilter.size > 0) {
+    // Walk every node in the scene; cheap because the filter membership
+    // check short-circuits anything that doesn't match.
+    for (const id of api.getAllNodeIds()) {
+      for (const t of listTracksForNode(api, id)) {
+        if (trackIdFilter.has(t.id)) writeTrack(t)
+      }
     }
+    return
+  }
+  for (const id of targets) {
+    for (const t of listTracksForNode(api, id)) writeTrack(t)
   }
 }

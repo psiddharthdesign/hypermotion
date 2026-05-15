@@ -82,7 +82,11 @@ export function addKeyframe(
 ): Keyframe {
   const track = ensureTrack(api, nodeId, propertyId)
   const kfs = [...track.keyframes]
-  const epsilon = 1e-4
+  // 10 ms — generous enough to catch playhead float-drift (frame * spf
+  // can produce values like 0.23333334 vs the keyframe's 0.23333333),
+  // tight enough to keep intentional adjacent keyframes distinct.
+  // Standard motion-tool authoring puts keyframes more than ~30ms apart.
+  const epsilon = 0.01
   const existingIdx = kfs.findIndex((k) => Math.abs(k.time - time) < epsilon)
   const kf: Keyframe = {
     id: existingIdx >= 0 ? kfs[existingIdx]!.id : genId(),
