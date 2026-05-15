@@ -2,7 +2,7 @@
 
 import * as Y from 'yjs'
 import { createSceneAPI, snapshotScene, type SceneAPI } from '@/scene/doc'
-import type { Scene } from '@/scene/types'
+import type { NodeId, Scene } from '@/scene/types'
 
 /**
  * `.hype` file format — version 1.
@@ -185,22 +185,122 @@ export function sceneToJsonString(api: SceneAPI): string {
 /**
  * Apply a plain `Scene` JSON snapshot to a Y.Doc.
  *
- * NOTE: Stubbed for v0.1.0. The proper implementation walks the JSON
- * and recreates nodes / tracks via the SceneAPI's `createNode`,
- * `setMeta`, `createTrack`, etc., translating any agent-supplied IDs
- * through an ID-mapping table. Coming with the v0.1.1 JSON I/O surface.
+ * This is the agent authoring entrypoint. An AI agent (or any external
+ * tool) produces a `Scene` JSON, this function walks it and recreates
+ * the full scene graph + tracks + sections via the SceneAPI. Returns a
+ * fresh SceneAPI bound to the target doc.
  *
- * Throws so callers don't silently no-op while the implementation is
- * pending.
+ * ID translation: the JSON's `NodeId` / `TrackId` strings are agent-
+ * supplied and need not match the IDs the SceneAPI mints. We walk
+ * the tree, call `api.createNode` (which generates a real ID), and
+ * thread the agent's references through an `idMap` so parent links,
+ * `activeCameraId`, and per-track `nodeId` all translate.
+ *
+ * Walk order is topological — parentless nodes (root + camera) first,
+ * then their children breadth-first — so every `createNode` call sees
+ * its parent already realized.
+ *
+ * The target doc is wiped before the JSON is applied. The auto-seeded
+ * camera and any other inherited state goes away so the result is
+ * exactly what the JSON described.
  */
 export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
-  // Touch the params so TS doesn't flag them; full implementation
-  // walks the JSON and recreates nodes / tracks via SceneAPI. Lands
-  // with the v0.1.1 agent authoring API.
-  void doc
-  void json
-  throw new Error(
-    'applyJsonToScene is not yet implemented in v0.1.0. ' +
-      'JSON import lands in v0.1.1 alongside the agent authoring API.',
-  )
+  // createSceneAPI seeds a default Camera (and, on a brand-new doc,
+  // sets up the meta defaults). We wipe everything immediately after
+  // so the JSON's content lands on a clean slate — preserving the
+  // doc's existing CRDT history but emptying its scene.
+  const api = createSceneAPI(doc)
+
+  doc.transact(() => {
+    for (const id of api.getAllNodeIds()) {
+      api.deleteNode(id)
+    }
+  })
+
+  // Apply meta (canvas size, duration, framerate, name). setMeta does
+  // a shallow patch, so any keys the JSON omits keep their defaults.
+  if (json.meta) {
+    api.setMeta(json.meta)
+  }
+
+  // Map agent IDs → real IDs. Used to translate `parent`, child arrays,
+  // track `nodeId`, and `activeCameraId`. We can't pass agent IDs into
+  // createNode (it auto-mints its own), so this map is the bridge.
+  const idMap = new Map<string, NodeId>()
+
+  // Topological walk: parents before children. We seed the queue with
+  // every parentless node (root frame + any standalone cameras), then
+  // enqueue each node's children after creating it.
+  const queue: string[] = []
+  const enqueued = new Set<string>()
+
+  for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+    if (node.parent == null) {
+      queue.push(agentId)
+      enqueued.add(agentId)
+    }
+  }
+
+  while (queue.length > 0) {
+    const agentId = queue.shift() as string
+    const node = json.nodes?.[agentId]
+    if (!node) continue
+
+    // Translate the parent reference through the map. Parentless
+    // nodes (root + cameras) keep `null` so `createNode` follows its
+    // "first parentless non-camera becomes root" path for the artboard.
+    const parentReal = node.parent ? (idMap.get(node.parent) ?? null) : null
+
+    // Strip the structural fields createNode owns directly — `kind`
+    // and `parent` are positional args, `id` is mint-fresh, and
+    // `children` is a Y.Array that createNode builds empty (we
+    // populate by creating each child with this node as parent).
+    const propsForCreate: Record<string, unknown> = { ...node }
+    delete propsForCreate.id
+    delete propsForCreate.kind
+    delete propsForCreate.parent
+    delete propsForCreate.children
+
+    const realId = api.createNode(
+      node.kind,
+      parentReal,
+      propsForCreate as Parameters<SceneAPI['createNode']>[2],
+    )
+    idMap.set(agentId, realId)
+
+    // Enqueue this node's children (skip ones already queued, in case
+    // the agent's JSON has duplicate references in different child
+    // arrays — which it shouldn't, but the guard is cheap).
+    const children = (node as { children?: NodeId[] }).children ?? []
+    for (const childAgentId of children) {
+      if (!enqueued.has(childAgentId)) {
+        queue.push(childAgentId)
+        enqueued.add(childAgentId)
+      }
+    }
+  }
+
+  // Set active camera if the JSON named one (and it was created).
+  if (json.activeCameraId) {
+    const realCamId = idMap.get(json.activeCameraId)
+    if (realCamId) api.setActiveCameraId(realCamId)
+  }
+
+  // Recreate tracks with translated nodeIds. The agent supplies its
+  // own TrackId values, which we keep (no remapping needed — tracks
+  // don't reference each other). Tracks whose `nodeId` doesn't map
+  // to a real node (orphaned by a bad agent payload) are skipped so
+  // the rest of the import still lands.
+  for (const track of Object.values(json.tracks ?? {})) {
+    const mappedNodeId = idMap.get(track.nodeId)
+    if (!mappedNodeId) continue
+    api.setTrack({ ...track, nodeId: mappedNodeId })
+  }
+
+  // Sections are stand-alone — no node references — so they go in as-is.
+  for (const section of Object.values(json.sections ?? {})) {
+    api.setSection(section)
+  }
+
+  return api
 }

@@ -1,6 +1,6 @@
 {
   "name": "@psiddharthdesign/hypermotion",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "CLI + MCP server for hyper-motion. Drives renders programmatically and lets AI agents (Claude Code, Codex) script motion sequences.",
   "license": "Apache-2.0",
   "author": "Siddharth Ponnapalli",
@@ -32,6 +32,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "commander": "^12.1.0",
+    "yjs": "^13.6.20",
     "zod": "^3.23.8"
   },
   "devDependencies": {

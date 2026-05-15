@@ -20,9 +20,10 @@
 import { Command } from 'commander'
 import { renderCommand } from './commands/render.js'
 import { infoCommand } from './commands/info.js'
+import { createCommand } from './commands/create.js'
 import { serveCommand } from './commands/serve.js'
 
-const PKG_VERSION = '0.1.0'
+const PKG_VERSION = '0.1.2'
 
 const program = new Command()
 
@@ -37,6 +38,7 @@ program
 
 program.addCommand(renderCommand())
 program.addCommand(infoCommand())
+program.addCommand(createCommand())
 program.addCommand(serveCommand())
 
 // Surface unknown commands cleanly instead of a stack trace.

@@ -34,11 +34,12 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 import { handleInfoScene, infoSceneTool } from './tools/infoScene.js'
+import { handleCreateScene, createSceneTool } from './tools/createScene.js'
 
 const SERVER_NAME = 'hypermotion'
-const SERVER_VERSION = '0.1.0'
+const SERVER_VERSION = '0.1.2'
 
-const TOOLS: Tool[] = [renderSceneTool, infoSceneTool]
+const TOOLS: Tool[] = [createSceneTool, renderSceneTool, infoSceneTool]
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
@@ -56,6 +57,8 @@ export async function startMcpServer(): Promise<void> {
           return await handleRenderScene(args ?? {})
         case 'info_scene':
           return await handleInfoScene(args ?? {})
+        case 'create_scene':
+          return await handleCreateScene(args ?? {})
         default:
           return {
             isError: true,

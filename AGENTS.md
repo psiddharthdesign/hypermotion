@@ -122,8 +122,9 @@ Any MCP-compatible agent can register it and call its tools.
 
 | Tool           | Status   | What it does                                                                  |
 |----------------|----------|-------------------------------------------------------------------------------|
+| `create_scene` | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.    |
 | `render_scene` | ✅ v0.1.0 | Renders the current desktop scene to MP4 / WebM / GIF at the chosen quality. |
-| `info_scene`   | 🚧 v0.1.1 | Will read scene metadata from a `.arnimotion` file. Ships with file format.  |
+| `info_scene`   | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
 
 ### Claude Code
 
@@ -178,22 +179,204 @@ after global install) and the agent will discover the tools.
 
 ### Prompts that work well today
 
-The CLI's v0.1.0 capability is "render the current scene." Prompts that
-match that shape work cleanly:
+Render the open scene:
 
 - "Render the current scene to `<path>`." ✅
 - "Render the current scene to `<path>` at 4K." ✅
 - "Render the current scene as a 60fps WebM." ✅
 
-Prompts that **don't** work yet (these are on the roadmap):
+Author from scratch (v0.1.2):
 
-- "Create a scene with three rectangles and animate them." ❌ — no
-  scene authoring API yet. Agents can render scenes you designed in
-  the desktop app, not author them programmatically.
-- "Render the scene at `~/path/to/scene.arnimotion`." ❌ — `.arnimotion`
-  file format ships in v0.1.1.
-- "Render only chapters 1 and 3." ❌ — CLI doesn't accept range/chapter
-  flags yet. Use the desktop app's chapter picker, render the result.
+- "Create a Hyper Motion scene with a card that fades in, and render it." ✅
+- "Build a 1080×1920 vertical scene with three buttons in a row using auto layout, save as `~/Desktop/buttons.hype`." ✅
+- "Make a calendar grid (5×7 cells, auto-layout) and animate each cell with a staggered fade-in." ✅
+
+Inspect a scene (v0.1.2):
+
+- "What's in `~/Desktop/intro.hype`?" ✅ (`info_scene`)
+- "How long is `~/Desktop/intro.hype`?" ✅
+
+Still on the roadmap:
+
+- "Modify the existing `<path>.hype` and re-render." ❌ — agents can `info` + `create` + `render`, but not in-place edit yet.
+- "Render only chapters 1 and 3." ❌ — CLI doesn't accept range/chapter flags yet.
+
+---
+
+## Authoring scenes — the `create_scene` JSON schema
+
+Agents call `create_scene` with `{ output, scene }`. The `scene` is a
+JSON object — same shape the desktop app uses internally, slightly
+simplified for terminal use. Required pieces: at least one frame node
+to be the artboard, optionally a camera, and any children you want
+inside the frame.
+
+### Minimal example
+
+A single-frame artboard with a title:
+
+```json
+{
+  "meta": {
+    "name": "Hello",
+    "duration": 5,
+    "frameRate": 60,
+    "canvas": { "width": 960, "height": 540 }
+  },
+  "nodes": {
+    "root": {
+      "id": "root",
+      "kind": "frame",
+      "parent": null,
+      "children": ["title"],
+      "size": { "width": 960, "height": 540 },
+      "layout": {
+        "mode": "flex",
+        "direction": "column",
+        "justify": "center",
+        "align": "center",
+        "padding": { "top": 24, "right": 24, "bottom": 24, "left": 24 }
+      },
+      "appearance": {
+        "opacity": 1,
+        "fill": { "kind": "solid", "color": "#f4f4f5" },
+        "stroke": null,
+        "cornerRadius": 0,
+        "effects": []
+      }
+    },
+    "title": {
+      "id": "title",
+      "kind": "text",
+      "parent": "root",
+      "text": "Hello, hyper-motion",
+      "fontFamily": "Inter",
+      "fontSize": 48,
+      "fontWeight": 700,
+      "color": "#0a0a0c"
+    },
+    "camera": {
+      "id": "camera",
+      "kind": "camera",
+      "parent": null,
+      "transform": { "x": 480, "y": 270, "z": 0, "rotation": 0, "scaleX": 1, "scaleY": 1 }
+    }
+  }
+}
+```
+
+### Node kinds
+
+| Kind     | Required extra fields                                                                 |
+|----------|---------------------------------------------------------------------------------------|
+| `frame`     | `size`, `layout`                                                                   |
+| `rect`      | `size` (filled background unless `appearance.fill` is null)                        |
+| `ellipse`   | `size`                                                                             |
+| `text`      | `text`, `fontFamily`, `fontSize` (default Inter / 16 / weight 400)                 |
+| `image`     | `src` (data URL or absolute path), `size`, `fit`                                   |
+| `camera`    | `transform` (position is the camera pivot — typically canvas centre)               |
+| `video` / `audio` | `src`, `duration`, `volume` — for sequences with media; rarely used by agents |
+
+### Layout
+
+Frames default to `mode: 'none'` (Figma's "no auto-layout"). For
+anything you'd lay out by hand, set `mode: 'flex'` and the kids stack
+according to `direction / justify / align / gap / padding`. Grid mode
+(`mode: 'grid'`) takes `columns`, `rowGap`, `columnGap` instead.
+
+Children specify themselves as either `width: 'fill'` (take the
+remaining slot), `width: 'hug'` (size to content), or a fixed number.
+The same for `height`.
+
+### Appearance
+
+Every paintable node carries:
+
+```json
+{
+  "opacity": 1,
+  "fill": null | { "kind": "solid", "color": "#hex" } | { "kind": "linear", "stops": [...], "angle": 0 },
+  "stroke": null | { "color": "#hex", "width": 1, "align": "inside", "style": "solid", "dashLength": 0, "dashGap": 0 },
+  "cornerRadius": 0,
+  "effects": []
+}
+```
+
+Backwards-compatible with the desktop app's inspector — the same
+schema renders inside the editor exactly as it does in the saved file.
+
+### Animation tracks
+
+A `tracks` map at the top of the scene drives keyframe animation:
+
+```json
+{
+  "tracks": {
+    "fade-title": {
+      "id": "fade-title",
+      "nodeId": "title",
+      "propertyId": "appearance.opacity",
+      "defaultEasing": "ease-out",
+      "keyframes": [
+        { "id": "k1", "time": 0,    "value": 0 },
+        { "id": "k2", "time": 0.5,  "value": 1 }
+      ]
+    }
+  }
+}
+```
+
+PropertyIds you can keyframe:
+
+```
+transform.x, transform.y, transform.z, transform.rotation,
+transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY,
+appearance.opacity, appearance.cornerRadius, appearance.fill,
+layout.gap, layout.padding.top, layout.padding.right, layout.padding.bottom,
+layout.padding.left, layout.direction, size.width, size.height, variant
+```
+
+EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
+
+### Stagger pattern
+
+For a Jitter-style staggered entry on N children:
+
+```json
+{
+  "tracks": {
+    "fade-1": { "id": "fade-1", "nodeId": "child-1", "propertyId": "appearance.opacity",
+                "defaultEasing": "ease-out",
+                "keyframes": [{ "id":"a","time":0.0,"value":0}, {"id":"b","time":0.4,"value":1}] },
+    "fade-2": { "id": "fade-2", "nodeId": "child-2", "propertyId": "appearance.opacity",
+                "defaultEasing": "ease-out",
+                "keyframes": [{ "id":"a","time":0.1,"value":0}, {"id":"b","time":0.5,"value":1}] },
+    "fade-3": { "id": "fade-3", "nodeId": "child-3", "propertyId": "appearance.opacity",
+                "defaultEasing": "ease-out",
+                "keyframes": [{ "id":"a","time":0.2,"value":0}, {"id":"b","time":0.6,"value":1}] }
+  }
+}
+```
+
+Each child gets its own track on `appearance.opacity`, offset by `0.1s`
+per index. Same pattern for slide-in (`transform.x` or `transform.y`)
+or pop (`transform.scaleX` + `transform.scaleY`).
+
+### Full author + render workflow
+
+```
+1. create_scene({ output: '/tmp/calendar.hype', scene: { ... } })
+2. render_scene({ scene: '/tmp/calendar.hype', output: '~/Desktop/cal.mp4',
+                  format: 'mp4', quality: '2k', fps: 60 })
+```
+
+Or from the terminal:
+
+```sh
+cat scene.json | hypermotion create ~/Desktop/calendar.hype --from -
+hypermotion info ~/Desktop/calendar.hype
+hypermotion render ~/Desktop/calendar.hype ~/Desktop/calendar.mp4 --quality 2k --fps 60
+```
 
 ---
 

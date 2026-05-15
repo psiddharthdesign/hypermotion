@@ -1,56 +1,95 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `info_scene` MCP tool.
- *
- * v0.1.0 status: returns a "not yet implemented" message. The
- * `.arnimotion` file format ships in v0.1.1 alongside the desktop app's
- * File → Save / Open, after which this tool reads scene metadata from
- * disk (canvas, duration, layer / track / chapter counts).
- *
- * The tool stays registered today so agents can discover its shape and
- * the planned roadmap — they get a clean structured error instead of an
- * "unknown tool" response.
+ * `info_scene` MCP tool — read a `.hype` file and return a structured
+ * summary (canvas, duration, framerate, layer/track/section/keyframe
+ * counts). Used by AI agents to inspect a scene before deciding what
+ * to render or modify.
  */
 
 import { z } from 'zod'
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import fs from 'node:fs'
+import { readSceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
-  scene: z.string().describe('Path to a .arnimotion scene file (v0.1.1)'),
+  scene: z.string().describe('Path to a .hype scene file'),
 })
 
 export const infoSceneTool: Tool = {
   name: 'info_scene',
   description:
-    'Read a hyper-motion .arnimotion scene file and return a structured ' +
-    'summary (canvas, duration, frame rate, layer count, track count, ' +
-    'chapter count). Status: deferred to v0.1.1 — the .arnimotion file ' +
-    'format ships then. Today the tool returns a structured "not yet" error.',
+    'Read a hyper-motion .hype scene file and return a structured summary ' +
+    '(canvas size, duration, frame rate, layer count, track count, section ' +
+    'count, keyframe count). Pass the absolute path to the .hype file.',
   inputSchema: {
     type: 'object',
     properties: {
-      scene: { type: 'string', description: 'Path to a .arnimotion scene file (v0.1.1)' },
+      scene: { type: 'string', description: 'Path to a .hype scene file' },
     },
     required: ['scene'],
   },
 }
 
 export async function handleInfoScene(args: Record<string, unknown>) {
-  // Validate input shape so agents get a real error if they pass the
-  // wrong fields, rather than an opaque "not yet" message.
-  InfoInput.parse(args)
+  const parsed = InfoInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `info_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
 
+  const scenePath = parsed.data.scene
+  let bytes: Buffer
+  try {
+    bytes = fs.readFileSync(scenePath)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `info_scene: failed to read ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+
+  let summary: ReturnType<typeof readSceneSummary>
+  try {
+    summary = readSceneSummary(new Uint8Array(bytes))
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `info_scene: ${scenePath} is not a valid .hype file: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+
+  // Return both a human-readable text block AND the structured JSON,
+  // so the agent can either render it as a chat reply or parse the
+  // JSON to make a decision. The JSON is wrapped in a fenced code
+  // block so MCP clients that only display the first content block
+  // still get readable output.
   return {
-    isError: true,
     content: [
       {
         type: 'text' as const,
-        text:
-          'info_scene is not yet implemented in v0.1.0. The .arnimotion ' +
-          'file format and File → Save / Open in the desktop app ship in ' +
-          'v0.1.1, after which this tool will read scene metadata. For now, ' +
-          'use the render_scene tool to render the current desktop scene.',
+        text: JSON.stringify(summary, null, 2),
       },
     ],
   }
