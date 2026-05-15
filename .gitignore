@@ -26,3 +26,8 @@ dist-ssr
 # Build artifacts
 dist-electron/
 release/
+
+# Build artifacts — never commit these
+hyper-motion-*.dmg
+dist/
+release/
