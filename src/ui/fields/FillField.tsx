@@ -897,13 +897,13 @@ function ImageEditor({
   value: Extract<Fill, { kind: 'image' }>
   onCommit: (next: Fill | null) => void
 }) {
-  // Drag-drop a local file → inline as a data: URL. Same path image
-  // imports already use; keeps the doc self-contained for MVP. A paste
-  // also works (URL pasted into the text field).
-  const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (!file || !file.type.startsWith('image/')) return
+  // Hidden <input type=file> that the Upload button clicks. Sharing
+  // the same data-URL pipeline as drag-drop keeps the doc self-
+  // contained for MVP and the rest of the inspector behavior identical.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const readFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return
     const reader = new FileReader()
     reader.onload = () => {
       const r = reader.result
@@ -911,12 +911,29 @@ function ImageEditor({
     }
     reader.readAsDataURL(file)
   }
+
+  // Drag-drop a local file → inline as a data: URL. Same path image
+  // imports already use; keeps the doc self-contained for MVP. A paste
+  // also works (URL pasted into the text field).
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (file) readFile(file)
+  }
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) readFile(file)
+    // Reset so picking the same file twice in a row still triggers
+    // onChange (browsers de-dupe identical selections by default).
+    e.target.value = ''
+  }
   return (
     <div className="space-y-2">
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
-        className="flex h-24 items-center justify-center overflow-hidden rounded border border-dashed border-border bg-panel"
+        className="relative flex h-24 items-center justify-center overflow-hidden rounded border border-dashed border-border bg-panel"
         style={
           value.src
             ? {
@@ -929,10 +946,38 @@ function ImageEditor({
         }
       >
         {!value.src && (
-          <span className="px-2 text-center text-[11px] text-text-dim">
-            Drop image here or paste a URL below
-          </span>
+          <div className="flex flex-col items-center gap-1.5 px-2 text-center">
+            <span className="text-[11px] text-text-dim">
+              Drop image here or paste a URL below
+            </span>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded bg-panel-raised px-2 py-1 text-[11px] text-text ring-1 ring-border transition-colors hover:bg-app-bg"
+            >
+              Upload image
+            </button>
+          </div>
         )}
+        {value.src && (
+          // When there's already an image, surface a smaller Replace
+          // chip in the top-right corner so users can swap without
+          // first clearing the fill.
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="absolute right-1 top-1 rounded bg-panel-raised/85 px-1.5 py-0.5 text-[10px] text-text ring-1 ring-border backdrop-blur transition-colors hover:bg-app-bg"
+          >
+            Replace
+          </button>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={onPickFile}
+          style={{ display: 'none' }}
+        />
       </div>
       <FieldRow label="URL">
         <TextField

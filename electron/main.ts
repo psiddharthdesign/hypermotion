@@ -246,19 +246,32 @@ function buildAppMenu() {
         { role: 'undo' },
         { role: 'redo' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        // Cut / Copy / Paste use `registerAccelerator: false` so the
+        // menu still shows the hint (and click-to-invoke still calls
+        // webContents.cut / .copy / .paste for native text fields),
+        // BUT the Cmd+X / C / V keystrokes are not intercepted at the
+        // menu level. They pass through to the renderer's document
+        // keydown listener, which routes:
+        //   - text fields → browser-native cut/copy/paste (inputs +
+        //     contentEditable handle these themselves)
+        //   - canvas / non-input focus → our scene clipboard in
+        //     useKeyboardShortcuts (cut a layer, paste it back)
+        // Previously these were plain `{ role: 'cut' }` etc., which
+        // ate the shortcut at the menu level — Cmd+X on a selected
+        // layer silently no-op'd because our keydown never ran.
+        { role: 'cut', registerAccelerator: false },
+        { role: 'copy', registerAccelerator: false },
+        { role: 'paste', registerAccelerator: false },
         ...(isMac
           ? [
               { role: 'pasteAndMatchStyle' as const },
               { role: 'delete' as const },
-              { role: 'selectAll' as const },
+              { role: 'selectAll' as const, registerAccelerator: false },
             ]
           : [
               { role: 'delete' as const },
               { type: 'separator' as const },
-              { role: 'selectAll' as const },
+              { role: 'selectAll' as const, registerAccelerator: false },
             ]),
       ],
     },

@@ -2052,6 +2052,7 @@ function TrackLabel({
   nodeKind,
   nodeSelected = false,
   indent = false,
+  layerName,
   onFocus,
   onContextMenu,
 }: {
@@ -2061,6 +2062,13 @@ function TrackLabel({
   nodeSelected?: boolean
   /** Render indented (used for tracks living inside an expanded group). */
   indent?: boolean
+  /**
+   * When set, prefixes the property label with this name and a separator.
+   * Used inside Sequence groups so each row shows which layer it
+   * animates. Composed groups (single-layer) leave it undefined since
+   * the group header already names the layer.
+   */
+  layerName?: string
   onFocus: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
@@ -2098,6 +2106,12 @@ function TrackLabel({
       }
     >
       <span className="truncate text-[11px] font-medium">
+        {layerName ? (
+          <>
+            <span className="text-text-dim">{layerName}</span>
+            <span className="mx-1 text-text-dim/60">·</span>
+          </>
+        ) : null}
         {humanProperty(track.propertyId, nodeKind)}
       </span>
       <span className="ml-auto font-mono text-[10px] tabular-nums opacity-70">
@@ -2821,6 +2835,7 @@ function TrackGroupLeftRow({
   openContextMenu: (menu: import('@/state/ui').ContextMenuState) => void
 }) {
   const collapsed = group.collapsed
+  const api = useSceneAPI()
   return (
     <>
       <div
@@ -2885,6 +2900,16 @@ function TrackGroupLeftRow({
             track={t}
             nodeKind={nodeKind}
             indent
+            // Sequence groups span multiple layers, so each child row
+            // needs the layer name to be useful — without it the user
+            // sees "Opacity, Opacity, Opacity" and can't tell which
+            // is which. Composed groups (single layer) skip the prefix
+            // because the group header already shows the layer name.
+            layerName={
+              group.kind === 'sequence'
+                ? (api.getNode(t.nodeId)?.name ?? undefined)
+                : undefined
+            }
             onFocus={() => {
               /* selection of the layer happens via the parent shell */
             }}

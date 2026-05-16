@@ -13,6 +13,34 @@ import { addKeyframe } from '@/anim/tracks'
  * `doc.ts`). Background is a light neutral so the card pops.
  */
 export function createSampleScene(api: SceneAPI): void {
+  // Camera first — every scene needs one so the renderer has a
+  // viewfinder + projection origin. `createSceneAPI` auto-seeds a
+  // camera on first run, but File → New deletes all nodes (camera
+  // included) before re-running this function, so without an explicit
+  // create here the scene comes back camera-less and the canvas
+  // disappears under the empty viewfinder.
+  //
+  // Position is the artboard center, matching what `centerCameraOnCanvas`
+  // would set on the next render anyway — doing it inline keeps the
+  // first paint correct without waiting for the recenter pass.
+  const meta = api.getMeta()
+  const canvasW = meta.canvas?.width ?? 960
+  const canvasH = meta.canvas?.height ?? 540
+  const camId = api.createNode('camera', null, {
+    name: 'Camera',
+    transform: {
+      x: canvasW / 2,
+      y: canvasH / 2,
+      z: 0,
+      rotation: 0,
+      rotationX: 0,
+      rotationY: 0,
+      scaleX: 1,
+      scaleY: 1,
+    },
+  })
+  api.setActiveCameraId(camId)
+
   // Outer canvas — neutral light background that contrasts the card.
   const root = api.createNode('frame', null, {
     name: 'Scene',

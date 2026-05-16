@@ -164,6 +164,11 @@ export interface NodeBaseMutable {
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
+  /** Camera focal length in canvas-pixel units. Drives both Z-driven
+   *  scale and the CSS perspective wrapper. */
+  focalLength: number
+  /** Where the camera rotates around — center or one of four edges. */
+  rotationOrigin: 'center' | 'top' | 'right' | 'bottom' | 'left'
   /** Stack of layout guides — only meaningful on FrameNode. */
   layoutGuides: import('@/scene/types').LayoutGuide[]
   // ... add kind-specific fields as they become mutable through the API
@@ -445,6 +450,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // the camera viewport," matching old behavior.
           background:
             (y.get('background') as CameraNode['background']) ?? null,
+          focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
+          rotationOrigin:
+            (y.get('rotationOrigin') as CameraNode['rotationOrigin'] | undefined) ??
+            'center',
         } as CameraNode
       }
       default: {
@@ -645,6 +654,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // back to the workspace chrome until the user picks a fill
           // in the inspector.
           y.set('background', cp?.background ?? null)
+          // Focal length default = 1000, matching the historical
+          // hardcoded perspective value so legacy scenes render the
+          // same. Larger = more telephoto (less distortion).
+          y.set('focalLength', cp?.focalLength ?? 1000)
+          // Rotation origin defaults to center — original behavior
+          // where the camera rotates around its own position.
+          y.set('rotationOrigin', cp?.rotationOrigin ?? 'center')
         }
 
         nodes.set(id, y)

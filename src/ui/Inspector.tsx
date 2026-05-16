@@ -5,6 +5,7 @@ import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
   Appearance,
+  CameraNode,
   CornerRadii,
   Effect,
   FlexAlign,
@@ -1453,6 +1454,39 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           <Section title="Camera">
             <FieldRow label="Projection">
               <span className="pr-1.5 text-[12px] text-text-muted">2D</span>
+            </FieldRow>
+            <FieldRow label="Focal">
+              {/* Drives both the Z-driven scale formula AND the CSS
+                  perspective. Larger = telephoto (less distortion at
+                  rotation). The suffix hints that this is the optical
+                  focal length in canvas-pixel units. Range 50–10000
+                  covers the practical span; clamp to 50 so the
+                  scale singularity stays well clear of likely Z values. */}
+              <NumberField
+                value={node.focalLength ?? 1000}
+                onCommit={(v) =>
+                  api.setNodeProperty(node.id, 'focalLength', Math.max(50, v))
+                }
+                min={50}
+                max={10000}
+                step={50}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow label="Pivot">
+              <SelectField<CameraNode['rotationOrigin']>
+                value={node.rotationOrigin ?? 'center'}
+                options={[
+                  { value: 'center', label: 'Center' },
+                  { value: 'top', label: 'Top' },
+                  { value: 'right', label: 'Right' },
+                  { value: 'bottom', label: 'Bottom' },
+                  { value: 'left', label: 'Left' },
+                ]}
+                onCommit={(v) =>
+                  api.setNodeProperty(node.id, 'rotationOrigin', v)
+                }
+              />
             </FieldRow>
             {node.kind === 'camera' && (
               <FillField

@@ -165,6 +165,67 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // Copy — serialize each selected subtree into our module-scoped
+      // clipboard. Skip when no selection so Cmd+C inside a focused
+      // input still works for ordinary text copy (events from text
+      // inputs are already filtered out earlier in the handler).
+      if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c') {
+        const sel = useUI.getState().selection
+        if (sel.length === 0) return
+        e.preventDefault()
+        clipboard = sel
+          .map((id) => serializeSubtree(api, id))
+          .filter((x): x is ClipboardNode => x !== null)
+        return
+      }
+
+      // Cut — copy, then delete the originals. The selection clears
+      // because the underlying nodes are gone; Cmd+V restores them
+      // (under root by default, see paste below).
+      if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
+        const sel = useUI.getState().selection
+        if (sel.length === 0) return
+        e.preventDefault()
+        clipboard = sel
+          .map((id) => serializeSubtree(api, id))
+          .filter((x): x is ClipboardNode => x !== null)
+        for (const id of sel) {
+          // Skip root + camera — deleting the artboard or active
+          // camera mid-cut leaves the scene in a bad state.
+          const n = api.getNode(id)
+          if (!n) continue
+          if (id === api.getRoot()) continue
+          if (n.kind === 'camera') continue
+          api.deleteNode(id)
+        }
+        clearSelection()
+        return
+      }
+
+      // Paste — recreate each clipboard subtree. Target parent is:
+      //   - The current single selection if it's a frame / component
+      //     (paste inside the selected container — matches Figma when
+      //     you have a frame selected and hit Cmd+V).
+      //   - Otherwise the scene root (paste at the top level).
+      if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        if (clipboard.length === 0) return
+        e.preventDefault()
+        const sel = useUI.getState().selection
+        const root = api.getRoot()
+        let targetParent: NodeId | null = root || null
+        if (sel.length === 1) {
+          const only = api.getNode(sel[0]!)
+          if (only && (only.kind === 'frame' || only.kind === 'component')) {
+            targetParent = only.id
+          }
+        }
+        const newIds = clipboard
+          .map((item) => pasteSubtree(api, item, targetParent))
+          .filter(Boolean)
+        if (newIds.length > 0) setSelection(newIds)
+        return
+      }
+
       // Mask — Cmd/Ctrl + Alt/Opt + M. Mirrors Figma's "Use as mask"
       // shortcut. The bottom-most node (lowest z-order, earliest in
       // parent's children array) becomes the mask; the next sibling
@@ -307,15 +368,36 @@ export function useKeyboardShortcuts() {
         return
       }
 
-      // Shift+A: wrap selection in an auto-layout frame.
-      // No meta required — Figma uses plain Shift+A too. Placed before
-      // the tool-key block so the single-letter `A` path below doesn't
-      // swallow this (it won't today, but the ordering makes intent
-      // obvious if a future tool claims `a`).
+      // Shift+A: auto-layout toggle / wrap. Mirrors Figma.
+      //   - Single frame/component selected → toggle that frame's
+      //     auto-layout on (flex) or off (none). No new container.
+      //   - 2+ items selected → wrap them in a new auto-layout frame.
+      //   - Single non-frame selected → wrap that one item too, so the
+      //     user can promote a rect/text into an auto-layout container.
       if (!meta && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         const sel = useUI.getState().selection
         if (sel.length === 0) return
+
+        if (sel.length === 1) {
+          const only = api.getNode(sel[0]!)
+          if (
+            only &&
+            (only.kind === 'frame' || only.kind === 'component') &&
+            'layout' in only
+          ) {
+            // Toggle the existing frame's auto-layout mode rather than
+            // wrapping it in a new container. Flips between 'none' and
+            // 'flex' — users who want grid go through the Layout section.
+            const nextMode = only.layout.mode === 'none' ? 'flex' : 'none'
+            api.setNodeProperty(only.id, 'layout', {
+              ...only.layout,
+              mode: nextMode,
+            })
+            return
+          }
+        }
+
         const newId = wrapInAutoLayout(api, sel)
         if (newId) setSelection([newId])
         return
@@ -537,6 +619,99 @@ function duplicateNode(
         scaleY: copy.transform.scaleY,
       })
     }
+  }
+  return newId
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard for Cmd+C / Cmd+X / Cmd+V
+// ---------------------------------------------------------------------------
+//
+// The clipboard lives at module scope (not in the React store) so it
+// survives panel re-mounts and isn't subject to React re-renders. We
+// store a serialized snapshot of each selected subtree plus every track
+// on each node — same shape duplicateNode carries — so paste can run
+// even after a cut deletes the originals.
+//
+// Why not the system clipboard via navigator.clipboard.write: the v1
+// goal is single-app cut/copy/paste so the user can reorganize their
+// scene. Cross-app paste (paste a frame into Figma, paste a Figma
+// frame here) is its own design problem — needs format negotiation,
+// asset embedding, and SVG/Lottie translation. Out of scope here.
+
+interface ClipboardNode {
+  /** A SceneNode minus the structural id / parent / children fields. */
+  data: Record<string, unknown>
+  kind: SceneNode['kind']
+  children: ClipboardNode[]
+  /** Tracks attached to THIS node (not children — those carry their own). */
+  tracks: Array<{
+    propertyId: string
+    defaultEasing: unknown
+    keyframes: unknown[]
+  }>
+}
+
+let clipboard: ClipboardNode[] = []
+
+function serializeSubtree(
+  api: ReturnType<typeof useSceneAPI>,
+  nodeId: NodeId,
+): ClipboardNode | null {
+  const node = api.getNode(nodeId)
+  if (!node) return null
+  const data = stripLinks(node) as Record<string, unknown>
+  delete data.name // name is restored verbatim below
+  const tracks = api.getTracksForNode(nodeId).map((t) => ({
+    propertyId: t.propertyId,
+    defaultEasing: t.defaultEasing,
+    keyframes: t.keyframes,
+  }))
+  const children: ClipboardNode[] = []
+  for (const child of api.getChildren(nodeId)) {
+    const c = serializeSubtree(api, child.id)
+    if (c) children.push(c)
+  }
+  return {
+    data: { ...data, name: node.name },
+    kind: node.kind,
+    children,
+    tracks,
+  }
+}
+
+/**
+ * Recreate a clipboard subtree under `parentId`. Walks depth-first,
+ * creates each node via api.createNode (which mints fresh ids), then
+ * re-attaches the saved tracks against the new node ids.
+ *
+ * Returns the new id of the subtree root so the caller can extend the
+ * selection across multiple pasted items.
+ */
+function pasteSubtree(
+  api: ReturnType<typeof useSceneAPI>,
+  item: ClipboardNode,
+  parentId: NodeId | null,
+): NodeId {
+  const newId = api.createNode(
+    item.kind,
+    parentId,
+    item.data as Partial<SceneNode>,
+  )
+  for (const track of item.tracks) {
+    api.setTrack({
+      id: genTrackId(),
+      nodeId: newId,
+      propertyId: track.propertyId as never,
+      defaultEasing: track.defaultEasing as never,
+      keyframes: track.keyframes.map((k) => ({
+        ...(k as { id: string; time: number; value: unknown }),
+        id: genTrackId(),
+      })) as never,
+    })
+  }
+  for (const child of item.children) {
+    pasteSubtree(api, child, newId)
   }
   return newId
 }

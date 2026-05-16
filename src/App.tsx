@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { TopBar } from '@/ui/TopBar'
 import { LayersPanel } from '@/ui/LayersPanel'
 import { Canvas } from '@/ui/Canvas'
@@ -11,12 +11,13 @@ import { ExportRecordingIndicator } from '@/ui/ExportRecordingIndicator'
 import { RenameDialog } from '@/ui/RenameDialog'
 import { ErrorBoundary } from '@/ui/ErrorBoundary'
 import { useUI } from '@/state/ui'
-import { SceneProvider, useSceneAPI } from '@/scene'
+import { SceneProvider, useSceneAPI, useSceneVersion } from '@/scene'
 import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useFigmaPaste } from '@/ui/hooks/useFigmaPaste'
 import { useFileMenu } from '@/ui/hooks/useFileMenu'
 import {
+  centerCameraOnCanvas,
   migrateCameraScaleToZ,
   normalizeRoot,
   pruneCameraScaleYTracks,
@@ -128,6 +129,31 @@ function Shell() {
       migrateCameraScaleToZ(api)
     }, 'migration')
   }, [api])
+
+  // Auto-recenter the camera on the artboard whenever the canvas
+  // dimensions change. The user opted in to "camera always points at
+  // the middle" — resizing from 1920×1080 to 1080×1920 should snap
+  // the camera to the new center rather than leaving it stranded at
+  // the previous one. We diff against a previous-size ref so the
+  // effect only writes when the size actually changed; this keeps
+  // unrelated scene mutations from spamming setNodeProperty.
+  useSceneVersion()
+  const prevCanvasRef = useRef<{ w: number; h: number } | null>(null)
+  useEffect(() => {
+    const meta = api.getMeta()
+    const w = meta.canvas?.width ?? 0
+    const h = meta.canvas?.height ?? 0
+    const prev = prevCanvasRef.current
+    if (!prev || prev.w !== w || prev.h !== h) {
+      prevCanvasRef.current = { w, h }
+      // Tag this as a 'migration' transaction so the recenter doesn't
+      // pollute the user's undo stack — Cmd+Z after resizing the
+      // canvas should revert the resize, not split into two steps.
+      api.doc.transact(() => {
+        centerCameraOnCanvas(api)
+      }, 'migration')
+    }
+  })
 
   return (
     <div className="flex h-full w-full flex-col bg-app-bg text-text">

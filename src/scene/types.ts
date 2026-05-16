@@ -585,6 +585,28 @@ export interface CameraNode extends NodeBase {
    * workspace panel color when null.
    */
   background: Fill | null
+  /**
+   * Focal length in canvas-pixel units. Used both for the CSS
+   * `perspective` value (foreshortening at non-zero rotateX / rotateY)
+   * AND for the Z-driven apparent scale (`FL / (FL - z)`). Larger =
+   * more telephoto: rotations look subtler, dolly per unit of Z is
+   * smaller. Smaller = wide-angle: rotations distort dramatically,
+   * dolly per unit of Z is bigger. Default 1000 matches the historical
+   * hardcoded value so existing scenes render identically.
+   */
+  focalLength: number
+  /**
+   * The point the camera rotates AROUND, in semantic terms — center
+   * of the artboard, or one of the four edge midpoints. Mirrors
+   * Figma's rotation-anchor affordance but for the scene-level camera:
+   * picking 'left' makes the right side of the scene swing in/out of
+   * depth while the left edge stays roughly fixed.
+   *
+   * Implemented as a transform-pivot offset, NOT by moving the camera
+   * position (camera.transform.x/y still names "where the camera
+   * looks"). Default 'center' = original behavior.
+   */
+  rotationOrigin: 'center' | 'top' | 'right' | 'bottom' | 'left'
 }
 
 /**

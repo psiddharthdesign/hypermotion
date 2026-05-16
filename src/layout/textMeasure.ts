@@ -128,9 +128,19 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
 
     const lineCount = Math.max(1, lines.length)
     const measuredWidth = widestLineWidth(ctx, lines)
+    // CRITICAL: ceil + 1px safety margin.
+    //
+    // `measureText` returns a fractional width (e.g. 127.34px). If we
+    // hand that back to Yoga, the renderer's `rect.width` floors to
+    // 127px while CSS still tries to lay out the full 127.34px of text
+    // inside that box — the last word overflows by 0.34px and CSS
+    // breaks it onto a new line. The visible result is "I set hug
+    // width and the text still wrapped." Ceiling alone closes the gap
+    // for most cases; the extra +1 is insurance against font-hinting
+    // rounding that can still nudge sub-pixel widths in either tree.
     return {
-      width: Math.max(1, measuredWidth),
-      height: Math.max(1, lineCount * node.fontSize * node.lineHeight),
+      width: Math.max(1, Math.ceil(measuredWidth) + 1),
+      height: Math.max(1, Math.ceil(lineCount * node.fontSize * node.lineHeight)),
     }
   }
 }

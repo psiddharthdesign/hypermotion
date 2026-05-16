@@ -89,16 +89,33 @@ function wrapInContainer(
     .map((id) => api.getNode(id))
     .filter((n): n is SceneNode => !!n)
   if (nodes.length !== ids.length) return null
-  // All same parent?
-  const parentId = nodes[0]!.parent
-  if (!parentId) return null
-  for (const n of nodes) if (n.parent !== parentId) return null
 
-  // Preserve child order within the parent so visual stacking is stable.
-  const siblings = api.getChildren(parentId).map((c) => c.id)
-  const sortedIds = [...ids].sort(
-    (a, b) => siblings.indexOf(a) - siblings.indexOf(b),
-  )
+  // Filter out the root and any orphan camera — those can never be
+  // wrapped. If nothing wrappable remains, bail.
+  const wrappable = nodes.filter((n) => n.parent != null && n.kind !== 'camera')
+  if (wrappable.length === 0) return null
+
+  // Pick a target parent. If everything already shares one, use it
+  // (preserves position-in-siblings ordering). Otherwise fall back to
+  // the FIRST wrappable node's parent — this lets the user select two
+  // unrelated frames and still get a wrap, instead of a silent no-op.
+  // The non-matching nodes will be re-parented into the new container.
+  const firstParent = wrappable[0]!.parent as NodeId
+  const allSameParent = wrappable.every((n) => n.parent === firstParent)
+  const parentId = firstParent
+
+  // Preserve child order within the home parent so visual stacking is
+  // stable for the same-parent case. For mixed parents, the wrap order
+  // matches selection order — there's no canonical sibling list to
+  // sort against once parents diverge.
+  const sortedIds = allSameParent
+    ? (() => {
+        const siblings = api.getChildren(parentId).map((c) => c.id)
+        return [...ids].sort(
+          (a, b) => siblings.indexOf(a) - siblings.indexOf(b),
+        )
+      })()
+    : wrappable.map((n) => n.id)
 
   // Outer parent's layout mode decides whether the new frame needs a
   // transform offset. Under mode='none', the new frame is absolutely
@@ -376,6 +393,32 @@ export function recenterStaleCamera(api: SceneAPI): void {
     x: w / 2,
     y: h / 2,
   })
+}
+
+/**
+ * Snap the active camera's transform x/y to the artboard center.
+ *
+ * Called whenever the canvas size changes — the user explicitly opted
+ * in to "camera always points at the middle." Without this, resizing
+ * from 1920×1080 to 1080×1920 leaves the camera parked at the OLD
+ * center (960, 540), which is no longer the middle of anything and
+ * pushes the visible artboard off-screen in the viewfinder.
+ *
+ * Z, rotation, scale are preserved — the user's dolly / pan-tilt /
+ * zoom intent shouldn't change just because they made the artboard
+ * taller.
+ */
+export function centerCameraOnCanvas(api: SceneAPI): void {
+  const cameraId = api.getActiveCameraId()
+  if (!cameraId) return
+  const camera = api.getNode(cameraId)
+  if (!camera || camera.kind !== 'camera') return
+  const meta = api.getMeta()
+  const targetX = (meta.canvas?.width ?? 0) / 2
+  const targetY = (meta.canvas?.height ?? 0) / 2
+  const t = camera.transform
+  if (t.x === targetX && t.y === targetY) return
+  api.setNodeProperty(cameraId, 'transform', { ...t, x: targetX, y: targetY })
 }
 
 /**

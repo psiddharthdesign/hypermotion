@@ -257,51 +257,63 @@ export function Canvas() {
   // Apparent scale uses a textbook pinhole model:
   //   apparentScale = focalLength / (focalLength - z)
   //
-  // FOCAL_LENGTH is in canvas-pixel units. 1000 was chosen so a
-  // ±50px Z move feels noticeable (≈±5% scale) without saturating.
-  // Bigger focal length = more "telephoto" feel (smaller scale change
-  // per unit of Z); smaller = "wide angle."
-  const FOCAL_LENGTH = 1000
+  // Focal length now lives on the camera node so users can dial it
+  // per-scene. Default 1000 matches the historical hardcoded value.
+  // Larger = more telephoto (subtler rotations, less Z-driven scale).
+  // Smaller = wide-angle (dramatic rotations, big Z scale).
+  const cameraFocalLength =
+    camera && camera.kind === 'camera'
+      ? Math.max(50, camera.focalLength ?? 1000)
+      : 1000
   const cameraZ =
     camera && camera.kind === 'camera'
       ? cameraAnim?.z ?? camera.transform.z
       : 0
-  // Clamp the denominator so an animation through z = FOCAL_LENGTH
+  // Clamp the denominator so an animation through z = focal length
   // (singularity) doesn't blow the scale up to infinity.
   const cameraScaleFromZ = useMemo(() => {
-    const denom = Math.max(1, FOCAL_LENGTH - cameraZ)
-    return FOCAL_LENGTH / denom
-  }, [cameraZ])
+    const denom = Math.max(1, cameraFocalLength - cameraZ)
+    return cameraFocalLength / denom
+  }, [cameraZ, cameraFocalLength])
 
   const cameraTransform = useMemo(() => {
     if (!camera || camera.kind !== 'camera') return null
-    // REPLACE semantics for x/y/rotation. Apparent scale is derived
-    // from camera Z so the inspector doesn't carry a redundant
-    // scale field on cameras (Z replaced it).
     const cx = cameraAnim?.x ?? camera.transform.x
     const cy = cameraAnim?.y ?? camera.transform.y
     const rZ = cameraAnim?.rotation ?? camera.transform.rotation
     const rX = cameraAnim?.rotationX ?? camera.transform.rotationX
     const rY = cameraAnim?.rotationY ?? camera.transform.rotationY
     const s = cameraScaleFromZ
-    // View-matrix pattern: shift world so camera position lands at
-    // origin → rotate/scale around that origin → shift back so the
-    // camera's position ends up at the artboard center.
-    //
-    // 3D rotation: a camera rotation moves the WORLD by the inverse,
-    // so each axis is negated. Order is rotateZ → rotateY → rotateX
-    // applied right-to-left (CSS multiplies in the order written),
-    // which matches a typical "yaw, pitch, roll" camera-to-world
-    // composition for a freelook camera. The renderer's parent
-    // wrapper carries `perspective(...)` so these rotations actually
-    // foreshorten layers instead of shearing them flat.
     const w = canvasWidth
     const h = canvasHeight
+
+    // Rotation pivot in WORLD space. Default 'center' = camera
+    // position. The four edge options pin one side of the artboard
+    // so rotation pivots around it (matches the user expectation
+    // "rotate around the left edge"). The math:
+    //   M = T(screen + s*(P-C)) * S(s) * R * T(-P)
+    // For P=C (center) this collapses back to the original
+    //   T(screen) * S(s) * R * T(-C)
+    const origin = camera.rotationOrigin ?? 'center'
+    const P =
+      origin === 'left'
+        ? { x: 0, y: h / 2 }
+        : origin === 'right'
+          ? { x: w, y: h / 2 }
+          : origin === 'top'
+            ? { x: w / 2, y: 0 }
+            : origin === 'bottom'
+              ? { x: w / 2, y: h }
+              : { x: cx, y: cy }
+    const dx = P.x - cx
+    const dy = P.y - cy
+    const screenX = w / 2 + s * dx
+    const screenY = h / 2 + s * dy
     return (
-      `translate(${w / 2}px, ${h / 2}px) ` +
+      `translate(${screenX}px, ${screenY}px) ` +
       `scale(${s}, ${s}) ` +
       `rotateX(${-rX}deg) rotateY(${-rY}deg) rotateZ(${-rZ}deg) ` +
-      `translate(${-cx}px, ${-cy}px)`
+      `translate(${-P.x}px, ${-P.y}px)`
     )
   }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
 
@@ -331,6 +343,18 @@ export function Canvas() {
     startY: number
   } | null>(null)
   const [drawPreview, setDrawPreview] = useState<Rect | null>(null)
+
+  // Marquee (rubber-band) selection state. Active only with the select
+  // tool, clicking the empty workspace background. Holding Shift at
+  // drag-start extends the existing selection instead of replacing it.
+  const marqueeRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    additive: boolean
+    initialSelection: NodeId[]
+  } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
 
   // Convert a clientX/clientY into canvas-space coordinates.
   //
@@ -453,7 +477,36 @@ export function Canvas() {
         return
       }
 
-      if (!onExistingNode) clearSelection()
+      if (!onExistingNode) {
+        // Select-tool marquee: start a rubber-band on the empty bg.
+        // Shift extends the existing selection; plain drag replaces.
+        // We snapshot the initial selection here so pointer-move can
+        // recompute union-with-marquee idempotently without losing the
+        // user's prior picks halfway through a Shift drag.
+        if (tool === 'select') {
+          const start = clientToCanvas(e.clientX, e.clientY)
+          if (start) {
+            marqueeRef.current = {
+              pointerId: e.pointerId,
+              startX: start.x,
+              startY: start.y,
+              additive: e.shiftKey,
+              initialSelection: e.shiftKey
+                ? [...useUI.getState().selection]
+                : [],
+            }
+            setMarqueeRect({ x: start.x, y: start.y, width: 0, height: 0 })
+            ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+            // Only clear when starting a non-additive marquee. With
+            // shift, hold the previous selection until pointer-up so
+            // a tiny accidental drag doesn't blow away the user's work.
+            if (!e.shiftKey) clearSelection()
+            e.preventDefault()
+            return
+          }
+        }
+        clearSelection()
+      }
     },
     [tool, isDrawTool, clientToCanvas, view.panX, view.panY, clearSelection],
   )
@@ -477,6 +530,17 @@ export function Canvas() {
         const width = Math.abs(cur.x - d.startX)
         const height = Math.abs(cur.y - d.startY)
         setDrawPreview({ x, y, width, height })
+        return
+      }
+      const m = marqueeRef.current
+      if (m && e.pointerId === m.pointerId) {
+        const cur = clientToCanvas(e.clientX, e.clientY)
+        if (!cur) return
+        const x = Math.min(m.startX, cur.x)
+        const y = Math.min(m.startY, cur.y)
+        const width = Math.abs(cur.x - m.startX)
+        const height = Math.abs(cur.y - m.startY)
+        setMarqueeRect({ x, y, width, height })
       }
     },
     [clientToCanvas, setView],
@@ -487,6 +551,64 @@ export function Canvas() {
       if (panStateRef.current) {
         panStateRef.current = null
         ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+        return
+      }
+      const m = marqueeRef.current
+      if (m && e.pointerId === m.pointerId) {
+        try {
+          ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+        } catch {
+          /* already released */
+        }
+        const cur = clientToCanvas(e.clientX, e.clientY)
+        const startX = m.startX
+        const startY = m.startY
+        const additive = m.additive
+        const prior = m.initialSelection
+        marqueeRef.current = null
+        setMarqueeRect(null)
+        if (!cur) return
+
+        // Build the marquee bounds in canvas coords.
+        const bx = Math.min(startX, cur.x)
+        const by = Math.min(startY, cur.y)
+        const bw = Math.abs(cur.x - startX)
+        const bh = Math.abs(cur.y - startY)
+
+        // Tiny drag (jitter on click) becomes a plain background click —
+        // selection clears unless Shift held it open. Threshold matches
+        // the draw tool's tiny-click stamp threshold for consistency.
+        if (bw < 2 && bh < 2) {
+          if (!additive) clearSelection()
+          return
+        }
+
+        // Hit-test: every solved rect that intersects the marquee
+        // counts as "inside." Excludes root (no point selecting the
+        // artboard itself with a drag) and cameras (they don't paint
+        // and a marquee over the viewfinder shouldn't grab them).
+        const hits: NodeId[] = []
+        const layoutRects = solved ?? {}
+        for (const [id, rect] of Object.entries(layoutRects)) {
+          if (id === rootId) continue
+          const n = api.getNode(id)
+          if (!n || n.kind === 'camera') continue
+          if (
+            rect.x + rect.width >= bx &&
+            rect.x <= bx + bw &&
+            rect.y + rect.height >= by &&
+            rect.y <= by + bh
+          ) {
+            hits.push(id)
+          }
+        }
+
+        // Compose with the initial selection when Shift was held at
+        // drag-start. Otherwise replace.
+        const next = additive
+          ? Array.from(new Set([...prior, ...hits]))
+          : hits
+        setSelection(next)
         return
       }
       const d = drawStateRef.current
@@ -593,7 +715,7 @@ export function Canvas() {
         }
       }
     },
-    [api, rootId, clientToCanvas, setSelection, setTool],
+    [api, rootId, clientToCanvas, setSelection, setTool, solved, clearSelection],
   )
 
   // --- wheel: cmd/ctrl + wheel = zoom, otherwise pan -------------------
@@ -758,7 +880,7 @@ export function Canvas() {
             // collapses 3D rotations to a flat shear). Matched to
             // FOCAL_LENGTH so the perceived 3D matches the same focal
             // length the perspective-scale code uses for cameraScaleFromZ.
-            perspective: 1000,
+            perspective: cameraFocalLength,
             perspectiveOrigin: 'center center',
           }}
           data-canvas-root
@@ -926,6 +1048,23 @@ export function Canvas() {
                   border: `${1 / Math.max(view.zoom, 0.001)}px dashed var(--color-accent)`,
                   background: 'var(--color-accent-soft)',
                   borderRadius: tool === 'ellipse' ? '9999px' : 2,
+                }}
+              />
+            ) : null}
+            {marqueeRect ? (
+              <div
+                className="pointer-events-none absolute"
+                style={{
+                  left: marqueeRect.x,
+                  top: marqueeRect.y,
+                  width: Math.max(1, marqueeRect.width),
+                  height: Math.max(1, marqueeRect.height),
+                  // Thinner solid border than the draw preview so the
+                  // two visuals don't get confused when both happen on
+                  // adjacent gestures. Accent color + low-opacity fill
+                  // reads as "I'm selecting" rather than "I'm drawing."
+                  border: `${1 / Math.max(view.zoom, 0.001)}px solid var(--color-accent)`,
+                  background: 'color-mix(in oklab, var(--color-accent) 12%, transparent)',
                 }}
               />
             ) : null}
@@ -1923,6 +2062,12 @@ function TextGlyphs({
       : node.textAlign === 'end'
         ? 'right'
         : 'center'
+  // When the node hugs width, force `whiteSpace: 'pre'` so the text
+  // never wraps — the box is supposed to be exactly the text's natural
+  // width, and any sub-pixel measurement drift would otherwise cause
+  // the last word to fold onto a new line. For fixed/fill widths we
+  // keep `pre-wrap` + `break-word` so multi-line text wraps correctly.
+  const hugWidth = node.size.width === 'hug'
   const sharedStyle: React.CSSProperties = {
     display: 'block',
     width: '100%',
@@ -1944,8 +2089,8 @@ function TextGlyphs({
         }
       : { color: node.color }),
     textAlign,
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
+    whiteSpace: hugWidth ? 'pre' : 'pre-wrap',
+    wordBreak: hugWidth ? 'normal' : 'break-word',
   }
 
   // contentEditable focus + select-all on mount. We do this with a ref

@@ -138,7 +138,7 @@ export function LayersPanel() {
             makes it selectable and keyframeable via the same flow as
             any other layer — click to select, then edit in Inspector,
             or animate via the Animate tab. */}
-        {camera ? <CameraRow node={camera} /> : null}
+        {camera ? <CameraRow node={camera} /> : <AddCameraRow />}
         {root ? (
           <Row node={root} depth={0} />
         ) : (
@@ -266,6 +266,52 @@ function LockToggle({
       ].join(' ')}
     >
       {locked ? '◈' : '◇'}
+    </button>
+  )
+}
+
+/**
+ * "Add camera" row, rendered in the Camera slot when the scene has
+ * none. createSceneAPI seeds a camera on first run AND createSampleScene
+ * creates one on File → New, so this is a recovery path — if a `.hype`
+ * load drops the camera, or the agent's `create_scene` JSON omitted it,
+ * the user has a one-click way back to a functional scene.
+ *
+ * On click: creates a Camera at the artboard center, sets it active,
+ * and selects it so the Inspector lights up with the camera's Z /
+ * Rotate / Projection / Background fields.
+ */
+function AddCameraRow() {
+  const api = useSceneAPI()
+  const setSelection = useUI((s) => s.setSelection)
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const meta = api.getMeta()
+        const w = meta.canvas?.width ?? 960
+        const h = meta.canvas?.height ?? 540
+        const id = api.createNode('camera', null, {
+          name: 'Camera',
+          transform: {
+            x: w / 2,
+            y: h / 2,
+            z: 0,
+            rotation: 0,
+            rotationX: 0,
+            rotationY: 0,
+            scaleX: 1,
+            scaleY: 1,
+          },
+        })
+        api.setActiveCameraId(id)
+        setSelection([id])
+      }}
+      className="group mx-2 mb-1 flex h-7 w-[calc(100%-1rem)] items-center gap-2 rounded border border-dashed border-border px-2 text-[11px] text-text-dim transition-colors hover:border-accent hover:bg-accent-soft/30 hover:text-accent"
+      title="Add a camera so the scene has a viewfinder + animatable Z / Rotate"
+    >
+      <span aria-hidden className="text-[12px]">+</span>
+      <span className="font-medium">Add camera</span>
     </button>
   )
 }
