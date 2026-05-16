@@ -321,18 +321,29 @@ export function useKeyboardShortcuts() {
         return
       }
 
-      // Enter — drill into selected parents' children. Replace the
-      // selection with the union of every selected node's direct
-      // children. Mirrors Figma's "Enter to step into the group" but
-      // works across multi-select: select two parents, hit Enter,
-      // get the children of both as the new selection.
+      // Enter — drill into selected parents' children OR enter text
+      // edit mode if the single selection is a text node.
       //
-      // De-duped while preserving order: a parent is naturally never
-      // its own child, but two siblings under the same grandparent
-      // could both list the SAME node as a child after some odd edits;
-      // the Set guard keeps us idempotent.
+      // Text precedence: matches Figma. A text layer has no children
+      // to drill into, so Enter doing nothing on text would be weird —
+      // Figma uses Enter to start editing the glyphs, which is what
+      // designers reach for. Multi-select with a text node mixed in
+      // still drills (the intent is clearly hierarchy navigation, not
+      // edit one specific text node).
+      //
+      // For frames / groups, Enter replaces the selection with the
+      // union of every selected node's direct children. De-duped via
+      // a Set in case sibling parents share a child reference.
       if (!meta && !e.shiftKey && !e.altKey && e.key === 'Enter') {
         const sel = useUI.getState().selection
+        if (sel.length === 1) {
+          const onlyNode = api.getNode(sel[0]!)
+          if (onlyNode && onlyNode.kind === 'text') {
+            e.preventDefault()
+            useUI.getState().setEditingTextId(onlyNode.id)
+            return
+          }
+        }
         if (sel.length > 0) {
           const kids: string[] = []
           const seen = new Set<string>()

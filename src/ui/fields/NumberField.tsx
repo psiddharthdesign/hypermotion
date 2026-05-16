@@ -126,6 +126,12 @@ export function NumberField({
 }
 
 function formatNumber(n: number): string {
+  // Defensive against undefined / null — agent-built scenes can land
+  // here with missing transform / appearance fields, and a single
+  // `undefined.toFixed` crashes the whole Inspector render tree.
+  // Return empty string so the field shows blank instead of bringing
+  // down the editor.
+  if (n == null || !Number.isFinite(n)) return ''
   // Trim trailing zeros on fractional numbers, keep integers clean.
   if (Number.isInteger(n)) return String(n)
   return n.toFixed(2).replace(/\.?0+$/, '')

@@ -139,18 +139,22 @@ const DEFAULT_APPEARANCE = {
   effects: [],
 }
 
+const DEFAULT_PADDING = { top: 0, right: 0, bottom: 0, left: 0 }
+
 const DEFAULT_LAYOUT = {
   mode: 'none',
   direction: 'column',
   justify: 'start',
   align: 'start',
   gap: 0,
-  padding: { top: 0, right: 0, bottom: 0, left: 0 },
+  padding: DEFAULT_PADDING,
   wrap: false,
   columns: 1,
   rowGap: 0,
   columnGap: 0,
 }
+
+const DEFAULT_SIZE = { width: 100, height: 100 }
 
 const DEFAULT_META = {
   id: 'scene',
@@ -193,10 +197,16 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     const childArr = new Y.Array<string>()
     for (const c of node.children ?? []) childArr.push([c])
     y.set('children', childArr)
-    y.set('transform', { ...DEFAULT_TRANSFORM, ...(node.transform ?? {}) })
+    y.set(
+      'transform',
+      mergeWithDefaults(DEFAULT_TRANSFORM, node.transform as Partial<typeof DEFAULT_TRANSFORM>),
+    )
     y.set(
       'appearance',
-      node.appearance ?? defaultAppearance(node.kind),
+      mergeWithDefaults(
+        defaultAppearance(node.kind) as Record<string, unknown>,
+        node.appearance,
+      ),
     )
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
@@ -205,15 +215,21 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
-      y.set('size', node.size ?? { width: 100, height: 100 })
-      y.set('layout', { ...DEFAULT_LAYOUT, ...(node.layout ?? {}) })
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
+      y.set(
+        'layout',
+        mergeWithDefaults(
+          DEFAULT_LAYOUT as Record<string, unknown>,
+          node.layout,
+        ),
+      )
       if (node.kind === 'frame') {
         y.set('clipsContent', node.clipsContent ?? true)
         y.set('layoutGuides', node.layoutGuides ?? [])
       }
     }
     if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
-      y.set('size', node.size ?? { width: 100, height: 100 })
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
     }
     if (node.kind === 'image') {
       y.set('src', node.src ?? '')
@@ -361,6 +377,44 @@ export function readSceneSummary(bytes: Uint8Array): {
     sectionCount: sections?.size ?? 0,
     keyframeCount,
   }
+}
+
+/**
+ * Merge agent-supplied partial fields onto a defaults object, recursing
+ * into nested objects. Returns a fresh object — never mutates input.
+ *
+ * Critical for `appearance`, `transform`, `layout` — the desktop app
+ * reads fields like `appearance.cornerRadius` and `layout.padding.top`
+ * directly and calls `.toFixed()` / arithmetic on them. If the agent
+ * passes `{ opacity: 1, fill: ... }` without cornerRadius, a shallow
+ * `?? default` keeps the partial as-is and the desktop crashes on
+ * `undefined.toFixed`. Deep-merge guarantees every leaf has a value.
+ */
+function mergeWithDefaults<T extends Record<string, unknown>>(
+  defaults: T,
+  patch: Partial<T> | undefined,
+): T {
+  if (!patch) return { ...defaults }
+  const out: Record<string, unknown> = { ...defaults }
+  for (const [k, v] of Object.entries(patch)) {
+    const d = (defaults as Record<string, unknown>)[k]
+    if (
+      d != null &&
+      typeof d === 'object' &&
+      !Array.isArray(d) &&
+      v != null &&
+      typeof v === 'object' &&
+      !Array.isArray(v)
+    ) {
+      out[k] = mergeWithDefaults(
+        d as Record<string, unknown>,
+        v as Record<string, unknown>,
+      )
+    } else {
+      out[k] = v
+    }
+  }
+  return out as T
 }
 
 function defaultName(kind: NodeJson['kind']): string {

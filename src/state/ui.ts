@@ -265,6 +265,14 @@ interface UIState {
    */
   renameDialogOpen: boolean
   /**
+   * Id of the text node currently in inline-edit mode, or null when
+   * no text is being edited. Set when the user presses Enter on a
+   * selected text node (or double-clicks one in the canvas). The
+   * Canvas renders a contentEditable instead of a static span for
+   * the node whose id matches.
+   */
+  editingTextId: string | null
+  /**
    * The track row the user most recently clicked in the Timeline panel,
    * or null when no track is focused. The global Delete keyboard
    * shortcut consults this first: if a track is focused, Delete removes
@@ -361,6 +369,8 @@ interface UIState {
   setRecording: (on: boolean) => void
   /** Open or close the multi-select rename dialog. */
   setRenameDialogOpen: (open: boolean) => void
+  /** Enter or exit inline text-edit mode for the given node id. */
+  setEditingTextId: (id: string | null) => void
   /** Set the timeline-focused track (or null to clear). */
   setSelectedTrackId: (id: string | null) => void
   /**
@@ -518,6 +528,7 @@ export const useUI = create<UIState>((set) => ({
   staggerDelay: 0.1,
   recording: false,
   renameDialogOpen: false,
+  editingTextId: null,
   selectedTrackId: null,
   layersWidth: readStoredNumber('hyper-motion.layersWidth', 256),
   inspectorWidth: readStoredNumber('hyper-motion.inspectorWidth', 288),
@@ -639,6 +650,7 @@ export const useUI = create<UIState>((set) => ({
     set({ staggerDelay: Math.max(0, seconds) }),
   setRecording: (on) => set({ recording: on }),
   setRenameDialogOpen: (open) => set({ renameDialogOpen: open }),
+  setEditingTextId: (id) => set({ editingTextId: id }),
   setSelectedTrackId: (id) => set({ selectedTrackId: id }),
   selectedKeyframes: [],
   setSelectedKeyframes: (keys) =>

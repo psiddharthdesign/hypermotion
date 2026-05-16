@@ -1028,12 +1028,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // null. When that's the case, a child fill would paint on top of a
   // parent that's invisible — so we dim the FillField to signal
   // "editing this won't show up until you give the parent a fill."
-  // Root has no parent, so skip. The parent lookup goes through the
-  // live scene API so Yjs subscription updates us when the parent's
-  // fill flips. Strokes are still editable since a stroke on an
-  // invisible-filled parent is still visible at the child level.
-  const parent = node.parent ? api.getNode(node.parent) : null
-  const parentFillNull = !!parent && 'appearance' in parent && parent.appearance.fill === null
+  // (Earlier this section computed `parentFillNull` and used it to
+  // disable a child's FillField when the parent had no fill. That was
+  // wrong reasoning — a child's fill paints its own pixels and is
+  // perfectly visible regardless of parent fill state. Removed so
+  // every node, including auto-layout children, can take a fill.)
 
   // Live animated values for this node. When a track is active on a
   // property, the engine emits the interpolated value every frame —
@@ -1399,8 +1398,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           <FillField
             value={node.appearance.fill}
             onCommit={(fill) => patchAppearance({ fill })}
-            disabled={parentFillNull}
-            disabledReason="Parent has no fill — child fill would be invisible"
           />
           <StrokeControls
             value={node.appearance.stroke}
@@ -1701,6 +1698,9 @@ function formatPct(scale: number): string {
   return formatPctNumber(Math.round(scale * 10000) / 100)
 }
 function formatPctNumber(p: number): string {
+  // Defensive: agent-built scenes may land here with undefined scale
+  // values — a single undefined.toFixed crashes the whole Inspector.
+  if (p == null || !Number.isFinite(p)) return ''
   if (Number.isInteger(p)) return String(p)
   return p.toFixed(2).replace(/\.?0+$/, '')
 }

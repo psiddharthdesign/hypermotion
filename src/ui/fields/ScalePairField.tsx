@@ -246,6 +246,9 @@ function formatPercent(n: number): string {
 }
 
 function formatPercentNumber(p: number): string {
+  // Defensive: agent-built scenes may land here with undefined scale
+  // values — a single undefined.toFixed crashes the whole Inspector.
+  if (p == null || !Number.isFinite(p)) return ''
   if (Number.isInteger(p)) return String(p)
   return p.toFixed(2).replace(/\.?0+$/, '')
 }

@@ -582,6 +582,15 @@ export function Canvas() {
 
         setSelection([newId])
         setTool('select')
+
+        // Drop straight into edit mode for new text nodes — matches
+        // Figma / Jitter. Skipping this step left the user looking at
+        // a text box that said "Text" and had to press Enter or
+        // double-click to start typing, which broke the flow of just
+        // pressing T and writing.
+        if (d.kind === 'text') {
+          useUI.getState().setEditingTextId(newId)
+        }
       }
     },
     [api, rootId, clientToCanvas, setSelection, setTool],
@@ -1592,6 +1601,17 @@ function NodeView({
       data-node-kind={node.kind}
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onDoubleClick={(e) => {
+        // Double-click on a text node enters inline edit mode —
+        // matches Figma. Pointer-down already started a drag, but
+        // contentEditable's focus will take over the keystroke
+        // stream; the drag effectively no-ops because the pointer
+        // is up by the time onDoubleClick fires.
+        if (node.kind === 'text') {
+          e.stopPropagation()
+          useUI.getState().setEditingTextId(node.id)
+        }
+      }}
       onPointerDown={drag.onPointerDown}
       // Hover gating for the empty-frame dashed placeholder. Cheap
       // enough to wire on every node; only the empty-frame path
@@ -1666,61 +1686,10 @@ function NodeView({
         <AudioChip node={node} />
       ) : null}
       {node.kind === 'text' ? (
-        <span
-          style={{
-            display: 'block',
-            width: '100%',
-            height: '100%',
-            fontFamily: node.fontFamily,
-            fontSize: node.fontSize,
-            fontWeight: node.fontWeight,
-            lineHeight: node.lineHeight,
-            letterSpacing: node.letterSpacing,
-            // Text color layering:
-            //  - If appearance.fill is set (solid or gradient), paint
-            //    the glyphs through the fill via background-clip: text.
-            //    This is how you get gradient text on the web: the text
-            //    becomes a clipping mask over a background image.
-            //  - Otherwise, fall back to the simple `color` path that
-            //    this renderer has always used. Gradients here require
-            //    transparent `color` so the clipped background shows
-            //    through; without it the fill would be hidden behind
-            //    the flat glyph color.
-            // Prefer the animation engine's fill override if a color
-            // track is active. Otherwise take the static fill off the
-            // node. This mirrors the wrapper-box logic above so glyphs
-            // and background stay in sync during a tween.
-            ...(effectiveFill
-              ? {
-                  background: fillToCss(effectiveFill) ?? undefined,
-                  WebkitBackgroundClip: 'text',
-                  backgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  color: 'transparent',
-                }
-              : { color: node.color }),
-            // Map our semantic align values to the CSS `text-align`
-            // shorthand. `start` / `end` honor the writing direction,
-            // `center` is the same in both models. Keeping 'start'/'end'
-            // in the data model (vs. 'left'/'right') so eventual RTL
-            // support is free.
-            textAlign:
-              node.textAlign === 'start'
-                ? 'left'
-                : node.textAlign === 'end'
-                  ? 'right'
-                  : 'center',
-            // Preserve whitespace and allow wrapping when the text box
-            // is width-constrained (Figma-style "Auto height" mode).
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            // We don't own the text editor yet; the span is display-only.
-            // Prevent the OS cursor from flickering over text glyphs.
-            userSelect: 'none',
-          }}
-        >
-          {node.text}
-        </span>
+        <TextGlyphs
+          node={node}
+          effectiveFill={effectiveFill}
+        />
       ) : null}
       {stroke && stroke.width > 0 && (strokeStyle !== 'solid' || strokeHasGradient) ? (
         <StrokeOverlay
@@ -1918,6 +1887,154 @@ function clamp01Local(n: number): number {
  *     the element holds its first or last frame and pauses, so the
  *     video isn't silently looping in the background.
  */
+/**
+ * Inline text renderer + editor.
+ *
+ * Reads `editingTextId` from the UI store. When this node is the one
+ * being edited, renders a contentEditable div in place of the static
+ * span — same typography, same layout — so the editor feels like the
+ * text just woke up. On commit (Enter without shift, or blur), writes
+ * the new value through `api.setNodeProperty`. Escape discards.
+ *
+ * Why a separate component: keeps the NodeView body uncluttered AND
+ * lets us scope the `useUI` / `useSceneAPI` subscriptions so only text
+ * nodes (a tiny fraction of the tree) re-render when edit mode flips.
+ */
+function TextGlyphs({
+  node,
+  effectiveFill,
+}: {
+  node: Extract<SceneNode, { kind: 'text' }>
+  // Match the type computed in NodeView — either node.appearance.fill
+  // (whatever Fill union the scene model uses) or the synth solid the
+  // animation engine emits.
+  effectiveFill: Extract<SceneNode, { kind: 'text' }>['appearance']['fill']
+}) {
+  const editingTextId = useUI((s) => s.editingTextId)
+  const setEditingTextId = useUI((s) => s.setEditingTextId)
+  const api = useSceneAPI()
+  const isEditing = editingTextId === node.id
+
+  // Common typography style block. Shared between read and edit modes
+  // so the text doesn't shift visually when you press Enter to edit.
+  const textAlign: 'left' | 'right' | 'center' =
+    node.textAlign === 'start'
+      ? 'left'
+      : node.textAlign === 'end'
+        ? 'right'
+        : 'center'
+  const sharedStyle: React.CSSProperties = {
+    display: 'block',
+    width: '100%',
+    height: '100%',
+    fontFamily: node.fontFamily,
+    fontSize: node.fontSize,
+    fontWeight: node.fontWeight,
+    lineHeight: node.lineHeight,
+    letterSpacing: node.letterSpacing,
+    // Text color layering — fill via background-clip: text when a
+    // gradient/solid fill is set, otherwise plain `color`.
+    ...(effectiveFill
+      ? {
+          background: fillToCss(effectiveFill) ?? undefined,
+          WebkitBackgroundClip: 'text',
+          backgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          color: 'transparent',
+        }
+      : { color: node.color }),
+    textAlign,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  }
+
+  // contentEditable focus + select-all on mount. We do this with a ref
+  // callback rather than autoFocus + a select effect because React
+  // doesn't have a built-in "select all text" autoFocus variant, and
+  // contentEditable's `autofocus` attribute is unreliable in Electron.
+  const editRef = (el: HTMLDivElement | null) => {
+    if (!el || !isEditing) return
+    el.focus()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const sel = window.getSelection()
+    if (sel) {
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+  }
+
+  const commit = (raw: string) => {
+    // Strip a single trailing newline that contentEditable likes to
+    // leave behind when the user lands on Enter for commit.
+    const next = raw.replace(/\n$/, '')
+    if (next !== node.text) {
+      api.setNodeProperty(node.id, 'text', next)
+    }
+    setEditingTextId(null)
+  }
+
+  if (isEditing) {
+    return (
+      <div
+        ref={editRef}
+        contentEditable
+        suppressContentEditableWarning
+        // Make the editor swallow pointer events so the parent's
+        // drag handler doesn't fight the cursor.
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onBlur={(e) => commit((e.currentTarget.textContent ?? '').toString())}
+        onKeyDown={(e) => {
+          // Enter (no shift) commits + exits. Shift+Enter inserts a
+          // newline so multi-line text is editable.
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            commit((e.currentTarget.textContent ?? '').toString())
+            return
+          }
+          // Escape discards changes and exits. We rely on React not
+          // re-rendering between the keydown and blur to bypass the
+          // commit() in onBlur.
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            setEditingTextId(null)
+            ;(e.currentTarget as HTMLDivElement).blur()
+            return
+          }
+          // Stop the global keyboard shortcut handler from claiming
+          // Backspace / Delete / Cmd+A / etc. while the editor is
+          // focused — those are text-editing actions inside the field.
+          e.stopPropagation()
+        }}
+        style={{
+          ...sharedStyle,
+          // Allow caret/selection rendering and prevent the OS no-
+          // cursor mask the read-only span uses.
+          userSelect: 'text',
+          cursor: 'text',
+          outline: 'none',
+        }}
+      >
+        {node.text}
+      </div>
+    )
+  }
+
+  return (
+    <span
+      style={{
+        ...sharedStyle,
+        // Static text shouldn't grab cursor flicker.
+        userSelect: 'none',
+      }}
+    >
+      {node.text}
+    </span>
+  )
+}
+
 function MediaVideo({
   node,
 }: {
