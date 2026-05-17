@@ -326,9 +326,21 @@ async function runCaptureRect(
         const t = f / fps
         engine.seek(t)
 
-        // One rAF to let the renderer commit the seek; two on the very
-        // first frame of the export to absorb cold-start costs.
-        await waitForFrames(isFirstFrameOverall ? 2 : 1)
+        // engine.seek schedules a React re-render through the
+        // useSyncExternalStore subscription, which then has to
+        // (1) reconcile, (2) apply the new CSS `transform` on the
+        // camera-transform wrapper, and (3) let Chromium repaint
+        // before `capturePage` grabs the surface. One rAF is not
+        // enough under React 19's concurrent renderer — the commit
+        // sometimes lands AFTER the next rAF, so capturePage grabs
+        // the previous frame's camera state.
+        //
+        // Bumping to 3 rAFs per frame (5 on the first) costs ~32ms
+        // per frame at 60fps and reliably gives React + the
+        // compositor time to flush the new transform. This is what
+        // fixes the "preview is correct but export is wrong"
+        // symptom on animated cameras.
+        await waitForFrames(isFirstFrameOverall ? 5 : 3)
         isFirstFrameOverall = false
 
         let canvas: HTMLCanvasElement
