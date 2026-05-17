@@ -21,29 +21,41 @@ validated it yet — that's the next milestone. Expect rough edges.
 
 ## Install (macOS)
 
-Download the latest `.dmg` from
-[github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases)
-— pick `*-arm64.dmg` for Apple Silicon or `*.dmg` for Intel.
-
-The v0.1.x series ships unsigned, so macOS will block the first open
-with a "damaged" dialog. Two-step setup, then it opens normally forever:
+One line in Terminal — works for every release:
 
 ```sh
-# 1. Open the .dmg and drag hyper-motion to /Applications, then run:
-xattr -cr /Applications/hyper-motion.app
-codesign --force --deep --sign - /Applications/hyper-motion.app
-
-# 2. Double-click the app from /Applications. Done.
+curl -fsSL https://raw.githubusercontent.com/psiddharthdesign/hypermotion/main/install.sh | bash
 ```
 
-**Why?** macOS Sequoia / Sonoma flag any unsigned download as
-"damaged" before they even check what's inside. `xattr -cr` strips the
-`com.apple.quarantine` attribute that Safari / Brave / Chrome add to
-downloaded files, and `codesign --force --deep --sign -` re-applies an
-ad-hoc signature **locally** (which Gatekeeper trusts in a way it
-doesn't trust the downloaded signature). Apple Developer signing +
-notarization — which removes both steps entirely — is on the v0.2
-roadmap.
+The script detects your Mac's architecture, pulls the latest release,
+copies the app into `/Applications`, strips macOS's download quarantine,
+applies a local ad-hoc signature, and opens it. No drag-to-Applications,
+no "damaged" dialog, no per-version steps.
+
+For a specific version: `curl ... | bash -s -- v0.1.6`.
+
+### Manual install
+
+Download the latest `.dmg` from
+[github.com/psiddharthdesign/hypermotion/releases](https://github.com/psiddharthdesign/hypermotion/releases)
+— `*-arm64.dmg` for Apple Silicon, `*.dmg` for Intel. Drag the app into
+`/Applications`, then run two lines in Terminal:
+
+```sh
+xattr -cr /Applications/hyper-motion.app
+codesign --force --deep --sign - /Applications/hyper-motion.app
+```
+
+Same effect as the one-liner above.
+
+**Why is any of this needed?** macOS Sequoia / Sonoma flag any unsigned
+download as "damaged" before they even check what's inside.
+`xattr -cr` strips the `com.apple.quarantine` attribute that
+Safari / Brave / Chrome add to downloaded files, and
+`codesign --force --deep --sign -` re-applies an ad-hoc signature
+**locally** (which Gatekeeper trusts in a way it doesn't trust the
+downloaded one). Apple Developer signing + notarization — which removes
+both steps entirely — is on the v0.2 roadmap.
 
 > Windows build is not shipping yet. Coming in a later v0.1.x release.
 
