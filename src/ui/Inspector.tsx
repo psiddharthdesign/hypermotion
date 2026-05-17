@@ -5,7 +5,6 @@ import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
   Appearance,
-  CameraNode,
   CornerRadii,
   Effect,
   FlexAlign,
@@ -1471,21 +1470,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 max={10000}
                 step={50}
                 suffix="px"
-              />
-            </FieldRow>
-            <FieldRow label="Pivot">
-              <SelectField<CameraNode['rotationOrigin']>
-                value={node.rotationOrigin ?? 'center'}
-                options={[
-                  { value: 'center', label: 'Center' },
-                  { value: 'top', label: 'Top' },
-                  { value: 'right', label: 'Right' },
-                  { value: 'bottom', label: 'Bottom' },
-                  { value: 'left', label: 'Left' },
-                ]}
-                onCommit={(v) =>
-                  api.setNodeProperty(node.id, 'rotationOrigin', v)
-                }
               />
             </FieldRow>
             {node.kind === 'camera' && (

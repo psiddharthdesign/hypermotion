@@ -595,18 +595,6 @@ export interface CameraNode extends NodeBase {
    * hardcoded value so existing scenes render identically.
    */
   focalLength: number
-  /**
-   * The point the camera rotates AROUND, in semantic terms — center
-   * of the artboard, or one of the four edge midpoints. Mirrors
-   * Figma's rotation-anchor affordance but for the scene-level camera:
-   * picking 'left' makes the right side of the scene swing in/out of
-   * depth while the left edge stays roughly fixed.
-   *
-   * Implemented as a transform-pivot offset, NOT by moving the camera
-   * position (camera.transform.x/y still names "where the camera
-   * looks"). Default 'center' = original behavior.
-   */
-  rotationOrigin: 'center' | 'top' | 'right' | 'bottom' | 'left'
 }
 
 /**

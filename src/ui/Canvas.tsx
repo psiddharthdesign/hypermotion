@@ -286,34 +286,13 @@ export function Canvas() {
     const s = cameraScaleFromZ
     const w = canvasWidth
     const h = canvasHeight
-
-    // Rotation pivot in WORLD space. Default 'center' = camera
-    // position. The four edge options pin one side of the artboard
-    // so rotation pivots around it (matches the user expectation
-    // "rotate around the left edge"). The math:
-    //   M = T(screen + s*(P-C)) * S(s) * R * T(-P)
-    // For P=C (center) this collapses back to the original
-    //   T(screen) * S(s) * R * T(-C)
-    const origin = camera.rotationOrigin ?? 'center'
-    const P =
-      origin === 'left'
-        ? { x: 0, y: h / 2 }
-        : origin === 'right'
-          ? { x: w, y: h / 2 }
-          : origin === 'top'
-            ? { x: w / 2, y: 0 }
-            : origin === 'bottom'
-              ? { x: w / 2, y: h }
-              : { x: cx, y: cy }
-    const dx = P.x - cx
-    const dy = P.y - cy
-    const screenX = w / 2 + s * dx
-    const screenY = h / 2 + s * dy
+    // Camera rotates around its own position. Per-element rotation
+    // pivots live on individual layers (transformOrigin), not here.
     return (
-      `translate(${screenX}px, ${screenY}px) ` +
+      `translate(${w / 2}px, ${h / 2}px) ` +
       `scale(${s}, ${s}) ` +
       `rotateX(${-rX}deg) rotateY(${-rY}deg) rotateZ(${-rZ}deg) ` +
-      `translate(${-P.x}px, ${-P.y}px)`
+      `translate(${-cx}px, ${-cy}px)`
     )
   }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
 
