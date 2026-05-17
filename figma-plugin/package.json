@@ -2,6 +2,7 @@
   "name": "hyper-motion-figma-plugin",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Figma plugin that copies a selection as a Hyper Motion JSON payload, ready to paste into the editor.",
   "scripts": {
     "build": "node build.mjs",

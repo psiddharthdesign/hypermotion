@@ -7,6 +7,7 @@ for the full text.
 Third-party dependencies:
   - @modelcontextprotocol/sdk (MIT)  https://github.com/modelcontextprotocol/typescript-sdk
   - commander (MIT)                  https://github.com/tj/commander.js
+  - yjs (MIT)                        https://github.com/yjs/yjs
   - zod (MIT)                        https://github.com/colinhacks/zod
   - typescript (Apache-2.0)          https://github.com/microsoft/TypeScript
 

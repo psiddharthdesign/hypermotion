@@ -135,8 +135,16 @@ export function getExportQuality(id: ExportQualityId): ExportQuality {
 
 /**
  * Resolve a quality's pixel dimensions against the active scene canvas.
- * Comp-relative qualities use the artboard size verbatim — fastest path
- * because no upscaling is needed.
+ *
+ *   - 'comp' qualities use the artboard size verbatim — fastest path,
+ *     no scaling, captures pixels 1:1.
+ *   - Named presets (720p / 2K / 4K) scale the artboard PROPORTIONALLY
+ *     so the preset's value sets the LONGEST edge and the other side
+ *     follows the canvas aspect ratio. Treating the preset's hardcoded
+ *     width/height as absolute would squash non-16:9 canvases — a
+ *     1080×1920 vertical artboard rendered at "4K = 3840×2160" would
+ *     letterbox or distort. Designers expect "4K" to mean "high-res
+ *     version of MY composition," not "16:9 regardless of what I drew."
  *
  * Even widths/heights are guaranteed because H.264 encoders refuse odd
  * dimensions; round up to the nearest even pixel.
@@ -145,10 +153,28 @@ export function resolveDimensions(
   quality: ExportQuality,
   sceneCanvas: { width: number; height: number },
 ): { width: number; height: number } {
-  const w = quality.width === 'comp' ? sceneCanvas.width : quality.width
-  const h = quality.height === 'comp' ? sceneCanvas.height : quality.height
   const ev = (n: number) => (n % 2 === 0 ? n : n + 1)
-  return { width: ev(Math.round(w)), height: ev(Math.round(h)) }
+
+  if (quality.width === 'comp' && quality.height === 'comp') {
+    return {
+      width: ev(Math.round(sceneCanvas.width)),
+      height: ev(Math.round(sceneCanvas.height)),
+    }
+  }
+
+  const presetLongest = Math.max(
+    typeof quality.width === 'number' ? quality.width : 0,
+    typeof quality.height === 'number' ? quality.height : 0,
+  )
+  const canvasLongest = Math.max(sceneCanvas.width, sceneCanvas.height)
+  if (presetLongest <= 0 || canvasLongest <= 0) {
+    return { width: ev(1), height: ev(1) }
+  }
+  const scale = presetLongest / canvasLongest
+  return {
+    width: ev(Math.round(sceneCanvas.width * scale)),
+    height: ev(Math.round(sceneCanvas.height * scale)),
+  }
 }
 
 /**

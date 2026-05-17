@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Hyper Motion Import — sandboxed plugin code.
  *
