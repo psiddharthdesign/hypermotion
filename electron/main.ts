@@ -23,6 +23,7 @@ import {
   ipcMain,
   Menu,
   shell,
+  webContents,
   type MenuItemConstructorOptions,
 } from 'electron'
 import path from 'node:path'
@@ -476,23 +477,68 @@ ipcMain.handle('clipboard:writeText', (_e, text: string) => {
 ipcMain.handle(
   'export:capture-rect',
   async (
-    _e,
+    e,
     rect: { x: number; y: number; width: number; height: number },
   ): Promise<Uint8Array> => {
-    const wc = mainWindow?.webContents
+    // Use the SENDER's webContents — not mainWindow's. The render-window
+    // architecture (added below) spawns a separate BrowserWindow that
+    // calls this IPC to capture itself, not the editor. Reading
+    // `event.sender` is what makes the same handler work for both the
+    // legacy in-editor capture path AND the new render-window flow.
+    const wc = e.sender ?? mainWindow?.webContents
     if (!wc) throw new Error('export:capture-rect — no active webContents')
-    // Electron requires whole numbers in the rect; clamp width/height to
-    // ≥1 so a zero-sized rect doesn't reject the capture call.
+    // Whole numbers + ≥1 dims; Electron / CDP both reject odd inputs.
     const r = {
       x: Math.max(0, Math.round(rect.x)),
       y: Math.max(0, Math.round(rect.y)),
       width: Math.max(1, Math.round(rect.width)),
       height: Math.max(1, Math.round(rect.height)),
     }
-    const image = await wc.capturePage(r)
-    // toPNG() returns a Buffer; structured-cloning sends it across IPC
-    // as Uint8Array on the renderer side.
-    return image.toPNG()
+
+    // PRIMARY: Chrome DevTools Protocol `Page.captureScreenshot` with a
+    // `clip` parameter. CDP captures regions of the rendered DOCUMENT,
+    // NOT just the visible viewport — which is the whole point. An
+    // artboard sized 3840×2880 on a 1920×1080 screen normally has the
+    // off-viewport portion unrasterized by Chromium's compositor, so
+    // `webContents.capturePage` only returns the visible center. CDP
+    // rasterizes the requested clip rect even when it extends beyond
+    // the visible area, giving us the full artboard at native pixels.
+    //
+    // We attach the debugger once per process and reuse it; reattaching
+    // every frame would burn IPC time. If anything goes wrong we fall
+    // through to the legacy capturePage path below, which still works
+    // for artboards that fit in the viewport.
+    try {
+      if (!wc.debugger.isAttached()) {
+        wc.debugger.attach('1.3')
+      }
+      const result = (await wc.debugger.sendCommand('Page.captureScreenshot', {
+        format: 'png',
+        clip: {
+          x: r.x,
+          y: r.y,
+          width: r.width,
+          height: r.height,
+          // `scale: 1` means "capture at the page's current device pixel
+          // ratio." Use the WebContents zoom factor to influence
+          // resolution; here we want native CSS pixels per unit.
+          scale: 1,
+        },
+        // Force the capture beyond the viewport. Without this, CDP
+        // still respects viewport bounds and we're back to square one.
+        captureBeyondViewport: true,
+        fromSurface: true,
+      })) as { data: string }
+      // CDP returns base64; decode to a buffer for IPC.
+      return Buffer.from(result.data, 'base64')
+    } catch (err) {
+      console.warn(
+        '[export] CDP captureScreenshot failed, falling back to capturePage:',
+        err,
+      )
+      const image = await wc.capturePage(r)
+      return image.toPNG()
+    }
   },
 )
 
@@ -505,9 +551,308 @@ ipcMain.handle('export:set-zoom-factor', (_e, factor: number) => {
   wc.setZoomFactor(f)
 })
 
+/**
+ * Resize the WebContents (and window) so a target rectangle fits
+ * entirely within the renderer's viewport.
+ *
+ * Why this exists: `webContents.capturePage(rect)` returns a snapshot of
+ * the COMPOSITOR's current surface — pixels that aren't laid out within
+ * the visible viewport simply aren't rasterized, so a 3840×2880 artboard
+ * rendered on a 1800×1000 screen will only have its central 1800×1000
+ * region in the snapshot. The rest crops out. Result: the export looks
+ * "zoomed in" because only the middle of the artboard was capturable.
+ *
+ * Solution: bump the window's content area to at least the artboard's
+ * pixel dimensions before the frame loop. macOS / Windows / Linux all
+ * allow windows larger than the display — they extend off the visible
+ * area but Chromium still rasterizes the full DOM at the new viewport.
+ * capturePage then returns the full artboard at native resolution.
+ *
+ * The original bounds are stashed in `preExportBounds` and restored by
+ * `export:restore-window-size`. Always pair the two; leaving the
+ * window oversized is the worst possible UX.
+ */
+let preExportBounds: { x: number; y: number; width: number; height: number } | null =
+  null
+
+ipcMain.handle(
+  'export:resize-for-capture',
+  (_e, opts: { width: number; height: number }) => {
+    if (!mainWindow) return
+    // Snapshot the user's pre-export window so we can restore exactly.
+    if (!preExportBounds) {
+      const b = mainWindow.getBounds()
+      preExportBounds = { x: b.x, y: b.y, width: b.width, height: b.height }
+    }
+    // Add a margin so the artboard isn't pressed up against the edge.
+    // The chrome bars (top bar, layers, inspector, timeline) eat real
+    // viewport space; without margin the artboard rect could end up
+    // partially clipped behind them. 40px each side covers the worst
+    // case for the current chrome thickness.
+    const targetW = Math.max(800, Math.round(opts.width) + 40)
+    const targetH = Math.max(600, Math.round(opts.height) + 100)
+    // Use setContentSize so we set the WebContents area, not the
+    // window's outer bounds (which would include title bar).
+    mainWindow.setContentSize(targetW, targetH)
+  },
+)
+
+ipcMain.handle('export:restore-window-size', () => {
+  if (!mainWindow || !preExportBounds) return
+  mainWindow.setBounds(preExportBounds)
+  preExportBounds = null
+})
+
 ipcMain.handle('export:get-zoom-factor', (): number => {
   const wc = mainWindow?.webContents
   return wc ? wc.getZoomFactor() : 1
+})
+
+/**
+ * Render-window export bridge.
+ *
+ * The proper "user keeps working during export" architecture. When the
+ * editor hits Export, instead of CSS-juggling the editor itself, we spawn
+ * a hidden BrowserWindow sized EXACTLY to the output dimensions, load the
+ * renderer with `?render-window=1&requestId=…`, and let it carry out the
+ * full export end-to-end:
+ *
+ *   1. Editor calls `export:open-render-window` with { params, seedBytes,
+ *      editorWebContentsId } — main stashes the job, spawns the hidden
+ *      window, returns the requestId.
+ *   2. Render window boots `RenderWindowApp`, calls
+ *      `export:fetch-render-job` to claim its job, hydrates a fresh Y.Doc
+ *      from seedBytes, mounts a chrome-less canvas at body (0,0).
+ *   3. Render window runs the same orchestrator + encoder, but uses ITS
+ *      OWN webContents for capture (via `export:capture-rect` — handler
+ *      reads `event.sender`).
+ *   4. Render window fires `export:render-window-progress` periodically;
+ *      main forwards to editor.
+ *   5. Render window fires `export:render-window-done` with the final
+ *      MP4 / GIF bytes; main forwards to editor, closes the render
+ *      window. Editor triggers the download / onBlob callback.
+ *   6. On cancel: editor calls `export:cancel-render-window` → main
+ *      destroys the render window mid-flight.
+ *
+ * Why a separate window rather than a hidden iframe / WebContentsView:
+ *   - A BrowserWindow has its own Chromium WebContents, its own viewport,
+ *     and its own CDP debugger. The editor stays interactive because
+ *     they're truly independent processes.
+ *   - Sizing is OS-level — `BrowserWindow.setContentSize(W, H)` makes
+ *     CDP's `captureBeyondViewport` reliably rasterize the whole DOM
+ *     because the DOM fits within the viewport. No special "fitViewportTo"
+ *     dance needed.
+ *   - The render window can be hidden (`show: false`) the entire time;
+ *     the OS still composites it for capture.
+ */
+interface RenderJob {
+  params: {
+    format: 'mp4' | 'webm' | 'gif'
+    quality: 'comp' | '720p' | '2k' | '4k'
+    sceneName: string
+    durationSec: number
+    frameRate: number
+    exportFps: number
+    // Output dimensions in CSS pixels. The render window is sized to
+    // exactly these dims so the artboard fills the viewport with no
+    // chrome and no padding.
+    outputWidth: number
+    outputHeight: number
+    // Range serialized as the inclusive frame pair (single-segment) or
+    // multi-segment array. The render window's orchestrator walks it.
+    range:
+      | { kind: 'full' }
+      | { kind: 'time'; startSec: number; endSec: number }
+      | { kind: 'frames'; startFrame: number; endFrame: number }
+      | {
+          kind: 'segments'
+          segments: Array<{ startSec: number; endSec: number }>
+        }
+    filenameTag?: string
+  }
+  /** `.hype`-style bytes (Y.encodeStateAsUpdate) describing the scene. */
+  seedBytes: Uint8Array
+  /** WebContents id of the editor window. Used to route progress + done
+   *  events back to the right window when multiple are open. */
+  editorWebContentsId: number
+}
+
+const renderJobs = new Map<string, RenderJob>()
+const renderWindows = new Map<string, BrowserWindow>()
+
+function makeRequestId(): string {
+  // Crypto-random short id is overkill for a per-export key. Use the
+  // timestamp + small random suffix so logs are scannable.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+ipcMain.handle(
+  'export:open-render-window',
+  async (
+    e,
+    payload: {
+      params: RenderJob['params']
+      seedBytes: Uint8Array
+    },
+  ): Promise<{ requestId: string }> => {
+    const requestId = makeRequestId()
+    const editorWebContentsId = e.sender.id
+    renderJobs.set(requestId, {
+      params: payload.params,
+      seedBytes: payload.seedBytes,
+      editorWebContentsId,
+    })
+
+    // Size to EXACTLY the output dimensions. No margin, no chrome — the
+    // canvas-root fills the viewport. capturePage / CDP captures the
+    // whole window with zero padding.
+    const W = Math.max(2, Math.round(payload.params.outputWidth))
+    const H = Math.max(2, Math.round(payload.params.outputHeight))
+
+    const win = new BrowserWindow({
+      width: W,
+      height: H,
+      // Hidden — capture works fine on offscreen windows because the
+      // compositor still rasterizes them. macOS / Windows / Linux all
+      // allow this.
+      show: false,
+      frame: false,
+      // No titlebar, no menu — irrelevant on a hidden window but also
+      // ensures setContentSize(W,H) lines up bit-for-bit with the
+      // viewport dimensions (no traffic-light area to deduct).
+      titleBarStyle: 'default',
+      backgroundColor: '#00000000',
+      // Allow the window to be larger than the visible display — required
+      // when the user requests a 4K export on a 1080p screen.
+      useContentSize: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        webSecurity: true,
+        // Mandatory — without this, the hidden window's rAF clock
+        // throttles to ~1Hz and the frame loop crawls.
+        backgroundThrottling: false,
+      },
+    })
+    // Belt-and-suspenders: force the inner content area to match.
+    win.setContentSize(W, H)
+
+    renderWindows.set(requestId, win)
+
+    win.on('closed', () => {
+      renderWindows.delete(requestId)
+      renderJobs.delete(requestId)
+    })
+
+    // Load the renderer with the render-window flag + requestId. The
+    // renderer's main.tsx detects this and mounts <RenderWindowApp>
+    // instead of <App>. URL params survive both dev and prod loads.
+    if (VITE_DEV_SERVER_URL) {
+      await win.loadURL(
+        `${VITE_DEV_SERVER_URL}?render-window=1&requestId=${requestId}`,
+      )
+    } else {
+      await win.loadFile(
+        path.join(process.env.DIST_RENDERER!, 'index.html'),
+        { query: { 'render-window': '1', requestId } },
+      )
+    }
+
+    return { requestId }
+  },
+)
+
+ipcMain.handle(
+  'export:fetch-render-job',
+  (_e, requestId: string): RenderJob['params'] & { seedBytes: Uint8Array } | null => {
+    const job = renderJobs.get(requestId)
+    if (!job) return null
+    // Return params + seedBytes inline so the render window has
+    // everything to bootstrap in one round-trip.
+    return { ...job.params, seedBytes: job.seedBytes }
+  },
+)
+
+function forwardToEditor(
+  requestId: string,
+  channel: string,
+  payload: unknown,
+): void {
+  const job = renderJobs.get(requestId)
+  if (!job) return
+  // `editorWebContentsId` is a WebContents id (from event.sender.id),
+  // not a BrowserWindow id. Look it up via `webContents.fromId` and
+  // ship the message there. Falls back to mainWindow's webContents
+  // when the original editor window has been closed — keeps the
+  // export pipeline functional even after a window swap.
+  const editor =
+    webContents.fromId(job.editorWebContentsId) ?? mainWindow?.webContents
+  if (editor && !editor.isDestroyed()) {
+    editor.send(channel, payload)
+  }
+}
+
+ipcMain.handle(
+  'export:render-window-progress',
+  (
+    _e,
+    payload: {
+      requestId: string
+      phase: string
+      frame?: number
+      totalFrames?: number
+      etaMs?: number
+      perFrameMs?: number
+    },
+  ) => {
+    forwardToEditor(payload.requestId, 'export:render-window-progress', payload)
+  },
+)
+
+ipcMain.handle(
+  'export:render-window-done',
+  (
+    _e,
+    payload: {
+      requestId: string
+      bytes: Uint8Array
+      fileName: string
+      mimeType: string
+    },
+  ) => {
+    forwardToEditor(payload.requestId, 'export:render-window-done', payload)
+    // Close + clean up the render window. Defer one tick so the
+    // forwarded message lands in the editor's queue before we tear
+    // down the sender's frame.
+    setTimeout(() => {
+      const win = renderWindows.get(payload.requestId)
+      if (win && !win.isDestroyed()) win.destroy()
+      renderWindows.delete(payload.requestId)
+      renderJobs.delete(payload.requestId)
+    }, 50)
+  },
+)
+
+ipcMain.handle(
+  'export:render-window-error',
+  (_e, payload: { requestId: string; message: string }) => {
+    forwardToEditor(payload.requestId, 'export:render-window-error', payload)
+    setTimeout(() => {
+      const win = renderWindows.get(payload.requestId)
+      if (win && !win.isDestroyed()) win.destroy()
+      renderWindows.delete(payload.requestId)
+      renderJobs.delete(payload.requestId)
+    }, 50)
+  },
+)
+
+ipcMain.handle('export:cancel-render-window', (_e, requestId: string) => {
+  const win = renderWindows.get(requestId)
+  if (win && !win.isDestroyed()) win.destroy()
+  renderWindows.delete(requestId)
+  renderJobs.delete(requestId)
 })
 
 /**

@@ -103,6 +103,31 @@ export interface ElectronCaptureOptions {
    * exports from a 1080p artboard, 4 for 4K. Pass 1 for native size.
    */
   zoomFactor?: number
+  /**
+   * Minimum viewport (CSS pixels) the BrowserWindow must accommodate
+   * during capture. When set, the main process resizes the window so
+   * the artboard fits ENTIRELY within the visible viewport — otherwise
+   * `webContents.capturePage` only returns the on-screen portion of an
+   * oversized artboard and the export looks "zoomed-in" because the
+   * rest crops out. Pass the scene canvas dimensions.
+   */
+  fitViewportTo?: { width: number; height: number }
+  /**
+   * Target output dimensions (CSS pixels). When set, every captured
+   * frame is drawn into a canvas of this exact size — downscaling the
+   * Retina-doubled raw capture to the requested pixel count.
+   *
+   * Why this is needed: `capturePage` returns a bitmap at the page's
+   * device pixel ratio (2x on Retina). A 3840×2880 artboard captures
+   * as 7680×5760 — which exceeds the H.264 Level 5.2 maximum (4096
+   * wide) and the encoder rejects the frame. Drawing the bitmap into
+   * a fixed-size 2D canvas via `drawImage` performs a bilinear
+   * downsample that fits within the codec's limits while preserving
+   * the framing.
+   *
+   * Recommended: pass the resolved export quality dimensions.
+   */
+  outputSize?: { width: number; height: number }
 }
 
 export interface ElectronCapture {
@@ -137,6 +162,26 @@ export async function createElectronCapture(
     )
   }
   const invoke = bridge.invoke
+
+  // Resize the BrowserWindow's WebContents to fit the entire artboard
+  // BEFORE we measure or capture. CDP's `captureBeyondViewport: true`
+  // is supposed to rasterize regions outside the viewport, but in
+  // practice it doesn't reliably do so for large off-viewport areas —
+  // we'd get the visible-viewport portion populated and the rest
+  // black. Forcing the WebContents larger than the artboard means
+  // every part of the canvas is in the viewport and rasterized,
+  // and CDP returns a full image.
+  //
+  // The window may extend off the user's display — that's fine,
+  // Chromium still rasterizes content at the full viewport size. We
+  // restore the original window dimensions in destroy().
+  let didResizeWindow = false
+  if (opts.fitViewportTo) {
+    await invoke('export:resize-for-capture', opts.fitViewportTo)
+    didResizeWindow = true
+    // Settle: window manager → Chromium re-layout → React reflow.
+    await waitForFrames(4)
+  }
 
   // Apply page zoom FIRST so the rect we read includes the zoomed
   // pixel dimensions. Without this, we'd measure the artboard at zoom
@@ -189,14 +234,25 @@ export async function createElectronCapture(
       const blob = new Blob([png as BlobPart], { type: 'image/png' })
       const bitmap = await createImageBitmap(blob)
       try {
+        // Two paths:
+        //   - outputSize set → draw the bitmap into a fixed-size canvas,
+        //     letting drawImage's bilinear filter downsample any DPR
+        //     inflation. Encoder gets exact target pixel dims.
+        //   - outputSize unset → keep the captured bitmap at native
+        //     dims (legacy behavior).
+        const targetW = opts.outputSize?.width ?? bitmap.width
+        const targetH = opts.outputSize?.height ?? bitmap.height
         if (
-          outCanvas.width !== bitmap.width ||
-          outCanvas.height !== bitmap.height
+          outCanvas.width !== targetW ||
+          outCanvas.height !== targetH
         ) {
-          outCanvas.width = bitmap.width
-          outCanvas.height = bitmap.height
+          outCanvas.width = targetW
+          outCanvas.height = targetH
         }
-        outCtx.drawImage(bitmap, 0, 0)
+        // drawImage with explicit destination rect performs the
+        // resample. High-quality on modern Chromium without us
+        // having to manage smoothing settings.
+        outCtx.drawImage(bitmap, 0, 0, targetW, targetH)
       } finally {
         bitmap.close()
       }
@@ -211,6 +267,14 @@ export async function createElectronCapture(
           await invoke('export:set-zoom-factor', originalZoom)
         } catch {
           /* best effort — never throw out of destroy */
+        }
+      }
+      if (didResizeWindow) {
+        try {
+          await invoke('export:restore-window-size')
+        } catch {
+          /* best effort — leaving the window oversized after a failed
+           * export is ugly but recoverable (user just resizes manually). */
         }
       }
     },

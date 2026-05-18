@@ -49,24 +49,53 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
 
   const codec = pickH264Codec(width, height, fps)
 
-  // Probe the chosen codec before we wire the encoder. If the
-  // hardware encoder doesn't support this combo (e.g. an old GPU
-  // missing 4K H.264 acceleration), this surfaces as a clean error
-  // BEFORE we start the frame loop — instead of failing on frame 1
-  // with a confusing message buried in the encoder error callback.
-  const config = {
+  // Probe the chosen codec. WebCodecs may reject for two reasons:
+  //   1. The GPU's hardware H.264 encoder doesn't handle this combo —
+  //      common at 4K+ on Intel iGPUs and some older Apple Silicon
+  //      paths. Apple's VideoToolbox notably refuses non-16:9 4K (e.g.
+  //      3840×2880, the 4:3 cousin) on Mx hardware encoder.
+  //   2. The codec string genuinely isn't supported (browser too old).
+  //
+  // For (1), software encoding works — slower but always there.
+  // Cycle through three accel preferences and use the first that
+  // accepts. Only if EVERY preference rejects do we surface an error.
+  const baseConfig = {
     codec,
     width,
     height,
     bitrate,
     framerate: fps,
   }
-  const support = await VideoEncoder.isConfigSupported(config)
-  if (!support.supported) {
+  const accelPrefs: Array<
+    'prefer-hardware' | 'prefer-software' | 'no-preference'
+  > = ['prefer-hardware', 'no-preference', 'prefer-software']
+  let chosenAccel: (typeof accelPrefs)[number] | null = null
+  for (const accel of accelPrefs) {
+    const probed = await VideoEncoder.isConfigSupported({
+      ...baseConfig,
+      hardwareAcceleration: accel,
+    })
+    if (probed.supported) {
+      chosenAccel = accel
+      break
+    }
+  }
+  if (!chosenAccel) {
+    // Tailor the suggestion. H.264 has hard caps that vary by Level
+    // (the trailing two hex digits of the codec string). On Chromium
+    // for macOS the practical ceiling for MP4 is roughly 4K @ 16:9
+    // (3840×2160) — Level 5.2. Non-standard aspect ratios at 4K
+    // (e.g. 3840×2880 / 4:3) exceed coded-area limits even though
+    // each dimension on its own is fine.
+    const is16x9 = Math.abs(width / height - 16 / 9) < 0.01
+    const suggestSize = is16x9
+      ? 'a smaller resolution'
+      : `a 16:9 canvas (e.g. 3840×2160 for 4K, 1920×1080 for HD), or 2K (${Math.round((width / Math.max(width, height)) * 2560)}×${Math.round((height / Math.max(width, height)) * 2560)} for your aspect)`
     throw new Error(
-      `H.264 encoder does not support ${width}×${height} at ${fps}fps with codec ${codec}. ` +
-        `Your browser or GPU may not have hardware support — try a smaller export size, ` +
-        `or update Chrome / Edge / Arc.`,
+      `H.264 / MP4 can't encode ${width}×${height} on this system. H.264 caps out around ` +
+        `4K at 16:9; your aspect ratio doesn't fit the codec's profile sizes. ` +
+        `Two ways forward: switch the Export format to WebM (no resolution limits — VP9 ` +
+        `encoder accepts arbitrary sizes), or pick ${suggestSize}.`,
     )
   }
 
@@ -91,14 +120,8 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
   })
 
   encoder.configure({
-    codec,
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-    // Constant-quality not supported on all platforms; rely on bitrate
-    // mode (the default). hardwareAcceleration='prefer-hardware' would
-    // be nice but Chrome's encoder picks the right backend on its own.
+    ...baseConfig,
+    hardwareAcceleration: chosenAccel,
   })
 
   const frameDurationUs = Math.round(1_000_000 / fps)
@@ -190,14 +213,24 @@ function pickH264Codec(width: number, height: number, fps: number): string {
     { hex: '32', maxArea: 5_652_480, maxRate: 150_994_944 }, // L5.0 — 1440p30
     { hex: '33', maxArea: 9_437_184, maxRate: 251_658_240 }, // L5.1 — 4K30
     { hex: '34', maxArea: 9_437_184, maxRate: 530_841_600 }, // L5.2 — 4K60
+    // Level 6.x covers everything larger than 4K — vertical UI scenes,
+    // 8K boards, anything with an unusual aspect like 3840×2880. Width
+    // cap is 8192 and height cap is 4320 across all 6.x sublevels;
+    // they differ only in MaxBR and MaxMBPS. We pick the lowest 6.x
+    // sublevel that fits the requested pixel rate so we don't ask the
+    // encoder for more headroom than necessary (some GPUs only
+    // implement up to 6.1).
+    { hex: '3C', maxArea: 35_651_584, maxRate: 1_069_547_520 }, // L6.0 — 8K30
+    { hex: '3D', maxArea: 35_651_584, maxRate: 2_139_095_040 }, // L6.1 — 8K60
+    { hex: '3E', maxArea: 35_651_584, maxRate: 4_278_190_080 }, // L6.2 — 8K120
   ]
   for (const l of levels) {
     if (codedArea <= l.maxArea && codedRate <= l.maxRate) {
       return `avc1.6400${l.hex}`
     }
   }
-  // Anything bigger than 4K60 is beyond the table; fall back to L5.2.
-  // The encoder will reject if the hardware doesn't support it, which
-  // surfaces as a clean error in the orchestrator.
-  return 'avc1.640034'
+  // Anything beyond Level 6.2 is past the H.264 spec entirely; fall
+  // back to L6.2 and let the encoder reject with a clean error if the
+  // GPU can't go that high.
+  return 'avc1.64003E'
 }

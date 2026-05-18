@@ -77,8 +77,11 @@ const IDENTITY_INHERITED: InheritedAnim = {
  * that carry the compounded effect of every ancestor's transform +
  * animated delta. Node's own contribution is NOT included here — the
  * NodeView composes its own on top at render time.
+ *
+ * Exported so the render-window shell (`src/render/RenderCanvas.tsx`)
+ * can build the same inheritance map without duplicating the walk.
  */
-function composeInheritedAnim(
+export function composeInheritedAnim(
   api: SceneAPI,
   rootId: NodeId | null,
   animated: Record<NodeId, AnimatedValue>,
@@ -827,8 +830,16 @@ export function Canvas() {
       {/* Single transform container for both scene paint + selection overlay.
           Placing the transform here (absolute, top-left) with explicit pan
           and scale is more predictable than transforming a flex-centered
-          box — the math for click-to-canvas stays linear. */}
+          box — the math for click-to-canvas stays linear.
+
+          `data-canvas-workspace="1"` lets export-mode CSS strip the
+          transform + centering so the artboard sits at viewport (0,0)
+          during capture. Without that, the artboard's bounding rect can
+          have negative coordinates (centered = anchor at workspace
+          middle), and CDP captures black from regions outside the
+          document. */}
       <div
+        data-canvas-workspace="1"
         className="absolute left-1/2 top-1/2"
         style={{
           transform: `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`,
@@ -1104,7 +1115,16 @@ function toolToKind(tool: Tool): NodeKind {
 // Scene paint layer
 // ---------------------------------------------------------------------------
 
-function SceneLayer({
+/**
+ * Paints the scene graph into an absolutely-positioned tree of NodeView
+ * divs. Exported so the render-window shell can reuse the exact same
+ * paint code as the editor — the only differences between editor and
+ * render-window rendering are chrome (overlays, gizmos, dock) and the
+ * surrounding workspace transform. Everything below this line is
+ * identical in both paths, which is the whole point: what you see in
+ * the editor is bit-for-bit what gets exported.
+ */
+export function SceneLayer({
   rootId,
   solved,
   order,

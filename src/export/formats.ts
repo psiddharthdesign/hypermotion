@@ -137,14 +137,26 @@ export function getExportQuality(id: ExportQualityId): ExportQuality {
  * Resolve a quality's pixel dimensions against the active scene canvas.
  *
  *   - 'comp' qualities use the artboard size verbatim — fastest path,
- *     no scaling, captures pixels 1:1.
- *   - Named presets (720p / 2K / 4K) scale the artboard PROPORTIONALLY
- *     so the preset's value sets the LONGEST edge and the other side
- *     follows the canvas aspect ratio. Treating the preset's hardcoded
- *     width/height as absolute would squash non-16:9 canvases — a
- *     1080×1920 vertical artboard rendered at "4K = 3840×2160" would
- *     letterbox or distort. Designers expect "4K" to mean "high-res
- *     version of MY composition," not "16:9 regardless of what I drew."
+ *     no scaling, captures pixels 1:1. Caller's responsibility to pick
+ *     a canvas that the chosen encoder can handle (H.264 caps around
+ *     4K @ 16:9 ≈ 8.3M pixels; OpenH264 software fallback caps at
+ *     9.4M pixels). When the comp exceeds those limits the MP4 encoder
+ *     surfaces a clear error suggesting WebM or a smaller quality.
+ *
+ *   - Named presets (720p / 2K / 4K) clamp the artboard into the
+ *     preset's bounding box, preserving aspect ratio. The output is
+ *     never larger than the preset's width OR height. The smaller of
+ *     the two ratios wins, so:
+ *
+ *       16:9 canvas + 4K preset → 3840×2160 (fills exactly)
+ *        4:3 canvas + 4K preset → 2880×2160 (height-limited)
+ *       9:16 canvas + 4K preset → 1215×2160 (width-limited)
+ *
+ *     The old "longest-edge" behavior produced 3840×2880 for a 4:3
+ *     canvas at 4K — exceeding H.264's pixel-count cap and getting
+ *     rejected by every encoder, hardware and software. Bounding-box
+ *     clamp guarantees every named preset fits within H.264 limits
+ *     regardless of canvas aspect.
  *
  * Even widths/heights are guaranteed because H.264 encoders refuse odd
  * dimensions; round up to the nearest even pixel.
@@ -152,29 +164,60 @@ export function getExportQuality(id: ExportQualityId): ExportQuality {
 export function resolveDimensions(
   quality: ExportQuality,
   sceneCanvas: { width: number; height: number },
+  formatId?: ExportFormatId,
 ): { width: number; height: number } {
   const ev = (n: number) => (n % 2 === 0 ? n : n + 1)
 
+  let width: number
+  let height: number
+
   if (quality.width === 'comp' && quality.height === 'comp') {
-    return {
-      width: ev(Math.round(sceneCanvas.width)),
-      height: ev(Math.round(sceneCanvas.height)),
+    width = Math.round(sceneCanvas.width)
+    height = Math.round(sceneCanvas.height)
+  } else {
+    const maxW = typeof quality.width === 'number' ? quality.width : 0
+    const maxH = typeof quality.height === 'number' ? quality.height : 0
+    if (maxW <= 0 || maxH <= 0 || sceneCanvas.width <= 0 || sceneCanvas.height <= 0) {
+      return { width: ev(1), height: ev(1) }
+    }
+    // Bounding-box fit: scale so neither dimension exceeds the preset.
+    // The smaller of (maxW / canvasW) and (maxH / canvasH) wins because
+    // it's the one that keeps BOTH dimensions inside the box. Math.min
+    // is also why 4K on a 4:3 canvas produces 2880×2160 instead of
+    // 3840×2880 — height becomes the limiting factor.
+    const scale = Math.min(maxW / sceneCanvas.width, maxH / sceneCanvas.height)
+    width = Math.round(sceneCanvas.width * scale)
+    height = Math.round(sceneCanvas.height * scale)
+  }
+
+  // H.264 / MP4 ceiling.
+  //
+  // OpenH264 (Chromium's software fallback) and most hardware H.264
+  // encoders cap the coded area around 4K UHD = 8,294,400 pixels with
+  // strict per-side limits at Level 5.2 (3840×2160 / 4096×2304). When
+  // the resolved dims exceed that, the encoder rejects the configure
+  // call and the user gets the "H.264 / MP4 can't encode N×M" error.
+  //
+  // Match comp on an oversized canvas is the common case — a user with
+  // a 3840×2880 (4:3) canvas picks "Match comp" expecting it to "just
+  // work." Without this clamp, every Match comp export on a >4K canvas
+  // dies. With it, we silently fit into the 4K bounding box (3840×2160
+  // → e.g. 2880×2160 for 4:3) and the export ships clean.
+  //
+  // WebM has no such limit (VP9 accepts arbitrary sizes) — skip the
+  // clamp there so users can still get a literal Match comp export by
+  // switching format.
+  if (formatId === 'mp4') {
+    const H264_MAX_W = 3840
+    const H264_MAX_H = 2160
+    if (width > H264_MAX_W || height > H264_MAX_H) {
+      const scale = Math.min(H264_MAX_W / width, H264_MAX_H / height)
+      width = Math.round(width * scale)
+      height = Math.round(height * scale)
     }
   }
 
-  const presetLongest = Math.max(
-    typeof quality.width === 'number' ? quality.width : 0,
-    typeof quality.height === 'number' ? quality.height : 0,
-  )
-  const canvasLongest = Math.max(sceneCanvas.width, sceneCanvas.height)
-  if (presetLongest <= 0 || canvasLongest <= 0) {
-    return { width: ev(1), height: ev(1) }
-  }
-  const scale = presetLongest / canvasLongest
-  return {
-    width: ev(Math.round(sceneCanvas.width * scale)),
-    height: ev(Math.round(sceneCanvas.height * scale)),
-  }
+  return { width: ev(width), height: ev(height) }
 }
 
 /**

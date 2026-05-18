@@ -30,6 +30,7 @@ export { apiReady } from './internals'
 export {
   sceneToBytes,
   applyBytesToScene,
+  loadSceneIntoDoc,
   readScene,
   sceneToJson,
   sceneToJsonString,

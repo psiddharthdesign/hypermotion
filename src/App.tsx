@@ -71,30 +71,29 @@ function Shell() {
   useFigmaPaste()
   useFileMenu()
 
-  // Body-level "export mode" toggle. CSS rules in src/index.css key off
-  // `data-export-mode='1'` to hide every chrome surface (TopBar, Layers,
-  // Inspector, Timeline, FloatingDock, status pill) so only the
-  // artboard remains on screen during a render. The orchestrator
-  // additionally freezes zoom + pan so the artboard sits at native
-  // CSS size, centered, ready for capturePage to grab pixel-correct
-  // frames. Toggle is driven by the export progress phase: anything
-  // that isn't `idle` / `done` / `error` / `cancelled` counts as an
-  // active render.
-  useEffect(() => {
-    const isActive =
-      exportPhase === 'rendering' || exportPhase === 'encoding'
-    const body = document.body
-    if (isActive) {
-      body.setAttribute('data-export-mode', '1')
-    } else {
-      body.removeAttribute('data-export-mode')
-    }
-    return () => {
-      // Defensive: if the App unmounts mid-export, never leave the
-      // editor stranded with chrome hidden.
-      body.removeAttribute('data-export-mode')
-    }
-  }, [exportPhase])
+  // Export-mode body attribute toggling has been REMOVED.
+  //
+  // Background: the legacy in-editor capture path used a body
+  // `data-export-mode='1'` attribute to hide the TopBar, Layers,
+  // Inspector, Timeline, FloatingDock, and status pill while the
+  // export pipeline captured the editor's own DOM. Combined with a
+  // forced zoom-to-100% + pan-to-0 on the workspace, this surfaced
+  // the artboard for capturePage to grab. It was visually disruptive
+  // and brittle — the user saw their editor flicker, snap, and
+  // restore on every export.
+  //
+  // The new render-window pipeline (electron/main.ts → render-window
+  // BrowserWindow → src/render/RenderWindowApp.tsx) runs the export
+  // in a separate, hidden process at the exact output dimensions.
+  // No editor chrome is ever present in the captured frames because
+  // the render window only mounts the canvas. The editor stays
+  // fully interactive throughout — pan, zoom, edit anything you
+  // want while a 4K export renders in the background.
+  //
+  // `exportPhase` is still read at the top of this function because
+  // some legacy diagnostic might want to know — but it no longer
+  // drives any DOM mutation here.
+  void exportPhase
   // Walk the scene and pre-fetch any Google Fonts referenced by text
   // nodes so the canvas renders the right face without waiting for the
   // Inspector to be opened for each one.

@@ -18,8 +18,31 @@ import { createSampleScene } from '@/scene/sample'
  * inside a useEffect.
  */
 
+/**
+ * Render-window detection.
+ *
+ * When this module loads inside an Electron BrowserWindow spawned by the
+ * `export:open-render-window` IPC, we MUST skip IndexedDB persistence and
+ * the sample-scene seed. Reasons:
+ *
+ *   - IndexedDB is partitioned per-origin in Electron. The render window
+ *     and editor share an origin, so both would attach to the same store
+ *     and the render window's empty doc would race-write over the user's
+ *     scene before the editor's seed-from-bytes lands.
+ *
+ *   - Sample-scene auto-seeding produces an "Untitled Scene" that the
+ *     render window would then export by accident.
+ *
+ * Detected via the same `?render-window=1` URL param `src/main.tsx`
+ * branches on. RenderWindowApp applies the editor's seed bytes onto this
+ * empty doc once it fetches its render job from main.
+ */
+const isRenderWindow =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('render-window') === '1'
+
 const doc = new Y.Doc()
-const persistence = persistScene(doc)
+const persistence = isRenderWindow ? null : persistScene(doc)
 
 /**
  * Module-scope handle to the active Y.Doc. Exposed for non-React callers
@@ -28,7 +51,9 @@ const persistence = persistScene(doc)
  */
 export const sceneDoc = doc
 
-export const apiReady: Promise<SceneAPI> = persistence.whenSynced
+export const apiReady: Promise<SceneAPI> = (
+  persistence ? persistence.whenSynced : Promise.resolve()
+)
   .then(() => {
     try {
       const api = createSceneAPI(doc)
@@ -39,7 +64,10 @@ export const apiReady: Promise<SceneAPI> = persistence.whenSynced
       // seeding, leaving us with a camera but no artboard. Every Canvas
       // mutation that needs `rootId` (drawing a rect, importing Figma,
       // pasting from the plugin) silently bails when root is empty.
-      if (!api.getRoot()) {
+      // Skipped in render-window mode — the render shell wipes + applies
+      // the editor's seed bytes itself, so any sample content would be
+      // about to get blown away anyway.
+      if (!isRenderWindow && !api.getRoot()) {
         createSampleScene(api)
       }
       // Dev-only: expose the API on window so you can poke at the scene

@@ -208,65 +208,39 @@ body {
 }
 
 /*
- * Export mode.
+ * Tab-capture export mode.
  *
- * Two attributes drive the same set of "hide editor chrome during
- * export" rules:
+ * `data-export-recording='1'` is set by recordTab.ts while
+ * getDisplayMedia + MediaRecorder is running — the WebM export path
+ * (always tab-captured) and the web-tree MP4 fallback. It hides every
+ * editor chrome surface so getDisplayMedia's whole-tab capture only
+ * sees the artboard.
  *
- *   - `data-export-mode='1'` — primary path, set by App's effect
- *     whenever a render is in flight (capturePage-driven exports). The
- *     editor's zoom/pan are also frozen by the orchestrator before the
- *     attribute flips on, so the artboard sits at native CSS size
- *     centered in the viewport.
- *
- *   - `data-export-recording='1'` — legacy path, set by recordTab.ts
- *     while getDisplayMedia + MediaRecorder is running. Same goals,
- *     same rules, only difference is the OS-level browser permission
- *     prompt that fires before this attribute is set. Kept for the
- *     web tree where capturePage isn't available.
- *
- * Selectors are deliberately broad: hide every <header>, <aside>, the
- * timeline (which is a <section> wrapped in a footer-style band), and
- * anything explicitly tagged with `data-export-hide`. The canvas
- * workspace (<main>) and the artboard div ([data-canvas-root]) stay
- * visible. The status pill carries `data-export-hide` so the user's
- * own progress indicator never bleeds into the capture.
+ * The render-window flow (MP4 / GIF in Electron, the new default) does
+ * NOT use this attribute. That pipeline spawns a separate, hidden
+ * BrowserWindow that mounts only the canvas — no editor chrome ever
+ * exists in the captured frames. See src/render/RenderWindowApp.tsx
+ * and the comment in src/App.tsx for why the in-editor
+ * `data-export-mode` attribute was removed.
  */
-body[data-export-mode='1'] [data-export-hide],
 body[data-export-recording='1'] [data-export-hide],
-body[data-export-mode='1'] [data-export-hide='1'],
 body[data-export-recording='1'] [data-export-hide='1'] {
   display: none !important;
 }
-body[data-export-mode='1'] header,
 body[data-export-recording='1'] header,
-body[data-export-mode='1'] aside,
 body[data-export-recording='1'] aside {
   display: none !important;
 }
-/* Timeline is rendered as a non-aside container; tag the host. */
-body[data-export-mode='1'] [data-timeline-host],
 body[data-export-recording='1'] [data-timeline-host] {
   display: none !important;
 }
-/* Workspace background fades to a neutral so any scroll-bar-area or
-   margin pixels around the artboard come back as solid black instead
-   of the editor's chrome color (which would look like banding). */
-body[data-export-mode='1'] {
+body[data-export-recording='1'] {
   background: #000 !important;
-}
-body[data-export-mode='1'] main {
-  background: #000 !important;
-}
-/* Disable user input while a render is running. The orchestrator also
-   captures the cancel token, but blocking pointer events keeps a
-   stray click from selecting layers mid-capture (which would then
-   show selection chrome in the next captured frame). */
-body[data-export-mode='1'] {
   cursor: none !important;
   user-select: none !important;
 }
-body[data-export-mode='1'] main {
+body[data-export-recording='1'] main {
+  background: #000 !important;
   pointer-events: none !important;
 }
 

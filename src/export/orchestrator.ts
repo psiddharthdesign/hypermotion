@@ -12,6 +12,7 @@ import { createGifEncoder } from './encodeGif'
 import { createMp4Encoder, isMp4ExportSupported } from './encodeMp4'
 import {
   buildExportFilename,
+  resolveDimensions,
   resolveFrameSegments,
   type ExportFormat,
   type ExportQuality,
@@ -19,6 +20,7 @@ import {
 } from './formats'
 import { useExportProgress } from './progressStore'
 import { recordTabCapture } from './recordTab'
+import { runRenderWindowExport, isRenderWindowSupported } from './renderWindowClient'
 
 /**
  * Top-level export dispatcher.
@@ -109,9 +111,26 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
     return recordTabCapture({ ...ctx.format, container: 'webm' as const }, ctx)
   }
 
-  if (id === 'gif') {
-    if (requested === 'tab-capture') {
-      // GIF tab capture isn't implemented; surface a friendly error.
+  // MP4 and GIF: route through the render-window pipeline when available.
+  //
+  // The render window is a hidden BrowserWindow sized to the exact output
+  // dimensions that hosts only the canvas — no editor chrome, no zoom or
+  // pan state. The export runs entirely inside it; this editor window
+  // stays fully interactive (no zoom snap, no panel hiding, no flicker).
+  //
+  // Fallback order:
+  //   1. Render window (in-Electron, the new default)
+  //   2. Legacy in-editor capturePage (in-Electron, kept for safety in
+  //      case the render-window path fails to spawn)
+  //   3. Tab capture (web tree — no Electron, no capturePage)
+  if (id === 'gif' || id === 'mp4') {
+    if (id === 'mp4' && requested === 'tab-capture') {
+      return recordTabCapture(
+        { ...ctx.format, container: 'mp4' as const },
+        ctx,
+      )
+    }
+    if (id === 'gif' && requested === 'tab-capture') {
       useExportProgress
         .getState()
         .setError(
@@ -119,7 +138,25 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
         )
       return
     }
+
+    // Prefer the render-window flow when we're in Electron AND no caller
+    // explicitly demanded the in-editor `native` path. The render-window
+    // flow IS the native path now; the `native` pipeline override
+    // remains as the legacy in-editor fallback for diagnostic use.
+    if (isRenderWindowSupported() && requested !== 'native') {
+      return runRenderWindowExport(ctx)
+    }
+
+    // Legacy in-editor capturePage path. Reached when:
+    //   - Caller explicitly set pipeline='native' (debugging / headless)
+    //   - The render-window IPC isn't available (older Electron build)
     if (!isElectronCaptureSupported()) {
+      if (id === 'mp4') {
+        return recordTabCapture(
+          { ...ctx.format, container: 'mp4' as const },
+          ctx,
+        )
+      }
       useExportProgress
         .getState()
         .setError(
@@ -127,28 +164,7 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
         )
       return
     }
-    return runCaptureRect(ctx, async (width, height, fps) => {
-      const enc = createGifEncoder({ width, height, fps })
-      return {
-        addFrame: (canvas) => enc.addFrame(canvas),
-        finish: async () => enc.finish(),
-      }
-    })
-  }
-
-  if (id === 'mp4') {
-    // Default: Electron capturePage when available, otherwise fall
-    // back to tab capture (which lands you with WebM-in-an-MP4-wrapper
-    // in the browser, but at least it doesn't fail).
-    const wantsTabCapture =
-      requested === 'tab-capture' || !isElectronCaptureSupported()
-    if (wantsTabCapture) {
-      return recordTabCapture(
-        { ...ctx.format, container: 'mp4' as const },
-        ctx,
-      )
-    }
-    if (!isMp4ExportSupported()) {
+    if (id === 'mp4' && !isMp4ExportSupported()) {
       useExportProgress
         .getState()
         .setError(
@@ -156,7 +172,15 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
         )
       return
     }
+
     return runCaptureRect(ctx, async (width, height, fps) => {
+      if (id === 'gif') {
+        const enc = createGifEncoder({ width, height, fps })
+        return {
+          addFrame: (canvas) => enc.addFrame(canvas),
+          finish: async () => enc.finish(),
+        }
+      }
       const enc = await createMp4Encoder({ width, height, fps })
       return {
         addFrame: (canvas, index) => enc.addFrame(canvas, index),
@@ -170,6 +194,11 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
     .getState()
     .setError(`No export pipeline registered for format '${id}'.`)
 }
+
+// Re-export so callers can introspect whether the render-window path
+// is available. Used by the headless export to decide whether to
+// emit a "use Electron" hint when running in a stripped environment.
+export { isRenderWindowSupported }
 
 // ---------------------------------------------------------------------------
 // captureRect-driven frame loop.
@@ -274,14 +303,19 @@ async function runCaptureRect(
   const ui = useUI.getState()
   const originalView = { ...ui.view }
   // Drop zoom to 1 and pan to 0 so the artboard sits at native CSS
-  // size centered in the viewport. `setView` is the Zustand setter.
+  // size centered in the viewport. Necessary because CDP's clip rect
+  // captures with all ancestor CSS transforms applied — at the user's
+  // current zoom (e.g. 17%), the artboard would render at 17% inside
+  // the clip region. Resetting view here keeps render fidelity.
+  //
+  // The proper "user keeps working during export" fix lives in a
+  // separate BrowserWindow that renders the scene independently;
+  // that's tracked as v0.2 work.
   ui.setView({ zoom: 1, panX: 0, panY: 0 })
 
   // Wait two rAFs:
   //   - first lets React commit the new view state
   //   - second lets the browser actually paint the new transform
-  // Without this, the first frame would capture the old (zoomed)
-  // viewport and the rect we measure would be wrong.
   await waitForFrames(2)
 
   // ---- set up the Electron capture session -------------------------
@@ -292,7 +326,24 @@ async function runCaptureRect(
   void sceneCanvas
   let capture: ElectronCapture
   try {
-    capture = await createElectronCapture({ zoomFactor: 1 })
+    // Resolve the chosen quality against the canvas so we know exactly
+    // how many pixels the encoder will emit. Used both to size the
+    // captured frames (downscaling Retina-doubled raw output) AND to
+    // configure the encoder. Drives the H.264 profile cap — without
+    // this, a 3840×2880 artboard on a 2× DPR display would capture as
+    // 7680×5760 and the encoder rejects it.
+    const targetDims = resolveDimensions(ctx.quality, sceneCanvas, ctx.format.id)
+    capture = await createElectronCapture({
+      zoomFactor: 1,
+      // Force the window to fit the artboard's CSS pixel dimensions
+      // so capturePage gets the WHOLE artboard rasterized, not just
+      // the portion that happened to fit in the user's screen.
+      fitViewportTo: { width: sceneCanvas.width, height: sceneCanvas.height },
+      // Pin each captured frame to the target output dimensions.
+      // Drops the DPR multiplier; encoder gets predictable pixel sizes
+      // that stay within H.264 limits.
+      outputSize: targetDims,
+    })
   } catch (e) {
     progress.setError(e instanceof Error ? e.message : String(e))
     ui.setView(originalView)
