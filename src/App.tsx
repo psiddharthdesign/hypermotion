@@ -24,6 +24,7 @@ import {
   recenterStaleCamera,
 } from '@/ui/actions'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
+import { useCustomFonts } from '@/ui/fonts/useCustomFonts'
 import { useExportProgress } from '@/export/progressStore'
 
 /**
@@ -98,6 +99,11 @@ function Shell() {
   // nodes so the canvas renders the right face without waiting for the
   // Inspector to be opened for each one.
   useEagerLoadSceneFonts()
+  // Register every scene-embedded custom font with document.fonts so
+  // measureText / CSS can use them. Notifies layout to re-solve on
+  // each registration so freshly-added fonts get correct metrics
+  // without a manual refresh.
+  useCustomFonts()
 
   // One-shot migration: earlier builds let users accidentally rotate /
   // scale the Scene root via Inspector fields that no longer exist.
