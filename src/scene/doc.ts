@@ -123,6 +123,22 @@ export interface SceneAPI {
   /** Delete a section by id. No-op if it doesn't exist. */
   deleteSection(id: string): void
 
+  // --- custom fonts --------------------------------------------------------
+  /**
+   * Embed a font into this scene. The font's raw bytes ship with the
+   * .hype file — opening on another machine restores the font without
+   * a network fetch. Idempotent on (font.id): a second call with the
+   * same id overwrites the prior entry, useful when re-uploading a
+   * fixed file. Returns the stored CustomFont.
+   */
+  setCustomFont(font: import('@/scene/types').CustomFont): void
+  /** Retrieve one font by id. Returns null if not embedded. */
+  getCustomFont(id: string): import('@/scene/types').CustomFont | null
+  /** All embedded fonts, in insertion order. */
+  getAllCustomFonts(): import('@/scene/types').CustomFont[]
+  /** Remove a font by id. No-op if not embedded. */
+  removeCustomFont(id: string): void
+
   // --- ui state (track groups, keyframe groups, collapse flags) ------------
   /**
    * Read the persistent UI state slab. Lives inside the scene's
@@ -293,6 +309,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   // wanted explicit section spans they could resize.
   const sections = ensureMap(scene, 'sections') as Y.Map<Section>
   const uiState = ensureMap(scene, 'uiState') as Y.Map<unknown>
+  // Custom fonts embedded in the scene. Each entry is a CustomFont
+  // (see types.ts). Bytes live inline so the .hype file is fully
+  // portable — no external font references that could break on
+  // another machine.
+  const customFonts = ensureMap(scene, 'customFonts') as Y.Map<
+    import('@/scene/types').CustomFont
+  >
   // Seed default ui-state on a fresh doc; existing docs keep their
   // persisted bag (which may have grown since v1).
   for (const [k, v] of Object.entries(DEFAULT_UI_STATE)) {
@@ -789,6 +812,34 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       })
     },
 
+    setCustomFont: (font) => {
+      // Idempotent on font.id — overwrite if present. Useful when
+      // re-uploading a corrected file (e.g. user fixed the family
+      // name) without churning a new id through every text node.
+      doc.transact(() => {
+        customFonts.set(font.id, font)
+      })
+    },
+
+    getCustomFont: (id) => {
+      const v = customFonts.get(id)
+      return v ?? null
+    },
+
+    getAllCustomFonts: () => {
+      const out: import('@/scene/types').CustomFont[] = []
+      customFonts.forEach((f) => {
+        if (f && typeof f.id === 'string') out.push(f)
+      })
+      return out
+    },
+
+    removeCustomFont: (id) => {
+      doc.transact(() => {
+        customFonts.delete(id)
+      })
+    },
+
     getUiState: () => {
       // Defensive read — a fresh / partial doc may have any subset of
       // the slab keys missing, so spread the defaults under the
@@ -953,6 +1004,8 @@ export function snapshotScene(api: SceneAPI): Scene {
   }
   const sections: Record<string, Section> = {}
   for (const s of api.getSections()) sections[s.id] = s
+  const customFonts: Record<string, import('@/scene/types').CustomFont> = {}
+  for (const f of api.getAllCustomFonts()) customFonts[f.id] = f
   return {
     meta: api.getMeta(),
     root: api.getRoot(),
@@ -960,5 +1013,6 @@ export function snapshotScene(api: SceneAPI): Scene {
     nodes,
     tracks: {}, // TODO: fill when tracks become mutable through the API
     sections,
+    customFonts,
   }
 }

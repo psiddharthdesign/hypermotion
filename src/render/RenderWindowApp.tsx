@@ -33,6 +33,7 @@ import {
   type ExportRange,
 } from '@/export/formats'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
+import { registerFont } from '@/fonts'
 
 /**
  * RenderWindowApp — the chrome-less render shell loaded in the hidden
@@ -772,6 +773,25 @@ async function waitForFontsReadyApi(
   api: ReturnType<typeof useSceneAPI>,
 ): Promise<void> {
   if (typeof document === 'undefined' || !('fonts' in document)) return
+
+  // Step 0: register every scene-embedded CUSTOM font with the
+  // browser's FontFaceSet. These ship in the seed bytes (Y.Doc) and
+  // are unique to this scene — they're not Google Fonts and there's
+  // no <link> to fetch. We register them inline via the FontFace API
+  // BEFORE the Google Fonts wait so measureText sees them by the time
+  // RenderCanvas's first paint runs.
+  //
+  // Failures here are non-fatal — `registerFont` returns false on
+  // corrupt files. Worst case is fallback metrics for text using that
+  // family, same as today.
+  const customFonts = api.getAllCustomFonts()
+  if (customFonts.length > 0) {
+    await Promise.allSettled(
+      customFonts.map((font) =>
+        Promise.race([registerFont(font), timeoutMs(5000)]),
+      ),
+    )
+  }
 
   // Step 1: collect every (family, weight) PAIR the scene actually uses.
   //

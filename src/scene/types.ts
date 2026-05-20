@@ -785,4 +785,57 @@ export interface Scene {
   tracks: Record<TrackId, Track>
   /** Named, length-bearing regions along the timeline. */
   sections: Record<string, Section>
+  /**
+   * User-uploaded fonts embedded in this scene. Each entry holds the
+   * font's raw bytes alongside its CSS metadata. Embedded fonts travel
+   * with the .hype file — open the scene on another machine and the
+   * fonts come with it. Optional for back-compat with pre-feature
+   * .hype files; missing == no custom fonts.
+   */
+  customFonts?: Record<string, CustomFont>
+}
+
+/**
+ * A custom font embedded in a scene OR stored in the user's global
+ * font library (see `src/fonts/library.ts`).
+ *
+ * Two storage paths use the same shape so a font can move between them
+ * with no transformation:
+ *
+ *   - Scene-embedded: lives in `Scene.customFonts`, ships in the .hype
+ *     bytes. Designed so the scene is fully portable — open on another
+ *     machine and the font is right there.
+ *
+ *   - Library: lives in IndexedDB, scoped to the user's machine. Reused
+ *     across scenes. Dropping a library font into a text node copies it
+ *     into the scene's `customFonts` so the file remains portable.
+ *
+ * `bytes` is the raw font file (woff2 / woff / ttf / otf). All four are
+ * accepted by the browser's FontFace API. We don't transcode — what the
+ * user uploaded is what we register and what ships in the export.
+ *
+ * `family` is the CSS family string text nodes set as `fontFamily`.
+ * Defaults to a slugified version of the file name but can be edited
+ * — useful when uploading multiple weights of the same family.
+ *
+ * `weight` + `style` mirror the CSS @font-face descriptors. A typical
+ * font ships as one (family, weight, style) tuple per file; uploading
+ * multiple weights creates multiple CustomFont entries that share a
+ * family.
+ */
+export interface CustomFont {
+  /** Stable id. UUID-like, generated at upload time. */
+  id: string
+  /** Original filename for display. */
+  name: string
+  /** CSS font-family value text nodes set. */
+  family: string
+  /** Numeric weight (100-900). 400 = regular, 700 = bold. */
+  weight: number
+  /** CSS font-style. 'normal' is the default; 'italic' for italics. */
+  style: 'normal' | 'italic'
+  /** File format hint. Drives the `format()` arg in @font-face. */
+  format: 'woff2' | 'woff' | 'truetype' | 'opentype'
+  /** Raw bytes of the font file. */
+  bytes: Uint8Array
 }

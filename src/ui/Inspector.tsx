@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
@@ -58,6 +65,16 @@ import {
   loadGoogleFont,
   type GoogleFontSpec,
 } from '@/ui/fonts/googleFonts'
+import {
+  bytesToCustomFont,
+  FONT_FILE_EXTENSIONS,
+  libraryAdd,
+  libraryGetAll,
+  pickFontFiles,
+  probeFontFile,
+  subscribeLibrary,
+  type CustomFont,
+} from '@/fonts'
 
 /**
  * Right sidebar: two modes.
@@ -2153,6 +2170,205 @@ const FONT_GROUPS = buildFontGroups()
 const FONT_GROUPS_FLAT = FONT_GROUPS.flatMap((g) => g.options)
 
 /**
+ * Static sentinel group surfaced at the bottom of the Font dropdown.
+ * Picking the option doesn't change fontFamily — TypographySection's
+ * onCommit intercepts the sentinel value and opens the file picker
+ * instead. Native <select> can't host an <option> with a custom click
+ * handler, so this is the cleanest route.
+ */
+/** Sentinel select value that opens the file picker instead of
+ *  committing as the new fontFamily. Picked unique to avoid colliding
+ *  with any real family name. Declared at module scope so the static
+ *  ADD_CUSTOM_FONT_GROUP can reference it. */
+const ADD_CUSTOM_FONT_SENTINEL = '__add-custom-font__'
+
+const ADD_CUSTOM_FONT_GROUP: {
+  label: string
+  options: { value: string; label: string }[]
+} = {
+  label: 'Custom',
+  options: [
+    { value: ADD_CUSTOM_FONT_SENTINEL, label: '+ Add custom font…' },
+  ],
+}
+
+/**
+ * Subscribe to the scene's `customFonts` map. Returns a fresh array
+ * whenever any custom font is added / removed / updated.
+ */
+function useSceneCustomFonts(api: SceneAPI): CustomFont[] {
+  const version = useSceneVersion()
+  return useMemo(() => {
+    void version
+    return api.getAllCustomFonts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, version])
+}
+
+/**
+ * Subscribe to the global font library (IndexedDB). Returns the full
+ * library snapshot on every mutation. Async load on first mount;
+ * returns [] until the IndexedDB read resolves.
+ */
+function useLibraryFonts(): CustomFont[] {
+  const [fonts, setFonts] = useState<CustomFont[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      void libraryGetAll().then((all) => {
+        if (!cancelled) setFonts(all)
+      })
+    }
+    refresh()
+    const off = subscribeLibrary(refresh)
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
+  return fonts
+}
+
+/**
+ * Build the Font dropdown's "Custom" groups. The scene-embedded set
+ * sits above the library-only set so the user can see at a glance
+ * what travels with the file vs what's local to this machine.
+ *
+ * De-dupes by family name — if a font is in both the scene AND the
+ * library, the scene entry wins (it's the portable copy). Library
+ * fonts that match a scene family are filtered out.
+ */
+function buildCustomFontGroups(
+  sceneFonts: CustomFont[],
+  libraryFonts: CustomFont[],
+): Array<{
+  label: string
+  options: { value: string; label: string }[]
+}> {
+  const groups: Array<{
+    label: string
+    options: { value: string; label: string }[]
+  }> = []
+  if (sceneFonts.length > 0) {
+    // De-dupe by family for the display — multiple weights of the
+    // same family collapse to one entry (the picker only sets
+    // fontFamily; weight is controlled separately).
+    const families = uniqueByFamily(sceneFonts)
+    groups.push({
+      label: 'Custom · in scene',
+      options: families.map((f) => ({ value: f.family, label: f.family })),
+    })
+  }
+  const sceneFamilies = new Set(sceneFonts.map((f) => f.family))
+  const libraryOnly = libraryFonts.filter((f) => !sceneFamilies.has(f.family))
+  if (libraryOnly.length > 0) {
+    const families = uniqueByFamily(libraryOnly)
+    groups.push({
+      label: 'Custom · library',
+      options: families.map((f) => ({ value: f.family, label: f.family })),
+    })
+  }
+  return groups
+}
+
+function uniqueByFamily(fonts: CustomFont[]): CustomFont[] {
+  const seen = new Set<string>()
+  const out: CustomFont[] = []
+  for (const f of fonts) {
+    if (seen.has(f.family)) continue
+    seen.add(f.family)
+    out.push(f)
+  }
+  return out
+}
+
+/**
+ * Open the OS font file picker, probe each selected file, save to
+ * library + scene, register with FontFace, and call `onApply` with
+ * the family name of the first successfully-imported font. The
+ * caller typically uses `onApply` to set the current text node's
+ * fontFamily to the new font.
+ */
+async function addCustomFontsFromPicker(
+  api: SceneAPI,
+  onApply: (family: string) => void,
+): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log('[fonts] opening file picker')
+  const files = await pickFontFiles()
+  // eslint-disable-next-line no-console
+  console.log(
+    `[fonts] picker returned ${files.length} file${files.length === 1 ? '' : 's'}`,
+  )
+  if (files.length === 0) return
+  await addCustomFontFiles(files, api, onApply)
+}
+
+/**
+ * Shared upload path for picker + drag-drop. Probes each file
+ * sequentially, surfaces per-file errors AND successes via console
+ * (so the user can see what's happening in DevTools while we don't
+ * yet have a toast system), and applies the first successful font's
+ * family. Throws are caught per-file so one bad font in a multi-file
+ * upload doesn't kill the rest.
+ *
+ * Errors that prevent any font from importing also fire a window.alert
+ * so the user immediately sees that something went wrong, even without
+ * DevTools open. Replace with a proper toast once we have one.
+ */
+async function addCustomFontFiles(
+  files: File[],
+  api: SceneAPI,
+  onApply: (family: string) => void,
+): Promise<void> {
+  let firstFamily: string | null = null
+  const errors: Array<{ name: string; error: string }> = []
+  for (const file of files) {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(`[fonts] importing "${file.name}" (${file.size} bytes)…`)
+      const probe = await probeFontFile(file)
+      // eslint-disable-next-line no-console
+      console.log(
+        `[fonts] probed "${file.name}" → format=${probe.format} family="${probe.family}"`,
+      )
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const font = bytesToCustomFont(bytes, file.name, probe)
+      // Save to BOTH the library (cross-scene reuse) AND the scene
+      // (portability). Embedding into the scene is what makes the
+      // .hype file self-contained.
+      await libraryAdd(font)
+      api.setCustomFont(font)
+      // eslint-disable-next-line no-console
+      console.log(
+        `[fonts] ✓ added "${font.family}" (weight ${font.weight}, ${font.style}) — id=${font.id}`,
+      )
+      if (!firstFamily) firstFamily = font.family
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // eslint-disable-next-line no-console
+      console.error(`[fonts] ✗ failed to import "${file.name}": ${message}`)
+      errors.push({ name: file.name, error: message })
+    }
+  }
+  if (firstFamily) {
+    onApply(firstFamily)
+  } else if (errors.length > 0) {
+    // Nothing imported AND we hit errors — surface to user via alert
+    // so they're not staring at a silent failure. (Toasts when we
+    // have them.)
+    const summary = errors
+      .map((e) => `• ${e.name}: ${e.error}`)
+      .join('\n')
+    if (typeof window !== 'undefined' && 'alert' in window) {
+      window.alert(
+        `Couldn't import font${errors.length === 1 ? '' : 's'}:\n\n${summary}\n\nCheck the file format (.woff2 / .woff / .ttf / .otf) and try again.`,
+      )
+    }
+  }
+}
+
+/**
  * Weight presets. 100–900 in steps of 100 covers everything from
  * Thin to Black; most fonts only ship a handful of real faces and the
  * browser synthesizes the rest. We keep it simple and let the renderer
@@ -2189,11 +2405,36 @@ function TypographySection({
       : best
   }, FONT_WEIGHTS[3]!)
 
+  // --- custom fonts: subscribe to scene + library so the picker
+  // surfaces both. Scene-embedded fonts are the "Custom" group at the
+  // top; library fonts (not yet embedded) follow as a separate group.
+  const sceneFonts = useSceneCustomFonts(api)
+  const libraryFonts = useLibraryFonts()
+  const customGroups = useMemo(() => {
+    return buildCustomFontGroups(sceneFonts, libraryFonts)
+  }, [sceneFonts, libraryFonts])
+
+  // Full picker = "Add custom font…" sentinel FIRST, then Custom
+  // groups (in-scene + library), then System, then Google.
+  //
+  // Why "Add custom font…" goes first: designers don't scroll dropdowns
+  // looking for an action button — they look at the top. Hiding the
+  // entry under 5 Google groups (~40 options) is what made "I tried to
+  // add a custom font but nothing happened" — they never found it.
+  const allGroups = useMemo(
+    () => [ADD_CUSTOM_FONT_GROUP, ...customGroups, ...FONT_GROUPS],
+    [customGroups],
+  )
+  const allFlat = useMemo(
+    () => allGroups.flatMap((g) => g.options),
+    [allGroups],
+  )
+
   // If the node's font-family isn't in the preset list (e.g. a custom
   // stack from elsewhere), fall back to the first system option for the
   // dropdown's displayed value — but keep the underlying value intact
   // until the user picks something new.
-  const familyValue = FONT_GROUPS_FLAT.some((f) => f.value === node.fontFamily)
+  const familyValue = allFlat.some((f) => f.value === node.fontFamily)
     ? node.fontFamily
     : FONT_GROUPS_FLAT[0]!.value
 
@@ -2207,6 +2448,61 @@ function TypographySection({
     }
   }, [node.fontFamily])
 
+  // Handle the user picking a value from the Font dropdown.
+  const onFontPick = useCallback(
+    (v: string): void => {
+      if (v === ADD_CUSTOM_FONT_SENTINEL) {
+        // Sentinel — open file picker, don't mutate fontFamily.
+        void addCustomFontsFromPicker(api, (family) => {
+          api.setNodeProperty(node.id, 'fontFamily', family)
+        })
+        return
+      }
+      // If the value matches a library font that ISN'T already in the
+      // scene, copy it into the scene first so it survives a save.
+      const libMatch = libraryFonts.find((f) => f.family === v)
+      const sceneHasIt = sceneFonts.some((f) => f.family === v)
+      if (libMatch && !sceneHasIt) {
+        api.setCustomFont(libMatch)
+      }
+      // Kick off the Google fetch when relevant.
+      if (isGoogleFont(v)) void loadGoogleFont(v)
+      api.setNodeProperty(node.id, 'fontFamily', v)
+    },
+    [api, node.id, libraryFonts, sceneFonts],
+  )
+
+  // File-drop on the Font row — designers commonly drag a font file
+  // straight from Finder onto the field they want to use it in.
+  const onFontDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      const files = Array.from(e.dataTransfer.files ?? []).filter((f) =>
+        FONT_FILE_EXTENSIONS.some((ext) =>
+          f.name.toLowerCase().endsWith(`.${ext}`),
+        ),
+      )
+      if (files.length === 0) return
+      e.preventDefault()
+      void addCustomFontFiles(files, api, (family) => {
+        api.setNodeProperty(node.id, 'fontFamily', family)
+      })
+    },
+    [api, node.id],
+  )
+
+  const onFontDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      // Required for `drop` to fire. Only enable when the drag carries
+      // a file with a font extension — anything else (a node drag, a
+      // string drag) gets the default reject behavior.
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+      }
+    },
+    [],
+  )
+
   return (
     <Section title="Typography">
       <FieldRow label="Content">
@@ -2215,22 +2511,20 @@ function TypographySection({
           onCommit={(v) => api.setNodeProperty(node.id, 'text', v)}
         />
       </FieldRow>
-      <FieldRow label="Font">
-        <SelectField<string>
-          value={familyValue}
-          groups={FONT_GROUPS}
-          onCommit={(v) => {
-            // Kick off the network fetch before we mutate the scene so
-            // the font file is en route by the time Yoga re-measures.
-            // The measure function will use the fallback during the
-            // in-flight window; useLayout re-solves on completion via
-            // `useFontLoadVersion`.
-            if (isGoogleFont(v)) void loadGoogleFont(v)
-            api.setNodeProperty(node.id, 'fontFamily', v)
-          }}
-          width="w-full"
-        />
-      </FieldRow>
+      <div
+        onDrop={onFontDrop}
+        onDragOver={onFontDragOver}
+        title="Drop a .woff2 / .woff / .ttf / .otf file to add a custom font"
+      >
+        <FieldRow label="Font">
+          <SelectField<string>
+            value={familyValue}
+            groups={allGroups}
+            onCommit={onFontPick}
+            width="w-full"
+          />
+        </FieldRow>
+      </div>
       <FieldRow label="Weight">
         <SelectField<string>
           value={nearestWeight.value}

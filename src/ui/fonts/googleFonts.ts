@@ -136,6 +136,17 @@ function notify(): void {
 }
 
 /**
+ * Public hook for OTHER font sources (custom-font registrations from
+ * `src/fonts/`) to trigger the same layout re-solve `notify()` does
+ * for Google font loads. Just re-emits the same event; subscribers
+ * (useLayout via useFontLoadVersion, the Inspector picker, etc.)
+ * can't tell which source fired.
+ */
+export function notifyFontLoaded(): void {
+  notify()
+}
+
+/**
  * Construct the Google Fonts CSS v2 URL for the given family. Requests
  * all weights in a single fetch (Google collapses them into one CSS
  * response with multiple @font-face blocks).
