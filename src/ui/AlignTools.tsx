@@ -240,9 +240,11 @@ function alignNodes(
     const n = api.getNode(id)
     const r = solved[id]
     if (!n || !r) continue
+    const rendered = renderedRectForNode(api, solved, n)
+    if (!rendered) continue
     nodes.push({
       node: n,
-      rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      rect: rendered,
     })
   }
   if (nodes.length === 0) return
@@ -263,12 +265,13 @@ function alignNodes(
   if (nodes.length === 1) {
     const only = nodes[0]!
     if (!only.node.parent) return
-    const parentRect = solved[only.node.parent]
+    const parent = api.getNode(only.node.parent)
+    const parentRect = parent ? renderedRectForNode(api, solved, parent) : null
     if (!parentRect) return
     refX = parentRect.x
     refY = parentRect.y
-    refW = parentRect.width
-    refH = parentRect.height
+    refW = parentRect.w
+    refH = parentRect.h
   } else {
     let minX = Infinity
     let minY = Infinity
@@ -321,6 +324,45 @@ function alignNodes(
       })
     }
   })
+}
+
+function renderedRectForNode(
+  api: SceneAPI,
+  solved: NonNullable<ReturnType<typeof getLastSolvedLayout>>,
+  node: Node,
+): { x: number; y: number; w: number; h: number } | null {
+  const r = solved[node.id]
+  if (!r) return null
+  const offset = accumulatedStaticOffset(api, node)
+  return {
+    x: r.x + offset.x,
+    y: r.y + offset.y,
+    w: r.width,
+    h: r.height,
+  }
+}
+
+function accumulatedStaticOffset(
+  api: SceneAPI,
+  node: Node,
+): { x: number; y: number } {
+  const rootId = api.getRoot()
+  let x = 0
+  let y = 0
+  let current: Node | null = node
+
+  while (current) {
+    // Canvas treats the root/artboard transform as identity. Mirror
+    // that here so alignment math uses the same visual coordinate space
+    // as the selection outline and painted layer.
+    if (current.id !== rootId) {
+      x += current.transform.x
+      y += current.transform.y
+    }
+    current = current.parent ? api.getNode(current.parent) : null
+  }
+
+  return { x, y }
 }
 
 /**
