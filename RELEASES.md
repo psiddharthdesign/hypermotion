@@ -3,6 +3,24 @@
 Human-friendly release notes. The GitHub Releases page mirrors the entries
 below for the corresponding tag, plus auto-generated commit summaries.
 
+## v0.1.10 — Import fidelity + update notifications (2026-05-22)
+
+This release tightens the Figma-to-Hyper Motion path and adds the first
+desktop update notification flow.
+
+- Figma imports now preserve clipped rounded frames, drop shadows, alpha
+  in fills and strokes, and zero-opacity strokes instead of dropping
+  them from the scene.
+- Text imported from Figma's auto-resize modes now keeps its expected
+  bounds, preventing split labels like "Sign / Up".
+- Inspector fill popovers now float above the panel instead of being
+  clipped by the right sidebar.
+- Transform alignment now uses rendered positions, so repeated center
+  clicks stay stable instead of moving the layer farther away.
+- The desktop app checks GitHub Releases on launch and every 5 minutes,
+  showing a native notification and in-app banner when a newer version
+  is available.
+
 ## v0.1.1 — CLI render hardening + Figma plugin docs (2026-05-14)
 
 Focused fix release on top of v0.1.0. CLI render is dramatically more
