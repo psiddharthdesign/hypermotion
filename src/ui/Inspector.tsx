@@ -3421,47 +3421,46 @@ function StrokeControls({
 
   return (
     <>
-      <div className="relative">
-        <FillField
-          label="Stroke"
-          value={currentStrokeFill}
-          onCommit={(fill) => {
-            if (fill === null) {
-              onCommit(null)
-              return
-            }
-            // Mirror solid-fill color into the legacy `color` field so
-            // code outside the renderer (exports, future migrations) still
-            // sees a plausible flat color. Gradients keep the last known
-            // solid color for fallback.
-            const nextColor =
-              fill.kind === 'solid'
-                ? fill.color
-                : (v?.color ?? STROKE_DEFAULT.color)
-            onCommit({
-              ...(v ?? STROKE_DEFAULT),
-              color: nextColor,
-              fill,
-            })
-          }}
-        />
-        {v ? (
-          // One-click clear. Sits absolutely-positioned over the
-          // FillField row so it doesn't disturb the field's layout
-          // (FillField owns its own swatch + summary at the right
-          // edge). z-10 so the clear-button hit area beats the
-          // FillField's swatch when they overlap.
-          <button
-            type="button"
-            onClick={() => onCommit(null)}
-            title="Remove stroke"
-            aria-label="Remove stroke"
-            className="absolute right-1 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-text-dim hover:bg-panel-raised hover:text-text"
-          >
-            ×
-          </button>
-        ) : null}
-      </div>
+      <FieldRow label="Stroke">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+          <div className="min-w-0 flex-1">
+            <FillField
+              label=""
+              value={currentStrokeFill}
+              onCommit={(fill) => {
+                if (fill === null) {
+                  onCommit(null)
+                  return
+                }
+                // Mirror solid-fill color into the legacy `color` field so
+                // code outside the renderer (exports, future migrations) still
+                // sees a plausible flat color. Gradients keep the last known
+                // solid color for fallback.
+                const nextColor =
+                  fill.kind === 'solid'
+                    ? fill.color
+                    : (v?.color ?? STROKE_DEFAULT.color)
+                onCommit({
+                  ...(v ?? STROKE_DEFAULT),
+                  color: nextColor,
+                  fill,
+                })
+              }}
+            />
+          </div>
+          {v ? (
+            <button
+              type="button"
+              onClick={() => onCommit(null)}
+              title="Remove stroke"
+              aria-label="Remove stroke"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-panel text-text-dim hover:border-border-strong hover:text-text"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      </FieldRow>
       {v ? (
         <>
           <StrokeWidthField value={v} onCommit={onCommit} />

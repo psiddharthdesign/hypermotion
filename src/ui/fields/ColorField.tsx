@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NumberField } from './NumberField'
 import { TextField } from './TextField'
-import { hexToOklch } from './colorConvert'
+import { hexToOklch, oklchToHex } from './colorConvert'
 
 /**
  * Fill/stroke color field — click the swatch to open a popover with
@@ -110,7 +110,9 @@ function EyedropperGlyph() {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M9 1.5l3.5 3.5M11.5 3l-7.6 7.6L2 12.5l1.9-1.9 7.6-7.6" />
+      <path d="M8.8 1.7a1.35 1.35 0 0 1 1.9 0l1.6 1.6a1.35 1.35 0 0 1 0 1.9l-1 1" />
+      <path d="M8.9 4.1 3.1 9.9 2 12l2.1-1.1 5.8-5.8" />
+      <path d="M7.8 3 11 6.2" />
     </svg>
   )
 }
@@ -355,7 +357,7 @@ function buildHueGradient(l: number, c: number): string {
 function shortLabel(oklchStr: string): string {
   const parsed = parseOklch(oklchStr)
   if (!parsed) return oklchStr
-  return `L${Math.round(parsed.l * 100)} C${parsed.c.toFixed(2)} H${Math.round(parsed.h)}`
+  return oklchToHex(parsed)
 }
 
 function clamp(n: number, lo: number, hi: number): number {

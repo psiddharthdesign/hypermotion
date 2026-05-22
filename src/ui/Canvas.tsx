@@ -1690,7 +1690,8 @@ function NodeView({
     stroke.width > 0 &&
     strokeStyle === 'solid' &&
     !strokeHasGradient &&
-    !hasPerSideStroke
+    !hasPerSideStroke &&
+    !clips
       ? stroke.align === 'inside'
         ? `inset 0 0 0 ${stroke.width}px ${strokeFlatColor}`
         : stroke.align === 'outside'
@@ -1735,6 +1736,11 @@ function NodeView({
   const composedBoxShadow = [strokeShadow, effectShadowCss]
     .filter(Boolean)
     .join(', ')
+  const shouldRenderStrokeOverlay =
+    !!stroke &&
+    stroke.width > 0 &&
+    !hasPerSideStroke &&
+    (clips || strokeStyle !== 'solid' || strokeHasGradient)
 
   // Drag-to-move, activated on pointerdown. Only inner (non-root) nodes
   // get drag behavior — the root is the scene frame, which is positioned
@@ -1889,7 +1895,7 @@ function NodeView({
           effectiveFill={effectiveFill}
         />
       ) : null}
-      {stroke && stroke.width > 0 && (strokeStyle !== 'solid' || strokeHasGradient) ? (
+      {shouldRenderStrokeOverlay ? (
         <StrokeOverlay
           stroke={stroke}
           width={rect.width}

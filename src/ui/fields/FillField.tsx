@@ -71,6 +71,40 @@ export function FillField({
   // tag along.
   const swatchBg = useMemo(() => fillToCss(value), [value])
   const imageBg = useMemo(() => imageBackgroundStyle(value), [value])
+  const control = (
+    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+      <span className="min-w-[56px] truncate text-right font-mono text-[10px] uppercase text-text-muted">
+        {summary(value)}
+      </span>
+      {/* Inline eyedropper — pick any color on screen and have it
+          land directly on the fill, without opening the popover.
+          Surfacing it on the row matters because designers reach for
+          it constantly when matching against an external reference
+          (a brand color in another tab, a screenshot, etc.). */}
+      <RowEyedropper
+        onPick={(lch) =>
+          onCommit({ kind: 'solid', color: formatOklch(lch) })
+        }
+      />
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={value ? `Edit fill (${value.kind})` : 'Add fill'}
+        className="h-5 w-5 shrink-0 rounded border border-border hover:border-border-strong"
+        style={{
+          ...(imageBg ?? {}),
+          background: imageBg ? undefined : swatchBg ?? undefined,
+          backgroundImage:
+            imageBg
+              ? imageBg.backgroundImage
+              : swatchBg
+                ? undefined
+                : 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 3px)',
+        }}
+      />
+    </div>
+  )
 
   return (
     <div
@@ -80,40 +114,7 @@ export function FillField({
       title={disabled ? disabledReason : undefined}
       aria-disabled={disabled || undefined}
     >
-      <FieldRow label={label}>
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-          <span className="truncate font-mono text-[10px] text-text-muted">
-            {summary(value)}
-          </span>
-          {/* Inline eyedropper — pick any color on screen and have it
-              land directly on the fill, without opening the popover.
-              Surfacing it on the row matters because designers reach for
-              it constantly when matching against an external reference
-              (a brand color in another tab, a screenshot, etc.). */}
-          <RowEyedropper
-            onPick={(lch) =>
-              onCommit({ kind: 'solid', color: formatOklch(lch) })
-            }
-          />
-          <button
-            ref={anchorRef}
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-label={value ? `Edit fill (${value.kind})` : 'Add fill'}
-            className="h-5 w-5 shrink-0 rounded border border-border hover:border-border-strong"
-            style={{
-              ...(imageBg ?? {}),
-              background: imageBg ? undefined : swatchBg ?? undefined,
-              backgroundImage:
-                imageBg
-                  ? imageBg.backgroundImage
-                  : swatchBg
-                    ? undefined
-                    : 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 3px)',
-            }}
-          />
-        </div>
-      </FieldRow>
+      {label ? <FieldRow label={label}>{control}</FieldRow> : control}
 
       {open && (
         <FillPopover
@@ -805,7 +806,7 @@ function RowEyedropper({ onPick }: { onPick: (lch: Lch) => void }) {
 }
 
 function EyedropperGlyph() {
-  // Classic eyedropper silhouette — angled barrel with a tip drop.
+  // Familiar eyedropper silhouette: bulb, angled barrel, and tapered tip.
   return (
     <svg
       width={14}
@@ -817,8 +818,9 @@ function EyedropperGlyph() {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M9 1.5l3.5 3.5M11.5 3l-7.6 7.6L2 12.5l1.9-1.9 7.6-7.6" />
-      <path d="M8.2 2.3l3.5 3.5" />
+      <path d="M8.8 1.7a1.35 1.35 0 0 1 1.9 0l1.6 1.6a1.35 1.35 0 0 1 0 1.9l-1 1" />
+      <path d="M8.9 4.1 3.1 9.9 2 12l2.1-1.1 5.8-5.8" />
+      <path d="M7.8 3 11 6.2" />
     </svg>
   )
 }
@@ -1340,8 +1342,7 @@ function summary(fill: Fill | null): string {
   switch (fill.kind) {
     case 'solid': {
       const lch = parseOklch(fill.color)
-      if (!lch) return 'Solid'
-      return `L${Math.round(lch.l * 100)} C${lch.c.toFixed(2)} H${Math.round(lch.h)}`
+      return lch ? oklchToHex(lch) : fill.color
     }
     case 'linear':
       return `Linear ${Math.round(fill.angle)}°`
