@@ -1382,7 +1382,100 @@ export function SceneLayer({
           />
         )
       })}
+      {order.map((id) => {
+        const node = api.getNode(id)
+        const rect = solved[id]
+        if (!node || !rect || hiddenIds.has(id)) return null
+        return (
+          <ClippedFrameStrokeOverlay
+            key={`stroke-${id}`}
+            node={node}
+            rect={rect}
+            anim={animated[id]}
+            inherit={inherited[id] ?? IDENTITY_INHERITED}
+            isRoot={id === rootId}
+          />
+        )
+      })}
     </>
+  )
+}
+
+/**
+ * Paint clipped-frame strokes in a final overlay pass.
+ *
+ * The DOM renderer flattens the scene tree, so children are siblings
+ * painted after their parent. A clipped card with a footer child can
+ * therefore cover the parent's inside stroke at the bottom. Figma
+ * paints frame strokes above children; this overlay restores that
+ * ordering for clipped frames without changing layout.
+ */
+function ClippedFrameStrokeOverlay({
+  node,
+  rect,
+  anim,
+  inherit,
+  isRoot,
+}: {
+  node: SceneNode
+  rect: Rect
+  anim: AnimatedValue | undefined
+  inherit: InheritedAnim
+  isRoot: boolean
+}) {
+  if (isRoot || node.kind !== 'frame' || !node.clipsContent) return null
+
+  const stroke = node.appearance.stroke
+  if (!stroke || stroke.width <= 0) return null
+
+  const strokeStyle = stroke.style ?? 'solid'
+  const strokeHasGradient = !!stroke.fill && stroke.fill.kind !== 'solid'
+  const hasPerSideStroke =
+    !!stroke.widths && strokeStyle === 'solid' && !strokeHasGradient
+  if (hasPerSideStroke) return null
+
+  const ownX = anim?.x ?? node.transform.x
+  const ownY = anim?.y ?? node.transform.y
+  const ownRot = anim?.rotation ?? node.transform.rotation
+  const ownSX = anim?.scaleX ?? node.transform.scaleX
+  const ownSY = anim?.scaleY ?? node.transform.scaleY
+  const ownOp = anim?.opacity ?? node.appearance.opacity
+  const tx = ownX + inherit.x
+  const ty = ownY + inherit.y
+  const rotation = ownRot + inherit.rotation
+  const sx = ownSX * inherit.scaleX
+  const sy = ownSY * inherit.scaleY
+  const opacity = ownOp * inherit.opacity
+
+  const parts: string[] = []
+  if (tx !== 0 || ty !== 0) parts.push(`translate(${tx}px, ${ty}px)`)
+  if (rotation !== 0) parts.push(`rotate(${rotation}deg)`)
+  if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`)
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute"
+      style={{
+        left: rect.x,
+        top: rect.y,
+        width: rect.width,
+        height: rect.height,
+        opacity,
+        transform: parts.length > 0 ? parts.join(' ') : undefined,
+        transformOrigin: 'center center',
+      }}
+    >
+      <StrokeOverlay
+        stroke={stroke}
+        width={rect.width}
+        height={rect.height}
+        cornerRadius={maxCornerRadius(
+          anim?.cornerRadius ?? node.appearance.cornerRadius,
+          node.appearance.cornerRadii,
+        )}
+      />
+    </div>
   )
 }
 
@@ -1740,7 +1833,8 @@ function NodeView({
     !!stroke &&
     stroke.width > 0 &&
     !hasPerSideStroke &&
-    (clips || strokeStyle !== 'solid' || strokeHasGradient)
+    !clips &&
+    (strokeStyle !== 'solid' || strokeHasGradient)
 
   // Drag-to-move, activated on pointerdown. Only inner (non-root) nodes
   // get drag behavior — the root is the scene frame, which is positioned
