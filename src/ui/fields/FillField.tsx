@@ -4,11 +4,13 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import type { Fill, GradientStop } from '@/scene'
 import { defaultFill, fillToCss, imageBackgroundStyle } from '@/scene'
 import { FieldRow } from './FieldRow'
@@ -143,7 +145,41 @@ function FillPopover({
   // Active tab seeds from the current fill kind, falling back to 'solid'
   // when there's no fill yet — that's the most common starting point.
   const [tab, setTab] = useState<FillKind>(value?.kind ?? 'solid')
+  const [position, setPosition] = useState({ left: 8, top: 8 })
   const popRef = useRef<HTMLDivElement>(null)
+
+  const updatePosition = useCallback(() => {
+    if (!anchor) return
+    const rect = anchor.getBoundingClientRect()
+    const margin = 8
+    const width = 280
+    const height = popRef.current?.offsetHeight ?? 0
+    const left = Math.min(
+      Math.max(margin, rect.right - width),
+      Math.max(margin, window.innerWidth - width - margin),
+    )
+    const preferredTop = rect.bottom + 6
+    const maxTop =
+      height > 0 ? Math.max(margin, window.innerHeight - height - margin) : preferredTop
+    const top = Math.min(
+      Math.max(margin, preferredTop),
+      maxTop,
+    )
+    setPosition({ left, top })
+  }, [anchor])
+
+  useLayoutEffect(() => {
+    updatePosition()
+  }, [updatePosition])
+
+  useEffect(() => {
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [updatePosition])
 
   useEffect(() => {
     const onDocPointer = (e: PointerEvent) => {
@@ -202,12 +238,17 @@ function FillPopover({
     onCommit(defaultFill(kind))
   }
 
-  return (
+  return createPortal(
     <div
       ref={popRef}
       // Wide enough to hold the 5-tab strip without crowding. Scrolls
       // vertically on small viewports rather than truncating the editor.
-      className="absolute right-0 top-6 z-50 w-[280px] rounded-md border border-border-strong bg-panel-raised p-3 shadow-2xl"
+      className="fixed z-[1000] w-[280px] overflow-y-auto rounded-md border border-border-strong bg-panel-raised p-3 shadow-2xl"
+      style={{
+        left: position.left,
+        top: position.top,
+        maxHeight: 'calc(100vh - 16px)',
+      }}
     >
       <Tabs value={tab} onChange={switchTo} onClose={onClose} />
       <div className="mt-3">
@@ -249,7 +290,8 @@ function FillPopover({
           Done
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
