@@ -10,6 +10,7 @@ import { ContextMenu } from '@/ui/ContextMenu'
 import { ExportRecordingIndicator } from '@/ui/ExportRecordingIndicator'
 import { RenameDialog } from '@/ui/RenameDialog'
 import { ErrorBoundary } from '@/ui/ErrorBoundary'
+import { UpdateNotice } from '@/ui/UpdateNotice'
 import { useUI } from '@/state/ui'
 import { SceneProvider, useSceneAPI, useSceneVersion } from '@/scene'
 import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
@@ -172,6 +173,7 @@ function Shell() {
       <ContextMenu />
       <RenameDialog />
       <ExportRecordingIndicator />
+      <UpdateNotice />
     </div>
   )
 }

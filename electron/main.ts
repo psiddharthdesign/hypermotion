@@ -22,6 +22,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   shell,
   webContents,
   type MenuItemConstructorOptions,
@@ -170,6 +171,116 @@ process.env.VITE_PUBLIC = app.isPackaged
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
+
+interface AppUpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  releaseName: string
+  releaseUrl: string
+  publishedAt: string | null
+}
+
+const UPDATE_CHECK_URL =
+  'https://api.github.com/repos/psiddharthdesign/hypermotion/releases/latest'
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000
+
+let updateCheckTimer: NodeJS.Timeout | null = null
+let lastUpdateInfo: AppUpdateInfo | null = null
+let lastNativeNotifiedVersion: string | null = null
+
+function normalizeVersion(v: string): string {
+  return v.trim().replace(/^v/i, '')
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = normalizeVersion(a).split('-')[0]!.split('.').map(Number)
+  const pb = normalizeVersion(b).split('-')[0]!.split('.').map(Number)
+  for (let i = 0; i < 3; i++) {
+    const da = Number.isFinite(pa[i]) ? pa[i]! : 0
+    const db = Number.isFinite(pb[i]) ? pb[i]! : 0
+    if (da !== db) return da > db ? 1 : -1
+  }
+  return 0
+}
+
+async function checkForUpdates(): Promise<AppUpdateInfo | null> {
+  try {
+    const res = await fetch(UPDATE_CHECK_URL, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `hyper-motion/${app.getVersion()}`,
+      },
+    })
+    if (!res.ok) return lastUpdateInfo
+
+    const release = (await res.json()) as {
+      tag_name?: string
+      name?: string
+      html_url?: string
+      published_at?: string
+      draft?: boolean
+      prerelease?: boolean
+    }
+    if (!release.tag_name || !release.html_url || release.draft) {
+      return lastUpdateInfo
+    }
+
+    const currentVersion = app.getVersion()
+    const latestVersion = normalizeVersion(release.tag_name)
+    if (compareVersions(latestVersion, currentVersion) <= 0) {
+      lastUpdateInfo = null
+      return null
+    }
+
+    lastUpdateInfo = {
+      currentVersion,
+      latestVersion,
+      releaseName: release.name ?? release.tag_name,
+      releaseUrl: release.html_url,
+      publishedAt: release.published_at ?? null,
+    }
+    notifyRendererAboutUpdate(lastUpdateInfo)
+    maybeShowNativeUpdateNotification(lastUpdateInfo)
+    return lastUpdateInfo
+  } catch (err) {
+    // Update checks should never interrupt launch or editing.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[updates] check failed: ${err instanceof Error ? err.message : err}`,
+    )
+    return lastUpdateInfo
+  }
+}
+
+function notifyRendererAboutUpdate(info: AppUpdateInfo): void {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send('updates:available', info)
+}
+
+function maybeShowNativeUpdateNotification(info: AppUpdateInfo): void {
+  if (lastNativeNotifiedVersion === info.latestVersion) return
+  if (!Notification.isSupported()) return
+  lastNativeNotifiedVersion = info.latestVersion
+  const notification = new Notification({
+    title: 'Hyper Motion update available',
+    body: `Version ${info.latestVersion} is ready to download.`,
+    silent: false,
+  })
+  notification.on('click', () => {
+    shell.openExternal(info.releaseUrl)
+  })
+  notification.show()
+}
+
+function startUpdateChecks(): void {
+  if (updateCheckTimer) return
+  setTimeout(() => {
+    void checkForUpdates()
+  }, 2500)
+  updateCheckTimer = setInterval(() => {
+    void checkForUpdates()
+  }, UPDATE_CHECK_INTERVAL_MS)
+}
 
 /**
  * Build a minimal app menu.
@@ -432,6 +543,7 @@ function createMainWindow() {
   // single-letter shortcuts go nowhere.
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow?.focus()
+    if (lastUpdateInfo) notifyRendererAboutUpdate(lastUpdateInfo)
   })
 
   // External links (export docs, font CDN, etc.) open in the OS browser
@@ -457,6 +569,9 @@ ipcMain.handle('clipboard:readText', () => clipboard.readText())
 ipcMain.handle('clipboard:writeText', (_e, text: string) => {
   clipboard.writeText(text)
 })
+
+ipcMain.handle('updates:check', () => checkForUpdates())
+ipcMain.handle('updates:get-status', () => lastUpdateInfo)
 
 /**
  * Export capture bridge.
@@ -1039,6 +1154,7 @@ app.whenReady().then(() => {
 
   buildAppMenu()
   createMainWindow()
+  startUpdateChecks()
 })
 
 /**
@@ -1078,5 +1194,15 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createMainWindow()
+    startUpdateChecks()
+  }
+})
+
+app.on('before-quit', () => {
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer)
+    updateCheckTimer = null
+  }
 })
