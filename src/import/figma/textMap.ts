@@ -37,27 +37,7 @@ export function figmaToText(
       ? fillObj.color
       : 'oklch(0.86 0.012 280)'
   const size: Size = {
-    width: resolveAxis(
-      node.layoutSizingHorizontal,
-      node.width,
-      // Legacy fallback. We INTENTIONALLY don't translate
-      // WIDTH_AND_HEIGHT (Figma's "Hug" width) to our 'hug' here:
-      //
-      //   Figma's hug-width is implicitly bounded by the parent's
-      //   available width, so a long description never escapes the
-      //   card it's drawn inside. Yoga's widthAuto on an absolutely-
-      //   positioned child has no such ceiling — the text expands to
-      //   a single line as wide as it needs and the parent's
-      //   clipsContent crops it mid-word (the "Invite new members,
-      //   manage roles, and ass" bug).
-      //
-      //   Pinning to the captured pixel width matches what Figma
-      //   actually rendered, so even captures from before the
-      //   layoutSizing fix produce correct widths. Designers who
-      //   want true "hug" behavior in Hyper Motion can flip the
-      //   width to 'hug' in the Inspector after import.
-      node.width,
-    ),
+    width: resolveTextWidth(node),
     height: resolveAxis(
       node.layoutSizingVertical,
       node.height,
@@ -109,6 +89,18 @@ export function figmaToText(
     color,
     size,
   }
+}
+
+function resolveTextWidth(node: FigmaCapturedText): SizeAxis {
+  if (node.layoutSizingHorizontal === 'FILL') return 'fill'
+  if (node.layoutSizingHorizontal === 'HUG') return 'hug'
+  // Figma can report layoutSizingHorizontal=FIXED for text that is
+  // still auto-width (`textAutoResize: WIDTH_AND_HEIGHT`) when the
+  // text sits in a free-positioned frame. Treat the text auto-resize
+  // field as authoritative for labels so tiny browser/Figma font
+  // metric drift cannot wrap "Sign Up" into two lines.
+  if (node.textAutoResize === 'WIDTH_AND_HEIGHT') return 'hug'
+  return node.width
 }
 
 /**

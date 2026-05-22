@@ -7,7 +7,14 @@ import {
   fillToCss,
   imageBackgroundStyle,
 } from '@/scene'
-import type { Node as SceneNode, NodeId, NodeKind, Stroke } from '@/scene'
+import type {
+  CornerRadii,
+  Fill,
+  Node as SceneNode,
+  NodeId,
+  NodeKind,
+  Stroke,
+} from '@/scene'
 import type { Rect, SolvedLayout } from '@/layout'
 import type { SceneAPI } from '@/scene/doc'
 import { useLayout } from '@/ui/hooks/useLayout'
@@ -58,6 +65,38 @@ export interface InheritedAnim {
   scaleX: number
   scaleY: number
   opacity: number
+}
+
+interface ClipHit {
+  rect: Rect
+  cornerRadius: number
+  cornerRadii?: CornerRadii
+}
+
+function cornerRadiusCss(
+  cornerRadius: number,
+  cornerRadii?: CornerRadii,
+): number | string {
+  return cornerRadii
+    ? `${cornerRadii.tl}px ${cornerRadii.tr}px ${cornerRadii.br}px ${cornerRadii.bl}px`
+    : cornerRadius
+}
+
+function maxCornerRadius(cornerRadius: number, cornerRadii?: CornerRadii): number {
+  return cornerRadii
+    ? Math.max(cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl)
+    : cornerRadius
+}
+
+function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSProperties {
+  if (!fill) return {}
+  if (fill.kind === 'solid') {
+    return { backgroundColor: fill.color }
+  }
+  if (fill.kind === 'image') {
+    return imageBackgroundStyle(fill) ?? {}
+  }
+  return { backgroundImage: fillToCss(fill) }
 }
 
 const IDENTITY_INHERITED: InheritedAnim = {
@@ -1195,13 +1234,13 @@ export function SceneLayer({
   // `overflow:hidden` at the DOM level, so root-level clipping is
   // handled by the canvas chrome and doesn't need a per-node clip-path.
   const ancestorClip = useMemo(() => {
-    const map: Record<NodeId, Rect> = {}
+    const map: Record<NodeId, ClipHit> = {}
     if (!rootId) return map
-    const visit = (id: NodeId, currentClip: Rect | null) => {
+    const visit = (id: NodeId, currentClip: ClipHit | null) => {
       if (currentClip && id !== rootId) map[id] = currentClip
       const node = api.getNode(id)
       if (!node) return
-      let nextClip: Rect | null = currentClip
+      let nextClip: ClipHit | null = currentClip
       // The root's own clipsContent is already enforced by the artboard
       // div's overflow:hidden, so we don't fold it into the per-node
       // clip map — would just paint a redundant inset(0 0 0 0) on every
@@ -1209,25 +1248,46 @@ export function SceneLayer({
       if (node.kind === 'frame' && node.clipsContent && id !== rootId) {
         const r = solved[id]
         if (r) {
+          const inherit = inherited[id] ?? IDENTITY_INHERITED
+          const ownX = animated[id]?.x ?? node.transform.x
+          const ownY = animated[id]?.y ?? node.transform.y
+          // `solved` stores layout-space rects. Clipping, however,
+          // happens in rendered world-space. Imported Figma roots are
+          // centered with transform.x/y, and animated frames can move
+          // too, so the clip wrapper must follow that translated frame
+          // or it masks descendants at the stale pre-transform origin.
+          const renderedRect: Rect = {
+            ...r,
+            x: r.x + ownX + inherit.x,
+            y: r.y + ownY + inherit.y,
+          }
+          const nodeClip: ClipHit = {
+            rect: renderedRect,
+            cornerRadius: animated[id]?.cornerRadius ?? node.appearance.cornerRadius,
+            cornerRadii: node.appearance.cornerRadii,
+          }
           if (currentClip) {
-            const x1 = Math.max(currentClip.x, r.x)
-            const y1 = Math.max(currentClip.y, r.y)
+            const x1 = Math.max(currentClip.rect.x, renderedRect.x)
+            const y1 = Math.max(currentClip.rect.y, renderedRect.y)
             const x2 = Math.min(
-              currentClip.x + currentClip.width,
-              r.x + r.width,
+              currentClip.rect.x + currentClip.rect.width,
+              renderedRect.x + renderedRect.width,
             )
             const y2 = Math.min(
-              currentClip.y + currentClip.height,
-              r.y + r.height,
+              currentClip.rect.y + currentClip.rect.height,
+              renderedRect.y + renderedRect.height,
             )
             nextClip = {
-              x: x1,
-              y: y1,
-              width: Math.max(0, x2 - x1),
-              height: Math.max(0, y2 - y1),
+              ...nodeClip,
+              rect: {
+                x: x1,
+                y: y1,
+                width: Math.max(0, x2 - x1),
+                height: Math.max(0, y2 - y1),
+              },
             }
           } else {
-            nextClip = r
+            nextClip = nodeClip
           }
         }
       }
@@ -1235,7 +1295,7 @@ export function SceneLayer({
     }
     visit(rootId, null)
     return map
-  }, [api, rootId, solved, order, sceneVersion])
+  }, [api, rootId, solved, order, sceneVersion, animated])
 
   // Mask info — for each node whose previous sibling carries
   // `isMask: true`, record the mask shape's solved rect + kind + corner
@@ -1269,13 +1329,15 @@ export function SceneLayer({
         const masked = kids[i + 1]!
         const maskerRect = solved[masker.id]
         if (!maskerRect) continue
-        // Corner radius — frames carry it on appearance.corner; rect
+        // Corner radius — frames carry it on appearance.cornerRadius; rect
         // and ellipse don't have a separate field. For ellipse we let
         // the kind drive the clip path (clip-path: ellipse(...)) and
-        // corner is unused; for rect/frame we read appearance.corner
+        // corner is unused; for rect/frame we read appearance.cornerRadius
         // when present.
-        const corner =
-          (masker.appearance as { corner?: number } | undefined)?.corner ?? 0
+        const corner = maxCornerRadius(
+          masker.appearance.cornerRadius,
+          masker.appearance.cornerRadii,
+        )
         map[masked.id] = {
           rect: maskerRect,
           kind: masker.kind,
@@ -1367,14 +1429,14 @@ function NodeView({
   isRoot: boolean
   isSelected: boolean
   /**
-   * World-space rect that this node should be clipped to, derived from
+   * World-space shape that this node should be clipped to, derived from
    * the closest clipping ancestor. Undefined when there is no clipping
    * ancestor (i.e. the node sits directly under root). The renderer
-   * applies this as a `clip-path: inset(...)` because the flat-DOM
+   * wraps the node in an overflow-hidden rounded box because the flat-DOM
    * structure means the parent frame's `overflow:hidden` can't reach
    * the child to clip it.
    */
-  ancestorClip?: Rect
+  ancestorClip?: ClipHit
   /**
    * Mask shape info — present when the previous sibling has
    * `isMask: true`. The renderer applies a CSS clip-path on this
@@ -1406,13 +1468,12 @@ function NodeView({
     anim?.fill !== undefined
       ? ({ kind: 'solid', color: anim.fill } as const)
       : node.appearance.fill
-  // Image fills need three CSS properties (image, size, repeat) — `bg`
-  // alone can't carry them. Compute the full style bundle here so the
-  // wrapper div can spread it; for non-image fills we keep the simple
-  // single-string `background` path.
-  const bgImage = node.kind === 'text' ? null : imageBackgroundStyle(effectiveFill)
-  const bg =
-    node.kind === 'text' || bgImage ? null : fillToCss(effectiveFill)
+  // Keep the renderer on background-* longhands only. React warns when
+  // a node switches between `background` shorthand and `backgroundImage`
+  // across rerenders, and image fills naturally need longhands for size
+  // and repeat anyway.
+  const backgroundStyle =
+    node.kind === 'text' ? {} : fillBackgroundStyle(effectiveFill)
 
   // Hover state for the placeholder outline below. Kept local so a
   // cursor hover doesn't fan out through the whole component tree.
@@ -1497,17 +1558,13 @@ function NodeView({
   const wrapperBorderRadius: number | string =
     node.kind === 'ellipse'
       ? '9999px'
-      : cornerRadii
-        ? `${cornerRadii.tl}px ${cornerRadii.tr}px ${cornerRadii.br}px ${cornerRadii.bl}px`
-        : cornerRadius
+      : cornerRadiusCss(cornerRadius, cornerRadii)
   // For SVG-based stroke overlays (dashed/dotted/inside-aligned/gradient
   // strokes) we can only express ONE rx today — fall back to the max of
   // the four corners when in per-corner mode. Solid solid-color strokes
   // are painted via CSS `box-shadow` strokeShadow and inherit the
   // wrapper's border-radius perfectly, so they work correctly already.
-  const strokeOverlayCorner = cornerRadii
-    ? Math.max(cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl)
-    : cornerRadius
+  const strokeOverlayCorner = maxCornerRadius(cornerRadius, cornerRadii)
 
   // Empty frames (fill=null, stroke=null) have no paint of their own —
   // applying the animated opacity to the wrapper would also fade out
@@ -1704,11 +1761,15 @@ function NodeView({
     ancestorClip && !isRoot
       ? ({
           position: 'absolute' as const,
-          left: ancestorClip.x,
-          top: ancestorClip.y,
-          width: ancestorClip.width,
-          height: ancestorClip.height,
+          left: ancestorClip.rect.x,
+          top: ancestorClip.rect.y,
+          width: ancestorClip.rect.width,
+          height: ancestorClip.rect.height,
           overflow: 'hidden' as const,
+          borderRadius: cornerRadiusCss(
+            ancestorClip.cornerRadius,
+            ancestorClip.cornerRadii,
+          ),
           // Clip wrapper itself shouldn't intercept clicks — it's an
           // invisible mask. Inner re-enables pointer events so clicks
           // land on the actual node.
@@ -1730,8 +1791,8 @@ function NodeView({
 
   // Inner box position. When wrapped, left/top become relative to the
   // clip wrapper's local coords; when not wrapped, they're world coords.
-  const innerLeft = clipWrapperStyle ? rect.x - ancestorClip!.x : rect.x
-  const innerTop = clipWrapperStyle ? rect.y - ancestorClip!.y : rect.y
+  const innerLeft = clipWrapperStyle ? rect.x - ancestorClip!.rect.x : rect.x
+  const innerTop = clipWrapperStyle ? rect.y - ancestorClip!.rect.y : rect.y
 
   const innerBox = (
     <div
@@ -1762,8 +1823,7 @@ function NodeView({
         top: innerTop,
         width: rect.width,
         height: rect.height,
-        background: bg,
-        ...(bgImage ?? {}),
+        ...backgroundStyle,
         opacity: wrapperOpacity,
         borderRadius: wrapperBorderRadius,
         boxShadow: composedBoxShadow || undefined,
@@ -2080,7 +2140,7 @@ function TextGlyphs({
     // gradient/solid fill is set, otherwise plain `color`.
     ...(effectiveFill
       ? {
-          background: fillToCss(effectiveFill) ?? undefined,
+          ...fillBackgroundStyle(effectiveFill),
           WebkitBackgroundClip: 'text',
           backgroundClip: 'text',
           WebkitTextFillColor: 'transparent',

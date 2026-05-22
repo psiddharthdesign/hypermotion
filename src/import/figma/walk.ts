@@ -3,6 +3,7 @@
 import type {
   Appearance,
   CornerRadii,
+  Effect as SceneEffect,
   NodeId,
   NodeKind,
   Position,
@@ -14,6 +15,7 @@ import { figmaToText } from './textMap'
 import type {
   FigmaCapturedFrame,
   FigmaCapturedNode,
+  FigmaCapturedEffect,
   FigmaCapturedText,
   FigmaCapturedVector,
   FigmaPayload,
@@ -282,6 +284,7 @@ function walk(
     // any code path that hasn't been per-corner-aware yet still gets a
     // sensible value.
     ...(cornerRadii ? { cornerRadii } : {}),
+    effects: figmaToEffects(node.effects ?? []),
   }
   // Free-canvas children should NOT participate in the parent's flex/
   // grid solve. Auto-layout children DO. Set `position` accordingly so
@@ -398,10 +401,7 @@ function createFrame(
   //
   // Designers can re-enable clip per-frame in the Inspector for any
   // case the heuristic gets wrong.
-  const corner =
-    typeof (appearance as { corner?: number }).corner === 'number'
-      ? (appearance as { corner: number }).corner
-      : 0
+  const corner = maxCornerRadius(appearance)
   const importedClips = node.clipsContent && corner > 0
   console.log(
     `[figma-import]   frame "${node.name}" → ${size.width}×${size.height} ` +
@@ -526,4 +526,49 @@ function perCornerRadiiFromFigma(
     Math.abs(tl - bl) < eps
   if (isUniform) return null
   return { tl, tr, br, bl }
+}
+
+function maxCornerRadius(appearance: Appearance): number {
+  const radii = appearance.cornerRadii
+  return radii
+    ? Math.max(radii.tl, radii.tr, radii.br, radii.bl)
+    : appearance.cornerRadius
+}
+
+function figmaToEffects(effects: FigmaCapturedEffect[]): SceneEffect[] {
+  return effects.map((effect) => {
+    if (effect.type === 'DROP_SHADOW' || effect.type === 'INNER_SHADOW') {
+      return {
+        kind: effect.type === 'DROP_SHADOW' ? 'shadow' : 'inner-shadow',
+        visible: effect.visible,
+        color: figmaColorToRgba(effect.color),
+        offsetX: effect.offset.x,
+        offsetY: effect.offset.y,
+        blur: effect.radius,
+        spread: effect.spread,
+      }
+    }
+    return {
+      kind: 'blur',
+      visible: effect.visible,
+      amount: effect.radius,
+    }
+  })
+}
+
+function figmaColorToRgba(color: {
+  r: number
+  g: number
+  b: number
+  a: number
+}): string {
+  const r = Math.round(clamp01(color.r) * 255)
+  const g = Math.round(clamp01(color.g) * 255)
+  const b = Math.round(clamp01(color.b) * 255)
+  const a = clamp01(color.a)
+  return `rgba(${r}, ${g}, ${b}, ${a})`
+}
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n))
 }

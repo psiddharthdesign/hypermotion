@@ -77,6 +77,7 @@ interface FigmaCapturedNodeBase {
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   /** Empty array means solid; presence means dashed. */
   strokeDashes: number[]
+  effects?: FigmaCapturedEffect[]
 }
 
 export interface FigmaCapturedFrame extends FigmaCapturedNodeBase {
@@ -144,6 +145,21 @@ export interface FigmaCapturedVector extends FigmaCapturedNodeBase {
   /** Inline SVG markup, ready to embed via data URL. */
   svg: string
 }
+
+export type FigmaCapturedEffect =
+  | {
+      type: 'DROP_SHADOW' | 'INNER_SHADOW'
+      visible: boolean
+      color: { r: number; g: number; b: number; a: number }
+      offset: { x: number; y: number }
+      radius: number
+      spread: number
+    }
+  | {
+      type: 'LAYER_BLUR'
+      visible: boolean
+      radius: number
+    }
 
 // ---------------------------------------------------------------------------
 // Fills — narrowed Figma `Paint` shape.

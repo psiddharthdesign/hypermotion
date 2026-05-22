@@ -78,8 +78,10 @@ interface CapturedNodeBase {
   fills: CapturedFill[]
   strokes: CapturedFill[]
   strokeWeight: number
+  strokeWidths?: { top: number; right: number; bottom: number; left: number }
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   strokeDashes: number[]
+  effects: CapturedEffect[]
 }
 
 interface CapturedFrame extends CapturedNodeBase {
@@ -121,12 +123,29 @@ interface CapturedText extends CapturedNodeBase {
   textAlignHorizontal: 'LEFT' | 'CENTER' | 'RIGHT' | 'JUSTIFIED'
   textAlignVertical: 'TOP' | 'CENTER' | 'BOTTOM'
   textAutoResize: 'NONE' | 'HEIGHT' | 'WIDTH_AND_HEIGHT'
+  layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
+  layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
 }
 
 interface CapturedVector extends CapturedNodeBase {
   type: 'VECTOR'
   svg: string
 }
+
+type CapturedEffect =
+  | {
+      type: 'DROP_SHADOW' | 'INNER_SHADOW'
+      visible: boolean
+      color: { r: number; g: number; b: number; a: number }
+      offset: { x: number; y: number }
+      radius: number
+      spread: number
+    }
+  | {
+      type: 'LAYER_BLUR'
+      visible: boolean
+      radius: number
+    }
 
 type CapturedFill = SolidFill | GradientFill | ImageFill
 
@@ -302,6 +321,12 @@ async function captureText(
     textAlignHorizontal: node.textAlignHorizontal,
     textAlignVertical: node.textAlignVertical,
     textAutoResize: node.textAutoResize as CapturedText['textAutoResize'],
+    layoutSizingHorizontal: (node as unknown as {
+      layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
+    }).layoutSizingHorizontal,
+    layoutSizingVertical: (node as unknown as {
+      layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
+    }).layoutSizingVertical,
   }
 }
 
@@ -346,6 +371,12 @@ async function captureBase(
     strokes?: ReadonlyArray<Paint>
     strokeWeight?: number | symbol
     strokeAlign?: 'INSIDE' | 'OUTSIDE' | 'CENTER'
+    individualStrokeWeights?: {
+      top: number
+      right: number
+      bottom: number
+      left: number
+    } | symbol
     dashPattern?: ReadonlyArray<number>
     cornerRadius?: number | symbol
     topLeftRadius?: number
@@ -354,6 +385,7 @@ async function captureBase(
     bottomRightRadius?: number
     rotation?: number
     opacity?: number
+    effects?: ReadonlyArray<Effect> | symbol
   }
   const fills = await capturePaints(
     Array.isArray(geo.fills) ? geo.fills : [],
@@ -362,10 +394,12 @@ async function captureBase(
   const strokes = await capturePaints(geo.strokes ?? [], assets)
   const strokeWeight =
     typeof geo.strokeWeight === 'number' ? geo.strokeWeight : 0
+  const strokeWidths = strokeWidthsOf(geo.individualStrokeWeights, strokeWeight)
   const strokeAlign = geo.strokeAlign ?? 'INSIDE'
   const strokeDashes = Array.isArray(geo.dashPattern)
     ? Array.from(geo.dashPattern)
     : []
+  const effects = Array.isArray(geo.effects) ? captureEffects(geo.effects) : []
   return {
     id: node.id,
     name: node.name,
@@ -381,9 +415,62 @@ async function captureBase(
     fills,
     strokes,
     strokeWeight,
+    ...(strokeWidths ? { strokeWidths } : {}),
     strokeAlign,
     strokeDashes,
+    effects,
   }
+}
+
+function captureEffects(effects: ReadonlyArray<Effect>): CapturedEffect[] {
+  const out: CapturedEffect[] = []
+  for (const effect of effects) {
+    if (effect.type === 'DROP_SHADOW' || effect.type === 'INNER_SHADOW') {
+      out.push({
+        type: effect.type,
+        visible: effect.visible !== false,
+        color: effect.color,
+        offset: { x: effect.offset.x, y: effect.offset.y },
+        radius: effect.radius,
+        spread: effect.spread ?? 0,
+      })
+    } else if (effect.type === 'LAYER_BLUR') {
+      out.push({
+        type: 'LAYER_BLUR',
+        visible: effect.visible !== false,
+        radius: effect.radius,
+      })
+    }
+  }
+  return out
+}
+
+function strokeWidthsOf(
+  widths:
+    | {
+        top: number
+        right: number
+        bottom: number
+        left: number
+      }
+    | symbol
+    | undefined,
+  uniformWeight: number,
+): { top: number; right: number; bottom: number; left: number } | undefined {
+  if (!widths || typeof widths === 'symbol') return undefined
+  const out = {
+    top: widths.top,
+    right: widths.right,
+    bottom: widths.bottom,
+    left: widths.left,
+  }
+  const eps = 0.01
+  const isUniform =
+    Math.abs(out.top - uniformWeight) < eps &&
+    Math.abs(out.right - uniformWeight) < eps &&
+    Math.abs(out.bottom - uniformWeight) < eps &&
+    Math.abs(out.left - uniformWeight) < eps
+  return isUniform ? undefined : out
 }
 
 function cornerRadiiOf(geo: {
@@ -422,12 +509,14 @@ async function capturePaint(
   paint: Paint,
   assets: Record<string, string>,
 ): Promise<CapturedFill | null> {
+  const visible = (paint as { visible?: boolean }).visible !== false
+  if (!visible) return null
   if (paint.type === 'SOLID') {
     return {
       type: 'SOLID',
       color: { r: paint.color.r, g: paint.color.g, b: paint.color.b },
       opacity: paint.opacity ?? 1,
-      visible: paint.visible !== false,
+      visible,
     }
   }
   if (
@@ -451,7 +540,7 @@ async function capturePaint(
         color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a },
       })),
       opacity: paint.opacity ?? 1,
-      visible: paint.visible !== false,
+      visible,
     }
   }
   if (paint.type === 'IMAGE') {
@@ -474,7 +563,7 @@ async function capturePaint(
       imageHash: paint.imageHash,
       scaleMode: paint.scaleMode as ImageFill['scaleMode'],
       opacity: paint.opacity ?? 1,
-      visible: paint.visible !== false,
+      visible,
     }
   }
   return null

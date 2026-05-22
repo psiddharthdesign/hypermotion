@@ -45,6 +45,28 @@ function setStatus(text: string, kind: '' | 'success' | 'error' = ''): void {
   statusEl.className = 'status' + (kind ? ' ' + kind : '')
 }
 
+function effectCountFromPayload(text: string): number {
+  try {
+    const payload = JSON.parse(text) as {
+      nodes?: Array<{ effects?: unknown[]; children?: unknown[] }>
+    }
+    let count = 0
+    const walk = (node: { effects?: unknown[]; children?: unknown[] }) => {
+      count += Array.isArray(node.effects) ? node.effects.length : 0
+      if (!Array.isArray(node.children)) return
+      for (const child of node.children) {
+        if (child && typeof child === 'object') {
+          walk(child as { effects?: unknown[]; children?: unknown[] })
+        }
+      }
+    }
+    for (const node of payload.nodes ?? []) walk(node)
+    return count
+  } catch {
+    return 0
+  }
+}
+
 // Outstanding payload request — resolved when the sandbox posts back
 // with `{ kind: 'payload' }`, rejected on `{ kind: 'error' }`. One in
 // flight at a time; subsequent clicks while in-flight are ignored
@@ -114,7 +136,12 @@ copyBtn.addEventListener('click', () => {
   void (async () => {
     const ok = await tryModernWrite()
     if (ok) {
-      setStatus('Copied. Paste into Hyper Motion (⌘V).', 'success')
+      const text = await payloadPromise.catch(() => '')
+      const effectCount = effectCountFromPayload(text)
+      setStatus(
+        `Copied. ${effectCount} effect${effectCount === 1 ? '' : 's'} included.`,
+        'success',
+      )
       copyBtn.disabled = false
       return
     }
@@ -128,7 +155,12 @@ copyBtn.addEventListener('click', () => {
       console.warn('[hyper-motion] fallback clipboard write failed', err)
     }
     if (fallbackOk) {
-      setStatus('Copied. Paste into Hyper Motion (⌘V).', 'success')
+      const text = await payloadPromise.catch(() => '')
+      const effectCount = effectCountFromPayload(text)
+      setStatus(
+        `Copied. ${effectCount} effect${effectCount === 1 ? '' : 's'} included.`,
+        'success',
+      )
     } else {
       setStatus(
         'Copy blocked by browser. Make sure the plugin window has focus and try again.',

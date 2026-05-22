@@ -94,7 +94,10 @@ export function figmaToStroke(
 // ---------------------------------------------------------------------------
 
 function solid(f: FigmaSolidFill): Fill {
-  return { kind: 'solid', color: rgbToOklch(f.color.r, f.color.g, f.color.b) }
+  return {
+    kind: 'solid',
+    color: colorWithOpacity(f.color.r, f.color.g, f.color.b, f.opacity),
+  }
 }
 
 function linear(f: FigmaGradientFill): Fill {
@@ -184,8 +187,22 @@ function stopsToOurs(
 ): GradientStop[] {
   return stops.map((s) => ({
     at: clamp01(s.position),
-    color: rgbToOklch(s.color.r, s.color.g, s.color.b),
+    color: colorWithOpacity(s.color.r, s.color.g, s.color.b, s.color.a),
   }))
+}
+
+function colorWithOpacity(r: number, g: number, b: number, opacity = 1): string {
+  const alpha = clamp01(opacity)
+  if (alpha < 1) return rgbToRgba(r, g, b, alpha)
+  return rgbToOklch(r, g, b)
+}
+
+function rgbToRgba(r: number, g: number, b: number, alpha: number): string {
+  return `rgba(${channelToByte(r)}, ${channelToByte(g)}, ${channelToByte(b)}, ${alpha})`
+}
+
+function channelToByte(n: number): number {
+  return Math.round(clamp01(n) * 255)
 }
 
 function rgbToOklch(r: number, g: number, b: number): string {
