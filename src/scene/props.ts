@@ -17,7 +17,7 @@ import type { PropertyId } from '@/scene/types'
  *   3. Anim engine will pick it up automatically
  */
 
-export type PropertyGroup = 'transform' | 'appearance' | 'layout' | 'size' | 'semantic'
+export type PropertyGroup = 'transform' | 'camera' | 'appearance' | 'layout' | 'size' | 'semantic'
 export type Interpolation = 'numeric' | 'discrete' | 'color' | 'angle'
 
 export interface PropertyDescriptor {
@@ -68,6 +68,84 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
   'transform.scaleY': {
     id: 'transform.scaleY', group: 'transform', label: 'Scale Y',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
+  'transform.anchorX': {
+    id: 'transform.anchorX', group: 'transform', label: 'Anchor X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.5,
+  },
+  'transform.anchorY': {
+    id: 'transform.anchorY', group: 'transform', label: 'Anchor Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.5,
+  },
+  'transform.anchorZ': {
+    id: 'transform.anchorZ', group: 'transform', label: 'Anchor Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+
+  // camera lens group — post-layout, no relayout needed
+  'camera.focusDistance': {
+    id: 'camera.focusDistance', group: 'camera', label: 'Focus Distance',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusX': {
+    id: 'camera.focusX', group: 'camera', label: 'Focus X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusY': {
+    id: 'camera.focusY', group: 'camera', label: 'Focus Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusWorldX': {
+    id: 'camera.focusWorldX', group: 'camera', label: 'Focus X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusWorldY': {
+    id: 'camera.focusWorldY', group: 'camera', label: 'Focus Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusWorldZ': {
+    id: 'camera.focusWorldZ', group: 'camera', label: 'Focus Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.pointOfInterestX': {
+    id: 'camera.pointOfInterestX', group: 'camera', label: 'POI X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.pointOfInterestY': {
+    id: 'camera.pointOfInterestY', group: 'camera', label: 'POI Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.pointOfInterestZ': {
+    id: 'camera.pointOfInterestZ', group: 'camera', label: 'POI Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focalLength': {
+    id: 'camera.focalLength', group: 'camera', label: 'Focal Length',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1000,
+  },
+  'camera.fieldOfView': {
+    id: 'camera.fieldOfView', group: 'camera', label: 'Field of View',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 35,
+  },
+  'camera.nearClip': {
+    id: 'camera.nearClip', group: 'camera', label: 'Near Clip',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
+  'camera.farClip': {
+    id: 'camera.farClip', group: 'camera', label: 'Far Clip',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 100000,
+  },
+  'camera.aperture': {
+    id: 'camera.aperture', group: 'camera', label: 'Aperture',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.blurLevel': {
+    id: 'camera.blurLevel', group: 'camera', label: 'Blur Level',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
+  'camera.blurQuality': {
+    id: 'camera.blurQuality', group: 'camera', label: 'Blur Quality',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 8,
   },
 
   // appearance group — also post-layout

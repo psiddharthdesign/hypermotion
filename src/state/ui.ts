@@ -304,6 +304,11 @@ interface UIState {
    * stay consistent.
    */
   rulerLabels: RulerLabelsMode
+  /**
+   * Camera id currently waiting for a canvas click to place its focus
+   * target. Null means regular canvas interactions are active.
+   */
+  focusPickingCameraId: string | null
 
   setTool: (tool: Tool) => void
   setSelection: (ids: string[]) => void
@@ -455,6 +460,8 @@ interface UIState {
   setRulerLabels: (mode: RulerLabelsMode) => void
   /** Cycle the ruler labels mode: both → time → frames → both. */
   cycleRulerLabels: () => void
+  /** Enter or exit click-to-focus placement for a camera. */
+  setFocusPickingCameraId: (id: string | null) => void
   /**
    * Full filesystem path of the currently-open `.hype` document, or
    * null if the user hasn't saved yet (acts like Figma's "Untitled").
@@ -541,6 +548,7 @@ export const useUI = create<UIState>((set) => ({
     return t
   })(),
   rulerLabels: readStoredRulerLabels(),
+  focusPickingCameraId: null,
 
   setTool: (tool) => set({ tool }),
   // Layer-selection actions clear `selectedTrackId`. Reasoning: if the
@@ -707,6 +715,7 @@ export const useUI = create<UIState>((set) => ({
       return { rulerLabels: m }
     })
   },
+  setFocusPickingCameraId: (id) => set({ focusPickingCameraId: id }),
   currentFilePath: null,
   lastSavedAt: null,
   setCurrentFile: (path, savedAt) =>

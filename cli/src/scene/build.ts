@@ -96,6 +96,27 @@ export interface NodeJson {
   projection?: '2d' | '3d'
   enabled?: boolean
   background?: unknown
+  focalLength?: number
+  fieldOfView?: number
+  pointOfInterestX?: number
+  pointOfInterestY?: number
+  pointOfInterestZ?: number
+  nearClip?: number
+  farClip?: number
+  depthOfField?: boolean
+  focusMode?: 'plane' | 'target' | 'screen'
+  focusX?: number
+  focusY?: number
+  focusWorldX?: number
+  focusWorldY?: number
+  focusWorldZ?: number
+  focusTargetNodeId?: string | null
+  focusDistance?: number
+  aperture?: number
+  iso?: number
+  blurLevel?: number
+  blurQuality?: number
+  showFocusPlane?: boolean
 }
 
 export interface TrackJson {
@@ -129,6 +150,11 @@ const DEFAULT_TRANSFORM = {
   rotationY: 0,
   scaleX: 1,
   scaleY: 1,
+  anchorX: 0.5,
+  anchorY: 0.5,
+  anchorZ: 0,
+  space: 'local',
+  renderMode: 'flat',
 }
 
 const DEFAULT_APPEARANCE = {
@@ -267,6 +293,27 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('projection', node.projection ?? '2d')
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
+      y.set('focalLength', node.focalLength ?? 1000)
+      y.set('fieldOfView', node.fieldOfView ?? 35)
+      y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
+      y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
+      y.set('pointOfInterestZ', node.pointOfInterestZ ?? node.focusWorldZ ?? 0)
+      y.set('nearClip', node.nearClip ?? 1)
+      y.set('farClip', node.farClip ?? 100000)
+      y.set('depthOfField', node.depthOfField ?? false)
+      y.set('focusMode', node.focusMode ?? 'plane')
+      y.set('focusX', node.focusX ?? node.transform?.x ?? 0)
+      y.set('focusY', node.focusY ?? node.transform?.y ?? 0)
+      y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? node.transform?.x ?? 0)
+      y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? node.transform?.y ?? 0)
+      y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+      y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
+      y.set('focusDistance', node.focusDistance ?? 0)
+      y.set('aperture', node.aperture ?? 0)
+      y.set('iso', node.iso ?? 100)
+      y.set('blurLevel', node.blurLevel ?? 1)
+      y.set('blurQuality', node.blurQuality ?? 8)
+      y.set('showFocusPlane', node.showFocusPlane ?? false)
     }
 
     nodes.set(agentId, y)

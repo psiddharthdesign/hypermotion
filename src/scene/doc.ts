@@ -4,6 +4,7 @@ import * as Y from 'yjs'
 import type {
   Appearance,
   CameraNode,
+  Fill,
   FrameNode,
   ImageNode,
   Keyframe,
@@ -183,6 +184,26 @@ export interface NodeBaseMutable {
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
    *  scale and the CSS perspective wrapper. */
   focalLength: number
+  fieldOfView: number
+  pointOfInterestX: number
+  pointOfInterestY: number
+  pointOfInterestZ: number
+  nearClip: number
+  farClip: number
+  depthOfField: boolean
+  focusMode: 'plane' | 'target' | 'screen'
+  focusX: number
+  focusY: number
+  focusWorldX: number
+  focusWorldY: number
+  focusWorldZ: number
+  focusTargetNodeId: NodeId | null
+  focusDistance: number
+  aperture: number
+  iso: number
+  blurLevel: number
+  blurQuality: number
+  showFocusPlane: boolean
   /** Stack of layout guides — only meaningful on FrameNode. */
   layoutGuides: import('@/scene/types').LayoutGuide[]
   // ... add kind-specific fields as they become mutable through the API
@@ -209,6 +230,11 @@ const DEFAULT_TRANSFORM: Transform = {
   rotationY: 0,
   scaleX: 1,
   scaleY: 1,
+  anchorX: 0.5,
+  anchorY: 0.5,
+  anchorZ: 0,
+  space: 'local',
+  renderMode: 'flat',
 }
 
 const DEFAULT_APPEARANCE: Appearance = {
@@ -464,7 +490,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // Legacy-safe defaults: '2d' + enabled=true. Older persisted
           // cameras (if any exist before migration) will read through
           // these so the render path never sees undefined.
-          projection: (y.get('projection') as '2d') ?? '2d',
+          projection:
+            (y.get('projection') as CameraNode['projection'] | undefined) ?? '2d',
           enabled: (y.get('enabled') as boolean) ?? true,
           // Background fill predates v2 cameras → default null. The
           // renderer interprets null as "use workspace chrome behind
@@ -472,6 +499,48 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           background:
             (y.get('background') as CameraNode['background']) ?? null,
           focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
+          fieldOfView: (y.get('fieldOfView') as number | undefined) ?? 35,
+          pointOfInterestX:
+            (y.get('pointOfInterestX') as number | undefined) ??
+            ((y.get('focusWorldX') as number | undefined) ??
+              ((y.get('transform') as Transform | undefined)?.x ?? 0)),
+          pointOfInterestY:
+            (y.get('pointOfInterestY') as number | undefined) ??
+            ((y.get('focusWorldY') as number | undefined) ??
+              ((y.get('transform') as Transform | undefined)?.y ?? 0)),
+          pointOfInterestZ:
+            (y.get('pointOfInterestZ') as number | undefined) ??
+            ((y.get('focusWorldZ') as number | undefined) ?? 0),
+          nearClip: (y.get('nearClip') as number | undefined) ?? 1,
+          farClip: (y.get('farClip') as number | undefined) ?? 100000,
+          depthOfField: (y.get('depthOfField') as boolean | undefined) ?? false,
+          focusMode:
+            (y.get('focusMode') as CameraNode['focusMode'] | undefined) ?? 'plane',
+          focusX:
+            (y.get('focusX') as number | undefined) ??
+            ((y.get('transform') as Transform | undefined)?.x ?? 0),
+          focusY:
+            (y.get('focusY') as number | undefined) ??
+            ((y.get('transform') as Transform | undefined)?.y ?? 0),
+          focusWorldX:
+            (y.get('focusWorldX') as number | undefined) ??
+            ((y.get('focusX') as number | undefined) ??
+              ((y.get('transform') as Transform | undefined)?.x ?? 0)),
+          focusWorldY:
+            (y.get('focusWorldY') as number | undefined) ??
+            ((y.get('focusY') as number | undefined) ??
+              ((y.get('transform') as Transform | undefined)?.y ?? 0)),
+          focusWorldZ:
+            (y.get('focusWorldZ') as number | undefined) ??
+            ((y.get('focusDistance') as number | undefined) ?? 0),
+          focusTargetNodeId:
+            (y.get('focusTargetNodeId') as NodeId | null | undefined) ?? null,
+          focusDistance: (y.get('focusDistance') as number | undefined) ?? 0,
+          aperture: (y.get('aperture') as number | undefined) ?? 0,
+          iso: (y.get('iso') as number | undefined) ?? 100,
+          blurLevel: (y.get('blurLevel') as number | undefined) ?? 1,
+          blurQuality: (y.get('blurQuality') as number | undefined) ?? 8,
+          showFocusPlane: (y.get('showFocusPlane') as boolean | undefined) ?? false,
         } as CameraNode
       }
       default: {
@@ -676,6 +745,26 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // hardcoded perspective value so legacy scenes render the
           // same. Larger = more telephoto (less distortion).
           y.set('focalLength', cp?.focalLength ?? 1000)
+          y.set('fieldOfView', cp?.fieldOfView ?? 35)
+          y.set('pointOfInterestX', cp?.pointOfInterestX ?? (cp?.focusWorldX ?? (cp?.transform?.x ?? 0)))
+          y.set('pointOfInterestY', cp?.pointOfInterestY ?? (cp?.focusWorldY ?? (cp?.transform?.y ?? 0)))
+          y.set('pointOfInterestZ', cp?.pointOfInterestZ ?? (cp?.focusWorldZ ?? 0))
+          y.set('nearClip', cp?.nearClip ?? 1)
+          y.set('farClip', cp?.farClip ?? 100000)
+          y.set('depthOfField', cp?.depthOfField ?? false)
+          y.set('focusMode', cp?.focusMode ?? 'plane')
+          y.set('focusX', cp?.focusX ?? (cp?.transform?.x ?? 0))
+          y.set('focusY', cp?.focusY ?? (cp?.transform?.y ?? 0))
+          y.set('focusWorldX', cp?.focusWorldX ?? (cp?.focusX ?? (cp?.transform?.x ?? 0)))
+          y.set('focusWorldY', cp?.focusWorldY ?? (cp?.focusY ?? (cp?.transform?.y ?? 0)))
+          y.set('focusWorldZ', cp?.focusWorldZ ?? (cp?.focusDistance ?? 0))
+          y.set('focusTargetNodeId', cp?.focusTargetNodeId ?? null)
+          y.set('focusDistance', cp?.focusDistance ?? 0)
+          y.set('aperture', cp?.aperture ?? 0)
+          y.set('iso', cp?.iso ?? 100)
+          y.set('blurLevel', cp?.blurLevel ?? 1)
+          y.set('blurQuality', cp?.blurQuality ?? 8)
+          y.set('showFocusPlane', cp?.showFocusPlane ?? false)
         }
 
         nodes.set(id, y)

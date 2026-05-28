@@ -12,6 +12,7 @@ import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
   Appearance,
+  CameraNode,
   CornerRadii,
   Effect,
   FlexAlign,
@@ -25,7 +26,6 @@ import type {
   Node,
   NodeId,
   Position,
-  PropertyId,
   Size,
   Stroke,
   TextNode,
@@ -508,19 +508,27 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               api.setNodeProperty(n.id, 'name', nextName)
             }
           }
-          // Auto-clear stale transform.x/y on flow children when the
-          // parent flips none → flex/grid. See the matching block in
-          // NodeDetails.patchLayout for rationale.
+          // Auto-layout mode means "the parent owns child placement."
+          // When a free-canvas frame flips to Stack/Grid, direct children
+          // often still carry absolute positioning and stale x/y offsets
+          // from dragging/import/duplicate. If we preserve those, Stack
+          // appears broken: Yoga lays out the children, then the renderer
+          // shifts them back to their old free positions. Normalize direct
+          // children into flow on the mode switch so the user gets the
+          // expected "arrange these items" behavior.
           const isAutoLayout = patch.mode === 'flex' || patch.mode === 'grid'
-          if (isAutoLayout && n.layout.mode === 'none') {
+          if (isAutoLayout) {
             for (const child of api.getChildren(n.id)) {
-              if (child.position === 'absolute') continue
-              if (child.transform.x === 0 && child.transform.y === 0) continue
-              api.setNodeProperty(child.id, 'transform', {
-                ...child.transform,
-                x: 0,
-                y: 0,
-              })
+              if (child.position !== 'flow') {
+                api.setNodeProperty(child.id, 'position', 'flow')
+              }
+              if (child.transform.x !== 0 || child.transform.y !== 0) {
+                api.setNodeProperty(child.id, 'transform', {
+                  ...child.transform,
+                  x: 0,
+                  y: 0,
+                })
+              }
             }
           }
         }
@@ -1069,6 +1077,49 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveSX = anim?.scaleX ?? node.transform.scaleX
   const liveSY = anim?.scaleY ?? node.transform.scaleY
   const liveOpacity = anim?.opacity ?? node.appearance.opacity
+  const liveFocusDistance =
+    node.kind === 'camera'
+      ? anim?.focusDistance ?? node.focusDistance ?? 0
+      : 0
+  const liveFocusWorldX =
+    node.kind === 'camera'
+      ? anim?.focusWorldX ?? node.focusWorldX ?? node.focusX ?? node.transform.x
+      : 0
+  const liveFocusWorldY =
+    node.kind === 'camera'
+      ? anim?.focusWorldY ?? node.focusWorldY ?? node.focusY ?? node.transform.y
+      : 0
+  const liveFocusWorldZ =
+    node.kind === 'camera'
+      ? anim?.focusWorldZ ?? node.focusWorldZ ?? node.focusDistance ?? 0
+      : 0
+  const liveAperture =
+    node.kind === 'camera' ? anim?.aperture ?? node.aperture ?? 0 : 0
+  const liveIso = node.kind === 'camera' ? node.iso ?? 100 : 100
+  const liveBlurLevel =
+    node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
+  const liveFocalLength =
+    node.kind === 'camera' ? anim?.focalLength ?? node.focalLength ?? 1000 : 1000
+  const liveFieldOfView =
+    node.kind === 'camera' ? anim?.fieldOfView ?? node.fieldOfView ?? 35 : 35
+  const liveNearClip =
+    node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
+  const liveFarClip =
+    node.kind === 'camera' ? anim?.farClip ?? node.farClip ?? 100000 : 100000
+  const livePointOfInterestX =
+    node.kind === 'camera'
+      ? anim?.pointOfInterestX ?? node.pointOfInterestX ?? node.transform.x
+      : 0
+  const livePointOfInterestY =
+    node.kind === 'camera'
+      ? anim?.pointOfInterestY ?? node.pointOfInterestY ?? node.transform.y
+      : 0
+  const livePointOfInterestZ =
+    node.kind === 'camera'
+      ? anim?.pointOfInterestZ ?? node.pointOfInterestZ ?? 0
+      : 0
+  const focusPickingCameraId = useUI((s) => s.focusPickingCameraId)
+  const setFocusPickingCameraId = useUI((s) => s.setFocusPickingCameraId)
   // Convenience patchers. Each reads the current group, merges the patch,
   // and writes the whole group back. This is the granularity setNodeProperty
   // accepts today; later we might split groups into nested Y.Maps so
@@ -1086,7 +1137,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // We read the store directly (not via hook) so commit handlers don't
   // re-subscribe per render — one-shot reads are fine here.
   const stampForPatch = (
-    group: 'transform' | 'appearance' | 'size',
+    group: 'transform' | 'appearance' | 'size' | 'camera',
     patch: Record<string, unknown>,
   ) => {
     const ui = useUI.getState()
@@ -1116,6 +1167,115 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     api.setNodeProperty(node.id, 'size', { ...node.size, ...patch })
     stampForPatch('size', patch)
   }
+  const patchCamera = (
+    patch: Partial<
+      Pick<
+        CameraNode,
+        | 'focusMode'
+        | 'focusDistance'
+        | 'focusX'
+        | 'focusY'
+        | 'focusWorldX'
+        | 'focusWorldY'
+        | 'focusWorldZ'
+        | 'focusTargetNodeId'
+        | 'focalLength'
+        | 'aperture'
+        | 'iso'
+        | 'blurLevel'
+        | 'fieldOfView'
+        | 'nearClip'
+        | 'farClip'
+        | 'pointOfInterestX'
+        | 'pointOfInterestY'
+        | 'pointOfInterestZ'
+        | 'blurQuality'
+        | 'showFocusPlane'
+      >
+    >,
+  ) => {
+    if (node.kind !== 'camera') return
+    if (patch.focusMode !== undefined) {
+      api.setNodeProperty(node.id, 'focusMode', patch.focusMode)
+    }
+    if (patch.focusDistance !== undefined) {
+      api.setNodeProperty(node.id, 'focusDistance', patch.focusDistance)
+    }
+    if (patch.focusX !== undefined) {
+      api.setNodeProperty(node.id, 'focusX', patch.focusX)
+    }
+    if (patch.focusY !== undefined) {
+      api.setNodeProperty(node.id, 'focusY', patch.focusY)
+    }
+    if (patch.focusWorldX !== undefined) {
+      api.setNodeProperty(node.id, 'focusWorldX', patch.focusWorldX)
+    }
+    if (patch.focusWorldY !== undefined) {
+      api.setNodeProperty(node.id, 'focusWorldY', patch.focusWorldY)
+    }
+    if (patch.focusWorldZ !== undefined) {
+      api.setNodeProperty(node.id, 'focusWorldZ', patch.focusWorldZ)
+    }
+    if (patch.focusTargetNodeId !== undefined) {
+      api.setNodeProperty(node.id, 'focusTargetNodeId', patch.focusTargetNodeId)
+    }
+    if (patch.focalLength !== undefined) {
+      api.setNodeProperty(node.id, 'focalLength', patch.focalLength)
+    }
+    if (patch.aperture !== undefined) {
+      api.setNodeProperty(node.id, 'aperture', patch.aperture)
+    }
+    if (patch.iso !== undefined) {
+      api.setNodeProperty(node.id, 'iso', patch.iso)
+    }
+    if (patch.blurLevel !== undefined) {
+      api.setNodeProperty(node.id, 'blurLevel', patch.blurLevel)
+    }
+    if (patch.fieldOfView !== undefined) {
+      api.setNodeProperty(node.id, 'fieldOfView', patch.fieldOfView)
+    }
+    if (patch.nearClip !== undefined) {
+      api.setNodeProperty(node.id, 'nearClip', patch.nearClip)
+    }
+    if (patch.farClip !== undefined) {
+      api.setNodeProperty(node.id, 'farClip', patch.farClip)
+    }
+    if (patch.pointOfInterestX !== undefined) {
+      api.setNodeProperty(node.id, 'pointOfInterestX', patch.pointOfInterestX)
+    }
+    if (patch.pointOfInterestY !== undefined) {
+      api.setNodeProperty(node.id, 'pointOfInterestY', patch.pointOfInterestY)
+    }
+    if (patch.pointOfInterestZ !== undefined) {
+      api.setNodeProperty(node.id, 'pointOfInterestZ', patch.pointOfInterestZ)
+    }
+    if (patch.blurQuality !== undefined) {
+      api.setNodeProperty(node.id, 'blurQuality', patch.blurQuality)
+    }
+    if (patch.showFocusPlane !== undefined) {
+      api.setNodeProperty(node.id, 'showFocusPlane', patch.showFocusPlane)
+    }
+    stampForPatch('camera', patch)
+  }
+  const patchPreciseFocusPoint = (
+    patch: Partial<Pick<CameraNode, 'focusWorldX' | 'focusWorldY' | 'focusWorldZ'>>,
+  ) => {
+    if (node.kind !== 'camera') return
+    const nextX = patch.focusWorldX ?? node.focusWorldX ?? node.focusX ?? node.transform.x
+    const nextY = patch.focusWorldY ?? node.focusWorldY ?? node.focusY ?? node.transform.y
+    const nextZ =
+      patch.focusWorldZ ?? node.focusWorldZ ?? node.focusDistance ?? node.transform.z
+    api.doc.transact(() => {
+      patchCamera({
+        focusMode: 'plane',
+        focusWorldX: nextX,
+        focusWorldY: nextY,
+        focusWorldZ: nextZ,
+        focusDistance: nextZ,
+        focusTargetNodeId: null,
+      })
+    })
+  }
   const patchLayout = (patch: Partial<Layout>) => {
     if (!('layout' in node)) return
     api.setNodeProperty(node.id, 'layout', { ...node.layout, ...patch })
@@ -1137,27 +1297,24 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           api.setNodeProperty(node.id, 'name', nextName)
         }
       }
-      // Auto-clear stale transform.x/y on `flow` children when the
-      // parent flips into auto-layout. Reasoning: in flow under flex/
-      // grid, those values shift the child OFF the slot the layout
-      // assigns — usually unintentionally (left over from `none`
-      // mode where the user dragged things around freely, or from a
-      // Figma import). The user just chose "let auto-layout decide
-      // positions," so reset the offsets to honor that intent.
-      // `absolute` children keep their offsets — that's how they're
-      // pinned in the first place.
+      // Auto-layout mode means "the parent owns child placement."
+      // Convert direct children into flow and clear stale x/y offsets
+      // when the user switches a frame/scene into Stack/Grid; otherwise
+      // old free-canvas offsets keep visually fighting the Yoga result.
       const isAutoLayout = patch.mode === 'flex' || patch.mode === 'grid'
-      const wasNone = node.layout.mode === 'none'
-      if (isAutoLayout && wasNone) {
+      if (isAutoLayout) {
         api.doc.transact(() => {
           for (const child of api.getChildren(node.id)) {
-            if (child.position === 'absolute') continue
-            if (child.transform.x === 0 && child.transform.y === 0) continue
-            api.setNodeProperty(child.id, 'transform', {
-              ...child.transform,
-              x: 0,
-              y: 0,
-            })
+            if (child.position !== 'flow') {
+              api.setNodeProperty(child.id, 'position', 'flow')
+            }
+            if (child.transform.x !== 0 || child.transform.y !== 0) {
+              api.setNodeProperty(child.id, 'transform', {
+                ...child.transform,
+                x: 0,
+                y: 0,
+              })
+            }
           }
         })
       }
@@ -1198,73 +1355,63 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       <PositionSection node={node} api={api} />
 
-      <Section title="Transform">
-        {/* See multi-select branch above for rationale. */}
-        <div className="mb-3">
-          <AlignTools api={api} selection={[node.id]} />
-        </div>
-        <FieldRow
-          label="X"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.x"
-              currentValue={liveX}
-            />
-          }
-        >
-          <NumberField
-            value={liveX}
-            onCommit={(v) => patchTransform({ x: v })}
-          />
-        </FieldRow>
-        <FieldRow
-          label="Y"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.y"
-              currentValue={liveY}
-            />
-          }
-        >
-          <NumberField
-            value={liveY}
-            onCommit={(v) => patchTransform({ y: v })}
-          />
-        </FieldRow>
-        {/* Z lives on the camera only. Regular layers render in 2D
-            space — exposing Z on every layer led to "negative Z hides
-            the element entirely" surprises (no perspective context).
-            The camera applies its own Z transform to the whole scene. */}
-        {node.kind === 'camera' && (
-          <FieldRow
-            label="Z"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="transform.z"
-                currentValue={liveZ}
-              />
-            }
-          >
-            <NumberField
-              value={liveZ}
-              onCommit={(v) => patchTransform({ z: v })}
-              step={1}
-            />
-          </FieldRow>
-        )}
-        {/* Rotation. Cameras get full 3D — pitch (X), yaw (Y), and roll
-            (Z) — so the user can fly the view around in three axes
-            instead of just spinning it. Other layers keep the original
-            single-axis Rotation row to avoid bloating the inspector
-            with controls most layers won't use. (Per-layer 3D rotation
-            is in the data model and rendered, but exposed only on
-            cameras for now — Step 4.5 will surface it on regular
-            layers along with the gizmo work.) */}
-        {node.kind === 'camera' ? (
-          <>
+      {node.kind === 'camera' && (
+        <>
+          <Section title="Camera Position">
+            <FieldRow
+              label="Position X"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="transform.x"
+                  currentValue={liveX}
+                />
+              }
+            >
+	              <NumberField
+	                value={liveX}
+	                onCommit={(v) => patchTransform({ x: v })}
+	                step={1}
+	                suffix="px"
+	              />
+            </FieldRow>
+            <FieldRow
+              label="Position Y"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="transform.y"
+                  currentValue={liveY}
+                />
+              }
+            >
+	              <NumberField
+	                value={liveY}
+	                onCommit={(v) => patchTransform({ y: v })}
+	                step={1}
+	                suffix="px"
+	              />
+            </FieldRow>
+            <FieldRow
+              label="Position Z"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="transform.z"
+                  currentValue={liveZ}
+                />
+              }
+            >
+	              <NumberField
+	                value={liveZ}
+	                onCommit={(v) => patchTransform({ z: v })}
+	                step={1}
+	                suffix="px"
+	              />
+            </FieldRow>
+          </Section>
+
+          <Section title="Camera Rotation">
             <FieldRow
               label="Rotate X"
               keyframe={
@@ -1313,43 +1460,230 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 suffix="°"
               />
             </FieldRow>
-          </>
-        ) : (
-          <FieldRow
-            label="Rotation"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="transform.rotation"
-                currentValue={liveRot}
+          </Section>
+
+          <Section title="Point of Interest">
+            <FieldRow
+              label="Target X"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.pointOfInterestX"
+                  currentValue={livePointOfInterestX}
+                />
+              }
+            >
+              <NumberField
+                value={livePointOfInterestX}
+                onCommit={(v) => patchCamera({ pointOfInterestX: v })}
+                step={1}
+                suffix="px"
               />
-            }
-          >
-            <NumberField
-              value={liveRot}
-              onCommit={(v) => patchTransform({ rotation: v })}
-              suffix="°"
+            </FieldRow>
+            <FieldRow
+              label="Target Y"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.pointOfInterestY"
+                  currentValue={livePointOfInterestY}
+                />
+              }
+            >
+              <NumberField
+                value={livePointOfInterestY}
+                onCommit={(v) => patchCamera({ pointOfInterestY: v })}
+                step={1}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Target Z"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.pointOfInterestZ"
+                  currentValue={livePointOfInterestZ}
+                />
+              }
+            >
+              <NumberField
+                value={livePointOfInterestZ}
+                onCommit={(v) => patchCamera({ pointOfInterestZ: v })}
+                step={5}
+                suffix="px"
+              />
+            </FieldRow>
+          </Section>
+        </>
+      )}
+
+      {node.kind !== 'camera' && (
+      <Section title="Transform">
+        {/* See multi-select branch above for rationale. */}
+        <div className="mb-3">
+          <AlignTools api={api} selection={[node.id]} />
+        </div>
+        <FieldRow label="Render Mode">
+          <SelectField<NonNullable<Transform['renderMode']>>
+            value={node.transform.renderMode ?? 'flat'}
+            options={[
+              { value: 'flat', label: 'Flat' },
+              { value: 'plane', label: '3D Plane' },
+              { value: 'group3d', label: '3D Group' },
+            ]}
+            onCommit={(renderMode) => patchTransform({ renderMode })}
+            width="w-full"
+          />
+        </FieldRow>
+        <FieldRow label="3D Space">
+          <SelectField<NonNullable<Transform['space']>>
+            value={node.transform.space ?? 'local'}
+            options={[
+              { value: 'local', label: 'Local plane' },
+              { value: 'world', label: 'World' },
+            ]}
+            onCommit={(space) => patchTransform({ space })}
+            width="w-full"
+          />
+        </FieldRow>
+        <FieldRow
+          label="Position X"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.x"
+              currentValue={liveX}
             />
-          </FieldRow>
-        )}
+          }
+        >
+          <NumberField
+            value={liveX}
+            onCommit={(v) => patchTransform({ x: v })}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Position Y"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.y"
+              currentValue={liveY}
+            />
+          }
+        >
+          <NumberField
+            value={liveY}
+            onCommit={(v) => patchTransform({ y: v })}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Position Z"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.z"
+              currentValue={liveZ}
+            />
+          }
+        >
+          <NumberField
+            value={liveZ}
+            onCommit={(v) => patchTransform({ z: v })}
+            step={1}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Rotate X"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationX"
+              currentValue={liveRotX}
+            />
+          }
+        >
+          <NumberField
+            value={liveRotX}
+            onCommit={(v) => patchTransform({ rotationX: v })}
+            suffix="°"
+          />
+        </FieldRow>
+        <FieldRow
+          label="Rotate Y"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationY"
+              currentValue={liveRotY}
+            />
+          }
+        >
+          <NumberField
+            value={liveRotY}
+            onCommit={(v) => patchTransform({ rotationY: v })}
+            suffix="°"
+          />
+        </FieldRow>
+        <FieldRow
+          label="Rotate Z"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotation"
+              currentValue={liveRot}
+            />
+          }
+        >
+          <NumberField
+            value={liveRot}
+            onCommit={(v) => patchTransform({ rotation: v })}
+            suffix="°"
+          />
+        </FieldRow>
         {/* Cameras don't expose Scale — they're 3D now, so Z position
             in the row above does the dolly job that Scale used to.
             Other layers still get the X/Y scale pair. Cameras *do*
             have scaleX/scaleY in the data model (used by the renderer
             for the camera transform), but those are computed from Z
             via perspective rather than user-edited. */}
-        {node.kind !== 'camera' && (
-          <FieldRow label="Scale">
-            <ScalePairField
-              nodeId={node.id}
-              scaleX={liveSX}
-              scaleY={liveSY}
-              onCommitX={(v) => patchTransform({ scaleX: v })}
-              onCommitY={(v) => patchTransform({ scaleY: v })}
-            />
-          </FieldRow>
-        )}
+        <FieldRow label="Scale">
+          <ScalePairField
+            nodeId={node.id}
+            scaleX={liveSX}
+            scaleY={liveSY}
+            onCommitX={(v) => patchTransform({ scaleX: v })}
+            onCommitY={(v) => patchTransform({ scaleY: v })}
+          />
+        </FieldRow>
+        <FieldRow label="Anchor X">
+          <NumberField
+            value={node.transform.anchorX ?? 0.5}
+            onCommit={(v) => patchTransform({ anchorX: Math.max(0, Math.min(1, v)) })}
+            min={0}
+            max={1}
+            step={0.05}
+          />
+        </FieldRow>
+        <FieldRow label="Anchor Y">
+          <NumberField
+            value={node.transform.anchorY ?? 0.5}
+            onCommit={(v) => patchTransform({ anchorY: Math.max(0, Math.min(1, v)) })}
+            min={0}
+            max={1}
+            step={0.05}
+          />
+        </FieldRow>
+        <FieldRow label="Anchor Z">
+          <NumberField
+            value={node.transform.anchorZ ?? 0}
+            onCommit={(v) => patchTransform({ anchorZ: v })}
+            step={1}
+            suffix="px"
+          />
+        </FieldRow>
       </Section>
+      )}
 
       {'size' in node && (
         <Section title="Size">
@@ -1467,35 +1801,260 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
-          <Section title="Camera">
-            <FieldRow label="Projection">
-              <span className="pr-1.5 text-[12px] text-text-muted">2D</span>
-            </FieldRow>
-            <FieldRow label="Focal">
-              {/* Drives both the Z-driven scale formula AND the CSS
-                  perspective. Larger = telephoto (less distortion at
-                  rotation). The suffix hints that this is the optical
-                  focal length in canvas-pixel units. Range 50–10000
-                  covers the practical span; clamp to 50 so the
-                  scale singularity stays well clear of likely Z values. */}
+          <Section title="Lens">
+            <FieldRow
+              label="Focal length"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focalLength"
+                  currentValue={liveFocalLength}
+                />
+              }
+            >
               <NumberField
-                value={node.focalLength ?? 1000}
+                value={liveFocalLength / 20}
                 onCommit={(v) =>
-                  api.setNodeProperty(node.id, 'focalLength', Math.max(50, v))
+                  patchCamera({ focalLength: Math.max(5, v) * 20 })
                 }
-                min={50}
-                max={10000}
-                step={50}
+                min={5}
+                max={300}
+                step={1}
+                suffix="mm"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Field of View"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.fieldOfView"
+                  currentValue={liveFieldOfView}
+                />
+              }
+            >
+              <NumberField
+                value={liveFieldOfView}
+                onCommit={(v) =>
+                  patchCamera({ fieldOfView: Math.max(1, Math.min(175, v)) })
+                }
+                min={1}
+                max={175}
+                step={0.5}
+                suffix="°"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Near Clip"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.nearClip"
+                  currentValue={liveNearClip}
+                />
+              }
+            >
+              <NumberField
+                value={liveNearClip}
+                onCommit={(v) => patchCamera({ nearClip: Math.max(0.001, v) })}
+                min={0.001}
+                step={1}
                 suffix="px"
               />
             </FieldRow>
-            {node.kind === 'camera' && (
-              <FillField
-                label="Background"
-                value={node.background ?? null}
-                onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
+            <FieldRow
+              label="Far Clip"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.farClip"
+                  currentValue={liveFarClip}
+                />
+              }
+            >
+              <NumberField
+                value={liveFarClip}
+                onCommit={(v) => patchCamera({ farClip: Math.max(1, v) })}
+                min={1}
+                step={100}
+                suffix="px"
               />
-            )}
+            </FieldRow>
+            <FieldRow
+              label="Aperture"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.aperture"
+                  currentValue={liveAperture}
+                />
+              }
+            >
+              <NumberField
+                value={Math.max(0, liveAperture)}
+                onCommit={(v) => patchCamera({ aperture: Math.max(0, v) })}
+                min={0}
+                max={22}
+                step={0.25}
+              />
+            </FieldRow>
+            <FieldRow
+              label="Focus distance"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focusDistance"
+                  currentValue={liveFocusDistance}
+                />
+              }
+            >
+              <NumberField
+                value={liveFocusDistance / 100}
+                onCommit={(v) =>
+                  patchCamera({
+                    focusDistance: v * 100,
+                    focusWorldZ: v * 100,
+                  })
+                }
+                min={0}
+                step={0.05}
+                suffix="m"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Focus X"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focusWorldX"
+                  currentValue={liveFocusWorldX}
+                />
+              }
+            >
+              <NumberField
+                value={liveFocusWorldX}
+                onCommit={(v) => patchPreciseFocusPoint({ focusWorldX: v })}
+                step={1}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Focus Y"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focusWorldY"
+                  currentValue={liveFocusWorldY}
+                />
+              }
+            >
+              <NumberField
+                value={liveFocusWorldY}
+                onCommit={(v) => patchPreciseFocusPoint({ focusWorldY: v })}
+                step={1}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Focus Z"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focusWorldZ"
+                  currentValue={liveFocusWorldZ}
+                />
+              }
+            >
+              <NumberField
+                value={liveFocusWorldZ}
+                onCommit={(v) => patchPreciseFocusPoint({ focusWorldZ: v })}
+                step={5}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow label="ISO">
+              <NumberField
+                value={liveIso}
+                onCommit={(v) => patchCamera({ iso: Math.max(50, Math.round(v)) })}
+                min={50}
+                max={12800}
+                step={50}
+              />
+            </FieldRow>
+            <FieldRow label="Focus point">
+              <button
+                type="button"
+                className={[
+                  'h-7 w-full rounded border px-2 text-[11px] font-medium transition-colors',
+                  focusPickingCameraId === node.id
+                    ? 'border-accent bg-accent/15 text-text'
+                    : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+                ].join(' ')}
+                onClick={() =>
+                  setFocusPickingCameraId(
+                    focusPickingCameraId === node.id ? null : node.id,
+                  )
+                }
+              >
+                {focusPickingCameraId === node.id ? 'Click canvas to set' : 'Pick on canvas'}
+              </button>
+            </FieldRow>
+            <FieldRow label="Depth of field">
+              <CheckboxField
+                value={node.depthOfField ?? false}
+                onCommit={(v) => api.setNodeProperty(node.id, 'depthOfField', v)}
+              />
+            </FieldRow>
+            <FieldRow label="Show focus plane">
+              <CheckboxField
+                value={node.showFocusPlane ?? false}
+                onCommit={(v) => patchCamera({ showFocusPlane: v })}
+              />
+            </FieldRow>
+            <FieldRow
+              label="Blur"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.blurLevel"
+                  currentValue={liveBlurLevel}
+                />
+              }
+            >
+              <NumberField
+                value={Math.max(0, Math.min(64, liveBlurLevel))}
+                onCommit={(v) =>
+                  patchCamera({ blurLevel: Math.max(0, Math.min(64, v)) })
+                }
+                min={0}
+                max={64}
+                step={0.25}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow
+              label="Blur quality"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.blurQuality"
+                  currentValue={node.blurQuality ?? 8}
+                />
+              }
+            >
+              <NumberField
+                value={node.blurQuality ?? 8}
+                onCommit={(v) => patchCamera({ blurQuality: Math.max(1, Math.round(v)) })}
+                min={1}
+                max={64}
+                step={1}
+              />
+            </FieldRow>
+            <FillField
+              label="Background"
+              value={node.background ?? null}
+              onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
+            />
             <CameraResetActions node={node} api={api} />
           </Section>
         </>

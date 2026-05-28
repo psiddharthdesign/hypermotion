@@ -28,9 +28,28 @@ export interface AnimatedValue {
   rotationY?: number
   scaleX?: number
   scaleY?: number
+  anchorX?: number
+  anchorY?: number
+  anchorZ?: number
   opacity?: number
   cornerRadius?: number
   fill?: string
+  focusDistance?: number
+  focusX?: number
+  focusY?: number
+  focusWorldX?: number
+  focusWorldY?: number
+  focusWorldZ?: number
+  pointOfInterestX?: number
+  pointOfInterestY?: number
+  pointOfInterestZ?: number
+  focalLength?: number
+  fieldOfView?: number
+  nearClip?: number
+  farClip?: number
+  aperture?: number
+  blurLevel?: number
+  blurQuality?: number
 }
 
 /**

@@ -38,6 +38,12 @@ export function createSampleScene(api: SceneAPI): void {
       scaleX: 1,
       scaleY: 1,
     },
+    focusMode: 'plane',
+    focusX: canvasW / 2,
+    focusY: canvasH / 2,
+    focusWorldX: canvasW / 2,
+    focusWorldY: canvasH / 2,
+    focusWorldZ: 0,
   })
   api.setActiveCameraId(camId)
 

@@ -54,8 +54,16 @@ export const createSceneTool: Tool = {
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, ...kind-specific }\n" +
     "Auto-layout frames take layout: { mode: 'flex', direction: 'row'|'column', justify, align, gap, padding }\n" +
     "Tracks: { id, nodeId, propertyId, keyframes: [{ id, time, value, easingOut? }], defaultEasing? }\n" +
-    "Property IDs you can keyframe: transform.x, transform.y, transform.rotation, transform.scaleX, " +
-    "transform.scaleY, appearance.opacity, appearance.cornerRadius, layout.gap, layout.padding.top, " +
+    "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
+    "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, aperture, iso, blurLevel, " +
+    "blurQuality, and showFocusPlane.\n" +
+    "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
+    "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
+    "camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, camera.focusDistance, " +
+    "camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ, " +
+    "camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip, " +
+    "camera.aperture, camera.blurLevel, camera.blurQuality, " +
+    "appearance.opacity, appearance.cornerRadius, layout.gap, layout.padding.top, " +
     "layout.padding.right, layout.padding.bottom, layout.padding.left, size.width, size.height, " +
     "layout.direction, variant.\n\n" +
     "Include a 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
