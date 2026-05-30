@@ -91,7 +91,6 @@ export function TopBar() {
           <span className="text-[13px] font-semibold tracking-tight">
             Hyper Motion
           </span>
-          <ChevronDown className="text-text-dim" />
         </button>
         <span className="text-text-dim text-[12px]">/</span>
         <button
@@ -433,14 +432,6 @@ function BrandGlyph() {
   return (
     <svg {...svgProps(10)} strokeWidth={1.8}>
       <path d="M3 12V4M3 4l5 8 5-8M13 4v8" />
-    </svg>
-  )
-}
-
-function ChevronDown({ className }: { className?: string }) {
-  return (
-    <svg {...svgProps(10)} className={className}>
-      <path d="M4 6l4 4 4-4" />
     </svg>
   )
 }

@@ -14,7 +14,13 @@ import { useAnim } from '@/ui/hooks/useAnim'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
-import { SceneLayer, composeInheritedAnim } from '@/ui/Canvas'
+import {
+  SceneLayer,
+  CameraFocusBlurOverlay,
+  composeInheritedAnim,
+  computeCameraDepthOfField,
+  resolveCameraFocusTargetPoint,
+} from '@/ui/Canvas'
 import { getAnimEngine } from '@/anim'
 import {
   createElectronCapture,
@@ -328,6 +334,37 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     )
   }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
 
+  const cameraDepthOfField = useMemo(
+    () => {
+      const focusTargetWorld = resolveCameraFocusTargetPoint(
+        api,
+        camera && camera.kind === 'camera' ? camera : null,
+        solved ?? {},
+        animated,
+        inherited,
+      )
+      return computeCameraDepthOfField(
+        camera && camera.kind === 'camera' ? camera : null,
+        cameraAnim,
+        cameraScaleFromZ,
+        canvasWidth,
+        canvasHeight,
+        focusTargetWorld,
+      )
+    },
+    [
+      api,
+      camera,
+      cameraAnim,
+      cameraScaleFromZ,
+      canvasWidth,
+      canvasHeight,
+      solved,
+      animated,
+      inherited,
+    ],
+  )
+
   // Output scale — the render window's content area is sized to the
   // output dimensions in main. The artboard is rendered at its own
   // CSS size, then scaled (via CSS transform) to fill the window.
@@ -427,8 +464,21 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               order={renderOrder}
               animated={animated}
               inherited={inherited}
+              cameraDepthOfField={cameraDepthOfField}
               // No-op — render window has no selection to drive.
               onNodeClick={() => {}}
+            />
+            <CameraFocusBlurOverlay
+              rootId={rootId}
+              solved={solved}
+              order={renderOrder}
+              animated={animated}
+              inherited={inherited}
+              cameraDepthOfField={cameraDepthOfField}
+              sceneFill={sceneFill}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              sceneCorner={sceneCorner}
             />
           </div>
         )}

@@ -3,10 +3,16 @@
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
 import { useSceneAPI } from '@/scene'
-import type { NodeId, Node as SceneNode } from '@/scene'
+import type {
+  EasingKind,
+  KeyframeValue,
+  NodeId,
+  Node as SceneNode,
+  PropertyId,
+} from '@/scene'
 import { useUI, type Tool } from '@/state/ui'
 import { wrapInAutoLayout } from '@/ui/actions'
-import { removeTrack } from '@/anim'
+import { addKeyframe, removeTrack } from '@/anim'
 
 /**
  * Global keyboard shortcuts.
@@ -160,7 +166,9 @@ export function useKeyboardShortcuts() {
         e.preventDefault()
         const sel = useUI.getState().selection
         if (sel.length === 0) return
-        const duplicates = sel.map((id) => duplicateNode(api, id)).filter(Boolean) as NodeId[]
+        const duplicates = sel
+          .map((id) => duplicateNode(api, id))
+          .filter(Boolean) as NodeId[]
         if (duplicates.length > 0) setSelection(duplicates)
         return
       }
@@ -170,6 +178,10 @@ export function useKeyboardShortcuts() {
       // input still works for ordinary text copy (events from text
       // inputs are already filtered out earlier in the handler).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c') {
+        if (copySelectedKeyframes(api)) {
+          e.preventDefault()
+          return
+        }
         const sel = useUI.getState().selection
         if (sel.length === 0) return
         e.preventDefault()
@@ -183,6 +195,10 @@ export function useKeyboardShortcuts() {
       // because the underlying nodes are gone; Cmd+V restores them
       // (under root by default, see paste below).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
+        if (copySelectedKeyframes(api)) {
+          e.preventDefault()
+          return
+        }
         const sel = useUI.getState().selection
         if (sel.length === 0) return
         e.preventDefault()
@@ -208,8 +224,9 @@ export function useKeyboardShortcuts() {
       //     you have a frame selected and hit Cmd+V).
       //   - Otherwise the scene root (paste at the top level).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
-        if (clipboard.length === 0) return
         e.preventDefault()
+        if (pasteKeyframesAtPlayhead(api)) return
+        if (clipboard.length === 0) return
         const sel = useUI.getState().selection
         const root = api.getRoot()
         let targetParent: NodeId | null = root || null
@@ -221,7 +238,7 @@ export function useKeyboardShortcuts() {
         }
         const newIds = clipboard
           .map((item) => pasteSubtree(api, item, targetParent))
-          .filter(Boolean)
+          .filter((id): id is NodeId => id !== null)
         if (newIds.length > 0) setSelection(newIds)
         return
       }
@@ -561,6 +578,7 @@ function duplicateNode(
 ): NodeId | null {
   const original = api.getNode(id)
   if (!original || !original.parent) return null
+  if (original.kind === 'camera') return null
 
   const cloneSubtree = (src: SceneNode, parent: NodeId): NodeId => {
     const newId = api.createNode(src.kind, parent, {
@@ -614,7 +632,10 @@ function duplicateNode(
       api.setNodeProperty(newId, 'transform', {
         x: 0,
         y: 0,
+        z: copy.transform.z,
         rotation: copy.transform.rotation,
+        rotationX: copy.transform.rotationX,
+        rotationY: copy.transform.rotationY,
         scaleX: copy.transform.scaleX,
         scaleY: copy.transform.scaleY,
       })
@@ -654,12 +675,24 @@ interface ClipboardNode {
 
 let clipboard: ClipboardNode[] = []
 
+interface ClipboardKeyframe {
+  nodeId: NodeId
+  propertyId: PropertyId
+  offset: number
+  value: KeyframeValue
+  easingOut?: EasingKind
+  presetOrigin?: 'in' | 'out'
+}
+
+let keyframeClipboard: ClipboardKeyframe[] = []
+
 function serializeSubtree(
   api: ReturnType<typeof useSceneAPI>,
   nodeId: NodeId,
 ): ClipboardNode | null {
   const node = api.getNode(nodeId)
   if (!node) return null
+  if (node.kind === 'camera') return null
   const data = stripLinks(node) as Record<string, unknown>
   delete data.name // name is restored verbatim below
   const tracks = api.getTracksForNode(nodeId).map((t) => ({
@@ -692,7 +725,8 @@ function pasteSubtree(
   api: ReturnType<typeof useSceneAPI>,
   item: ClipboardNode,
   parentId: NodeId | null,
-): NodeId {
+): NodeId | null {
+  if (item.kind === 'camera') return null
   const newId = api.createNode(
     item.kind,
     parentId,
@@ -714,6 +748,88 @@ function pasteSubtree(
     pasteSubtree(api, child, newId)
   }
   return newId
+}
+
+function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
+  const keys = useUI.getState().selectedKeyframes
+  if (keys.length === 0) return false
+
+  const entries: Array<{
+    nodeId: NodeId
+    propertyId: PropertyId
+    time: number
+    value: KeyframeValue
+    easingOut?: EasingKind
+    presetOrigin?: 'in' | 'out'
+  }> = []
+
+  for (const key of keys) {
+    const sep = key.indexOf(':')
+    if (sep <= 0) continue
+    const trackId = key.slice(0, sep)
+    const kfId = key.slice(sep + 1)
+    const track = api.getTrack(trackId)
+    if (!track) continue
+    const node = api.getNode(track.nodeId)
+    if (!node) continue
+    const kf = track.keyframes.find((candidate) => candidate.id === kfId)
+    if (!kf) continue
+    entries.push({
+      nodeId: track.nodeId,
+      propertyId: track.propertyId,
+      time: kf.time,
+      value: kf.value,
+      ...(kf.easingOut ? { easingOut: kf.easingOut } : {}),
+      ...(kf.presetOrigin ? { presetOrigin: kf.presetOrigin } : {}),
+    })
+  }
+
+  if (entries.length === 0) return false
+  const start = Math.min(...entries.map((entry) => entry.time))
+  keyframeClipboard = entries
+    .sort((a, b) => a.time - b.time)
+    .map((entry) => ({
+      nodeId: entry.nodeId,
+      propertyId: entry.propertyId,
+      offset: entry.time - start,
+      value: entry.value,
+      ...(entry.easingOut ? { easingOut: entry.easingOut } : {}),
+      ...(entry.presetOrigin ? { presetOrigin: entry.presetOrigin } : {}),
+    }))
+  return true
+}
+
+function pasteKeyframesAtPlayhead(api: ReturnType<typeof useSceneAPI>): boolean {
+  if (keyframeClipboard.length === 0) return false
+
+  const playhead = useUI.getState().playhead
+  const pastedKeys: string[] = []
+
+  api.doc.transact(() => {
+    for (const item of keyframeClipboard) {
+      const node = api.getNode(item.nodeId)
+      if (!node) continue
+      const kf = addKeyframe(
+        api,
+        item.nodeId,
+        item.propertyId,
+        Math.max(0, playhead + item.offset),
+        item.value,
+        item.easingOut,
+        item.presetOrigin,
+      )
+      const track = api
+        .getTracksForNode(item.nodeId)
+        .find((candidate) => candidate.propertyId === item.propertyId)
+      if (track) pastedKeys.push(`${track.id}:${kf.id}`)
+    }
+  })
+
+  if (pastedKeys.length > 0) {
+    useUI.getState().setSelectedKeyframes(pastedKeys)
+    useUI.getState().setSelectedTrackId(null)
+  }
+  return pastedKeys.length > 0
 }
 
 function stripLinks<T extends object>(n: T): Partial<T> {

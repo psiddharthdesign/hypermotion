@@ -64,11 +64,30 @@ export interface AnimatedValue {
   rotationY?: number
   scaleX?: number
   scaleY?: number
+  anchorX?: number
+  anchorY?: number
+  anchorZ?: number
   opacity?: number
   /** Override for `node.appearance.cornerRadius`. */
   cornerRadius?: number
   /** Override for the node's `appearance.fill` solid color. */
   fill?: string
+  focusDistance?: number
+  focusX?: number
+  focusY?: number
+  focusWorldX?: number
+  focusWorldY?: number
+  focusWorldZ?: number
+  pointOfInterestX?: number
+  pointOfInterestY?: number
+  pointOfInterestZ?: number
+  focalLength?: number
+  fieldOfView?: number
+  nearClip?: number
+  farClip?: number
+  aperture?: number
+  blurLevel?: number
+  blurQuality?: number
 }
 
 /** Empty snapshot value — no tracks means no overrides. */
@@ -348,11 +367,68 @@ function writeProperty(
     case 'transform.scaleY':
       into.scaleY = value
       break
+    case 'transform.anchorX':
+      into.anchorX = value
+      break
+    case 'transform.anchorY':
+      into.anchorY = value
+      break
+    case 'transform.anchorZ':
+      into.anchorZ = value
+      break
     case 'appearance.opacity':
       into.opacity = value
       break
     case 'appearance.cornerRadius':
       into.cornerRadius = value
+      break
+    case 'camera.focusDistance':
+      into.focusDistance = value
+      break
+    case 'camera.focusX':
+      into.focusX = value
+      break
+    case 'camera.focusY':
+      into.focusY = value
+      break
+    case 'camera.focusWorldX':
+      into.focusWorldX = value
+      break
+    case 'camera.focusWorldY':
+      into.focusWorldY = value
+      break
+    case 'camera.focusWorldZ':
+      into.focusWorldZ = value
+      break
+    case 'camera.pointOfInterestX':
+      into.pointOfInterestX = value
+      break
+    case 'camera.pointOfInterestY':
+      into.pointOfInterestY = value
+      break
+    case 'camera.pointOfInterestZ':
+      into.pointOfInterestZ = value
+      break
+    case 'camera.focalLength':
+      into.focalLength = value
+      break
+    case 'camera.fieldOfView':
+      into.fieldOfView = value
+      break
+    case 'camera.nearClip':
+      into.nearClip = value
+      break
+    case 'camera.farClip':
+      into.farClip = value
+      break
+    case 'camera.aperture':
+      into.aperture = value
+      break
+    case 'camera.blurLevel':
+      into.blurLevel = value
+      break
+    case 'camera.blurQuality':
+      into.blurQuality = value
       break
     // Other PropertyIds ignored for MVP (layout + variant go through FLIP).
     default:

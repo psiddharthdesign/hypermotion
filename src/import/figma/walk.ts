@@ -192,6 +192,8 @@ function recenterCameraOnArtboard(api: SceneAPI): void {
     y: targetY,
     z: 0,
     rotation: 0,
+    rotationX: 0,
+    rotationY: 0,
     scaleX: 1,
     scaleY: 1,
   })

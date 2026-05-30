@@ -41,14 +41,9 @@ export interface Padding {
  * are offsets from the slot the parent gave this node (so animating x/y
  * won't knock siblings around). Outside auto-layout, x/y are absolute.
  *
- * `z` is a 2D-faked depth on the camera's optical axis. Default 0
- * means "in the focal plane." Negative values sit behind the focal
- * plane, positive values in front. The unit is arbitrary but
- * interpretable — most scenes will use small integers (e.g.
- * foreground=10, focal=0, background=-10).
- *
- * `z` does NOT affect layout or paint order — it's purely a 3D
- * positional offset. Paint order still follows tree position.
+ * `z` is a real world-space depth value in canvas units. It does not
+ * participate in Yoga layout, but 3D renderers use it for projection,
+ * camera-space depth, hit testing, and depth-of-field.
  */
 export interface Transform {
   x: number
@@ -77,6 +72,25 @@ export interface Transform {
    * a CSS rotateY. Default 0.
    */
   rotationY: number
+  /** Normalized X transform origin: 0=left, 0.5=center, 1=right. */
+  anchorX?: number
+  /** Normalized Y transform origin: 0=top, 0.5=center, 1=bottom. */
+  anchorY?: number
+  /** Z transform origin in canvas-depth units. */
+  anchorZ?: number
+  /**
+   * How 3D offsets are interpreted after layout.
+   * - local: x/y come from layout, z moves along the parent/layer plane normal.
+   * - world: x/y/z are treated as global scene offsets.
+   */
+  space?: 'local' | 'world'
+  /**
+   * How this node participates in the camera renderer.
+   * - flat: folded into the nearest ancestor plane/DOM fallback.
+   * - plane: subtree is composited into a texture and placed as one 3D plane.
+   * - group3d: children may become independent planes in this node's local space.
+   */
+  renderMode?: 'flat' | 'plane' | 'group3d'
 }
 
 // ---------------------------------------------------------------------------
@@ -559,8 +573,8 @@ export interface AudioNode extends NodeBase {
  */
 export interface CameraNode extends NodeBase {
   kind: 'camera'
-  /** Camera lens model. MVP ships '2d'; '3d'-style will slot in later. */
-  projection: '2d'
+  /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
+  projection: '2d' | 'perspective'
   /**
    * Whether the camera is enabled. Only the scene's active camera is
    * actually used for rendering; this flag lets users temporarily
@@ -595,6 +609,40 @@ export interface CameraNode extends NodeBase {
    * hardcoded value so existing scenes render identically.
    */
   focalLength: number
+  /** Vertical field of view in degrees. Derived from focal length when absent. */
+  fieldOfView: number
+  /** Camera point of interest / look-at target in world canvas units. */
+  pointOfInterestX: number
+  pointOfInterestY: number
+  pointOfInterestZ: number
+  /** Perspective clipping planes in world/camera units. */
+  nearClip: number
+  farClip: number
+  /** Enables camera depth-of-field blur. */
+  depthOfField: boolean
+  /** Camera focus behavior. Plane is the physical default. */
+  focusMode: 'plane' | 'target' | 'screen'
+  /** Canvas-space point used by screen-focus mode and as picker metadata. */
+  focusX: number
+  focusY: number
+  /** World-space point hit by the focus picker. Projected for the reticle. */
+  focusWorldX: number
+  focusWorldY: number
+  focusWorldZ: number
+  /** Target node used by target-focus mode. Null when no target is bound. */
+  focusTargetNodeId: NodeId | null
+  /** Z-depth plane that remains sharp, in canvas depth units. */
+  focusDistance: number
+  /** Lens opening multiplier. Larger values blur out-of-focus layers more. */
+  aperture: number
+  /** Sensor sensitivity. Higher values add stronger camera grain. */
+  iso: number
+  /** Global blur multiplier in pixels. */
+  blurLevel: number
+  /** Preview/final DOF quality hint. Higher values allow more samples. */
+  blurQuality: number
+  /** Whether editor helpers should draw the focus plane. */
+  showFocusPlane: boolean
 }
 
 /**
@@ -676,6 +724,26 @@ export type PropertyId =
   | 'transform.rotationY'
   | 'transform.scaleX'
   | 'transform.scaleY'
+  | 'transform.anchorX'
+  | 'transform.anchorY'
+  | 'transform.anchorZ'
+  // camera lens group — post-layout, cheap
+  | 'camera.focusDistance'
+  | 'camera.focusX'
+  | 'camera.focusY'
+  | 'camera.focusWorldX'
+  | 'camera.focusWorldY'
+  | 'camera.focusWorldZ'
+  | 'camera.pointOfInterestX'
+  | 'camera.pointOfInterestY'
+  | 'camera.pointOfInterestZ'
+  | 'camera.focalLength'
+  | 'camera.fieldOfView'
+  | 'camera.nearClip'
+  | 'camera.farClip'
+  | 'camera.aperture'
+  | 'camera.blurLevel'
+  | 'camera.blurQuality'
   // appearance group — post-layout, cheap
   | 'appearance.opacity'
   | 'appearance.cornerRadius'

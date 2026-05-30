@@ -40,6 +40,9 @@ const TRANSFORM_PROP_IDS: Partial<Record<string, PropertyId>> = {
   rotationY: 'transform.rotationY',
   scaleX: 'transform.scaleX',
   scaleY: 'transform.scaleY',
+  anchorX: 'transform.anchorX',
+  anchorY: 'transform.anchorY',
+  anchorZ: 'transform.anchorZ',
 }
 
 /** Map from `appearance` patch keys to their PropertyId. */
@@ -55,6 +58,27 @@ const SIZE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   height: 'size.height',
 }
 
+const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
+  focusDistance: 'camera.focusDistance',
+  focusX: 'camera.focusX',
+  focusY: 'camera.focusY',
+  focusWorldX: 'camera.focusWorldX',
+  focusWorldY: 'camera.focusWorldY',
+  focusWorldZ: 'camera.focusWorldZ',
+  pointOfInterestX: 'camera.pointOfInterestX',
+  pointOfInterestY: 'camera.pointOfInterestY',
+  pointOfInterestZ: 'camera.pointOfInterestZ',
+  focalLength: 'camera.focalLength',
+  fieldOfView: 'camera.fieldOfView',
+  nearClip: 'camera.nearClip',
+  farClip: 'camera.farClip',
+  aperture: 'camera.aperture',
+  blurLevel: 'camera.blurLevel',
+  blurQuality: 'camera.blurQuality',
+}
+
+type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'
+
 /**
  * Stamp keyframes for every animatable key in `patch`. The value is the
  * *post-patch* value — callers pass the committed scene value, not the
@@ -67,7 +91,7 @@ export function recordKeyframesForPatch(
   api: SceneAPI,
   nodeId: NodeId,
   playhead: number,
-  group: 'transform' | 'appearance' | 'size',
+  group: PatchGroup,
   patch: Record<string, unknown>,
 ): void {
   const map =
@@ -75,7 +99,9 @@ export function recordKeyframesForPatch(
       ? TRANSFORM_PROP_IDS
       : group === 'appearance'
         ? APPEARANCE_PROP_IDS
-        : SIZE_PROP_IDS
+        : group === 'size'
+          ? SIZE_PROP_IDS
+          : CAMERA_PROP_IDS
   for (const key of Object.keys(patch)) {
     const pid = map[key]
     if (!pid) continue
@@ -119,7 +145,7 @@ export function stampToActiveTracksForPatch(
   api: SceneAPI,
   nodeId: NodeId,
   playhead: number,
-  group: 'transform' | 'appearance' | 'size',
+  group: PatchGroup,
   patch: Record<string, unknown>,
 ): void {
   const map =
@@ -127,7 +153,9 @@ export function stampToActiveTracksForPatch(
       ? TRANSFORM_PROP_IDS
       : group === 'appearance'
         ? APPEARANCE_PROP_IDS
-        : SIZE_PROP_IDS
+        : group === 'size'
+          ? SIZE_PROP_IDS
+          : CAMERA_PROP_IDS
   for (const key of Object.keys(patch)) {
     const pid = map[key]
     if (!pid) continue
