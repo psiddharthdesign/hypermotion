@@ -40,6 +40,7 @@ import {
 } from '@/export/formats'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { registerFont } from '@/fonts'
+import { useUI } from '@/state/ui'
 
 /**
  * RenderWindowApp — the chrome-less render shell loaded in the hidden
@@ -311,10 +312,11 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     camera && camera.kind === 'camera'
       ? cameraAnim?.z ?? camera.transform.z
       : 0
+  const cameraDollyZ = cameraZ / 100
   const cameraScaleFromZ = useMemo(() => {
-    const denom = Math.max(1, cameraFocalLength - cameraZ)
+    const denom = Math.max(1, cameraFocalLength - cameraDollyZ)
     return cameraFocalLength / denom
-  }, [cameraZ, cameraFocalLength])
+  }, [cameraDollyZ, cameraFocalLength])
 
   const cameraTransform = useMemo(() => {
     if (!camera || camera.kind !== 'camera') return null
@@ -329,7 +331,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     return (
       `translate(${w / 2}px, ${h / 2}px) ` +
       `scale(${s}, ${s}) ` +
-      `rotateX(${-rX}deg) rotateY(${-rY}deg) rotateZ(${-rZ}deg) ` +
+      `rotateX(${-rX}deg) rotateY(${rY}deg) rotateZ(${-rZ}deg) ` +
       `translate(${-cx}px, ${-cy}px)`
     )
   }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
@@ -562,6 +564,10 @@ async function runExportLoop(
 
   // Pause + reset playhead so we start at the first frame deterministically.
   engine.pause()
+  const ui = useUI.getState()
+  const originalPlayhead = ui.playhead
+  const originalPlaying = ui.playing
+  ui.setPlaying(false)
 
   let capture: Awaited<ReturnType<typeof createElectronCapture>>
   try {
@@ -594,6 +600,7 @@ async function runExportLoop(
         const frameStart = performance.now()
         const t = f / job.exportFps
         engine.seek(t)
+        useUI.getState().setPlayhead(t)
         // Multiple rAFs to let React commit + Chromium re-rasterize the
         // new playhead before CDP captures the surface. Same heuristic
         // the editor's orchestrator uses — proven against React 19
@@ -705,6 +712,11 @@ async function runExportLoop(
     } catch {
       /* best effort */
     }
+    const latestUi = useUI.getState()
+    latestUi.setPlayhead(originalPlayhead)
+    latestUi.setPlaying(originalPlaying)
+    engine.seek(originalPlayhead)
+    if (originalPlaying) engine.play()
   }
 }
 
