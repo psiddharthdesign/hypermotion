@@ -180,6 +180,13 @@ export interface NodeBaseMutable {
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
   importWarning: string
+  // media-kind fields — used by audio/video layers.
+  volume: number
+  muted: boolean
+  startTime: number
+  trimStart: number
+  trimEnd: number
+  loop: boolean
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
@@ -467,10 +474,12 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (y.get('trimEnd') as number | undefined) ??
             ((y.get('duration') as number) ?? 0),
           loop: (y.get('loop') as boolean) ?? false,
+          muted:
+            (y.get('muted') as boolean | undefined) ??
+            (kind === 'video' ? true : false),
           ...(kind === 'video'
             ? {
                 fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
-                muted: (y.get('muted') as boolean) ?? true,
               }
             : {}),
         } as Node
@@ -759,11 +768,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('trimStart', mp.trimStart ?? 0)
           y.set('trimEnd', mp.trimEnd ?? mp.duration ?? 0)
           y.set('loop', mp.loop ?? false)
+          y.set('muted', mp.muted ?? (kind === 'video'))
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
             // Motion tools are primarily visual — default to muted so
             // a dropped MP4 doesn't surprise the user with audio.
-            y.set('muted', mp.muted ?? true)
           }
         }
         if (kind === 'image') {

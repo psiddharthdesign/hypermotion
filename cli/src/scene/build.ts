@@ -312,9 +312,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('trimStart', node.trimStart ?? 0)
       y.set('trimEnd', node.trimEnd ?? node.duration ?? 0)
       y.set('loop', node.loop ?? false)
+      y.set('muted', node.muted ?? node.kind === 'video')
       if (node.kind === 'video') {
         y.set('fit', node.fit ?? 'cover')
-        y.set('muted', node.muted ?? true)
       }
     }
     if (node.kind === 'text') {

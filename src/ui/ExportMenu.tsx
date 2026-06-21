@@ -46,7 +46,7 @@ import { useUI } from '@/state/ui'
  */
 
 type FpsId = 24 | 30 | 60
-type RangeMode = 'full' | 'chapter' | 'custom'
+type RangeMode = 'full' | 'chapter' | 'work' | 'custom'
 
 const PANEL_WIDTH = 480
 const LABEL_COL = 88
@@ -60,6 +60,7 @@ export function ExportMenu({
 }) {
   const api = useSceneAPI()
   const isolatedRange = useUI((s) => s.isolatedRange)
+  const workAreaRange = useUI((s) => s.workAreaRange)
 
   const meta = useMemo(() => api.getMeta(), [api])
   const sections = useMemo(() => api.getSections(), [api])
@@ -88,7 +89,11 @@ export function ExportMenu({
   })
 
   // Range. Default to the active chapter when one's isolated, else full.
-  const initialMode: RangeMode = isolatedRange ? 'chapter' : 'full'
+  const initialMode: RangeMode = isolatedRange
+    ? 'chapter'
+    : workAreaRange
+      ? 'work'
+      : 'full'
   const [rangeMode, setRangeMode] = useState<RangeMode>(initialMode)
   // Multi-chapter selection. A Set keyed by section id; rendered + sent
   // to the orchestrator in timeline order. One element = single chapter
@@ -140,8 +145,11 @@ export function ExportMenu({
         })),
       }
     }
+    if (rangeMode === 'work' && workAreaRange) {
+      return { kind: 'time', startSec: workAreaRange.start, endSec: workAreaRange.end }
+    }
     return { kind: 'time', startSec: customStart, endSec: customEnd }
-  }, [rangeMode, selectedChapters, customStart, customEnd])
+  }, [rangeMode, selectedChapters, workAreaRange, customStart, customEnd])
 
   // Filename tag — empty string when not partial, sanitized chapter
   // ids joined when one or more chapters are selected.
@@ -355,6 +363,14 @@ export function ExportMenu({
                   Chapter
                 </SegmentBtn>
               )}
+              {workAreaRange && (
+                <SegmentBtn
+                  active={rangeMode === 'work'}
+                  onClick={() => setRangeMode('work')}
+                >
+                  Work
+                </SegmentBtn>
+              )}
               <SegmentBtn
                 active={rangeMode === 'custom'}
                 onClick={() => setRangeMode('custom')}
@@ -391,6 +407,14 @@ export function ExportMenu({
                   frames={frameCount}
                 />
               </div>
+            )}
+
+            {rangeMode === 'work' && workAreaRange && (
+              <RangeReadout
+                start={rangeStart}
+                end={rangeEnd}
+                frames={frameCount}
+              />
             )}
 
             {rangeMode === 'custom' && (

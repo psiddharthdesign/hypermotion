@@ -28,24 +28,38 @@ export function useAnim() {
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
   const setPlayhead = useUI((s) => s.setPlayhead)
+  const setPlaying = useUI((s) => s.setPlaying)
   const isolatedRange = useUI((s) => s.isolatedRange)
+  const workAreaRange = useUI((s) => s.workAreaRange)
+  const workAreaPlaybackMode = useUI((s) => s.workAreaPlaybackMode)
 
   // Attach engine to scene once.
   useEffect(() => {
     getAnimEngine().attach(api)
   }, [api])
 
-  // Mirror the UI's isolated section into the engine's loop range
-  // so Space / play stays inside the section and loops there. When
-  // the user exits isolation, the engine reverts to looping the
-  // full comp duration.
+  // Mirror isolation/work-area playback into the engine. Isolation
+  // keeps its historical behavior and always loops. Otherwise the
+  // shared work area can either loop or stop at its end.
   useEffect(() => {
-    getAnimEngine().setLoopRange(
-      isolatedRange
-        ? { start: isolatedRange.start, end: isolatedRange.end }
+    if (isolatedRange) {
+      getAnimEngine().setPlaybackRange({
+        start: isolatedRange.start,
+        end: isolatedRange.end,
+        mode: 'loop',
+      })
+      return
+    }
+    getAnimEngine().setPlaybackRange(
+      workAreaRange
+        ? {
+            start: workAreaRange.start,
+            end: workAreaRange.end,
+            mode: workAreaPlaybackMode,
+          }
         : null,
     )
-  }, [isolatedRange])
+  }, [isolatedRange, workAreaPlaybackMode, workAreaRange])
 
   // UI → engine: sync playhead when NOT playing (during scrub / fields).
   useEffect(() => {
@@ -69,7 +83,8 @@ export function useAnim() {
     const engine = getAnimEngine()
     const h = window.setInterval(() => {
       setPlayhead(engine.getPlayhead())
+      if (!engine.isPlaying()) setPlaying(false)
     }, 66)
     return () => window.clearInterval(h)
-  }, [playing, setPlayhead])
+  }, [playing, setPlayhead, setPlaying])
 }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { removeKeyframe, moveKeyframe, removeTrack } from '@/anim'
-import type { Section, Track } from '@/scene'
+import type { SceneNode, Section, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   groupKeyframes as groupKeyframesHelper,
@@ -15,6 +15,7 @@ import {
   addTracksToGroup as addTracksToGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
 } from '@/state/groupActions'
+import { importAudioFile } from '@/ui/importMedia'
 
 /**
  * Keyframe multi-select keys are the compound `trackId:kfId` string.
@@ -56,6 +57,8 @@ const TRACK_HEADER_WIDTH = 180
 // store, so closures see fresh values.
 let PX_PER_SECOND = 80
 const ROW_HEIGHT = 24
+type TimelineMode = 'animated' | 'sound'
+type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
 
 export function Timeline() {
   // Version is read *and* used as a memo dep — without it, `tracksByNode`
@@ -83,6 +86,10 @@ export function Timeline() {
   const setSelectedTrackIds = useUI((s) => s.setSelectedTrackIds)
   const isolatedRange = useUI((s) => s.isolatedRange)
   const setIsolatedRange = useUI((s) => s.setIsolatedRange)
+  const workAreaRange = useUI((s) => s.workAreaRange)
+  const setWorkAreaRange = useUI((s) => s.setWorkAreaRange)
+  const workAreaPlaybackMode = useUI((s) => s.workAreaPlaybackMode)
+  const setWorkAreaPlaybackMode = useUI((s) => s.setWorkAreaPlaybackMode)
   const rulerLabels = useUI((s) => s.rulerLabels)
   const cycleRulerLabels = useUI((s) => s.cycleRulerLabels)
   // Group dictionaries now live in the Y.Doc — read them off the
@@ -145,6 +152,11 @@ export function Timeline() {
   PX_PER_SECOND = pxPerSecond
   const duration = api.getMeta().duration
   const frameRate = api.getMeta().frameRate
+  const frameStep = 1 / Math.max(1, frameRate)
+  const minWorkArea = Math.max(frameStep, 0.05)
+  const normalizedWorkArea = workAreaRange
+    ? normalizeTimelineWorkArea(workAreaRange, duration, minWorkArea)
+    : null
 
   // Pinch-zoom + Cmd/Ctrl-scroll over the timeline scales horizontally
   // (time-axis zoom). Browser pinch on macOS fires `wheel` with
@@ -195,6 +207,7 @@ export function Timeline() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [setTimelinePxPerSecond])
   const scrollerRef = useRef<HTMLDivElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
   // The right column wrapper — the element whose `getBoundingClientRect`
   // is the shared coordinate space for the ruler, the segment rows, and
   // the marquee rectangle. Using this instead of computing offsets off
@@ -208,6 +221,7 @@ export function Timeline() {
   // the graph editor in that case). Set is kept here for fast hit
   // tests; the store sees a serializable array.
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
+  const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
   const setSelectedKeyframes = useUI((s) => s.setSelectedKeyframes)
   useEffect(() => {
     setSelectedKeyframes(Array.from(selectedKfs))
@@ -605,6 +619,68 @@ export function Timeline() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, version])
 
+  const mediaClips = useMemo(() => {
+    const out: MediaTimelineNode[] = []
+    for (const id of api.getAllNodeIds()) {
+      const node = api.getNode(id)
+      if (node && (node.kind === 'audio' || node.kind === 'video')) {
+        out.push(node)
+      }
+    }
+    return out.sort((a, b) => a.startTime - b.startTime)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, version])
+
+  const duplicateMediaClip = useCallback(
+    (node: MediaTimelineNode) => {
+      const parent = node.parent ?? api.getRoot()
+      const id = api.createNode(node.kind, parent, {
+        name: `${node.name} copy`,
+        size: node.size,
+        src: node.src,
+        duration: node.duration,
+        volume: node.volume,
+        muted: node.muted,
+        startTime: node.startTime + 0.25,
+        trimStart: node.trimStart,
+        trimEnd: node.trimEnd,
+        loop: node.loop,
+        ...(node.kind === 'video' ? { fit: node.fit } : {}),
+      } as Partial<SceneNode>)
+      setSelection([id])
+      setInspectorMode('properties')
+    },
+    [api, setInspectorMode, setSelection],
+  )
+
+  const openMediaMenu = useCallback(
+    (e: React.MouseEvent, node: MediaTimelineNode) => {
+      e.preventDefault()
+      e.stopPropagation()
+      openContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        items: [
+          {
+            label: node.muted ? 'Unmute clip' : 'Mute clip',
+            onClick: () => api.setNodeProperty(node.id, 'muted', !node.muted),
+          },
+          {
+            label: 'Duplicate clip',
+            onClick: () => duplicateMediaClip(node),
+          },
+          { kind: 'separator' },
+          {
+            label: `Delete "${node.name}"`,
+            danger: true,
+            onClick: () => api.deleteNode(node.id),
+          },
+        ],
+      })
+    },
+    [api, duplicateMediaClip, openContextMenu],
+  )
+
   // Flat list of every visible track — threaded into KeyframeDiamond so a
   // batch drag can enumerate all selected keyframes without re-walking
   // the grouped structure. Rebuilds alongside tracksByNode.
@@ -871,6 +947,61 @@ export function Timeline() {
     // When isolated, clamp scrub to the section so the playhead
     // can't roam outside the focused band.
     return clamp(x / PX_PER_SECOND, viewStart, viewEnd)
+  }
+
+  const timeFromWorkAreaClientX = (clientX: number): number => {
+    const el = rightRef.current
+    if (!el) return 0
+    const rect = el.getBoundingClientRect()
+    return clamp((clientX - rect.left) / PX_PER_SECOND, 0, duration)
+  }
+
+  const toggleWorkArea = () => {
+    if (normalizedWorkArea) {
+      setWorkAreaRange(null)
+      return
+    }
+    const start = clamp(playhead, 0, Math.max(0, duration - minWorkArea))
+    const end = Math.min(duration, start + Math.min(2, duration - start))
+    setWorkAreaRange({ start, end: Math.max(start + minWorkArea, end) })
+  }
+
+  const beginWorkAreaDrag = (
+    e: React.PointerEvent,
+    mode: 'start' | 'end' | 'move',
+  ) => {
+    if (!normalizedWorkArea) return
+    e.preventDefault()
+    e.stopPropagation()
+    setPlaying(false)
+    const anchor = timeFromWorkAreaClientX(e.clientX)
+    const base = normalizedWorkArea
+    const span = base.end - base.start
+    const onMove = (ev: PointerEvent) => {
+      const t = timeFromWorkAreaClientX(ev.clientX)
+      if (mode === 'start') {
+        const nextStart = clamp(t, 0, base.end - minWorkArea)
+        setWorkAreaRange({ start: nextStart, end: base.end })
+        setPlayhead(nextStart)
+        return
+      }
+      if (mode === 'end') {
+        const nextEnd = clamp(t, base.start + minWorkArea, duration)
+        setWorkAreaRange({ start: base.start, end: nextEnd })
+        setPlayhead(Math.min(playhead, nextEnd))
+        return
+      }
+      const delta = t - anchor
+      const nextStart = clamp(base.start + delta, 0, duration - span)
+      setWorkAreaRange({ start: nextStart, end: nextStart + span })
+      setPlayhead(clamp(playhead + delta, nextStart, nextStart + span))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   /**
@@ -1206,6 +1337,44 @@ export function Timeline() {
           </div>
         )}
 
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={toggleWorkArea}
+            title={
+              normalizedWorkArea
+                ? 'Clear work area'
+                : 'Create work area at playhead'
+            }
+            className={[
+              'h-7 rounded border px-2 font-mono text-[10px] tracking-wider uppercase',
+              normalizedWorkArea
+                ? 'border-[oklch(0.84_0.18_85)] bg-[oklch(0.84_0.18_85)]/15 text-text'
+                : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+            ].join(' ')}
+          >
+            Work area
+          </button>
+          {normalizedWorkArea && (
+            <button
+              type="button"
+              onClick={() =>
+                setWorkAreaPlaybackMode(
+                  workAreaPlaybackMode === 'loop' ? 'stop' : 'loop',
+                )
+              }
+              title={
+                workAreaPlaybackMode === 'loop'
+                  ? 'Loop work area while playing'
+                  : 'Stop playback at work area end'
+              }
+              className="h-7 rounded border border-border bg-panel px-2 font-mono text-[10px] tracking-wider text-text-muted uppercase hover:border-border-strong hover:text-text"
+            >
+              {workAreaPlaybackMode}
+            </button>
+          )}
+        </div>
+
         {/* Duration cluster — far-right, After Effects pattern. The
             "Duration" label is back since the field is no longer
             adjacent to the playhead time and needs its own context. */}
@@ -1281,19 +1450,76 @@ export function Timeline() {
               the ruler tick labels across the divider. */}
           <div
             className={[
-              'sticky top-7 z-[29] flex items-end border-b border-border bg-panel px-3 pb-1',
+              'sticky top-7 z-[29] flex items-end gap-1 border-b border-border bg-panel px-2 pb-1',
               rulerLabels === 'both' ? 'h-10' : 'h-7',
             ].join(' ')}
           >
-            <span className="text-[11px] font-medium text-text-muted">
+            <TimelineTabButton
+              active={timelineMode === 'animated'}
+              onClick={() => setTimelineMode('animated')}
+            >
               Animated layers
-            </span>
+            </TimelineTabButton>
+            <TimelineTabButton
+              active={timelineMode === 'sound'}
+              onClick={() => setTimelineMode('sound')}
+            >
+              Audio
+            </TimelineTabButton>
           </div>
+          <input
+            ref={audioInputRef}
+            type="file"
+            accept="audio/*"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = event.currentTarget.files
+              if (!files) return
+              void Promise.all(
+                Array.from(files).map((file) =>
+                  importAudioFile(file, api, null),
+                ),
+              )
+              event.currentTarget.value = ''
+            }}
+          />
           {/* The h-3 spacer that used to live here is gone — the
               Tracks header above now expands to h-10 in both-labels +
               no-sections mode, so the left column matches the right
               column's ruler height directly. */}
-          {tracksByNode.length === 0 ? (
+          {normalizedWorkArea && (
+            <div className="h-5 border-b border-border/50 bg-panel" />
+          )}
+          {timelineMode === 'sound' ? (
+            mediaClips.length === 0 ? (
+              <div className="space-y-3 px-4 py-5 text-[11px] leading-relaxed text-text-dim">
+                <AudioImportButton onClick={() => audioInputRef.current?.click()} />
+                <div>
+                  No audio clips yet.<br />
+                  Click Import or drag an audio file onto the canvas.
+                </div>
+              </div>
+            ) : (
+              <>
+                {mediaClips.map((clip) => (
+                  <MediaClipLabel
+                    key={clip.id}
+                    node={clip}
+                    selected={selection.includes(clip.id)}
+                    onSelect={() => {
+                      setSelection([clip.id])
+                      setInspectorMode('properties')
+                    }}
+                    onContextMenu={(e) => openMediaMenu(e, clip)}
+                  />
+                ))}
+                <div className="border-t border-border/50 bg-panel px-3 py-2">
+                  <AudioImportButton onClick={() => audioInputRef.current?.click()} />
+                </div>
+              </>
+            )
+          ) : tracksByNode.length === 0 ? (
             <div className="px-4 py-5 text-[11px] leading-relaxed text-text-dim">
               No keyframes yet.<br />
               Pick a preset in the Animate tab to add one.
@@ -1602,8 +1828,85 @@ export function Timeline() {
                   same value was noise; one is enough. */}
             </div>
 
+            {normalizedWorkArea && (
+              <>
+                <div
+                  className="pointer-events-none absolute z-[7] bg-panel/60"
+                  style={{
+                    top: 28 + (rulerLabels === 'both' ? 40 : 28) + 20,
+                    bottom: 0,
+                    left: 0,
+                    width: normalizedWorkArea.start * PX_PER_SECOND,
+                  }}
+                />
+                <div
+                  className="pointer-events-none absolute z-[7] bg-panel/60"
+                  style={{
+                    top: 28 + (rulerLabels === 'both' ? 40 : 28) + 20,
+                    bottom: 0,
+                    left: normalizedWorkArea.end * PX_PER_SECOND,
+                    right: 0,
+                  }}
+                />
+                <div
+                  className="pointer-events-none absolute z-[12] h-2 rounded-full border border-[oklch(0.84_0.18_85)] bg-[oklch(0.84_0.18_85)] shadow-sm"
+                  style={{
+                    top: 28 + (rulerLabels === 'both' ? 40 : 28) + 6,
+                    left: normalizedWorkArea.start * PX_PER_SECOND,
+                    width:
+                      (normalizedWorkArea.end - normalizedWorkArea.start) *
+                      PX_PER_SECOND,
+                  }}
+                >
+                  <div
+                    className="pointer-events-auto absolute top-1/2 left-0 h-5 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-[oklch(0.84_0.18_85)] bg-panel shadow-sm"
+                    title="Drag work area start"
+                    onPointerDown={(e) => beginWorkAreaDrag(e, 'start')}
+                  />
+                  <div
+                    className="pointer-events-auto absolute top-1/2 right-0 h-5 w-2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-[oklch(0.84_0.18_85)] bg-panel shadow-sm"
+                    title="Drag work area end"
+                    onPointerDown={(e) => beginWorkAreaDrag(e, 'end')}
+                  />
+                  <div
+                    className="pointer-events-auto absolute inset-y-[-6px] left-2 right-2 cursor-grab active:cursor-grabbing"
+                    title="Drag work area"
+                    onPointerDown={(e) => beginWorkAreaDrag(e, 'move')}
+                  />
+                </div>
+              </>
+            )}
+
+            {normalizedWorkArea && (
+              <div className="h-5 border-b border-border/50 bg-panel" />
+            )}
+
             {/* Track rows */}
-            {tracksByNode.length === 0 ? (
+            {timelineMode === 'sound' ? (
+              mediaClips.length === 0 ? (
+                <div className="h-20" />
+              ) : (
+                mediaClips.map((clip) => (
+                  <MediaClipRow
+                    key={clip.id}
+                    node={clip}
+                    api={api}
+                    duration={duration}
+                    totalWidth={totalWidth}
+                    selected={selection.includes(clip.id)}
+                    onSelect={() => {
+                      setSelection([clip.id])
+                      setInspectorMode('properties')
+                    }}
+                    onScrub={(time) => {
+                      setPlaying(false)
+                      setPlayhead(time)
+                    }}
+                    onContextMenu={(e) => openMediaMenu(e, clip)}
+                  />
+                ))
+              )
+            ) : tracksByNode.length === 0 ? (
               <div className="h-20" />
             ) : (
               tracksByNode.map((group) => {
@@ -2130,6 +2433,323 @@ function TrackLabel({
       </button>
     </div>
   )
+}
+
+function TimelineTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'h-5 rounded px-1.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
+        active
+          ? 'bg-accent-soft text-accent'
+          : 'text-text-muted hover:bg-panel-raised hover:text-text',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}
+
+function AudioImportButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="h-6 rounded border border-border bg-panel-raised px-2 text-[10px] font-semibold tracking-[0.06em] text-text-muted uppercase hover:border-border-strong hover:text-text"
+      title="Import audio from Finder"
+    >
+      Import audio
+    </button>
+  )
+}
+
+function MediaClipLabel({
+  node,
+  selected,
+  onSelect,
+  onContextMenu,
+}: {
+  node: MediaTimelineNode
+  selected: boolean
+  onSelect: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+}) {
+  return (
+    <div
+      onClick={onSelect}
+      onContextMenu={onContextMenu}
+      aria-selected={selected}
+      className={[
+        'flex h-8 cursor-pointer items-center gap-2 border-t border-border/50 px-3',
+        selected
+          ? 'bg-accent-soft/40 text-accent hover:bg-accent-soft/55'
+          : 'bg-panel-raised/40 text-text hover:bg-panel-raised/70',
+      ].join(' ')}
+    >
+      <span className="w-4 shrink-0 text-center text-[12px] text-text-muted">
+        {node.muted ? '×' : node.kind === 'audio' ? '♪' : '▶'}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[11px] font-medium">{node.name}</div>
+        <div className="truncate font-mono text-[9px] text-text-dim">
+          {node.kind === 'audio' ? 'AUDIO' : 'VIDEO'} · {formatMediaDuration(node)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MediaClipRow({
+  node,
+  api,
+  duration,
+  totalWidth,
+  selected,
+  onSelect,
+  onScrub,
+  onContextMenu,
+}: {
+  node: MediaTimelineNode
+  api: SceneAPI
+  duration: number
+  totalWidth: number
+  selected: boolean
+  onSelect: () => void
+  onScrub: (time: number) => void
+  onContextMenu: (e: React.MouseEvent) => void
+}) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const trimStart = Math.max(0, node.trimStart || 0)
+  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
+  const sourceDuration = Math.max(0, node.duration || trimEnd)
+  const clipLength = Math.max(0.01, trimEnd - trimStart)
+  const start = Math.max(0, node.startTime || 0)
+  const left = start * PX_PER_SECOND
+  const width = Math.max(8, clipLength * PX_PER_SECOND)
+
+  const timeFromPointer = (clientX: number) => {
+    const rect = rowRef.current?.getBoundingClientRect()
+    if (!rect) return 0
+    return Math.max(0, Math.min(duration, (clientX - rect.left) / PX_PER_SECOND))
+  }
+
+  const beginDrag = (
+    e: React.PointerEvent,
+    mode: 'move' | 'trim-start' | 'trim-end',
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onSelect()
+    const startX = e.clientX
+    const baseStart = start
+    const baseTrimStart = trimStart
+    const baseTrimEnd = trimEnd
+    const maxStart = Math.max(0, duration - clipLength)
+
+    const onMove = (ev: PointerEvent) => {
+      const deltaSec = (ev.clientX - startX) / PX_PER_SECOND
+      if (mode === 'move') {
+        const nextStart = Math.max(0, Math.min(maxStart, baseStart + deltaSec))
+        api.setNodeProperty(node.id, 'startTime', nextStart)
+        return
+      }
+      if (mode === 'trim-start') {
+        const nextTrimStart = Math.max(
+          0,
+          Math.min(baseTrimEnd - 0.01, baseTrimStart + deltaSec),
+        )
+        const nextStart = Math.max(0, baseStart + (nextTrimStart - baseTrimStart))
+        api.setNodeProperty(node.id, 'trimStart', nextTrimStart)
+        api.setNodeProperty(node.id, 'startTime', nextStart)
+        return
+      }
+      const nextTrimEnd = Math.max(
+        baseTrimStart + 0.01,
+        Math.min(sourceDuration, baseTrimEnd + deltaSec),
+      )
+      api.setNodeProperty(node.id, 'trimEnd', nextTrimEnd)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  return (
+    <div
+      ref={rowRef}
+      className={[
+        'relative h-8 border-t border-border/50',
+        selected ? 'bg-accent-soft/20' : '',
+      ].join(' ')}
+      style={{ width: totalWidth }}
+      onPointerDown={(e) => {
+        if ((e.target as HTMLElement).dataset.mediaClipPart) return
+        onScrub(timeFromPointer(e.clientX))
+      }}
+      onContextMenu={onContextMenu}
+    >
+      <div
+        data-media-clip-part="body"
+        className={[
+          'absolute top-1 bottom-1 cursor-grab rounded-md border px-2 active:cursor-grabbing',
+          node.muted
+            ? 'border-border-strong bg-panel-raised text-text-muted'
+            : 'border-accent/60 bg-accent-soft text-accent',
+        ].join(' ')}
+        style={{ left, width }}
+        onPointerDown={(e) => beginDrag(e, 'move')}
+        onContextMenu={onContextMenu}
+        title="Drag to move. Drag edges to trim."
+      >
+        <div
+          data-media-clip-part="trim-start"
+          className="absolute top-0 bottom-0 left-0 w-2 cursor-ew-resize rounded-l-md hover:bg-accent/25"
+          onPointerDown={(e) => beginDrag(e, 'trim-start')}
+        />
+        <div
+          data-media-clip-part="trim-end"
+          className="absolute top-0 right-0 bottom-0 w-2 cursor-ew-resize rounded-r-md hover:bg-accent/25"
+          onPointerDown={(e) => beginDrag(e, 'trim-end')}
+        />
+        <div className="pointer-events-none relative h-full overflow-hidden rounded-md">
+          <WaveformBars node={node} />
+          <div className="absolute inset-0 flex items-center gap-1 px-2">
+            <span className="shrink-0 text-[11px] drop-shadow-sm">
+              {node.muted ? '×' : '♪'}
+            </span>
+            <span className="ml-auto max-w-[45%] truncate bg-accent-soft/80 pl-2 font-mono text-[10px] drop-shadow-sm">
+              {node.name}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const waveformCache = new Map<string, AudioBuffer>()
+
+function WaveformBars({ node }: { node: MediaTimelineNode }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [buffer, setBuffer] = useState<AudioBuffer | null>(
+    () => waveformCache.get(node.src) ?? null,
+  )
+  const [barCount, setBarCount] = useState(64)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!node.src || waveformCache.has(node.src)) {
+      setBuffer(node.src ? waveformCache.get(node.src) ?? null : null)
+      return
+    }
+    async function load() {
+      if (typeof AudioContext === 'undefined') return
+      try {
+        const response = await fetch(node.src)
+        const bytes = await response.arrayBuffer()
+        const ctx = new AudioContext()
+        try {
+          const decoded = await ctx.decodeAudioData(bytes.slice(0))
+          waveformCache.set(node.src, decoded)
+          if (!cancelled) setBuffer(decoded)
+        } finally {
+          void ctx.close()
+        }
+      } catch {
+        if (!cancelled) setBuffer(null)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [node.src])
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || typeof ResizeObserver === 'undefined') return
+    const resize = () => {
+      setBarCount(Math.max(12, Math.min(500, Math.floor(host.clientWidth / 3))))
+    }
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
+
+  const bars = useMemo(() => {
+    if (!buffer) return Array.from({ length: barCount }, () => 0.12)
+    const trimStart = Math.max(0, node.trimStart || 0)
+    const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || buffer.duration)
+    return computeWaveformPeaks(buffer, barCount, trimStart, trimEnd)
+  }, [barCount, buffer, node.duration, node.trimEnd, node.trimStart])
+
+  return (
+    <div
+      ref={hostRef}
+      className="absolute inset-x-7 inset-y-1 flex items-center gap-px opacity-90"
+      aria-hidden="true"
+    >
+      {bars.map((p, i) => (
+        <span
+          key={i}
+          className="min-w-px flex-1 rounded-full bg-current"
+          style={{ height: `${Math.max(8, Math.round(p * 100))}%` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function computeWaveformPeaks(
+  buffer: AudioBuffer,
+  count: number,
+  startSeconds = 0,
+  endSeconds = buffer.duration,
+): number[] {
+  const data = buffer.getChannelData(0)
+  if (data.length === 0) return Array.from({ length: count }, () => 0.1)
+  const startSample = Math.max(
+    0,
+    Math.min(data.length - 1, Math.floor(startSeconds * buffer.sampleRate)),
+  )
+  const endSample = Math.max(
+    startSample + 1,
+    Math.min(data.length, Math.floor(endSeconds * buffer.sampleRate)),
+  )
+  const block = Math.max(1, Math.floor((endSample - startSample) / count))
+  const peaks: number[] = []
+  let maxPeak = 0.0001
+  for (let i = 0; i < count; i++) {
+    let sum = 0
+    const start = startSample + i * block
+    const end = i === count - 1 ? endSample : Math.min(endSample, start + block)
+    for (let j = start; j < end; j++) sum += Math.abs(data[j] ?? 0)
+    const avg = sum / Math.max(1, end - start)
+    peaks.push(avg)
+    if (avg > maxPeak) maxPeak = avg
+  }
+  return peaks.map((p) => Math.max(0.12, Math.min(1, p / maxPeak)))
+}
+
+function formatMediaDuration(node: MediaTimelineNode): string {
+  const trimStart = Math.max(0, node.trimStart || 0)
+  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
+  const seconds = Math.max(0, trimEnd - trimStart)
+  return `${seconds.toFixed(seconds < 10 ? 2 : 1)}S`
 }
 
 // ---------------------------------------------------------------------------
@@ -3713,6 +4333,21 @@ function humanProperty(id: string, nodeKind?: string): string {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
+}
+
+function normalizeTimelineWorkArea(
+  range: { start: number; end: number },
+  duration: number,
+  minSpan: number,
+): { start: number; end: number } {
+  const safeDuration = Math.max(minSpan, duration)
+  let start = clamp(Math.min(range.start, range.end), 0, safeDuration)
+  let end = clamp(Math.max(range.start, range.end), 0, safeDuration)
+  if (end - start < minSpan) {
+    if (start + minSpan <= safeDuration) end = start + minSpan
+    else start = Math.max(0, end - minSpan)
+  }
+  return { start, end }
 }
 
 /**

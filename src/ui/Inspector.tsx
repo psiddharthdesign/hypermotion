@@ -1852,6 +1852,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ImageSection node={node} api={api} />
       )}
 
+      {(node.kind === 'audio' || node.kind === 'video') && (
+        <MediaSection node={node} api={api} />
+      )}
+
       {'layout' in node && (
         <LayoutSection layout={node.layout} onPatch={patchLayout} />
       )}
@@ -4351,6 +4355,84 @@ function ImageSection({ node, api }: { node: ImageNode; api: SceneAPI }) {
           ]}
           onCommit={(f) => api.setNodeProperty(node.id, 'fit', f)}
           width="w-full"
+        />
+      </FieldRow>
+    </Section>
+  )
+}
+
+function MediaSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'audio' | 'video' }>
+  api: SceneAPI
+}) {
+  const duration = Math.max(0, node.duration || 0)
+  const trimStart = Math.max(0, Math.min(duration, node.trimStart || 0))
+  const trimEnd = Math.max(trimStart, Math.min(duration, node.trimEnd || duration))
+
+  return (
+    <Section title={node.kind === 'audio' ? 'Audio' : 'Media'}>
+      <FieldRow label="Mute">
+        <CheckboxField
+          value={node.muted}
+          onCommit={(v) => api.setNodeProperty(node.id, 'muted', v)}
+        />
+      </FieldRow>
+      <FieldRow label="Volume">
+        <NumberField
+          value={Math.round((node.volume ?? 1) * 100)}
+          onCommit={(v) =>
+            api.setNodeProperty(node.id, 'volume', Math.max(0, Math.min(200, v)) / 100)
+          }
+          min={0}
+          max={200}
+          step={5}
+          suffix="%"
+        />
+      </FieldRow>
+      <FieldRow label="Start">
+        <NumberField
+          value={node.startTime ?? 0}
+          onCommit={(v) => api.setNodeProperty(node.id, 'startTime', Math.max(0, v))}
+          min={0}
+          step={0.05}
+          suffix="s"
+        />
+      </FieldRow>
+      <FieldRow label="Trim in">
+        <NumberField
+          value={trimStart}
+          onCommit={(v) =>
+            api.setNodeProperty(node.id, 'trimStart', Math.max(0, Math.min(trimEnd, v)))
+          }
+          min={0}
+          max={duration}
+          step={0.05}
+          suffix="s"
+        />
+      </FieldRow>
+      <FieldRow label="Trim out">
+        <NumberField
+          value={trimEnd}
+          onCommit={(v) =>
+            api.setNodeProperty(
+              node.id,
+              'trimEnd',
+              Math.max(trimStart, Math.min(duration, v)),
+            )
+          }
+          min={0}
+          max={duration}
+          step={0.05}
+          suffix="s"
+        />
+      </FieldRow>
+      <FieldRow label="Loop">
+        <CheckboxField
+          value={node.loop}
+          onCommit={(v) => api.setNodeProperty(node.id, 'loop', v)}
         />
       </FieldRow>
     </Section>

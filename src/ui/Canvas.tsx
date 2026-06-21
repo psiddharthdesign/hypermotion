@@ -3205,6 +3205,8 @@ function NodeView({
   onClick: (e: React.MouseEvent<HTMLDivElement>) => void
   onContextMenu: (e: React.MouseEvent<HTMLDivElement>) => void
 }) {
+  if (node.kind === 'audio') return null
+
   // Node background — serialize whatever Fill shape the model holds
   // (solid / linear / radial) into a CSS background value. Solid fills
   // return a bare color, gradients return a `linear-gradient(...)` or
@@ -3670,9 +3672,6 @@ function NodeView({
       {node.kind === 'video' ? (
         <MediaVideo node={node} />
       ) : null}
-      {node.kind === 'audio' ? (
-        <AudioChip node={node} />
-      ) : null}
       {node.kind === 'text' ? (
         <TextGlyphs
           node={node}
@@ -4121,8 +4120,9 @@ function AudioChip({
   useEffect(() => {
     const el = ref.current
     if (!el) return
+    el.muted = node.muted
     el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.volume])
+  }, [node.muted, node.volume])
 
   useEffect(() => {
     const el = ref.current
@@ -4157,7 +4157,7 @@ function AudioChip({
       }}
     >
       <span aria-hidden style={{ fontSize: 14 }}>
-        ♪
+        {node.muted ? '×' : '♪'}
       </span>
       <span
         style={{
@@ -4174,6 +4174,7 @@ function AudioChip({
           ref={ref}
           src={node.src}
           preload="auto"
+          muted={node.muted}
         />
       ) : null}
     </div>

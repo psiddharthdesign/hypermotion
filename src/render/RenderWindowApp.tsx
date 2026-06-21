@@ -26,6 +26,7 @@ import {
   isElectronCaptureSupported,
 } from '@/export/captureRect'
 import { createMp4Encoder } from '@/export/encodeMp4'
+import { mixSceneAudioTrack } from '@/export/audioMix'
 import { createGifEncoder } from '@/export/encodeGif'
 import {
   EXPORT_FORMATS,
@@ -556,6 +557,14 @@ async function runExportLoop(
     (acc, s) => acc + (s.lastFrame - s.firstFrame + 1),
     0,
   )
+  const audioTrack =
+    job.format === 'mp4'
+      ? await mixSceneAudioTrack({
+          api,
+          segments,
+          fps: job.exportFps,
+        })
+      : null
   const firstFrame = segments[0]?.firstFrame ?? 0
   const lastFrame = segments[segments.length - 1]?.lastFrame ?? 0
   const fileName = buildExportFilename(job.sceneName, format, {
@@ -648,6 +657,7 @@ async function runExportLoop(
                 width: canvasEl.width,
                 height: canvasEl.height,
                 fps: job.exportFps,
+                audio: audioTrack,
               })
               encoder = {
                 addFrame: (c, i) => mp4.addFrame(c, i),
