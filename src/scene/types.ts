@@ -20,6 +20,8 @@ export type NodeId = string
 export type TrackId = string
 export type KeyframeId = string
 export type ComponentId = NodeId
+export type ComponentTimelineId = string
+export type InteractionId = string
 
 /** Size in canvas pixels, or an intrinsic-sizing token. */
 export type SizeAxis = number | 'hug' | 'fill'
@@ -426,6 +428,18 @@ interface NodeBase {
   /** Layout participation; 'flow' by default. See {@link Position}. */
   position: Position
   /**
+   * For materialized component instances, this points at the node inside
+   * the master component that this rendered copy mirrors. Null/undefined
+   * means the node is authored directly in the scene.
+   */
+  componentSourceId?: NodeId | null
+  /**
+   * Pasteboard-only nodes live beside the scene artboard. They are editable
+   * design assets, but they are not part of the scene root, timeline, camera
+   * view, or export output.
+   */
+  workspaceOnly?: boolean
+  /**
    * When true, this node acts as a mask for the layer immediately
    * above it among its parent's children — Figma's mask convention,
    * where the bottom shape clips everything stacked above it within
@@ -492,6 +506,12 @@ export interface ImageNode extends NodeBase {
   size: Size
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
+  /**
+   * Optional user-facing import note. Used for Figma fallbacks where the
+   * visual was preserved as a bitmap because SVG/vector reconstruction
+   * would not match the original.
+   */
+  importWarning?: string
 }
 
 /**
@@ -620,9 +640,9 @@ export interface CameraNode extends NodeBase {
   farClip: number
   /** Enables camera depth-of-field blur. */
   depthOfField: boolean
-  /** Camera focus behavior. Plane is the physical default. */
+  /** Camera focus behavior. Screen focus is the editor default. */
   focusMode: 'plane' | 'target' | 'screen'
-  /** Canvas-space point used by screen-focus mode and as picker metadata. */
+  /** Camera-viewport point used by screen-focus mode and as picker metadata. */
   focusX: number
   focusY: number
   /** World-space point hit by the focus picker. Projected for the reticle. */
@@ -633,6 +653,10 @@ export interface CameraNode extends NodeBase {
   focusTargetNodeId: NodeId | null
   /** Z-depth plane that remains sharp, in canvas depth units. */
   focusDistance: number
+  /** Radius, in scene pixels, that remains sharp around the focus point. */
+  focusRadius: number
+  /** Feather distance, in scene pixels, from sharp focus to full blur. */
+  focusFalloff: number
   /** Lens opening multiplier. Larger values blur out-of-focus layers more. */
   aperture: number
   /** Sensor sensitivity. Higher values add stronger camera grain. */
@@ -660,15 +684,40 @@ export interface ComponentNode extends NodeBase {
   variants: VariantAxis[]
   defaultSelection: VariantSelection
   variantOverrides: VariantOverride[]
+  /** Freeform positions for variant tiles in the component editor board. */
+  variantPositions?: Record<string, { x: number; y: number }>
+  componentProperties: ComponentPropertyDefinition[]
+  variantTransition: VariantTransition
+  /**
+   * Reusable local timelines owned by this component definition.
+   * Unlike scene-level tracks, these do not run against the global
+   * playhead by default. An interaction starts them for one concrete
+   * instance, so ten button instances can all share the same "click"
+   * motion while each instance plays independently.
+   */
+  timelines: Record<ComponentTimelineId, ComponentTimeline>
+  /**
+   * Default event wiring for every instance of this component. Instance
+   * additions are merged at runtime, letting repeated items keep the
+   * shared press/hover feel while adding item-specific actions.
+   */
+  interactions: Interaction[]
 }
 
 /** A use of a component. Has its own variant selection and property overrides. */
 export interface InstanceNode extends NodeBase {
   kind: 'instance'
+  size: Size
+  layout: Layout
   componentId: ComponentId
   selection: VariantSelection
   /** Per-inner-node overrides, keyed by the inner node id inside the component. */
   overrides: Record<NodeId, Record<string, unknown>>
+  /**
+   * Instance-local interaction additions. These are appended to the
+   * component's default interactions for this one instance only.
+   */
+  interactions: Interaction[]
 }
 
 export type Node =
@@ -704,6 +753,94 @@ export interface VariantOverride {
   overrides: Record<NodeId, Record<string, unknown>>
 }
 
+export type ComponentPropertyType =
+  | 'text'
+  | 'fill'
+  | 'color'
+  | 'number'
+  | 'size'
+  | 'stroke'
+  | 'boolean'
+
+export interface ComponentPropertyDefinition {
+  id: string
+  name: string
+  nodeId: NodeId
+  path: string
+  type: ComponentPropertyType
+}
+
+export interface VariantTransition {
+  duration: number
+  easing: EasingKind
+  presetId?: string
+  strength?: number
+}
+
+// ---------------------------------------------------------------------------
+// Component motion + interactions
+// ---------------------------------------------------------------------------
+
+export interface ComponentTimeline {
+  id: ComponentTimelineId
+  name: string
+  /** Local duration in seconds. */
+  duration: number
+  /**
+   * Tracks target node ids inside the component definition. Runtime
+   * scopes the result to the clicked instance before applying it.
+   */
+  tracks: Track[]
+  loop?: boolean
+}
+
+export type InteractionEventKind =
+  | 'click'
+  | 'pointerDown'
+  | 'pointerUp'
+  | 'hoverIn'
+  | 'hoverOut'
+
+export type InteractionTarget =
+  | { kind: 'self' }
+  | { kind: 'instance'; instanceId: NodeId }
+  | { kind: 'node'; nodeId: NodeId }
+
+export type InteractionAction =
+  | {
+      type: 'playTimeline'
+      timelineId: ComponentTimelineId
+      target?: InteractionTarget
+      restart?: boolean
+    }
+  | {
+      type: 'setVariant'
+      selection: VariantSelection
+      target?: InteractionTarget
+    }
+  | {
+      type: 'toggleVariant'
+      axis: string
+      values: [string, string]
+      target?: InteractionTarget
+    }
+  | {
+      type: 'after'
+      delay: number
+      action: InteractionAction
+    }
+
+export interface Interaction {
+  id: InteractionId
+  /**
+   * Node inside the component definition that receives the event. If
+   * omitted, the component root handles the event.
+   */
+  sourceNodeId?: NodeId
+  event: InteractionEventKind
+  actions: InteractionAction[]
+}
+
 // ---------------------------------------------------------------------------
 // Animation: tracks, keyframes, property descriptors
 // ---------------------------------------------------------------------------
@@ -734,6 +871,8 @@ export type PropertyId =
   | 'camera.focusWorldX'
   | 'camera.focusWorldY'
   | 'camera.focusWorldZ'
+  | 'camera.focusRadius'
+  | 'camera.focusFalloff'
   | 'camera.pointOfInterestX'
   | 'camera.pointOfInterestY'
   | 'camera.pointOfInterestZ'

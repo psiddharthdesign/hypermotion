@@ -40,6 +40,8 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusRadius?: number
+  focusFalloff?: number
   pointOfInterestX?: number
   pointOfInterestY?: number
   pointOfInterestZ?: number

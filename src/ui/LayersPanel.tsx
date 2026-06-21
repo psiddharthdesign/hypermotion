@@ -12,7 +12,7 @@ import type { Node, NodeId, NodeKind } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { useUI } from '@/state/ui'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
-import { setLockedRecursive } from '@/ui/actions'
+import { instantiateComponent, setLockedRecursive } from '@/ui/actions'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 
 /**
@@ -43,13 +43,21 @@ export function LayersPanel() {
   const api = useSceneAPI()
   const rootId = api.getRoot()
   const root = rootId ? api.getNode(rootId) : null
+  const componentEditId = useUI((s) => s.componentEditId)
+  const editMaster = componentEditId ? api.getNode(componentEditId) : null
   const camera = api.getActiveCamera()
+  const pasteboardNodes = api
+    .getAllNodeIds()
+    .map((id) => api.getNode(id))
+    .filter((node): node is Node => !!node && !!node.workspaceOnly && node.parent === null)
   const selection = useUI((s) => s.selection)
   const layersCollapsed = useUI((s) => s.layersCollapsed)
   const toggleLayerCollapsed = useUI((s) => s.toggleLayerCollapsed)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const width = useUI((s) => s.layersWidth)
   const setWidth = useUI((s) => s.setLayersWidth)
+  const [tab, setTab] = useState<'layers' | 'components'>('layers')
+  const [componentsModalOpen, setComponentsModalOpen] = useState(false)
 
   // When the canvas (or any other surface) commits a new selection,
   // make sure the Layers panel reveals the row:
@@ -125,30 +133,64 @@ export function LayersPanel() {
       className="relative flex shrink-0 flex-col border-r border-border bg-panel"
       style={{ width }}
     >
-      <div className="flex h-9 shrink-0 items-center border-b border-border px-4">
-        {/* Apple HIG: section headers are title-style, not uppercase. */}
-        <span className="text-[11px] font-medium text-text-muted">
-          Layers
-        </span>
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
+        <SidebarTab
+          active={tab === 'layers'}
+          label="Layers"
+          onClick={() => setTab('layers')}
+        />
+        <SidebarTab
+          active={tab === 'components'}
+          label="Assets"
+          onClick={() => setTab('components')}
+        />
       </div>
-      <div ref={scrollerRef} className="flex-1 overflow-auto py-2">
-        {/* Camera sits above the artboard tree as its own section. It's a
-            scene-level node (parent: null, not a child of root) so it
-            would otherwise not appear in the walk. Surfacing it here
-            makes it selectable and keyframeable via the same flow as
-            any other layer — click to select, then edit in Inspector,
-            or animate via the Animate tab. */}
-        {camera ? <CameraRow node={camera} /> : <AddCameraRow />}
-        {root ? (
-          <Row node={root} depth={0} />
-        ) : (
-          <p className="px-3 py-4 text-text-dim">
-            Empty scene.
-            <br />
-            <span className="text-[11px]">Press R to draw a rectangle.</span>
-          </p>
-        )}
-      </div>
+      {tab === 'layers' ? (
+        <div ref={scrollerRef} className="flex-1 overflow-auto py-2">
+          {editMaster && editMaster.kind === 'component' ? (
+            <>
+              <div className="px-3 pb-2 text-[10px] font-medium uppercase tracking-wider text-[oklch(0.64_0.24_300)]">
+                Master component
+              </div>
+              <Row node={editMaster} depth={0} rootId={editMaster.id} />
+            </>
+          ) : (
+            <>
+          {/* Camera sits above the artboard tree as its own section. It's a
+              scene-level node (parent: null, not a child of root) so it
+              would otherwise not appear in the walk. Surfacing it here
+              makes it selectable and keyframeable via the same flow as
+              any other layer — click to select, then edit in Inspector,
+              or animate via the Animate tab. */}
+          {camera ? <CameraRow node={camera} /> : <AddCameraRow />}
+          {root ? (
+            <Row node={root} depth={0} rootId={rootId} />
+          ) : (
+            <p className="px-3 py-4 text-text-dim">
+              Empty scene.
+              <br />
+              <span className="text-[11px]">Press R to draw a rectangle.</span>
+            </p>
+          )}
+          {pasteboardNodes.length > 0 ? (
+            <div className="mt-3 border-t border-border pt-2">
+              <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-text-dim">
+                Pasteboard
+              </div>
+              {pasteboardNodes.map((node) => (
+                <Row key={node.id} node={node} depth={0} rootId={rootId} />
+              ))}
+            </div>
+          ) : null}
+            </>
+          )}
+        </div>
+      ) : (
+        <ComponentsPanel onViewAll={() => setComponentsModalOpen(true)} />
+      )}
+      {componentsModalOpen ? (
+        <ComponentsModal onClose={() => setComponentsModalOpen(false)} />
+      ) : null}
       {/* Right-edge drag handle. 4px wide, sits half-outside the panel
           so the handle hit area straddles the border line — easier to
           grab than a 1px border. */}
@@ -159,6 +201,274 @@ export function LayersPanel() {
       />
     </aside>
   )
+}
+
+function SidebarTab({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'h-6 rounded px-2 text-[11px] font-medium transition-colors',
+        active
+          ? 'bg-panel-raised text-text'
+          : 'text-text-muted hover:bg-panel-raised/70 hover:text-text',
+      ].join(' ')}
+    >
+      {label}
+    </button>
+  )
+}
+
+function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
+  useSceneVersion()
+  const api = useSceneAPI()
+  const components = listComponents(api)
+  const setSelection = useUI((s) => s.setSelection)
+  const setComponentEditId = useUI((s) => s.setComponentEditId)
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
+        <span className="text-[11px] font-medium text-text-muted">
+          Assets
+        </span>
+        <button
+          type="button"
+          onClick={onViewAll}
+          className="rounded px-2 py-1 text-[11px] font-medium text-[oklch(0.7_0.24_300)] hover:bg-panel-raised"
+        >
+          View all
+        </button>
+      </div>
+      <div className="flex-1 overflow-auto py-2">
+        {components.length === 0 ? (
+          <p className="px-3 py-4 text-[12px] text-text-dim">
+            No components yet.
+            <br />
+            <span className="text-[11px]">Select layers and press ⌥⌘K.</span>
+          </p>
+        ) : (
+          components.map((component) => (
+            <button
+              key={component.id}
+              type="button"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/hyper-motion-component', component.id)
+                e.dataTransfer.effectAllowed = 'copy'
+              }}
+              onClick={() => setSelection([component.id])}
+              onDoubleClick={() => {
+                setComponentEditId(component.id)
+                setSelection([component.id])
+              }}
+              className="group flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-text-muted hover:bg-panel-raised hover:text-text"
+            >
+              <span className="font-mono text-[11px] text-[oklch(0.7_0.24_300)]">
+                ◆
+              </span>
+              <span className="min-w-0 flex-1 truncate">{component.name}</span>
+              <span className="text-[10px] text-text-dim">
+                {api.getChildren(component.id).length}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="border-t border-border px-3 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-wider text-text-dim">
+          Imported assets
+        </div>
+        <div className="mt-2 rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-text-dim">
+          Images and media can be dropped directly onto the scene canvas.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ComponentsModal({ onClose }: { onClose: () => void }) {
+  useSceneVersion()
+  const api = useSceneAPI()
+  const rootId = api.getRoot()
+  const components = listComponents(api)
+  const [query, setQuery] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(
+    components[0]?.id ?? null,
+  )
+  const setSelection = useUI((s) => s.setSelection)
+  const filtered = components.filter((component) =>
+    component.name.toLowerCase().includes(query.trim().toLowerCase()),
+  )
+  const active =
+    filtered.find((component) => component.id === activeId) ??
+    filtered[0] ??
+    null
+
+  const insert = () => {
+    if (!active || !rootId) return
+    const meta = api.getMeta()
+    const id = instantiateComponent(api, active.id, rootId, {
+      absolute: true,
+      position: {
+        x: Math.round(meta.canvas.width / 2 - 80),
+        y: Math.round(meta.canvas.height / 2 - 60),
+      },
+    })
+    if (id) setSelection([id])
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45">
+      <div className="flex h-[620px] w-[860px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel shadow-2xl">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-[15px] font-semibold text-text">
+            Components
+          </h2>
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search components"
+            className="mt-3 h-9 w-full rounded-md border border-border bg-app-bg px-3 text-[13px] text-text outline-none ring-0 placeholder:text-text-dim focus:border-[oklch(0.64_0.24_300)]"
+          />
+        </div>
+        <div className="grid min-h-0 flex-1 grid-cols-[220px_1fr]">
+          <div className="border-r border-border bg-app-bg/40 p-2">
+            {filtered.length === 0 ? (
+              <p className="px-2 py-3 text-[12px] text-text-dim">
+                No matches.
+              </p>
+            ) : (
+              filtered.map((component) => {
+                const selected = component.id === active?.id
+                return (
+                  <button
+                    key={component.id}
+                    type="button"
+                    onClick={() => setActiveId(component.id)}
+                    className={[
+                      'flex w-full items-center gap-2 rounded px-2 py-2 text-left text-[12px]',
+                      selected
+                        ? 'text-text'
+                        : 'text-text-muted hover:bg-panel-raised hover:text-text',
+                    ].join(' ')}
+                    style={
+                      selected
+                        ? { backgroundColor: 'oklch(0.64 0.24 300 / 0.16)' }
+                        : undefined
+                    }
+                  >
+                    <span className="font-mono text-[oklch(0.7_0.24_300)]">
+                      ◆
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {component.name}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+          <div className="flex min-h-0 flex-col p-5">
+            {active ? (
+              <>
+                <div className="flex flex-1 items-center justify-center rounded-md border border-border bg-app-bg">
+                  <div className="rounded-md border border-[oklch(0.64_0.24_300_/_0.55)] bg-panel px-8 py-6 text-center shadow-lg">
+                    <div className="text-[28px] text-[oklch(0.7_0.24_300)]">
+                      ◆
+                    </div>
+                    <div className="mt-2 text-[14px] font-semibold text-text">
+                      {active.name}
+                    </div>
+                    <div className="mt-1 text-[11px] text-text-dim">
+                      Master component
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-3 text-[12px]">
+                  <ComponentFact label="Name" value={active.name} />
+                  <ComponentFact
+                    label="Children"
+                    value={String(api.getChildren(active.id).length)}
+                  />
+                  <ComponentFact
+                    label="Instances"
+                    value={String(countInstances(api, active.id))}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-[13px] text-text-dim">
+                No component selected.
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-md border border-border px-4 text-[13px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={insert}
+            disabled={!active}
+            className="h-9 rounded-md bg-[oklch(0.64_0.24_300)] px-4 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Insert
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ComponentFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-panel-raised px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">
+        {label}
+      </div>
+      <div className="mt-1 truncate text-[12px] font-medium text-text">
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function listComponents(api: SceneAPI): Extract<Node, { kind: 'component' }>[] {
+  return api
+    .getAllNodeIds()
+    .map((id) => api.getNode(id))
+    .filter(
+      (node): node is Extract<Node, { kind: 'component' }> =>
+        !!node && node.kind === 'component',
+    )
+}
+
+function countInstances(api: SceneAPI, componentId: NodeId): number {
+  let count = 0
+  for (const id of api.getAllNodeIds()) {
+    const node = api.getNode(id)
+    if (node?.kind === 'instance' && node.componentId === componentId) {
+      count++
+    }
+  }
+  return count
 }
 
 /**
@@ -316,17 +626,27 @@ function AddCameraRow() {
   )
 }
 
-function Row({ node, depth }: { node: Node; depth: number }) {
+function Row({
+  node,
+  depth,
+  rootId,
+}: {
+  node: Node
+  depth: number
+  rootId: NodeId
+}) {
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
   const toggleInSelection = useUI((s) => s.toggleInSelection)
   const setSelection = useUI((s) => s.setSelection)
+  const setComponentEditId = useUI((s) => s.setComponentEditId)
   const extendSelectionTo = useUI((s) => s.extendSelectionTo)
   const openContextMenu = useUI((s) => s.openContextMenu)
   const collapsed = useUI((s) => s.layersCollapsed.has(node.id))
   const layersCollapsed = useUI((s) => s.layersCollapsed)
   const toggleLayerCollapsed = useUI((s) => s.toggleLayerCollapsed)
   const selected = selection.includes(node.id)
+  const isComponentNode = node.kind === 'component' || node.kind === 'instance'
   const children = api.getChildren(node.id)
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
@@ -334,7 +654,7 @@ function Row({ node, depth }: { node: Node; depth: number }) {
   const [dropEdge, setDropEdge] = useState<'above' | 'into' | 'below' | null>(
     null,
   )
-  const isRoot = node.parent === null
+  const isRoot = node.id === rootId
   // Which nodes accept "drop into" as a new child. Frames and components
   // are the real containers. Instances technically expose children
   // through their component definition — dropping a foreign node inside
@@ -462,13 +782,21 @@ function Row({ node, depth }: { node: Node; depth: number }) {
           }
         }}
         onDoubleClick={() => {
+          if (node.kind === 'component' || node.kind === 'instance') {
+            const masterId = node.kind === 'instance' ? node.componentId : node.id
+            setComponentEditId(masterId)
+            setSelection([masterId])
+            return
+          }
           setDraftName(node.name)
           setEditing(true)
         }}
         className={[
           'group relative flex w-full items-center gap-1 py-1 pr-2 text-left text-[12px] transition-colors',
           selected
-            ? 'bg-accent-soft text-text'
+            ? isComponentNode
+              ? 'text-text'
+              : 'bg-accent-soft text-text'
             : 'text-text-muted hover:bg-panel-raised hover:text-text',
           dropEdge === 'above' ? 'border-t-2 border-t-accent' : '',
           dropEdge === 'below' ? 'border-b-2 border-b-accent' : '',
@@ -479,7 +807,12 @@ function Row({ node, depth }: { node: Node; depth: number }) {
             ? 'ring-2 ring-inset ring-accent bg-accent-soft/40'
             : '',
         ].join(' ')}
-        style={{ paddingLeft: 8 + depth * 12 }}
+        style={{
+          paddingLeft: 8 + depth * 12,
+          ...(selected && isComponentNode
+            ? { backgroundColor: 'oklch(0.64 0.24 300 / 0.16)' }
+            : {}),
+        }}
       >
         {hasChildren ? (
           <button
@@ -556,7 +889,7 @@ function Row({ node, depth }: { node: Node; depth: number }) {
       </div>
       {!collapsed &&
         children.map((c) => (
-          <Row key={c.id} node={c} depth={depth + 1} />
+          <Row key={c.id} node={c} depth={depth + 1} rootId={rootId} />
         ))}
     </>
   )
@@ -695,8 +1028,14 @@ function glyphFor(node: Node): string {
 }
 
 function KindGlyph({ node }: { node: Node }) {
+  const isComponentNode = node.kind === 'component' || node.kind === 'instance'
   return (
-    <span className="w-3 shrink-0 text-center font-mono text-[10px] text-text-dim">
+    <span
+      className="w-3 shrink-0 text-center font-mono text-[10px] text-text-dim"
+      style={{
+        color: isComponentNode ? 'oklch(0.7 0.24 300)' : undefined,
+      }}
+    >
       {glyphFor(node)}
     </span>
   )

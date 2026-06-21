@@ -78,6 +78,8 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusRadius?: number
+  focusFalloff?: number
   pointOfInterestX?: number
   pointOfInterestY?: number
   pointOfInterestZ?: number
@@ -399,6 +401,12 @@ function writeProperty(
       break
     case 'camera.focusWorldZ':
       into.focusWorldZ = value
+      break
+    case 'camera.focusRadius':
+      into.focusRadius = value
+      break
+    case 'camera.focusFalloff':
+      into.focusFalloff = value
       break
     case 'camera.pointOfInterestX':
       into.pointOfInterestX = value

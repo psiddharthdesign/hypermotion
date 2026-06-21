@@ -144,6 +144,14 @@ export interface FigmaCapturedVector extends FigmaCapturedNodeBase {
   type: 'VECTOR'
   /** Inline SVG markup, ready to embed via data URL. */
   svg: string
+  /**
+   * Base64 PNG fallback exported by the Figma plugin. Used when SVG
+   * export is blank, collapsed, or a vector-only group is safer to
+   * preserve as an exact raster image.
+   */
+  rasterPng?: string
+  /** User-facing explanation shown when the fallback image is selected. */
+  rasterReason?: string
 }
 
 export type FigmaCapturedEffect =

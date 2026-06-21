@@ -40,7 +40,18 @@ export function useFileMenu(): void {
 
   useEffect(() => {
     const bridge = window.hypermotion
-    if (!bridge || !bridge.on) return
+    if (!bridge || !bridge.on) {
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') {
+          return
+        }
+        event.preventDefault()
+        downloadSceneFile(api.getMeta()?.name || 'Untitled')
+        useUI.getState().setCurrentFile(null, Date.now())
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
+    }
 
     // Read currentFilePath from the store at the moment of each event —
     // not via useUI()/useState so we don't tear the closure or remount
@@ -76,6 +87,18 @@ export function useFileMenu(): void {
         // saved timestamp so the TopBar reads "Saved just now" instead
         // of "Unsaved" right after a fresh open.
         setFile(result.path, Date.now())
+      })()
+    })
+
+    const offOpenPath = bridge.on('file:open-path', (path) => {
+      void (async () => {
+        if (typeof path !== 'string') return
+        const bytes = (await bridge.invoke('file:read', path)) as
+          | Uint8Array
+          | null
+        if (!bytes) return
+        loadSceneIntoDoc(sceneDoc, new Uint8Array(bytes))
+        setFile(path, Date.now())
       })()
     })
 
@@ -118,8 +141,31 @@ export function useFileMenu(): void {
     return () => {
       offNew?.()
       offOpen?.()
+      offOpenPath?.()
       offSave?.()
       offSaveAs?.()
     }
   }, [api])
+}
+
+function downloadSceneFile(name: string): void {
+  const bytes = sceneToBytes(sceneDoc)
+  const copy = new Uint8Array(bytes)
+  const arrayBuffer = copy.buffer.slice(
+    copy.byteOffset,
+    copy.byteOffset + copy.byteLength,
+  )
+  const blob = new Blob([arrayBuffer], { type: 'application/x-hypermotion' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${safeFilename(name)}.hype`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function safeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'Untitled'
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   useSceneAPI,
   useSceneVersion,
@@ -29,7 +29,9 @@ import { useDragToMove } from '@/ui/hooks/useDragToMove'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
 import { importMediaFiles, isMediaFile } from '@/ui/importMedia'
+import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
+import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import {
   buildWorldPlanes,
@@ -39,6 +41,7 @@ import {
 } from '@/render3d/scene3d'
 import {
   recordKeyframesForPatch,
+  stampToActiveTracksForPatch,
 } from '@/anim'
 
 /**
@@ -51,12 +54,11 @@ import {
  * parent (e.g. a Slide preset on a card) leaves its children stuck in
  * place while the parent alone slides — clearly broken.
  *
- * For each descendant we fold in every ancestor's (static + animated)
- *   translate   → additive
- *   rotation    → additive (uses each child's own pivot — approximate,
- *                 good enough for MVP pure-slide / pure-rotate)
- *   scaleX/Y    → multiplicative (same pivot caveat)
- *   opacity     → multiplicative
+ * When the layout snapshot is available we use a small 2D affine matrix
+ * for ancestor translation / rotationZ / scale around the ancestor pivot.
+ * That keeps children attached to rotated cards even though the DOM paint
+ * is still flat. 3D rotateX/Y/Z-depth are still carried as metadata and
+ * composed by NodeView.
  *
  * The root / artboard contributes nothing — its transform is clamped
  * to identity by `NodeView` so even if stale scene state had it tilted,
@@ -78,6 +80,72 @@ export interface InheritedAnim {
   opacity: number
 }
 
+interface Matrix2D {
+  a: number
+  b: number
+  c: number
+  d: number
+  e: number
+  f: number
+}
+
+const IDENTITY_MATRIX_2D: Matrix2D = {
+  a: 1,
+  b: 0,
+  c: 0,
+  d: 1,
+  e: 0,
+  f: 0,
+}
+
+function multiplyMatrix2D(left: Matrix2D, right: Matrix2D): Matrix2D {
+  return {
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+    e: left.a * right.e + left.c * right.f + left.e,
+    f: left.b * right.e + left.d * right.f + left.f,
+  }
+}
+
+function transformPoint2D(matrix: Matrix2D, x: number, y: number): { x: number; y: number } {
+  return {
+    x: matrix.a * x + matrix.c * y + matrix.e,
+    y: matrix.b * x + matrix.d * y + matrix.f,
+  }
+}
+
+function nodeMatrix2D(
+  rect: Rect,
+  tx: number,
+  ty: number,
+  rotation: number,
+  scaleX: number,
+  scaleY: number,
+  anchorX: number,
+  anchorY: number,
+): Matrix2D {
+  const originX = rect.x + rect.width * anchorX
+  const originY = rect.y + rect.height * anchorY
+  const r = degToRad(rotation)
+  const c = Math.cos(r)
+  const s = Math.sin(r)
+  return multiplyMatrix2D(
+    { ...IDENTITY_MATRIX_2D, e: tx, f: ty },
+    multiplyMatrix2D(
+      { ...IDENTITY_MATRIX_2D, e: originX, f: originY },
+      multiplyMatrix2D(
+        { a: c, b: s, c: -s, d: c, e: 0, f: 0 },
+        multiplyMatrix2D(
+          { a: scaleX, b: 0, c: 0, d: scaleY, e: 0, f: 0 },
+          { ...IDENTITY_MATRIX_2D, e: -originX, f: -originY },
+        ),
+      ),
+    ),
+  )
+}
+
 export interface CameraDepthOfField {
   enabled: boolean
   mode: CameraNode['focusMode']
@@ -87,6 +155,7 @@ export interface CameraDepthOfField {
   focusWorldY: number
   focusWorldZ: number
   focusRadius: number
+  focusFalloff: number
   focusDistance: number
   aperture: number
   blurPx: number
@@ -95,6 +164,7 @@ export interface CameraDepthOfField {
   cameraZ: number
   cameraScale: number
   iso: number
+  blurQuality: number
   blurAxisDeg: number
 }
 
@@ -108,25 +178,8 @@ function degToRad(deg: number): number {
   return (deg * Math.PI) / 180
 }
 
-function dot3(a: Vec3, b: Vec3): number {
-  return a.x * b.x + a.y * b.y + a.z * b.z
-}
-
 function sub3(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }
-}
-
-function add3(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }
-}
-
-function mul3(v: Vec3, n: number): Vec3 {
-  return { x: v.x * n, y: v.y * n, z: v.z * n }
-}
-
-function norm3(v: Vec3): Vec3 {
-  const len = Math.hypot(v.x, v.y, v.z) || 1
-  return { x: v.x / len, y: v.y / len, z: v.z / len }
 }
 
 function rotateX(v: Vec3, deg: number): Vec3 {
@@ -148,10 +201,6 @@ function rotateZ(v: Vec3, deg: number): Vec3 {
   const c = Math.cos(r)
   const s = Math.sin(r)
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c, z: v.z }
-}
-
-function rotateEuler(v: Vec3, rotX: number, rotY: number, rotZ: number): Vec3 {
-  return rotateZ(rotateY(rotateX(v, rotX), rotY), rotZ)
 }
 
 function inverseRotateEuler(v: Vec3, rotX: number, rotY: number, rotZ: number): Vec3 {
@@ -209,11 +258,50 @@ export function composeInheritedAnim(
   api: SceneAPI,
   rootId: NodeId | null,
   animated: Record<NodeId, AnimatedValue>,
+  solved?: SolvedLayout | null,
 ): Record<NodeId, InheritedAnim> {
   const out: Record<NodeId, InheritedAnim> = {}
   if (!rootId) return out
-  const visit = (id: NodeId, inherited: InheritedAnim) => {
-    out[id] = inherited
+
+  interface InheritanceContext extends InheritedAnim {
+    matrix: Matrix2D
+  }
+  const identityContext: InheritanceContext = {
+    ...IDENTITY_INHERITED,
+    matrix: IDENTITY_MATRIX_2D,
+  }
+
+  const inheritForNode = (id: NodeId, context: InheritanceContext): InheritedAnim => {
+    const rect = solved?.[id]
+    if (!rect) {
+      return {
+        x: context.x,
+        y: context.y,
+        z: context.z,
+        rotation: context.rotation,
+        rotationX: context.rotationX,
+        rotationY: context.rotationY,
+        scaleX: context.scaleX,
+        scaleY: context.scaleY,
+        opacity: context.opacity,
+      }
+    }
+    const topLeft = transformPoint2D(context.matrix, rect.x, rect.y)
+    return {
+      x: topLeft.x - rect.x,
+      y: topLeft.y - rect.y,
+      z: context.z,
+      rotation: context.rotation,
+      rotationX: context.rotationX,
+      rotationY: context.rotationY,
+      scaleX: context.scaleX,
+      scaleY: context.scaleY,
+      opacity: context.opacity,
+    }
+  }
+
+  const visit = (id: NodeId, context: InheritanceContext) => {
+    out[id] = inheritForNode(id, context)
     const node = api.getNode(id)
     if (!node) return
     // Root translation/scale/opacity are treated as identity so the
@@ -235,32 +323,46 @@ export function composeInheritedAnim(
     const effSX = a?.scaleX ?? node.transform.scaleX
     const effSY = a?.scaleY ?? node.transform.scaleY
     const effOp = a?.opacity ?? node.appearance.opacity
+    const anchorX = a?.anchorX ?? node.transform.anchorX ?? 0.5
+    const anchorY = a?.anchorY ?? node.transform.anchorY ?? 0.5
+    const rect = solved?.[id]
     // Z is propagated as depth metadata for camera depth-of-field, but
     // it is still not included in the regular DOM transform below.
     // This keeps the surface visually 2D while letting a frame move an
     // entire subtree closer to or farther from the camera's focus plane.
-    const nextInherited: InheritedAnim = isRoot
+    const nodeMatrix =
+      rect && !isRoot
+        ? nodeMatrix2D(rect, effX, effY, effRot, effSX, effSY, anchorX, anchorY)
+        : rect && isRoot
+          ? nodeMatrix2D(rect, 0, 0, effRot, 1, 1, 0.5, 0.5)
+          : null
+    const nextMatrix = nodeMatrix
+      ? multiplyMatrix2D(context.matrix, nodeMatrix)
+      : context.matrix
+    const nextInherited: InheritanceContext = isRoot
       ? {
-          ...inherited,
-          z: inherited.z + effZ,
-          rotation: inherited.rotation + effRot,
-          rotationX: inherited.rotationX + effRotX,
-          rotationY: inherited.rotationY + effRotY,
+          ...context,
+          matrix: nextMatrix,
+          z: context.z + effZ,
+          rotation: context.rotation + effRot,
+          rotationX: context.rotationX + effRotX,
+          rotationY: context.rotationY + effRotY,
         }
       : {
-          x: inherited.x + effX,
-          y: inherited.y + effY,
-          z: inherited.z + effZ,
-          rotation: inherited.rotation + effRot,
-          rotationX: inherited.rotationX + effRotX,
-          rotationY: inherited.rotationY + effRotY,
-          scaleX: inherited.scaleX * effSX,
-          scaleY: inherited.scaleY * effSY,
-          opacity: inherited.opacity * effOp,
+          x: context.x + effX,
+          y: context.y + effY,
+          z: context.z + effZ,
+          rotation: context.rotation + effRot,
+          rotationX: context.rotationX + effRotX,
+          rotationY: context.rotationY + effRotY,
+          scaleX: context.scaleX * effSX,
+          scaleY: context.scaleY * effSY,
+          opacity: context.opacity * effOp,
+          matrix: nextMatrix,
         }
     for (const child of api.getChildren(id)) visit(child.id, nextInherited)
   }
-  visit(rootId, IDENTITY_INHERITED)
+  visit(rootId, identityContext)
   return out
 }
 
@@ -281,31 +383,46 @@ export function computeCameraDepthOfField(
   if (!camera || !camera.depthOfField) return null
   const focusDistance = cameraAnim?.focusDistance ?? camera.focusDistance ?? 0
   const aperture = Math.max(0, cameraAnim?.aperture ?? camera.aperture ?? 0)
-  const maxBlur = Math.max(0, Math.min(64, cameraAnim?.blurLevel ?? camera.blurLevel ?? 1))
+  const focusZ = cameraAnim?.focusWorldZ ?? camera.focusWorldZ ?? focusDistance
+  const maxBlur = Math.max(0, Math.min(128, cameraAnim?.blurLevel ?? camera.blurLevel ?? 1))
   const focalLength = Math.max(50, camera.focalLength ?? 1000)
   const cameraZ = cameraAnim?.z ?? camera.transform.z
   const rotationX = cameraAnim?.rotationX ?? camera.transform.rotationX
   const rotationY = cameraAnim?.rotationY ?? camera.transform.rotationY
   const safeCameraScale = Math.max(0.05, cameraScale)
   const focalFactor = Math.max(0.35, Math.min(6, focalLength / 1000))
-  const zoomFactor = Math.max(0.25, Math.min(8, safeCameraScale))
   const dollyFactor = Math.max(0.5, Math.min(5, 1 + Math.max(0, cameraZ) / focalLength))
-  const blurPx = Math.min(maxBlur, aperture * maxBlur * focalFactor * Math.sqrt(zoomFactor) * dollyFactor)
-  const effectiveFocusRadius =
-    Math.max(28, 220 / Math.sqrt(Math.max(1, aperture + 0.5))) /
-    Math.sqrt(focalFactor * zoomFactor)
-  const mode = camera.focusMode ?? 'plane'
+  const apertureFactor =
+    aperture <= 0 ? 1 : Math.max(0.25, Math.min(5, Math.pow(aperture / 10, 1.15)))
+  const focusDepthFactor = Math.max(
+    0.75,
+    Math.min(5, 1 + Math.abs(focusZ - cameraZ) / Math.max(120, focalLength * 0.55)),
+  )
+  const blurPx = Math.min(
+    160,
+    maxBlur * apertureFactor * focusDepthFactor * Math.sqrt(focalFactor) * dollyFactor,
+  )
+  const effectiveFocusRadius = Math.max(
+    4,
+    cameraAnim?.focusRadius ?? camera.focusRadius ?? 160,
+  )
+  const focusFalloff = Math.max(
+    1,
+    cameraAnim?.focusFalloff ?? camera.focusFalloff ?? 180,
+  )
+  const mode = camera.focusMode ?? 'screen'
+  const focusScreen = {
+    x: cameraAnim?.focusX ?? camera.focusX ?? canvasWidth / 2,
+    y: cameraAnim?.focusY ?? camera.focusY ?? canvasHeight / 2,
+  }
   const focusWorld = focusWorldOverride ?? {
-    x: cameraAnim?.focusWorldX ?? camera.focusWorldX ?? camera.focusX ?? camera.transform.x,
-    y: cameraAnim?.focusWorldY ?? camera.focusWorldY ?? camera.focusY ?? camera.transform.y,
-    z: cameraAnim?.focusWorldZ ?? camera.focusWorldZ ?? focusDistance,
+    x: cameraAnim?.focusWorldX ?? camera.focusWorldX ?? focusScreen.x,
+    y: cameraAnim?.focusWorldY ?? camera.focusWorldY ?? focusScreen.y,
+    z: focusZ,
   }
   const projected =
     mode === 'screen'
-      ? {
-          x: cameraAnim?.focusX ?? camera.focusX ?? camera.transform.x,
-          y: cameraAnim?.focusY ?? camera.focusY ?? camera.transform.y,
-        }
+      ? focusScreen
       : projectWorldPointThroughCamera(
           focusWorld,
           camera,
@@ -322,14 +439,16 @@ export function computeCameraDepthOfField(
     focusWorldY: focusWorld.y,
     focusWorldZ: focusWorld.z,
     focusRadius: effectiveFocusRadius,
+    focusFalloff,
     focusDistance: mode === 'screen' ? focusDistance : focusWorld.z,
     aperture,
     blurPx,
-    featherPx: Math.max(24, effectiveFocusRadius * 0.75),
+    featherPx: focusFalloff,
     focalLength,
     cameraZ,
     cameraScale: safeCameraScale,
     iso: Math.max(0, camera.iso ?? 100),
+    blurQuality: Math.max(1, Math.min(8, cameraAnim?.blurQuality ?? camera.blurQuality ?? 4)),
     blurAxisDeg:
       Math.abs(rotationX) + Math.abs(rotationY) < 0.001
         ? 90
@@ -361,108 +480,13 @@ function projectWorldPointThroughCamera(
   }
 }
 
-interface FocusHit {
-  nodeId: NodeId
-  point: Vec3
-  screen: { x: number; y: number }
-  focusDistance: number
-}
-
-function findCameraFocusHit({
-  api,
-  order,
-  solved,
-  animated,
-  inherited,
-  camera,
-  cameraAnim,
-  canvasX,
-  canvasY,
-  canvasWidth,
-  canvasHeight,
-}: {
-  api: SceneAPI
-  order: NodeId[]
-  solved: SolvedLayout
-  animated: Record<NodeId, AnimatedValue>
-  inherited: Record<NodeId, InheritedAnim>
-  camera: CameraNode
-  cameraAnim: AnimatedValue | undefined
-  canvasX: number
-  canvasY: number
-  canvasWidth: number
-  canvasHeight: number
-}): FocusHit | null {
-  const focalLength = Math.max(50, camera.focalLength ?? 1000)
-  const cx = cameraAnim?.x ?? camera.transform.x
-  const cy = cameraAnim?.y ?? camera.transform.y
-  const cz = cameraAnim?.z ?? camera.transform.z
-  const rX = cameraAnim?.rotationX ?? camera.transform.rotationX
-  const rY = cameraAnim?.rotationY ?? camera.transform.rotationY
-  const rZ = cameraAnim?.rotation ?? camera.transform.rotation
-  const origin: Vec3 = { x: cx, y: cy, z: -focalLength + cz }
-  const localRay = norm3({
-    x: canvasX - canvasWidth / 2,
-    y: canvasY - canvasHeight / 2,
-    z: focalLength,
-  })
-  const direction = norm3(rotateEuler(localRay, rX, rY, rZ))
-  let best: (FocusHit & { t: number }) | null = null
-
-  for (let i = order.length - 1; i >= 0; i--) {
-    const id = order[i]!
-    const node = api.getNode(id)
-    const rect = solved[id]
-    if (!node || !rect || node.kind === 'camera' || id === api.getRoot()) continue
-    if (!node.visible || node.locked) continue
-    const inherit = inherited[id] ?? IDENTITY_INHERITED
-    const anim = animated[id]
-    const ownX = anim?.x ?? node.transform.x
-    const ownY = anim?.y ?? node.transform.y
-    const ownZ = anim?.z ?? node.transform.z
-    const ownRot = anim?.rotation ?? node.transform.rotation
-    const ownRotX = anim?.rotationX ?? node.transform.rotationX
-    const ownRotY = anim?.rotationY ?? node.transform.rotationY
-    const ownSX = anim?.scaleX ?? node.transform.scaleX
-    const ownSY = anim?.scaleY ?? node.transform.scaleY
-    const center: Vec3 = {
-      x: rect.x + rect.width / 2 + inherit.x + ownX,
-      y: rect.y + rect.height / 2 + inherit.y + ownY,
-      z: inherit.z + ownZ,
-    }
-    const rotZ = inherit.rotation + ownRot
-    const rotX = inherit.rotationX + ownRotX
-    const rotY = inherit.rotationY + ownRotY
-    const u = norm3(rotateEuler({ x: 1, y: 0, z: 0 }, rotX, rotY, rotZ))
-    const v = norm3(rotateEuler({ x: 0, y: 1, z: 0 }, rotX, rotY, rotZ))
-    const normal = norm3(rotateEuler({ x: 0, y: 0, z: 1 }, rotX, rotY, rotZ))
-    const denom = dot3(direction, normal)
-    if (Math.abs(denom) < 0.0001) continue
-    const t = dot3(sub3(center, origin), normal) / denom
-    if (t <= 0 || (best && t >= best.t)) continue
-    const point = add3(origin, mul3(direction, t))
-    const rel = sub3(point, center)
-    const localX = dot3(rel, u) / Math.max(0.0001, Math.abs(ownSX * inherit.scaleX)) + rect.width / 2
-    const localY = dot3(rel, v) / Math.max(0.0001, Math.abs(ownSY * inherit.scaleY)) + rect.height / 2
-    if (localX < 0 || localX > rect.width || localY < 0 || localY > rect.height) continue
-    best = {
-      nodeId: id,
-      point,
-      screen: projectWorldPointThroughCamera(point, camera, cameraAnim, canvasWidth, canvasHeight),
-      focusDistance: point.z,
-      t,
-    }
-  }
-
-  return best
-}
-
 export function resolveCameraFocusTargetPoint(
   api: SceneAPI,
   camera: CameraNode | null,
   solved: SolvedLayout,
   animated: Record<NodeId, AnimatedValue>,
   inherited: Record<NodeId, InheritedAnim>,
+  viewport?: { width: number; height: number },
 ): Vec3 | null {
   if (!camera || (camera.focusMode ?? 'plane') !== 'target') return null
   const targetId = camera.focusTargetNodeId
@@ -470,6 +494,12 @@ export function resolveCameraFocusTargetPoint(
   const target = api.getNode(targetId)
   const rect = solved[targetId]
   if (!target || !rect) return null
+  if (viewport) {
+    const resolvedCamera = resolveCamera3D(camera, animated[camera.id], viewport)
+    const targetPlane = buildWorldPlanes(api, solved, animated, resolvedCamera)
+      .find((plane) => plane.nodeId === targetId)
+    if (targetPlane) return targetPlane.center
+  }
   const inherit = inherited[targetId] ?? IDENTITY_INHERITED
   const anim = animated[targetId]
   return {
@@ -477,26 +507,6 @@ export function resolveCameraFocusTargetPoint(
     y: rect.y + rect.height / 2 + inherit.y + (anim?.y ?? target.transform.y),
     z: inherit.z + (anim?.z ?? target.transform.z),
   }
-}
-
-function depthOfFieldBlurForNode(
-  cameraDepthOfField: CameraDepthOfField | null | undefined,
-  node: SceneNode,
-  anim: AnimatedValue | undefined,
-  inherit: InheritedAnim,
-  isRoot: boolean,
-): number {
-  void cameraDepthOfField
-  void node
-  void anim
-  void inherit
-  void isRoot
-  // Camera lens blur must not be applied as a per-layer CSS filter. That
-  // turns DOF into a regular "Layer blur" effect and smears the whole
-  // plane uniformly. The photographic preview is handled by
-  // CameraFocusBlurOverlay, which masks blurred scene passes around the
-  // selected focus band/point.
-  return 0
 }
 
 /**
@@ -584,6 +594,22 @@ export function Canvas() {
     visit(rootId)
     return out
   }, [api, rootId, version])
+
+  const workspaceOrder = useMemo<NodeId[]>(() => {
+    const roots = api
+      .getAllNodeIds()
+      .filter((id) => {
+        const node = api.getNode(id)
+        return !!node && !!node.workspaceOnly && node.parent === null
+      })
+    const out: NodeId[] = []
+    const visit = (id: NodeId) => {
+      out.push(id)
+      for (const child of api.getChildren(id)) visit(child.id)
+    }
+    for (const id of roots) visit(id)
+    return out
+  }, [api, version])
 
   // Animated values (opacity, transform offsets) from the anim engine,
   // keyed by node id. Empty object while no tracks exist, which is the
@@ -704,9 +730,9 @@ export function Canvas() {
   // required so pure-scene mutations (e.g. dragging a node) re-run the
   // ancestor walk even when the anim snapshot identity hasn't changed.
   const inherited = useMemo(
-    () => composeInheritedAnim(api, rootId, animated),
+    () => composeInheritedAnim(api, rootId, animated, solved),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, rootId, animated, version],
+    [api, rootId, animated, solved, version],
   )
 
   const focusTargetWorld = useMemo(
@@ -717,6 +743,7 @@ export function Canvas() {
         solved ?? {},
         animated,
         inherited,
+        { width: canvasWidth, height: canvasHeight },
       ),
     [api, camera, solved, animated, inherited],
   )
@@ -771,8 +798,11 @@ export function Canvas() {
     pointerId: number
     startX: number
     startY: number
+    workspaceOnly: boolean
   } | null>(null)
-  const [drawPreview, setDrawPreview] = useState<Rect | null>(null)
+  const [drawPreview, setDrawPreview] = useState<
+    (Rect & { workspaceOnly?: boolean }) | null
+  >(null)
 
   // Marquee (rubber-band) selection state. Active only with the select
   // tool, clicking the empty workspace background. Holding Shift at
@@ -783,8 +813,11 @@ export function Canvas() {
     startY: number
     additive: boolean
     initialSelection: NodeId[]
+    workspaceOnly: boolean
   } | null>(null)
-  const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<
+    (Rect & { workspaceOnly?: boolean }) | null
+  >(null)
   const cameraControlRef = useRef<{
     pointerId: number
     cameraId: NodeId
@@ -795,13 +828,43 @@ export function Canvas() {
     latestTransform: CameraNode['transform']
     moved: boolean
   } | null>(null)
+  const focusMaskDragRef = useRef<{
+    pointerId: number
+    cameraId: NodeId
+    startX: number
+    startY: number
+    latestPatch: Record<string, number>
+    moved: boolean
+  } | null>(null)
+
+  const stampCanvasPatch = useCallback(
+    (
+      nodeId: NodeId,
+      group: 'transform' | 'appearance' | 'size' | 'camera',
+      patch: Record<string, unknown>,
+    ) => {
+      const ui = useUI.getState()
+      if (ui.recording) {
+        recordKeyframesForPatch(api, nodeId, ui.playhead, group, patch)
+      } else {
+        stampToActiveTracksForPatch(api, nodeId, ui.playhead, group, patch)
+      }
+    },
+    [api],
+  )
 
   const stampCanvasTransformPatch = useCallback(
     (nodeId: NodeId, patch: Record<string, unknown>) => {
-      const ui = useUI.getState()
-      recordKeyframesForPatch(api, nodeId, ui.playhead, 'transform', patch)
+      stampCanvasPatch(nodeId, 'transform', patch)
     },
-    [api],
+    [stampCanvasPatch],
+  )
+
+  const stampCanvasCameraPatch = useCallback(
+    (nodeId: NodeId, patch: Record<string, unknown>) => {
+      stampCanvasPatch(nodeId, 'camera', patch)
+    },
+    [stampCanvasPatch],
   )
 
   const clientToViewport = useCallback(
@@ -819,6 +882,31 @@ export function Canvas() {
       }
     },
     [view.panX, view.panY, view.zoom, canvasWidth, canvasHeight],
+  )
+
+  const hitTestWorkspace = useCallback(
+    (clientX: number, clientY: number): NodeId | null => {
+      const point = clientToViewport(clientX, clientY)
+      if (!point) return null
+      for (const id of [...workspaceOrder].reverse()) {
+        const node = api.getNode(id)
+        if (!node || !node.visible) continue
+        const rect = workspaceRectForNode(node)
+        const inherit = workspaceInheritedTransform(api, node)
+        const x = rect.x + node.transform.x + inherit.x
+        const y = rect.y + node.transform.y + inherit.y
+        if (
+          point.x >= x &&
+          point.x <= x + rect.width &&
+          point.y >= y &&
+          point.y <= y + rect.height
+        ) {
+          return id
+        }
+      }
+      return null
+    },
+    [api, clientToViewport, workspaceOrder],
   )
 
   const resolvedCamera3D = useMemo(
@@ -936,6 +1024,16 @@ export function Canvas() {
     ],
   )
 
+  const isInsideArtboard = useCallback(
+    (point: { x: number; y: number } | null): point is { x: number; y: number } =>
+      !!point &&
+      point.x >= 0 &&
+      point.y >= 0 &&
+      point.x <= canvasWidth &&
+      point.y <= canvasHeight,
+    [canvasWidth, canvasHeight],
+  )
+
   const DRAW_TOOLS: Tool[] = ['rect', 'ellipse', 'text', 'frame']
   const isDrawTool = DRAW_TOOLS.includes(tool)
   const [spacePanning, setSpacePanning] = useState(false)
@@ -968,7 +1066,7 @@ export function Canvas() {
   }, [])
 
   const onFocusPickPointerDownCapture = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
+    (e: React.PointerEvent<HTMLElement>) => {
       if (e.button !== 0) return
       if (!focusPickingCameraId && spacePanning) {
         panStateRef.current = {
@@ -1011,31 +1109,34 @@ export function Canvas() {
       }
       if (!focusPickingCameraId) return
       const point = clientToViewport(e.clientX, e.clientY)
+      const canvasPoint = clientToCanvas(e.clientX, e.clientY)
       const focusCamera = api.getNode(focusPickingCameraId)
-      if (!point || !focusCamera || focusCamera.kind !== 'camera') {
+      if (!point || !canvasPoint || !focusCamera || focusCamera.kind !== 'camera') {
         setFocusPickingCameraId(null)
         return
       }
-      if (!solved) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
-      const hit = hitTestCanvas3D(e.clientX, e.clientY)
-      if (!hit) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
+      const focusWorld = {
+        x: canvasPoint.x,
+        y: canvasPoint.y,
+        z: focusCamera.focusWorldZ ?? focusCamera.focusDistance ?? 0,
       }
       api.doc.transact(() => {
-        api.setNodeProperty(focusCamera.id, 'focusX', hit.viewport.x)
-        api.setNodeProperty(focusCamera.id, 'focusY', hit.viewport.y)
-        api.setNodeProperty(focusCamera.id, 'focusWorldX', hit.point.x)
-        api.setNodeProperty(focusCamera.id, 'focusWorldY', hit.point.y)
-        api.setNodeProperty(focusCamera.id, 'focusWorldZ', hit.point.z)
-        api.setNodeProperty(focusCamera.id, 'focusDistance', hit.cameraDepth)
-        api.setNodeProperty(focusCamera.id, 'focusMode', 'plane')
+        api.setNodeProperty(focusCamera.id, 'focusX', point.x)
+        api.setNodeProperty(focusCamera.id, 'focusY', point.y)
+        api.setNodeProperty(focusCamera.id, 'focusWorldX', focusWorld.x)
+        api.setNodeProperty(focusCamera.id, 'focusWorldY', focusWorld.y)
+        api.setNodeProperty(focusCamera.id, 'focusWorldZ', focusWorld.z)
+        api.setNodeProperty(focusCamera.id, 'focusDistance', focusWorld.z)
+        api.setNodeProperty(focusCamera.id, 'focusMode', 'screen')
         api.setNodeProperty(focusCamera.id, 'focusTargetNodeId', null)
+      })
+      stampCanvasCameraPatch(focusCamera.id, {
+        focusX: point.x,
+        focusY: point.y,
+        focusWorldX: focusWorld.x,
+        focusWorldY: focusWorld.y,
+        focusWorldZ: focusWorld.z,
+        focusDistance: focusWorld.z,
       })
       setSelection([focusCamera.id])
       setFocusPickingCameraId(null)
@@ -1045,11 +1146,12 @@ export function Canvas() {
     [
       api,
       clientToViewport,
+      clientToCanvas,
       solved,
-      hitTestCanvas3D,
       focusPickingCameraId,
       setFocusPickingCameraId,
       setSelection,
+      stampCanvasCameraPatch,
       camera,
       displayedCameraTransform,
       selection,
@@ -1058,6 +1160,115 @@ export function Canvas() {
       view.panX,
       view.panY,
     ],
+  )
+
+  const focusPatchFromClientPoint = useCallback(
+    (
+      cameraNode: CameraNode,
+      clientX: number,
+      clientY: number,
+    ): Record<string, number> | null => {
+      const viewportPoint = clientToViewport(clientX, clientY)
+      const canvasPoint = clientToCanvas(clientX, clientY)
+      if (!viewportPoint || !canvasPoint) return null
+      const focusWorld = {
+        x: canvasPoint.x,
+        y: canvasPoint.y,
+        z: cameraNode.focusWorldZ ?? cameraNode.focusDistance ?? 0,
+      }
+      return {
+        focusX: viewportPoint.x,
+        focusY: viewportPoint.y,
+        focusWorldX: focusWorld.x,
+        focusWorldY: focusWorld.y,
+        focusWorldZ: focusWorld.z,
+        focusDistance: focusWorld.z,
+      }
+    },
+    [clientToCanvas, clientToViewport],
+  )
+
+  const applyFocusMaskPatch = useCallback(
+    (cameraNode: CameraNode, patch: Record<string, number>) => {
+      api.doc.transact(() => {
+        api.setNodeProperty(cameraNode.id, 'focusX', patch.focusX)
+        api.setNodeProperty(cameraNode.id, 'focusY', patch.focusY)
+        api.setNodeProperty(cameraNode.id, 'focusWorldX', patch.focusWorldX)
+        api.setNodeProperty(cameraNode.id, 'focusWorldY', patch.focusWorldY)
+        api.setNodeProperty(cameraNode.id, 'focusWorldZ', patch.focusWorldZ)
+        api.setNodeProperty(cameraNode.id, 'focusDistance', patch.focusDistance)
+        api.setNodeProperty(cameraNode.id, 'focusMode', 'screen')
+        api.setNodeProperty(cameraNode.id, 'focusTargetNodeId', null)
+      })
+    },
+    [api],
+  )
+
+  const onFocusMaskPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (e.button !== 0 || !camera || camera.kind !== 'camera') return
+      const patch = focusPatchFromClientPoint(camera, e.clientX, e.clientY)
+      if (!patch) return
+      focusMaskDragRef.current = {
+        pointerId: e.pointerId,
+        cameraId: camera.id,
+        startX: e.clientX,
+        startY: e.clientY,
+        latestPatch: patch,
+        moved: false,
+      }
+      applyFocusMaskPatch(camera, patch)
+      setSelection([camera.id])
+      e.currentTarget.setPointerCapture(e.pointerId)
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [
+      applyFocusMaskPatch,
+      camera,
+      focusPatchFromClientPoint,
+      setSelection,
+    ],
+  )
+
+  const onFocusMaskPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const drag = focusMaskDragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+      const focusCamera = api.getNode(drag.cameraId)
+      if (!focusCamera || focusCamera.kind !== 'camera') return
+      const dx = e.clientX - drag.startX
+      const dy = e.clientY - drag.startY
+      if (!drag.moved && Math.hypot(dx, dy) < 1) return
+      const patch = focusPatchFromClientPoint(focusCamera, e.clientX, e.clientY)
+      if (!patch) return
+      drag.moved = true
+      drag.latestPatch = patch
+      applyFocusMaskPatch(focusCamera, patch)
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [api, applyFocusMaskPatch, focusPatchFromClientPoint],
+  )
+
+  const onFocusMaskPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = focusMaskDragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+      const focusCamera = api.getNode(drag.cameraId)
+      if (drag.moved && focusCamera?.kind === 'camera') {
+        stampCanvasCameraPatch(focusCamera.id, drag.latestPatch)
+      }
+      focusMaskDragRef.current = null
+      try {
+        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [api, stampCanvasCameraPatch],
   )
 
 	  const onBackgroundPointerDown = useCallback(
@@ -1087,19 +1298,44 @@ export function Canvas() {
       }
 
       if (isDrawTool) {
-        const start = clientToCanvas(e.clientX, e.clientY)
+        const viewportStart = clientToViewport(e.clientX, e.clientY)
+        const workspaceOnly = !isInsideArtboard(viewportStart)
+        const start = workspaceOnly
+          ? viewportStart
+          : clientToCanvas(e.clientX, e.clientY)
         if (!start) return
         drawStateRef.current = {
           kind: toolToKind(tool),
           pointerId: e.pointerId,
           startX: start.x,
           startY: start.y,
+          workspaceOnly,
         }
-        setDrawPreview({ x: start.x, y: start.y, width: 0, height: 0 })
+        setDrawPreview({
+          x: start.x,
+          y: start.y,
+          width: 0,
+          height: 0,
+          workspaceOnly,
+        })
         ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
         e.preventDefault()
         e.stopPropagation()
         return
+      }
+
+      if (tool === 'select' && !onExistingNode) {
+        const workspaceHit = hitTestWorkspace(e.clientX, e.clientY)
+        if (workspaceHit) {
+          if (e.shiftKey || e.metaKey || e.ctrlKey) {
+            useUI.getState().toggleInSelection(workspaceHit, true)
+          } else {
+            setSelection([workspaceHit])
+          }
+          e.preventDefault()
+          e.stopPropagation()
+          return
+        }
       }
 
 	      if (!onExistingNode) {
@@ -1145,7 +1381,11 @@ export function Canvas() {
         // recompute union-with-marquee idempotently without losing the
         // user's prior picks halfway through a Shift drag.
         if (tool === 'select') {
-          const start = clientToCanvas(e.clientX, e.clientY)
+          const viewportStart = clientToViewport(e.clientX, e.clientY)
+          const workspaceOnly = !isInsideArtboard(viewportStart)
+          const start = workspaceOnly
+            ? viewportStart
+            : clientToCanvas(e.clientX, e.clientY)
           if (start) {
             marqueeRef.current = {
               pointerId: e.pointerId,
@@ -1155,8 +1395,15 @@ export function Canvas() {
               initialSelection: e.shiftKey
                 ? [...useUI.getState().selection]
                 : [],
+              workspaceOnly,
             }
-            setMarqueeRect({ x: start.x, y: start.y, width: 0, height: 0 })
+            setMarqueeRect({
+              x: start.x,
+              y: start.y,
+              width: 0,
+              height: 0,
+              workspaceOnly,
+            })
             ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
             // Only clear when starting a non-additive marquee. With
             // shift, hold the previous selection until pointer-up so
@@ -1173,6 +1420,9 @@ export function Canvas() {
 	      tool,
 	      isDrawTool,
 	      clientToCanvas,
+	      clientToViewport,
+      isInsideArtboard,
+      hitTestWorkspace,
 	      hitTestCanvas3D,
 	      setSelection,
 		      camera,
@@ -1233,27 +1483,31 @@ export function Canvas() {
       }
       const d = drawStateRef.current
       if (d && e.pointerId === d.pointerId) {
-        const cur = clientToCanvas(e.clientX, e.clientY)
+        const cur = d.workspaceOnly
+          ? clientToViewport(e.clientX, e.clientY)
+          : clientToCanvas(e.clientX, e.clientY)
         if (!cur) return
         const x = Math.min(d.startX, cur.x)
         const y = Math.min(d.startY, cur.y)
         const width = Math.abs(cur.x - d.startX)
         const height = Math.abs(cur.y - d.startY)
-        setDrawPreview({ x, y, width, height })
+        setDrawPreview({ x, y, width, height, workspaceOnly: d.workspaceOnly })
         return
       }
       const m = marqueeRef.current
       if (m && e.pointerId === m.pointerId) {
-        const cur = clientToCanvas(e.clientX, e.clientY)
+        const cur = m.workspaceOnly
+          ? clientToViewport(e.clientX, e.clientY)
+          : clientToCanvas(e.clientX, e.clientY)
         if (!cur) return
         const x = Math.min(m.startX, cur.x)
         const y = Math.min(m.startY, cur.y)
         const width = Math.abs(cur.x - m.startX)
         const height = Math.abs(cur.y - m.startY)
-        setMarqueeRect({ x, y, width, height })
+        setMarqueeRect({ x, y, width, height, workspaceOnly: m.workspaceOnly })
       }
 	    },
-	    [api, cameraScaleFromZ, clientToCanvas, setView, view.zoom],
+	    [api, cameraScaleFromZ, clientToCanvas, clientToViewport, setView, view.zoom],
 	  )
 
 	  const onBackgroundPointerUp = useCallback(
@@ -1301,11 +1555,14 @@ export function Canvas() {
         } catch {
           /* already released */
         }
-        const cur = clientToCanvas(e.clientX, e.clientY)
+        const cur = m.workspaceOnly
+          ? clientToViewport(e.clientX, e.clientY)
+          : clientToCanvas(e.clientX, e.clientY)
         const startX = m.startX
         const startY = m.startY
         const additive = m.additive
         const prior = m.initialSelection
+        const workspaceOnly = m.workspaceOnly
         marqueeRef.current = null
         setMarqueeRect(null)
         if (!cur) return
@@ -1324,23 +1581,46 @@ export function Canvas() {
           return
         }
 
-        // Hit-test: every solved rect that intersects the marquee
-        // counts as "inside." Excludes root (no point selecting the
-        // artboard itself with a drag) and cameras (they don't paint
-        // and a marquee over the viewfinder shouldn't grab them).
         const hits: NodeId[] = []
-        const layoutRects = solved ?? {}
-        for (const [id, rect] of Object.entries(layoutRects)) {
-          if (id === rootId) continue
-          const n = api.getNode(id)
-          if (!n || n.kind === 'camera') continue
-          if (
-            rect.x + rect.width >= bx &&
-            rect.x <= bx + bw &&
-            rect.y + rect.height >= by &&
-            rect.y <= by + bh
-          ) {
-            hits.push(id)
+        if (workspaceOnly) {
+          for (const id of workspaceOrder) {
+            const n = api.getNode(id)
+            if (!n || !n.visible) continue
+            const rect = workspaceRectForNode(n)
+            const inherit = workspaceInheritedTransform(api, n)
+            const worldRect = {
+              x: rect.x + n.transform.x + inherit.x,
+              y: rect.y + n.transform.y + inherit.y,
+              width: rect.width,
+              height: rect.height,
+            }
+            if (
+              worldRect.x + worldRect.width >= bx &&
+              worldRect.x <= bx + bw &&
+              worldRect.y + worldRect.height >= by &&
+              worldRect.y <= by + bh
+            ) {
+              hits.push(id)
+            }
+          }
+        } else {
+          // Hit-test: every solved rect that intersects the marquee
+          // counts as "inside." Excludes root (no point selecting the
+          // artboard itself with a drag) and cameras (they don't paint
+          // and a marquee over the viewfinder shouldn't grab them).
+          const layoutRects = solved ?? {}
+          for (const [id, rect] of Object.entries(layoutRects)) {
+            if (id === rootId) continue
+            const n = api.getNode(id)
+            if (!n || n.kind === 'camera') continue
+            if (
+              rect.x + rect.width >= bx &&
+              rect.x <= bx + bw &&
+              rect.y + rect.height >= by &&
+              rect.y <= by + bh
+            ) {
+              hits.push(id)
+            }
           }
         }
 
@@ -1359,10 +1639,12 @@ export function Canvas() {
         } catch {
           /* already released */
         }
-        const cur = clientToCanvas(e.clientX, e.clientY)
+        const cur = d.workspaceOnly
+          ? clientToViewport(e.clientX, e.clientY)
+          : clientToCanvas(e.clientX, e.clientY)
         drawStateRef.current = null
         setDrawPreview(null)
-        if (!cur || !rootId) return
+        if (!cur || (!rootId && !d.workspaceOnly)) return
 
         // Commit. Dragged bounds → size + transform.x/y under root.
         // A tiny drag (< 2px) becomes a default-sized rect at the point,
@@ -1381,10 +1663,10 @@ export function Canvas() {
         // it jump?" If the parent is mode='none' (free canvas), we keep
         // the dragged position as the transform so click-drag lands
         // exactly where the user pointed.
-        const parentNode = api.getNode(rootId)
+        const parentNode = d.workspaceOnly || !rootId ? null : api.getNode(rootId)
         const parentMode =
           parentNode && 'layout' in parentNode ? parentNode.layout.mode : 'none'
-        const useAbsolute = parentMode === 'none'
+        const useAbsolute = d.workspaceOnly || parentMode === 'none'
 
         // Sizing rules:
         // - Text always prefers hug when drawn into a flex/grid parent
@@ -1438,8 +1720,10 @@ export function Canvas() {
             : undefined
 
         const appearance = appearanceForKind(d.kind)
-        const newId = api.createNode(d.kind, rootId, {
+        const newId = api.createNode(d.kind, d.workspaceOnly ? null : rootId, {
           ...baseProps,
+          position: useAbsolute ? 'absolute' : 'flow',
+          workspaceOnly: d.workspaceOnly,
           ...(appearance ? { appearance } : {}),
         } as never)
 
@@ -1456,7 +1740,17 @@ export function Canvas() {
         }
       }
     },
-    [api, rootId, clientToCanvas, setSelection, setTool, solved, clearSelection],
+    [
+      api,
+      rootId,
+      clientToCanvas,
+      clientToViewport,
+      setSelection,
+      setTool,
+      solved,
+      workspaceOrder,
+      clearSelection,
+    ],
   )
 
   // --- wheel: cmd/ctrl + wheel = zoom, otherwise pan -------------------
@@ -1505,8 +1799,8 @@ export function Canvas() {
     }
     // React only synthesizes wheel as passive; we need to preventDefault
     // to stop the page from scrolling under Cmd+wheel, so attach native.
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [
     api,
     camera,
@@ -1531,7 +1825,7 @@ export function Canvas() {
         ? 'crosshair'
         : undefined
 
-  // --- native drag-drop: image import ----------------------------------
+  // --- native drag-drop: component / image import ----------------------
   // Tracks the "a dragged file is hovering over the canvas" state so the
   // UI can show a visible drop target. dragenter/dragover fire many times
   // during a hover; a boolean is enough — we don't need to count enters.
@@ -1539,13 +1833,19 @@ export function Canvas() {
   const dragDepthRef = useRef(0)
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (
+      !e.dataTransfer.types.includes('Files') &&
+      !e.dataTransfer.types.includes('text/hyper-motion-component')
+    ) return
     dragDepthRef.current += 1
     setIsFileDragging(true)
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (
+      !e.dataTransfer.types.includes('Files') &&
+      !e.dataTransfer.types.includes('text/hyper-motion-component')
+    ) return
     // Required to allow `drop` to fire — the browser assumes you're
     // rejecting the drag unless you preventDefault on dragover.
     e.preventDefault()
@@ -1553,7 +1853,10 @@ export function Canvas() {
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes('Files')) return
+    if (
+      !e.dataTransfer.types.includes('Files') &&
+      !e.dataTransfer.types.includes('text/hyper-motion-component')
+    ) return
     // Nested elements fire leave/enter pairs during traversal. Use a
     // depth counter so the highlight only clears when the drag truly
     // exits the workspace, not when crossing a child boundary.
@@ -1563,11 +1866,35 @@ export function Canvas() {
 
   const handleDrop = useCallback(
     async (e: React.DragEvent<HTMLDivElement>) => {
-      if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return
+      const componentId = e.dataTransfer.getData('text/hyper-motion-component')
+      if (
+        !componentId &&
+        (!e.dataTransfer.files || e.dataTransfer.files.length === 0)
+      ) return
       e.preventDefault()
       dragDepthRef.current = 0
       setIsFileDragging(false)
-      if (!rootId) return
+      const viewportDrop = clientToViewport(e.clientX, e.clientY)
+      const workspaceOnly = !isInsideArtboard(viewportDrop)
+      if (!rootId && !workspaceOnly) return
+
+      const dropPos = workspaceOnly
+        ? viewportDrop ?? undefined
+        : clientToCanvas(e.clientX, e.clientY) ?? undefined
+      if (componentId) {
+        const id = instantiateComponent(api, componentId, workspaceOnly ? null : rootId, {
+          absolute: true,
+          workspaceOnly,
+          position: dropPos
+            ? { x: Math.round(dropPos.x), y: Math.round(dropPos.y) }
+            : undefined,
+        })
+        if (id) {
+          setSelection([id])
+          setTool('select')
+        }
+        return
+      }
 
       const allFiles = Array.from(e.dataTransfer.files)
       const imageFiles = allFiles.filter(isImageFile)
@@ -1582,19 +1909,20 @@ export function Canvas() {
 
       // Drop at the pointer location in canvas coordinates so the asset
       // lands where the user let go, not at the artboard center.
-      const dropPos = clientToCanvas(e.clientX, e.clientY) ?? undefined
       const ids: NodeId[] = []
       if (imageFiles.length > 0) {
         ids.push(
-          ...(await importImageFiles(imageFiles, api, rootId, {
+          ...(await importImageFiles(imageFiles, api, workspaceOnly ? null : rootId, {
             dropPos: dropPos ?? undefined,
+            workspaceOnly,
           })),
         )
       }
       if (mediaFiles.length > 0) {
         ids.push(
-          ...(await importMediaFiles(mediaFiles, api, rootId, {
+          ...(await importMediaFiles(mediaFiles, api, workspaceOnly ? null : rootId, {
             dropPos: dropPos ?? undefined,
+            workspaceOnly,
           })),
         )
       }
@@ -1603,7 +1931,7 @@ export function Canvas() {
         setTool('select')
       }
     },
-    [api, rootId, clientToCanvas, setSelection, setTool],
+    [api, rootId, clientToCanvas, clientToViewport, isInsideArtboard, setSelection, setTool],
   )
 
   return (
@@ -1745,10 +2073,19 @@ export function Canvas() {
                       }
                     />
                   ) : null}
-                  <div
-                    data-three-texture-source="1"
-                    className="absolute inset-0"
-                    style={
+                  <ScenePostProcessLayer
+                    rootId={rootId}
+                    solved={solved}
+                    order={renderOrder}
+                    animated={animated}
+                    inherited={inherited}
+                    cameraDepthOfField={previewCameraDepthOfField}
+                    sceneFill={sceneFill}
+                    canvasWidth={canvasWidth}
+                    canvasHeight={canvasHeight}
+                    sceneCorner={sceneCorner}
+                    includeSceneFill
+                    sceneContentStyle={
                       cameraTransform
                         ? {
                             transform: cameraTransform,
@@ -1758,57 +2095,29 @@ export function Canvas() {
                           }
                         : undefined
                     }
-                  >
-                    {sceneFill ? (
-                      <div
-                        className="pointer-events-none absolute"
-                        style={{
-                          left: 0,
-                          top: 0,
-                          width: canvasWidth,
-                          height: canvasHeight,
-                          background: sceneFill,
-                          borderRadius: Math.max(0, sceneCorner),
-                        }}
-                      />
-                    ) : null}
-                    <SceneLayer
-                      rootId={rootId}
-                      solved={solved}
-                      order={renderOrder}
-                      animated={animated}
-                      inherited={inherited}
-	                      cameraDepthOfField={previewCameraDepthOfField}
-                      onNodeClick={(id, additive) => {
-                        if (additive) {
-                          useUI.getState().toggleInSelection(id, true)
-                        } else {
-                          setSelection([id])
-                        }
-                      }}
-                    />
-                    <CameraFocusBlurOverlay
-                      rootId={rootId}
-                      solved={solved}
-                      order={renderOrder}
-                      animated={animated}
-                      inherited={inherited}
-	                      cameraDepthOfField={previewCameraDepthOfField}
-                      sceneFill={sceneFill}
-                      canvasWidth={canvasWidth}
-                      canvasHeight={canvasHeight}
-                      sceneCorner={sceneCorner}
-                    />
-                    {camera.showFocusPlane || focusPickingCameraId === camera.id ? (
+                  />
+                  {camera.showFocusPlane || focusPickingCameraId === camera.id ? (
+                    <div
+                      className="pointer-events-none absolute inset-0"
+                      style={
+                        cameraTransform
+                          ? {
+                              transform: cameraTransform,
+                              transformOrigin: '0 0',
+                              transformStyle: 'preserve-3d',
+                            }
+                          : undefined
+                      }
+                    >
                       <DomFocusPlaneOverlay
                         camera={camera}
                         cameraAnim={cameraAnim}
-	                        cameraDepthOfField={previewCameraDepthOfField}
+                        cameraDepthOfField={previewCameraDepthOfField}
                         canvasWidth={canvasWidth}
                         canvasHeight={canvasHeight}
                       />
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -1825,28 +2134,13 @@ export function Canvas() {
                       }}
                     />
                   ) : null}
-                  <SceneLayer
+                  <ScenePostProcessLayer
                     rootId={rootId}
                     solved={solved}
                     order={renderOrder}
                     animated={animated}
                     inherited={inherited}
-	                    cameraDepthOfField={previewCameraDepthOfField}
-                    onNodeClick={(id, additive) => {
-                      if (additive) {
-                        useUI.getState().toggleInSelection(id, true)
-                      } else {
-                        setSelection([id])
-                      }
-                    }}
-                  />
-                  <CameraFocusBlurOverlay
-                    rootId={rootId}
-                    solved={solved}
-                    order={renderOrder}
-                    animated={animated}
-                    inherited={inherited}
-	                    cameraDepthOfField={previewCameraDepthOfField}
+                    cameraDepthOfField={previewCameraDepthOfField}
                     sceneFill={sceneFill}
                     canvasWidth={canvasWidth}
                     canvasHeight={canvasHeight}
@@ -1858,10 +2152,46 @@ export function Canvas() {
           )}
         </div>
 
-        {/* Selection outline lives outside the `overflow:hidden` canvas box
-            so a selected node near the edge doesn't get its frame clipped.
-            It's still in canvas coordinates — same transform — so positions
-            map 1:1 to what the user sees.
+        <WorkspaceLayer
+          order={workspaceOrder}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
+          zoom={view.zoom}
+        />
+        {drawPreview?.workspaceOnly ? (
+          <div
+            className="pointer-events-none absolute"
+            data-export-hide="1"
+            style={{
+              left: -canvasWidth / 2 + drawPreview.x,
+              top: -canvasHeight / 2 + drawPreview.y,
+              width: Math.max(1, drawPreview.width),
+              height: Math.max(1, drawPreview.height),
+              border: `${1 / Math.max(view.zoom, 0.001)}px dashed var(--color-accent)`,
+              background: 'var(--color-accent-soft)',
+              borderRadius: tool === 'ellipse' ? '9999px' : 2,
+            }}
+          />
+        ) : null}
+        {marqueeRect?.workspaceOnly ? (
+          <div
+            className="pointer-events-none absolute"
+            data-export-hide="1"
+            style={{
+              left: -canvasWidth / 2 + marqueeRect.x,
+              top: -canvasHeight / 2 + marqueeRect.y,
+              width: Math.max(1, marqueeRect.width),
+              height: Math.max(1, marqueeRect.height),
+              border: `${1 / Math.max(view.zoom, 0.001)}px solid var(--color-accent)`,
+              background:
+                'color-mix(in oklab, var(--color-accent) 12%, transparent)',
+            }}
+          />
+        ) : null}
+
+        {/* Selection/editor overlays sit in canvas coordinates. Keep this
+            clipped to the artboard bounds so camera tilt / dolly helpers
+            never spill into the neutral workspace beside the scene.
 
             `data-export-hide="1"` removes this entire chrome layer
             (selection rings, resize handles, camera viewfinder gizmo,
@@ -1869,13 +2199,14 @@ export function Canvas() {
             export. None of these are scene content — they're editor
             affordances that don't belong in the output WebM. */}
         <div
-          className="pointer-events-none absolute"
+          className="pointer-events-none absolute overflow-hidden"
           data-export-hide="1"
           style={{
             left: -canvasWidth / 2,
             top: -canvasHeight / 2,
             width: canvasWidth,
             height: canvasHeight,
+            borderRadius: Math.max(0, sceneCorner),
           }}
         >
           {/* Camera viewfinder gizmo. Drawn OUTSIDE the camera-transform
@@ -1892,26 +2223,6 @@ export function Canvas() {
               canvasHeight={canvasHeight}
               zoom={view.zoom}
               selected={selection.includes(camera.id)}
-            />
-          ) : null}
-          {previewCameraDepthOfField?.enabled &&
-          camera &&
-          camera.kind === 'camera' &&
-          (camera.focusMode ?? 'plane') === 'screen' &&
-          (selection.includes(camera.id) ||
-            focusPickingCameraId === camera.id ||
-            camera.showFocusPlane) ? (
-            <div
-              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
-              style={{
-                left: previewCameraDepthOfField.focusX,
-                top: previewCameraDepthOfField.focusY,
-                width: 18 / Math.max(view.zoom, 0.001),
-                height: 18 / Math.max(view.zoom, 0.001),
-                border: `${1.5 / Math.max(view.zoom, 0.001)}px solid var(--color-accent)`,
-                borderRadius: 999,
-                boxShadow: `0 0 0 ${4 / Math.max(view.zoom, 0.001)}px color-mix(in oklab, var(--color-accent) 16%, transparent)`,
-              }}
             />
           ) : null}
           <div
@@ -1945,7 +2256,7 @@ export function Canvas() {
                 rootId={rootId}
               />
             )}
-            {drawPreview ? (
+            {drawPreview && !drawPreview.workspaceOnly ? (
               <div
                 className="pointer-events-none absolute"
                 style={{
@@ -1959,7 +2270,7 @@ export function Canvas() {
                 }}
               />
             ) : null}
-            {marqueeRect ? (
+            {marqueeRect && !marqueeRect.workspaceOnly ? (
               <div
                 className="pointer-events-none absolute"
                 style={{
@@ -1978,6 +2289,25 @@ export function Canvas() {
             ) : null}
           </div>
         </div>
+        {previewCameraDepthOfField?.enabled &&
+        camera &&
+        camera.kind === 'camera' &&
+        (selection.includes(camera.id) ||
+          focusPickingCameraId === camera.id ||
+          camera.showFocusPlane) ? (
+          <CameraFocusMaskOverlay
+            cameraDepthOfField={previewCameraDepthOfField}
+            canvasWidth={canvasWidth}
+            canvasHeight={canvasHeight}
+            zoom={view.zoom}
+            sceneCorner={sceneCorner}
+            onPointerMove={onFocusMaskPointerMove}
+            onPointerUp={onFocusMaskPointerUp}
+            onHandlePointerDown={onFocusMaskPointerDown}
+            onHandlePointerMove={onFocusMaskPointerMove}
+            onHandlePointerUp={onFocusMaskPointerUp}
+          />
+        ) : null}
       </div>
 
       {/* Zoom indicator. `data-export-hide` removes it from any
@@ -2042,6 +2372,169 @@ function toolToKind(tool: Tool): NodeKind {
 // Scene paint layer
 // ---------------------------------------------------------------------------
 
+function WorkspaceLayer({
+  order,
+  canvasWidth,
+  canvasHeight,
+  zoom,
+}: {
+  order: NodeId[]
+  canvasWidth: number
+  canvasHeight: number
+  zoom: number
+}) {
+  const api = useSceneAPI()
+  const openContextMenu = useUI((s) => s.openContextMenu)
+  const selection = useUI((s) => s.selection)
+  const setSelection = useUI((s) => s.setSelection)
+
+  const inherited = useMemo(() => {
+    const map: Record<NodeId, InheritedAnim> = {}
+    const visit = (id: NodeId, inherit: InheritedAnim) => {
+      const node = api.getNode(id)
+      if (!node) return
+      map[id] = inherit
+      const next: InheritedAnim = {
+        x: inherit.x + node.transform.x,
+        y: inherit.y + node.transform.y,
+        z: inherit.z + node.transform.z,
+        rotation: inherit.rotation + node.transform.rotation,
+        rotationX: inherit.rotationX + node.transform.rotationX,
+        rotationY: inherit.rotationY + node.transform.rotationY,
+        scaleX: inherit.scaleX * node.transform.scaleX,
+        scaleY: inherit.scaleY * node.transform.scaleY,
+        opacity: inherit.opacity * node.appearance.opacity,
+      }
+      for (const child of api.getChildren(id)) visit(child.id, next)
+    }
+    for (const id of order) {
+      const node = api.getNode(id)
+      if (node?.parent === null) visit(id, IDENTITY_INHERITED)
+    }
+    return map
+  }, [api, order])
+
+  if (order.length === 0) return null
+
+  return (
+    <div
+      className="absolute overflow-visible"
+      data-export-hide="1"
+      style={{
+        left: -canvasWidth / 2,
+        top: -canvasHeight / 2,
+        width: canvasWidth,
+        height: canvasHeight,
+      }}
+    >
+      {order.map((id) => {
+        const node = api.getNode(id)
+        if (!node || !node.visible) return null
+        const rect = workspaceRectForNode(node)
+        const inherit = inherited[id] ?? IDENTITY_INHERITED
+        const selected = selection.includes(id)
+        const selectedX = rect.x + node.transform.x + inherit.x
+        const selectedY = rect.y + node.transform.y + inherit.y
+        return (
+          <div key={id} className="absolute left-0 top-0">
+            <NodeView
+              node={node}
+              rect={rect}
+              anim={undefined}
+              inherit={inherit}
+              isRoot={false}
+              isSelected={selected}
+              onClick={(e) => {
+                e.stopPropagation()
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const targetIds = selection.includes(id) ? selection : [id]
+                if (!selection.includes(id)) setSelection([id])
+                openContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  items: buildNodeContextMenu(api, targetIds),
+                })
+              }}
+            />
+            {selected ? (
+              <div
+                className="pointer-events-none absolute"
+                style={{
+                  left: selectedX,
+                  top: selectedY,
+                  width: rect.width,
+                  height: rect.height,
+                  border: `${1.5 / Math.max(zoom, 0.001)}px solid oklch(0.64 0.24 300)`,
+                  boxShadow: `0 0 0 ${3 / Math.max(zoom, 0.001)}px oklch(0.64 0.24 300 / 0.16)`,
+                }}
+              />
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function workspaceRectForNode(node: SceneNode): Rect {
+  const width =
+    'size' in node
+      ? numericSizeAxis(node.size.width, node.kind === 'text' ? 72 : 100)
+      : 100
+  const height =
+    'size' in node
+      ? numericSizeAxis(node.size.height, node.kind === 'text' ? 24 : 100)
+      : 100
+  if (node.kind === 'text') {
+    const textWidth = Math.max(24, node.text.length * node.fontSize * 0.58)
+    return {
+      x: 0,
+      y: 0,
+      width: node.size.width === 'hug' ? textWidth : width,
+      height: node.size.height === 'hug' ? node.fontSize * node.lineHeight : height,
+    }
+  }
+  return {
+    x: 0,
+    y: 0,
+    width,
+    height,
+  }
+}
+
+function workspaceInheritedTransform(api: SceneAPI, node: SceneNode): InheritedAnim {
+  let inherit = IDENTITY_INHERITED
+  let parentId = node.parent
+  const ancestors: SceneNode[] = []
+  while (parentId) {
+    const parent = api.getNode(parentId)
+    if (!parent) break
+    ancestors.push(parent)
+    parentId = parent.parent
+  }
+  for (const parent of ancestors.reverse()) {
+    inherit = {
+      x: inherit.x + parent.transform.x,
+      y: inherit.y + parent.transform.y,
+      z: inherit.z + parent.transform.z,
+      rotation: inherit.rotation + parent.transform.rotation,
+      rotationX: inherit.rotationX + parent.transform.rotationX,
+      rotationY: inherit.rotationY + parent.transform.rotationY,
+      scaleX: inherit.scaleX * parent.transform.scaleX,
+      scaleY: inherit.scaleY * parent.transform.scaleY,
+      opacity: inherit.opacity * parent.appearance.opacity,
+    }
+  }
+  return inherit
+}
+
+function numericSizeAxis(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
 /**
  * Paints the scene graph into an absolutely-positioned tree of NodeView
  * divs. Exported so the render-window shell can reuse the exact same
@@ -2057,16 +2550,12 @@ export function SceneLayer({
   order,
   animated,
   inherited,
-  cameraDepthOfField,
-  onNodeClick,
 }: {
   rootId: NodeId | null
   solved: SolvedLayout
   order: NodeId[]
   animated: Record<NodeId, AnimatedValue>
   inherited: Record<NodeId, InheritedAnim>
-  cameraDepthOfField?: CameraDepthOfField | null
-  onNodeClick: (id: NodeId, additive: boolean) => void
 }) {
   const api = useSceneAPI()
   const sceneVersion = useSceneVersion() // re-render on mutations
@@ -2254,14 +2743,12 @@ export function SceneLayer({
             rect={rect}
             anim={animated[id]}
             inherit={inherit}
-            cameraDepthOfField={cameraDepthOfField}
             isRoot={id === rootId}
             isSelected={selection.includes(id)}
             ancestorClip={ancestorClip[id]}
             maskedBy={maskInfo[id]}
             onClick={(e) => {
               e.stopPropagation()
-              onNodeClick(id, e.shiftKey || e.metaKey)
             }}
             onContextMenu={(e) => {
               // Skip context menu on the root — there's nothing useful
@@ -2285,7 +2772,6 @@ export function SceneLayer({
             rect={rect}
             anim={animated[id]}
             inherit={inherited[id] ?? IDENTITY_INHERITED}
-            cameraDepthOfField={cameraDepthOfField}
             isRoot={id === rootId}
           />
         )
@@ -2308,14 +2794,12 @@ function ClippedFrameStrokeOverlay({
   rect,
   anim,
   inherit,
-  cameraDepthOfField,
   isRoot,
 }: {
   node: SceneNode
   rect: Rect
   anim: AnimatedValue | undefined
   inherit: InheritedAnim
-  cameraDepthOfField?: CameraDepthOfField | null
   isRoot: boolean
 }) {
   if (isRoot || node.kind !== 'frame' || !node.clipsContent) return null
@@ -2344,6 +2828,10 @@ function ClippedFrameStrokeOverlay({
   const sx = ownSX * inherit.scaleX
   const sy = ownSY * inherit.scaleY
   const opacity = ownOp * inherit.opacity
+  const anchorX = anim?.anchorX ?? node.transform.anchorX ?? 0.5
+  const anchorY = anim?.anchorY ?? node.transform.anchorY ?? 0.5
+  const anchorZ = anim?.anchorZ ?? node.transform.anchorZ ?? 0
+  const transformOrigin = `${Number((anchorX * 100).toFixed(3))}% ${Number((anchorY * 100).toFixed(3))}% ${Number(anchorZ.toFixed(3))}px`
 
   const parts: string[] = []
   const transformSpace = node.transform.space ?? 'local'
@@ -2354,14 +2842,6 @@ function ClippedFrameStrokeOverlay({
   if (rotation !== 0) parts.push(`rotate(${rotation}deg)`)
   if (transformSpace === 'local' && tz !== 0) parts.push(`translateZ(${tz}px)`)
   if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`)
-  const depthBlur = depthOfFieldBlurForNode(
-    cameraDepthOfField,
-    node,
-    anim,
-    inherit,
-    isRoot,
-  )
-
   return (
     <div
       aria-hidden
@@ -2373,9 +2853,8 @@ function ClippedFrameStrokeOverlay({
         height: rect.height,
         opacity,
         transform: parts.length > 0 ? parts.join(' ') : undefined,
-        transformOrigin: 'center center',
+        transformOrigin,
         transformStyle: 'preserve-3d',
-        filter: depthBlur > 0.05 ? `blur(${Number(depthBlur.toFixed(2))}px)` : undefined,
       }}
     >
       <StrokeOverlay
@@ -2391,7 +2870,16 @@ function ClippedFrameStrokeOverlay({
   )
 }
 
-export function CameraFocusBlurOverlay({
+/**
+ * Scene-level effects compositor.
+ *
+ * This is intentionally a whole-scene pass, not a NodeView/per-layer
+ * filter. Future shader work should plug in here: render a source scene
+ * pass, then apply masks/effects to the composed scene or to explicitly
+ * selected subtrees. `group3d` remains below this layer in the normal
+ * scene renderer, so DOM auto-layout and 3D grouping are preserved.
+ */
+export function ScenePostProcessLayer({
   rootId,
   solved,
   order,
@@ -2402,6 +2890,8 @@ export function CameraFocusBlurOverlay({
   canvasWidth,
   canvasHeight,
   sceneCorner,
+  sceneContentStyle,
+  includeSceneFill = false,
 }: {
   rootId: NodeId | null
   solved: SolvedLayout
@@ -2413,116 +2903,162 @@ export function CameraFocusBlurOverlay({
   canvasWidth: number
   canvasHeight: number
   sceneCorner: number
+  sceneContentStyle?: CSSProperties
+  includeSceneFill?: boolean
 }) {
-  if (
-    !cameraDepthOfField?.enabled ||
-    cameraDepthOfField.aperture <= 0 ||
-    cameraDepthOfField.blurPx <= 0.05
-  ) {
-    return null
-  }
-
-  const radius = Math.max(1, cameraDepthOfField.focusRadius)
-  const feather = Math.max(1, cameraDepthOfField.featherPx)
-  const blur = Number(cameraDepthOfField.blurPx.toFixed(2))
-  const angle = Number(cameraDepthOfField.blurAxisDeg.toFixed(2))
-  const horizontalBias =
-    Math.abs(Math.cos(degToRad(angle))) > Math.abs(Math.sin(degToRad(angle)))
-  const centerPct = Math.max(
-    8,
-    Math.min(
-      92,
-      horizontalBias
-        ? (cameraDepthOfField.focusX / Math.max(1, canvasWidth)) * 100
-        : (cameraDepthOfField.focusY / Math.max(1, canvasHeight)) * 100,
-    ),
-  )
-  const bandPct = Math.max(
-    2,
-    Math.min(
-      24,
-      (Math.max(radius, feather) /
-        Math.max(1, horizontalBias ? canvasWidth : canvasHeight)) *
-        100,
-    ),
-  )
-  const linearMask = (innerScale: number, outerScale: number) => {
-    const inner = bandPct * innerScale
-    const outer = bandPct * outerScale
-    return `linear-gradient(${angle}deg, black 0%, rgba(0,0,0,0.82) ${Math.max(0, centerPct - outer)}%, transparent ${Math.max(0, centerPct - inner)}%, transparent ${Math.min(100, centerPct + inner)}%, rgba(0,0,0,0.82) ${Math.min(100, centerPct + outer)}%, black 100%)`
-  }
-  const passes =
-    cameraDepthOfField.mode === 'screen'
-      ? [
-          {
-            blur: blur * 0.28,
-            mask: `radial-gradient(circle at ${cameraDepthOfField.focusX}px ${cameraDepthOfField.focusY}px, transparent 0px, transparent ${radius * 0.38}px, black ${radius * 0.95}px, transparent ${radius * 1.55}px)`,
-          },
-          {
-            blur: blur * 0.58,
-            mask: `radial-gradient(circle at ${cameraDepthOfField.focusX}px ${cameraDepthOfField.focusY}px, transparent 0px, transparent ${radius * 0.78}px, black ${radius + feather * 0.9}px, transparent ${radius + feather * 1.65}px)`,
-          },
-          {
-            blur,
-            mask: `radial-gradient(circle at ${cameraDepthOfField.focusX}px ${cameraDepthOfField.focusY}px, transparent 0px, transparent ${radius}px, rgba(0,0,0,0.35) ${radius + feather * 0.45}px, black ${radius + feather}px)`,
-          },
-        ]
-      : [
-          { blur: blur * 0.22, mask: linearMask(0.9, 1.9) },
-          { blur: blur * 0.55, mask: linearMask(1.35, 3.1) },
-          { blur, mask: linearMask(2.0, 5.2) },
-        ]
-
-  return (
+  const sceneBody = (
     <>
-      {passes.map((pass, index) => (
+      {includeSceneFill && sceneFill ? (
         <div
-          key={index}
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute"
           style={{
-            filter: `blur(${Number(pass.blur.toFixed(2))}px)`,
-            WebkitMaskImage: pass.mask,
-            maskImage: pass.mask,
-            WebkitMaskRepeat: 'no-repeat',
-            maskRepeat: 'no-repeat',
-          }}
-        >
-          {sceneFill ? (
-            <div
-              className="pointer-events-none absolute"
-              style={{
-                left: 0,
-                top: 0,
-                width: canvasWidth,
-                height: canvasHeight,
-                background: sceneFill,
-                borderRadius: Math.max(0, sceneCorner),
-              }}
-            />
-          ) : null}
-          <SceneLayer
-            rootId={rootId}
-            solved={solved}
-            order={order}
-            animated={animated}
-            inherited={inherited}
-            onNodeClick={() => {}}
-          />
-        </div>
-      ))}
-      {cameraDepthOfField.iso > 100 ? (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-[0.035] mix-blend-multiply"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 20% 30%, #000 0 0.7px, transparent 0.8px), radial-gradient(circle at 70% 60%, #000 0 0.6px, transparent 0.7px)',
-            backgroundSize: `${Math.max(2, 900 / cameraDepthOfField.iso)}px ${Math.max(2, 900 / cameraDepthOfField.iso)}px`,
+            left: 0,
+            top: 0,
+            width: canvasWidth,
+            height: canvasHeight,
+            background: sceneFill,
+            borderRadius: Math.max(0, sceneCorner),
           }}
         />
       ) : null}
+      <SceneLayer
+        rootId={rootId}
+        solved={solved}
+        order={order}
+        animated={animated}
+        inherited={inherited}
+      />
     </>
+  )
+  const scene = sceneContentStyle ? (
+    <div
+      data-three-texture-source="1"
+      className="absolute inset-0"
+      style={sceneContentStyle}
+    >
+      {sceneBody}
+    </div>
+  ) : (
+    sceneBody
+  )
+  if (
+    !cameraDepthOfField?.enabled ||
+    cameraDepthOfField.blurPx <= 0.05
+  ) {
+    return scene
+  }
+
+  const radius = Math.max(1, cameraDepthOfField.focusRadius)
+  const feather = Math.max(24, cameraDepthOfField.featherPx * 1.4)
+  const blur = Number(cameraDepthOfField.blurPx.toFixed(2))
+
+  return (
+    <SnapshotCompositor
+      width={canvasWidth}
+      height={canvasHeight}
+      focus={{
+        enabled: true,
+        focusX: cameraDepthOfField.focusX,
+        focusY: cameraDepthOfField.focusY,
+        radius,
+        feather,
+        blurPx: blur,
+        iso: cameraDepthOfField.iso,
+      }}
+    >
+      {scene}
+    </SnapshotCompositor>
+  )
+}
+
+function CameraFocusMaskOverlay({
+  cameraDepthOfField,
+  canvasWidth,
+  canvasHeight,
+  zoom,
+  sceneCorner,
+  onPointerMove,
+  onPointerUp,
+  onHandlePointerDown,
+  onHandlePointerMove,
+  onHandlePointerUp,
+}: {
+  cameraDepthOfField: CameraDepthOfField
+  canvasWidth: number
+  canvasHeight: number
+  zoom: number
+  sceneCorner: number
+  onPointerMove: (e: React.PointerEvent<HTMLElement>) => void
+  onPointerUp: (e: React.PointerEvent<HTMLElement>) => void
+  onHandlePointerDown: (e: React.PointerEvent<HTMLButtonElement>) => void
+  onHandlePointerMove: (e: React.PointerEvent<HTMLElement>) => void
+  onHandlePointerUp: (e: React.PointerEvent<HTMLElement>) => void
+}) {
+  const safeZoom = Math.max(zoom, 0.001)
+  const radius = Math.max(1, cameraDepthOfField.focusRadius)
+  const falloff = Math.max(1, cameraDepthOfField.focusFalloff)
+  const outerRadius = radius + falloff
+  const x = cameraDepthOfField.focusX
+  const y = cameraDepthOfField.focusY
+  const stroke = 1.5 / safeZoom
+  const handleSize = 18 / safeZoom
+  return (
+    <div
+      data-export-hide="1"
+      className="pointer-events-none absolute overflow-hidden"
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      style={{
+        left: -canvasWidth / 2,
+        top: -canvasHeight / 2,
+        width: canvasWidth,
+        height: canvasHeight,
+        borderRadius: Math.max(0, sceneCorner),
+      }}
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute rounded-full"
+        style={{
+          left: x - outerRadius,
+          top: y - outerRadius,
+          width: outerRadius * 2,
+          height: outerRadius * 2,
+          border: `${stroke}px dashed color-mix(in oklab, var(--color-accent) 34%, transparent)`,
+          background:
+            'radial-gradient(circle, transparent 0, transparent 58%, color-mix(in oklab, var(--color-accent) 5%, transparent) 100%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute rounded-full"
+        style={{
+          left: x - radius,
+          top: y - radius,
+          width: radius * 2,
+          height: radius * 2,
+          border: `${stroke}px solid color-mix(in oklab, var(--color-accent) 62%, white 12%)`,
+          boxShadow: `0 0 0 ${4 / safeZoom}px color-mix(in oklab, var(--color-accent) 12%, transparent)`,
+        }}
+      />
+      <button
+        type="button"
+        aria-label="Move camera focus"
+        title="Move camera focus"
+        className="pointer-events-auto absolute cursor-grab rounded-full border-0 bg-accent p-0 shadow-lg active:cursor-grabbing"
+        onPointerDown={onHandlePointerDown}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={onHandlePointerUp}
+        style={{
+          left: x,
+          top: y,
+          width: handleSize,
+          height: handleSize,
+          transform: 'translate(-50%, -50%)',
+          boxShadow: `0 0 0 ${3 / safeZoom}px color-mix(in oklab, var(--color-accent) 20%, transparent), 0 ${8 / safeZoom}px ${18 / safeZoom}px color-mix(in oklab, var(--color-accent) 20%, transparent)`,
+        }}
+      />
+    </div>
   )
 }
 
@@ -2637,7 +3173,6 @@ function NodeView({
   rect,
   anim,
   inherit,
-  cameraDepthOfField,
   isRoot,
   isSelected,
   ancestorClip,
@@ -2649,7 +3184,6 @@ function NodeView({
   rect: Rect
   anim: AnimatedValue | undefined
   inherit: InheritedAnim
-  cameraDepthOfField?: CameraDepthOfField | null
   isRoot: boolean
   isSelected: boolean
   /**
@@ -2730,7 +3264,8 @@ function NodeView({
   // noise that even bled into video exports. If you want a
   // permanent silhouette around a frame, set a faint stroke or fill
   // on it; the editor outline is just an interaction affordance.
-  const needsDashedOutline = isEmptyFrame && (hovered || isSelected)
+  const needsDashedOutline =
+    isEmptyFrame && (hovered || isSelected || !!node.workspaceOnly)
 
   // Root is the artboard — no transform, no rotation, no scale. Even
   // if stale state has a non-identity transform on it, we paint it
@@ -2860,6 +3395,15 @@ function NodeView({
   if (transformSpace === 'local' && tz !== 0) parts.push(`translateZ(${tz}px)`)
   if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`)
   const transform = parts.length > 0 ? parts.join(' ') : undefined
+  const anchorX = isRoot ? 0.5 : anim?.anchorX ?? node.transform.anchorX ?? 0.5
+  const anchorY = isRoot ? 0.5 : anim?.anchorY ?? node.transform.anchorY ?? 0.5
+  const anchorZ = isRoot ? 0 : anim?.anchorZ ?? node.transform.anchorZ ?? 0
+  const transformOrigin = `${Number((anchorX * 100).toFixed(3))}% ${Number((anchorY * 100).toFixed(3))}% ${Number(anchorZ.toFixed(3))}px`
+  const hasProjected3D =
+    Math.abs(rotationX) > 0.001 ||
+    Math.abs(rotationY) > 0.001 ||
+    Math.abs(rotation) > 0.001 ||
+    Math.abs(tz) > 0.001
 
   const clips = node.kind === 'frame' && node.clipsContent
 
@@ -2955,16 +3499,6 @@ function NodeView({
     }
   }
   const effectShadowCss = effectShadowParts.join(', ')
-  const depthBlur = depthOfFieldBlurForNode(
-    cameraDepthOfField,
-    node,
-    anim,
-    inherit,
-    isRoot,
-  )
-  if (depthBlur > 0.05) {
-    effectFilterParts.push(`blur(${Number(depthBlur.toFixed(2))}px)`)
-  }
   const effectFilterCss = effectFilterParts.join(' ')
 
   // Compose the final box-shadow string. Stroke shadow first so a
@@ -3001,18 +3535,19 @@ function NodeView({
   //
   // When there's no clipping ancestor, render the styled box directly
   // (no wrapper) so unrelated nodes pay no DOM cost.
+  const effectiveAncestorClip = hasProjected3D ? undefined : ancestorClip
   const clipWrapperStyle =
-    ancestorClip && !isRoot
+    effectiveAncestorClip && !isRoot
       ? ({
           position: 'absolute' as const,
-          left: ancestorClip.rect.x,
-          top: ancestorClip.rect.y,
-          width: ancestorClip.rect.width,
-          height: ancestorClip.rect.height,
+          left: effectiveAncestorClip.rect.x,
+          top: effectiveAncestorClip.rect.y,
+          width: effectiveAncestorClip.rect.width,
+          height: effectiveAncestorClip.rect.height,
           overflow: 'hidden' as const,
           borderRadius: cornerRadiusCss(
-            ancestorClip.cornerRadius,
-            ancestorClip.cornerRadii,
+            effectiveAncestorClip.cornerRadius,
+            effectiveAncestorClip.cornerRadii,
           ),
           // Clip wrapper itself shouldn't intercept clicks — it's an
           // invisible mask. Inner re-enables pointer events so clicks
@@ -3035,8 +3570,8 @@ function NodeView({
 
   // Inner box position. When wrapped, left/top become relative to the
   // clip wrapper's local coords; when not wrapped, they're world coords.
-  const innerLeft = clipWrapperStyle ? rect.x - ancestorClip!.rect.x : rect.x
-  const innerTop = clipWrapperStyle ? rect.y - ancestorClip!.rect.y : rect.y
+  const innerLeft = clipWrapperStyle ? rect.x - effectiveAncestorClip!.rect.x : rect.x
+  const innerTop = clipWrapperStyle ? rect.y - effectiveAncestorClip!.rect.y : rect.y
 
   const innerBox = (
     <div
@@ -3045,6 +3580,16 @@ function NodeView({
       onClick={onClick}
       onContextMenu={onContextMenu}
       onDoubleClick={(e) => {
+        if (node.kind === 'component' || node.kind === 'instance') {
+          e.stopPropagation()
+          useUI
+            .getState()
+            .setComponentEditId(node.kind === 'instance' ? node.componentId : node.id)
+          useUI
+            .getState()
+            .setSelection([node.kind === 'instance' ? node.componentId : node.id])
+          return
+        }
         // Double-click on a text node enters inline edit mode —
         // matches Figma. Pointer-down already started a drag, but
         // contentEditable's focus will take over the keystroke
@@ -3073,7 +3618,7 @@ function NodeView({
         boxShadow: composedBoxShadow || undefined,
         ...(strokeBorderCss ?? {}),
         transform,
-        transformOrigin: 'center center',
+        transformOrigin,
         transformStyle: 'preserve-3d',
         filter: effectFilterCss || undefined,
         overflow: clips ? 'hidden' : undefined,

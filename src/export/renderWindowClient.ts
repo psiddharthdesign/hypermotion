@@ -160,23 +160,31 @@ export async function runRenderWindowExport(
   const offProgress = bridge.on('export:render-window-progress', (...args) => {
     const msg = args[0] as ProgressMessage
     if (msg.requestId !== requestId) return
-    if (progress.cancelToken !== startToken) return // user cancelled
+    const currentProgress = useExportProgress.getState()
+    if (currentProgress.cancelToken !== startToken) return // user cancelled
     if (msg.phase === 'encoding') {
-      progress.setPhase('encoding')
+      currentProgress.setPhase('encoding')
       return
     }
     if (typeof msg.frame === 'number') {
-      progress.setFrame(msg.frame)
+      currentProgress.setFrame(msg.frame)
     }
     if (typeof msg.perFrameMs === 'number') {
       smoothedFrameMs = msg.perFrameMs
-      progress.setEta(msg.etaMs ?? 0, smoothedFrameMs)
+      currentProgress.setEta(msg.etaMs ?? 0, smoothedFrameMs)
     }
   })
 
   const offDone = bridge.on('export:render-window-done', (...args) => {
     const msg = args[0] as DoneMessage
     if (msg.requestId !== requestId) return
+    if (useExportProgress.getState().cancelToken !== startToken) {
+      offProgress?.()
+      offDone?.()
+      offError?.()
+      resolveDone()
+      return
+    }
     void handleDone(msg, ctx).finally(() => {
       offProgress?.()
       offDone?.()
@@ -188,7 +196,10 @@ export async function runRenderWindowExport(
   const offError = bridge.on('export:render-window-error', (...args) => {
     const msg = args[0] as ErrorMessage
     if (msg.requestId !== requestId) return
-    progress.setError(msg.message)
+    const currentProgress = useExportProgress.getState()
+    if (currentProgress.cancelToken === startToken) {
+      currentProgress.setError(msg.message)
+    }
     offProgress?.()
     offDone?.()
     offError?.()
@@ -201,9 +212,10 @@ export async function runRenderWindowExport(
   // pending promise then resolves via the error/done path (window
   // destroy fires `closed` which clears the renderJobs entry).
   const cancelInterval = window.setInterval(() => {
-    if (progress.cancelToken !== startToken) {
+    const currentProgress = useExportProgress.getState()
+    if (currentProgress.cancelToken !== startToken) {
       void bridge.invoke('export:cancel-render-window', requestId)
-      progress.setPhase('cancelled')
+      currentProgress.setPhase('cancelled')
       offProgress?.()
       offDone?.()
       offError?.()

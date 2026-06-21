@@ -79,26 +79,6 @@ function writeStoredNumber(key: string, value: number): void {
   }
 }
 
-/**
- * Read a stored string from localStorage, validating it against an
- * allowed set. Used for the timeline mode toggle so we don't have to
- * widen storage to arbitrary strings.
- */
-function readStoredEnum<T extends string>(
-  key: string,
-  allowed: readonly T[],
-  fallback: T,
-): T {
-  if (typeof window === 'undefined') return fallback
-  try {
-    const v = window.localStorage.getItem(key)
-    if (v && (allowed as readonly string[]).includes(v)) return v as T
-    return fallback
-  } catch {
-    return fallback
-  }
-}
-
 function readStoredTheme(): ThemePreference {
   if (typeof window === 'undefined') return 'system'
   try {
@@ -202,6 +182,7 @@ interface UIState {
   playing: boolean
   inspectorMode: InspectorMode
   view: WorkspaceView
+  componentEditId: string | null
   contextMenu: ContextMenuState | null
   /**
    * Layers-panel collapse state: set of node IDs whose children are
@@ -337,6 +318,7 @@ interface UIState {
   setPlaying: (p: boolean) => void
   setInspectorMode: (mode: InspectorMode) => void
   setView: (patch: Partial<WorkspaceView>) => void
+  setComponentEditId: (id: string | null) => void
   /**
    * Zoom around an origin-relative workspace point.
    *
@@ -498,6 +480,7 @@ export const useUI = create<UIState>((set) => ({
   playing: false,
   inspectorMode: 'properties',
   view: { zoom: 1, panX: 0, panY: 0 },
+  componentEditId: null,
   contextMenu: null,
   layersCollapsed: new Set<string>(),
   easingPresetId: 'smooth',
@@ -608,6 +591,14 @@ export const useUI = create<UIState>((set) => ({
   setPlaying: (p) => set({ playing: p }),
   setInspectorMode: (mode) => set({ inspectorMode: mode }),
   setView: (patch) => set((s) => ({ view: { ...s.view, ...patch } })),
+  setComponentEditId: (id) =>
+    set({
+      componentEditId: id,
+      selectedTrackId: null,
+      selectedTrackIds: [],
+      selectedKeyframes: [],
+      playing: false,
+    }),
   zoomAt: (nextZoom, originX, originY) =>
     set((s) => {
       const z = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)

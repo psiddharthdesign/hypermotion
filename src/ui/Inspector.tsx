@@ -13,6 +13,7 @@ import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
   Appearance,
   CameraNode,
+  ComponentPropertyDefinition,
   CornerRadii,
   Effect,
   FlexAlign,
@@ -30,6 +31,9 @@ import type {
   Stroke,
   TextNode,
   Transform,
+  Interaction,
+  InteractionEventKind,
+  VariantTransition,
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
@@ -50,7 +54,27 @@ import {
 } from '@/ui/fields'
 import { PresetsPanel } from '@/ui/PresetsPanel'
 import { AlignTools } from '@/ui/AlignTools'
-import { setLockedRecursive, wrapInAutoLayout } from '@/ui/actions'
+import { EasingPicker } from '@/ui/EasingPicker'
+import type { EasingPresetId } from '@/anim'
+import {
+  addComponentVariantInteraction,
+  applyComponentVariantState,
+  applyInstanceVariantTransition,
+  ensureComponentStateAxis,
+  exposeComponentProperty,
+  fitComponentToChildren,
+  removeComponentProperty,
+  removeComponentInteraction,
+  removeComponentVariant,
+  resetInstanceComponentProperty,
+  setComponentSourceProperty,
+  setInstanceComponentProperty,
+  setLockedRecursive,
+  updateComponentInteraction,
+  updateComponentPropertyDefinition,
+  upsertComponentVariant,
+  wrapInAutoLayout,
+} from '@/ui/actions'
 import {
   findKeyframeAt,
   findTrack,
@@ -478,6 +502,12 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     for (const n of nodes) {
       if ('size' in n) {
         api.setNodeProperty(n.id, 'size', { ...n.size, ...patch })
+        if (
+          n.kind === 'component' &&
+          (patch.width === 'hug' || patch.height === 'hug')
+        ) {
+          fitComponentToChildren(api, n.id, { preserveHug: true })
+        }
         if (recording) {
           recordKeyframesForPatch(api, n.id, playhead, 'size', patch)
         } else {
@@ -1048,6 +1078,59 @@ function stableKey(v: unknown): string {
 // Per-node details
 // ---------------------------------------------------------------------------
 
+type PivotPreset =
+  | 'custom'
+  | 'center'
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'bottom'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+
+function pivotPresetPatch(preset: Exclude<PivotPreset, 'custom'>): Pick<Transform, 'anchorX' | 'anchorY' | 'anchorZ'> {
+  switch (preset) {
+    case 'left':
+      return { anchorX: 0, anchorY: 0.5, anchorZ: 0 }
+    case 'right':
+      return { anchorX: 1, anchorY: 0.5, anchorZ: 0 }
+    case 'top':
+      return { anchorX: 0.5, anchorY: 0, anchorZ: 0 }
+    case 'bottom':
+      return { anchorX: 0.5, anchorY: 1, anchorZ: 0 }
+    case 'top-left':
+      return { anchorX: 0, anchorY: 0, anchorZ: 0 }
+    case 'top-right':
+      return { anchorX: 1, anchorY: 0, anchorZ: 0 }
+    case 'bottom-left':
+      return { anchorX: 0, anchorY: 1, anchorZ: 0 }
+    case 'bottom-right':
+      return { anchorX: 1, anchorY: 1, anchorZ: 0 }
+    default:
+      return { anchorX: 0.5, anchorY: 0.5, anchorZ: 0 }
+  }
+}
+
+function pivotPresetForTransform(transform: Transform): PivotPreset {
+  const x = transform.anchorX ?? 0.5
+  const y = transform.anchorY ?? 0.5
+  const z = transform.anchorZ ?? 0
+  if (Math.abs(z) > 0.001) return 'custom'
+  const close = (a: number, b: number) => Math.abs(a - b) < 0.001
+  if (close(x, 0.5) && close(y, 0.5)) return 'center'
+  if (close(x, 0) && close(y, 0.5)) return 'left'
+  if (close(x, 1) && close(y, 0.5)) return 'right'
+  if (close(x, 0.5) && close(y, 0)) return 'top'
+  if (close(x, 0.5) && close(y, 1)) return 'bottom'
+  if (close(x, 0) && close(y, 0)) return 'top-left'
+  if (close(x, 1) && close(y, 0)) return 'top-right'
+  if (close(x, 0) && close(y, 1)) return 'bottom-left'
+  if (close(x, 1) && close(y, 1)) return 'bottom-right'
+  return 'custom'
+}
+
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // Whether this node's parent is a frame with fill explicitly set to
   // null. When that's the case, a child fill would paint on top of a
@@ -1081,6 +1164,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera'
       ? anim?.focusDistance ?? node.focusDistance ?? 0
       : 0
+  const liveFocusX =
+    node.kind === 'camera'
+      ? anim?.focusX ?? node.focusX ?? node.transform.x
+      : 0
+  const liveFocusY =
+    node.kind === 'camera'
+      ? anim?.focusY ?? node.focusY ?? node.transform.y
+      : 0
   const liveFocusWorldX =
     node.kind === 'camera'
       ? anim?.focusWorldX ?? node.focusWorldX ?? node.focusX ?? node.transform.x
@@ -1093,6 +1184,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera'
       ? anim?.focusWorldZ ?? node.focusWorldZ ?? node.focusDistance ?? 0
       : 0
+  const liveFocusRadius =
+    node.kind === 'camera' ? anim?.focusRadius ?? node.focusRadius ?? 160 : 160
+  const liveFocusFalloff =
+    node.kind === 'camera' ? anim?.focusFalloff ?? node.focusFalloff ?? 180 : 180
   const liveAperture =
     node.kind === 'camera' ? anim?.aperture ?? node.aperture ?? 0 : 0
   const liveIso = node.kind === 'camera' ? node.iso ?? 100 : 100
@@ -1165,6 +1260,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const patchSize = (patch: Partial<Size>) => {
     if (!('size' in node)) return
     api.setNodeProperty(node.id, 'size', { ...node.size, ...patch })
+    if (
+      node.kind === 'component' &&
+      (patch.width === 'hug' || patch.height === 'hug')
+    ) {
+      fitComponentToChildren(api, node.id, { preserveHug: true })
+    }
     stampForPatch('size', patch)
   }
   const patchCamera = (
@@ -1178,6 +1279,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focusWorldX'
         | 'focusWorldY'
         | 'focusWorldZ'
+        | 'focusRadius'
+        | 'focusFalloff'
         | 'focusTargetNodeId'
         | 'focalLength'
         | 'aperture'
@@ -1215,6 +1318,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.focusWorldZ !== undefined) {
       api.setNodeProperty(node.id, 'focusWorldZ', patch.focusWorldZ)
+    }
+    if (patch.focusRadius !== undefined) {
+      api.setNodeProperty(node.id, 'focusRadius', patch.focusRadius)
+    }
+    if (patch.focusFalloff !== undefined) {
+      api.setNodeProperty(node.id, 'focusFalloff', patch.focusFalloff)
     }
     if (patch.focusTargetNodeId !== undefined) {
       api.setNodeProperty(node.id, 'focusTargetNodeId', patch.focusTargetNodeId)
@@ -1276,6 +1385,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       })
     })
   }
+  const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
     if (!('layout' in node)) return
     api.setNodeProperty(node.id, 'layout', { ...node.layout, ...patch })
@@ -1352,6 +1462,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           />
         </FieldRow>
       </Section>
+
+      {(node.kind === 'component' || node.kind === 'instance') ? (
+        <>
+          <ComponentVariablesSection node={node} api={api} />
+          <VariantsSection node={node} api={api} />
+          <PrototypeSection node={node} api={api} />
+        </>
+      ) : (
+        <ExposeComponentPropertiesSection node={node} api={api} />
+      )}
 
       <PositionSection node={node} api={api} />
 
@@ -1656,6 +1776,28 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             onCommitY={(v) => patchTransform({ scaleY: v })}
           />
         </FieldRow>
+        <FieldRow label="Pivot">
+          <SelectField<PivotPreset>
+            value={pivotPreset}
+            options={[
+              { value: 'center', label: 'Center' },
+              { value: 'left', label: 'Left edge' },
+              { value: 'right', label: 'Right edge' },
+              { value: 'top', label: 'Top edge' },
+              { value: 'bottom', label: 'Bottom edge' },
+              { value: 'top-left', label: 'Top left' },
+              { value: 'top-right', label: 'Top right' },
+              { value: 'bottom-left', label: 'Bottom left' },
+              { value: 'bottom-right', label: 'Bottom right' },
+              { value: 'custom', label: 'Custom' },
+            ]}
+            onCommit={(preset) => {
+              if (preset === 'custom') return
+              patchTransform(pivotPresetPatch(preset))
+            }}
+            width="w-full"
+          />
+        </FieldRow>
         <FieldRow label="Anchor X">
           <NumberField
             value={node.transform.anchorX ?? 0.5}
@@ -1845,42 +1987,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             </FieldRow>
             <FieldRow
-              label="Near Clip"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.nearClip"
-                  currentValue={liveNearClip}
-                />
-              }
-            >
-              <NumberField
-                value={liveNearClip}
-                onCommit={(v) => patchCamera({ nearClip: Math.max(0.001, v) })}
-                min={0.001}
-                step={1}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Far Clip"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.farClip"
-                  currentValue={liveFarClip}
-                />
-              }
-            >
-              <NumberField
-                value={liveFarClip}
-                onCommit={(v) => patchCamera({ farClip: Math.max(1, v) })}
-                min={1}
-                step={100}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
               label="Aperture"
               keyframe={
                 <KeyframeButton
@@ -1899,41 +2005,126 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             </FieldRow>
             <FieldRow
-              label="Focus distance"
+              label="Focus radius"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
-                  propertyId="camera.focusDistance"
-                  currentValue={liveFocusDistance}
+                  propertyId="camera.focusRadius"
+                  currentValue={liveFocusRadius}
                 />
               }
             >
               <NumberField
-                value={liveFocusDistance / 100}
-                onCommit={(v) =>
-                  patchCamera({
-                    focusDistance: v * 100,
-                    focusWorldZ: v * 100,
-                  })
-                }
-                min={0}
-                step={0.05}
-                suffix="m"
+                value={liveFocusRadius}
+                onCommit={(v) => patchCamera({ focusRadius: Math.max(4, v) })}
+                min={4}
+                max={2000}
+                step={5}
+                suffix="px"
               />
+            </FieldRow>
+            <FieldRow
+              label="Focus falloff"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="camera.focusFalloff"
+                  currentValue={liveFocusFalloff}
+                />
+              }
+            >
+              <NumberField
+                value={liveFocusFalloff}
+                onCommit={(v) => patchCamera({ focusFalloff: Math.max(1, v) })}
+                min={1}
+                max={4000}
+                step={5}
+                suffix="px"
+              />
+            </FieldRow>
+            <FieldRow label="Focus point">
+              <div className="grid w-full grid-cols-3 gap-1">
+                <button
+                  type="button"
+                  className="h-7 rounded border border-border bg-panel px-2 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                  onClick={() => {
+                    const canvas = api.getMeta().canvas
+                    patchCamera({
+                      focusMode: 'screen',
+                      focusX: canvas.width / 2,
+                      focusY: canvas.height / 2,
+                      focusTargetNodeId: null,
+                    })
+                  }}
+                >
+                  Center
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    'h-7 rounded border px-2 text-[11px] font-medium transition-colors',
+                    focusPickingCameraId === node.id
+                      ? 'border-accent bg-accent/15 text-text'
+                      : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+                  ].join(' ')}
+                  onClick={() =>
+                    setFocusPickingCameraId(
+                      focusPickingCameraId === node.id ? null : node.id,
+                    )
+                  }
+                >
+                  {focusPickingCameraId === node.id ? 'Click canvas' : 'Pick'}
+                </button>
+                <button
+                  type="button"
+                  className="h-7 rounded border border-border bg-panel px-2 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-danger"
+                  onClick={() => {
+                    const focusProps = new Set([
+                      'camera.focusX',
+                      'camera.focusY',
+                      'camera.focusWorldX',
+                      'camera.focusWorldY',
+                      'camera.focusWorldZ',
+                      'camera.focusDistance',
+                    ])
+                    for (const track of api.getTracksForNode(node.id)) {
+                      if (focusProps.has(track.propertyId)) {
+                        removeTrack(api, track.id)
+                      }
+                    }
+                    const canvas = api.getMeta().canvas
+                    patchCamera({
+                      focusMode: 'screen',
+                      focusX: canvas.width / 2,
+                      focusY: canvas.height / 2,
+                      focusTargetNodeId: null,
+                    })
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
             </FieldRow>
             <FieldRow
               label="Focus X"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
-                  propertyId="camera.focusWorldX"
-                  currentValue={liveFocusWorldX}
+                  propertyId="camera.focusX"
+                  currentValue={liveFocusX}
                 />
               }
             >
               <NumberField
-                value={liveFocusWorldX}
-                onCommit={(v) => patchPreciseFocusPoint({ focusWorldX: v })}
+                value={liveFocusX}
+                onCommit={(v) =>
+                  patchCamera({
+                    focusMode: 'screen',
+                    focusX: v,
+                    focusWorldX: v,
+                    focusTargetNodeId: null,
+                  })
+                }
                 step={1}
                 suffix="px"
               />
@@ -1943,20 +2134,27 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
-                  propertyId="camera.focusWorldY"
-                  currentValue={liveFocusWorldY}
+                  propertyId="camera.focusY"
+                  currentValue={liveFocusY}
                 />
               }
             >
               <NumberField
-                value={liveFocusWorldY}
-                onCommit={(v) => patchPreciseFocusPoint({ focusWorldY: v })}
+                value={liveFocusY}
+                onCommit={(v) =>
+                  patchCamera({
+                    focusMode: 'screen',
+                    focusY: v,
+                    focusWorldY: v,
+                    focusTargetNodeId: null,
+                  })
+                }
                 step={1}
                 suffix="px"
               />
             </FieldRow>
             <FieldRow
-              label="Focus Z"
+              label="Focus Z depth"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -1967,37 +2165,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             >
               <NumberField
                 value={liveFocusWorldZ}
-                onCommit={(v) => patchPreciseFocusPoint({ focusWorldZ: v })}
+                onCommit={(v) =>
+                  patchCamera({
+                    focusWorldZ: v,
+                    focusDistance: v,
+                    focusTargetNodeId: null,
+                  })
+                }
                 step={5}
                 suffix="px"
               />
-            </FieldRow>
-            <FieldRow label="ISO">
-              <NumberField
-                value={liveIso}
-                onCommit={(v) => patchCamera({ iso: Math.max(50, Math.round(v)) })}
-                min={50}
-                max={12800}
-                step={50}
-              />
-            </FieldRow>
-            <FieldRow label="Focus point">
-              <button
-                type="button"
-                className={[
-                  'h-7 w-full rounded border px-2 text-[11px] font-medium transition-colors',
-                  focusPickingCameraId === node.id
-                    ? 'border-accent bg-accent/15 text-text'
-                    : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
-                ].join(' ')}
-                onClick={() =>
-                  setFocusPickingCameraId(
-                    focusPickingCameraId === node.id ? null : node.id,
-                  )
-                }
-              >
-                {focusPickingCameraId === node.id ? 'Click canvas to set' : 'Pick on canvas'}
-              </button>
             </FieldRow>
             <FieldRow label="Depth of field">
               <CheckboxField
@@ -2005,14 +2182,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 onCommit={(v) => api.setNodeProperty(node.id, 'depthOfField', v)}
               />
             </FieldRow>
-            <FieldRow label="Show focus plane">
-              <CheckboxField
-                value={node.showFocusPlane ?? false}
-                onCommit={(v) => patchCamera({ showFocusPlane: v })}
-              />
-            </FieldRow>
             <FieldRow
-              label="Blur"
+              label="Blur amount"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2022,32 +2193,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             >
               <NumberField
-                value={Math.max(0, Math.min(64, liveBlurLevel))}
+                value={Math.max(0, Math.min(128, liveBlurLevel))}
                 onCommit={(v) =>
-                  patchCamera({ blurLevel: Math.max(0, Math.min(64, v)) })
+                  patchCamera({ blurLevel: Math.max(0, Math.min(128, v)) })
                 }
                 min={0}
-                max={64}
-                step={0.25}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Blur quality"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.blurQuality"
-                  currentValue={node.blurQuality ?? 8}
-                />
-              }
-            >
-              <NumberField
-                value={node.blurQuality ?? 8}
-                onCommit={(v) => patchCamera({ blurQuality: Math.max(1, Math.round(v)) })}
-                min={1}
-                max={64}
+                max={128}
                 step={1}
+                suffix="px"
               />
             </FieldRow>
             <FillField
@@ -2568,6 +2721,965 @@ function ShadowFields({
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
+}
+
+function ExposeComponentPropertiesSection({
+  node,
+  api,
+}: {
+  node: Node
+  api: SceneAPI
+}) {
+  const component = findOwningComponent(api, node.id)
+  if (!component || node.id === component.id) return null
+  const exposed = new Set(
+    component.componentProperties
+      .filter((prop) => prop.nodeId === node.id)
+      .map((prop) => prop.path),
+  )
+  const options = exposeOptionsForNode(node)
+  if (options.length === 0) return null
+  return (
+    <Section title="Expose">
+      <p className="mb-2 text-[11px] leading-4 text-text-dim">
+        Make selected layer properties editable on instances.
+      </p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {options.map((option) => {
+          const active = exposed.has(option.path)
+          const existing = component.componentProperties.find(
+            (prop) => prop.nodeId === node.id && prop.path === option.path,
+          )
+          return (
+            <button
+              key={option.path}
+              type="button"
+              onClick={() =>
+                active && existing
+                  ? removeComponentProperty(api, component.id, existing.id)
+                  : exposeComponentProperty(
+                      api,
+                      node.id,
+                      option.path,
+                      option.type,
+                      `${node.name} ${option.name}`,
+                    )
+              }
+              className={[
+                'h-7 rounded-md border px-2 text-left text-[11px] font-medium',
+                active
+                  ? 'border-[oklch(0.64_0.24_300)] bg-[oklch(0.64_0.24_300_/_0.14)] text-[oklch(0.5_0.22_300)]'
+                  : 'border-border bg-panel-raised text-text-muted hover:border-border-strong hover:text-text',
+              ].join(' ')}
+            >
+              {option.name}
+            </button>
+          )
+        })}
+      </div>
+    </Section>
+  )
+}
+
+function InstanceComponentPropertiesSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'instance' }>
+  api: SceneAPI
+}) {
+  const component = api.getNode(node.componentId)
+  if (!component || component.kind !== 'component') return null
+  if (component.componentProperties.length === 0) return null
+  return (
+    <Section title="Properties">
+      <div className="space-y-2">
+        {component.componentProperties.map((property) => {
+          const source = api.getNode(property.nodeId)
+          if (!source) return null
+          const value = componentPropertyValue(node, source, property)
+          const overridden = hasPathValue(
+            node.overrides[property.nodeId] ?? {},
+            property.path,
+          )
+          return (
+            <div key={property.id} className="rounded-md border border-border bg-panel-raised p-2">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-semibold text-text">
+                    {property.name}
+                  </div>
+                  <div className="truncate text-[10px] text-text-dim">
+                    {source.name}
+                  </div>
+                </div>
+                {overridden ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      resetInstanceComponentProperty(api, node.id, property.id)
+                    }
+                    className="h-6 rounded border border-border px-1.5 text-[10px] text-text-muted hover:text-text"
+                  >
+                    Reset
+                  </button>
+                ) : null}
+              </div>
+              <ComponentPropertyControl
+                property={property}
+                value={value}
+                onCommit={(next) =>
+                  setInstanceComponentProperty(api, node.id, property.id, next)
+                }
+              />
+            </div>
+          )
+        })}
+      </div>
+    </Section>
+  )
+}
+
+function ComponentVariablesSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'component' | 'instance' }>
+  api: SceneAPI
+}) {
+  const [propertyMenuOpen, setPropertyMenuOpen] = useState(false)
+  const playhead = useUI((s) => s.playhead)
+  const component =
+    node.kind === 'component' ? node : api.getNode(node.componentId)
+  if (!component || component.kind !== 'component') return null
+  const stateAxis = component.variants.find((axis) => axis.name === 'State')
+  const values = stateAxis?.values.length ? stateAxis.values : ['Default']
+  const currentState =
+    node.kind === 'instance'
+      ? node.selection.State ?? component.defaultSelection.State ?? values[0]!
+      : component.defaultSelection.State ?? values[0]!
+
+  return (
+    <Section title={component.name}>
+      <div className="space-y-3">
+        <div className="relative">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[12px] font-semibold text-text-dim">
+              Properties
+            </div>
+            <button
+              type="button"
+              onClick={() => setPropertyMenuOpen((open) => !open)}
+              className="grid h-7 w-7 place-items-center rounded-md text-[18px] leading-none text-text-muted hover:bg-panel-raised hover:text-text"
+              aria-label="Create property"
+            >
+              +
+            </button>
+          </div>
+          {propertyMenuOpen ? (
+            <div className="absolute right-0 top-8 z-20 w-44 rounded-lg bg-neutral-950 p-2 text-white shadow-2xl">
+              <div className="px-2 pb-1.5 text-[11px] text-white/55">
+                Create property
+              </div>
+              {[
+                ['◇', 'Variant'],
+                ['T', 'Text'],
+                ['◉', 'Boolean'],
+                ['◇', 'Instance swap'],
+                ['⊞', 'Slot'],
+              ].map(([icon, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setPropertyMenuOpen(false)}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-white/90 hover:bg-white/10"
+                >
+                  <span className="grid h-4 w-4 place-items-center font-mono text-[13px]">
+                    {icon}
+                  </span>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="space-y-1">
+            <ComponentPropertyRow
+              icon="◇"
+              name="State"
+              value={currentState}
+              control={
+                <SelectField<string>
+                  value={currentState}
+                  options={values}
+                  width="w-full"
+                  onCommit={(value) => {
+                    if (node.kind === 'instance') {
+                      applyInstanceVariantTransition(
+                        api,
+                        node.id,
+                        { State: value },
+                        { playhead },
+                      )
+                    } else {
+                      api.setNodeProperty(component.id, 'defaultSelection', {
+                        ...component.defaultSelection,
+                        State: value,
+                      } as never)
+                    }
+                  }}
+                />
+              }
+            />
+
+            {component.componentProperties.map((property) => {
+              const source = api.getNode(property.nodeId)
+              if (!source) return null
+              const value =
+                node.kind === 'instance'
+                  ? componentPropertyValue(node, source, property)
+                  : getPathValue(
+                      source as unknown as Record<string, unknown>,
+                      property.path,
+                    )
+              const overridden =
+                node.kind === 'instance' &&
+                hasPathValue(node.overrides[property.nodeId] ?? {}, property.path)
+              return (
+                <ComponentPropertyRow
+                  key={property.id}
+                  icon={componentPropertyIcon(property.type)}
+                  name={property.name}
+                  value={formatComponentPropertyValue(value, property)}
+                  control={
+                    <div className="space-y-1.5">
+                      {node.kind === 'component' ? (
+                        <TextField
+                          value={property.name}
+                          onCommit={(name) =>
+                            updateComponentPropertyDefinition(
+                              api,
+                              component.id,
+                              property.id,
+                              { name: name.trim() || property.name },
+                            )
+                          }
+                          allowEmpty={false}
+                        />
+                      ) : null}
+                      <ComponentPropertyControl
+                        property={property}
+                        value={value}
+                        onCommit={(next) =>
+                          node.kind === 'instance'
+                            ? setInstanceComponentProperty(api, node.id, property.id, next)
+                            : setComponentSourceProperty(api, component.id, property.id, next)
+                        }
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="truncate text-[10px] text-text-dim">
+                          {source.name} · {variablePathLabel(property.path)}
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          {overridden ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                resetInstanceComponentProperty(api, node.id, property.id)
+                              }
+                              className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-text"
+                            >
+                              Reset
+                            </button>
+                          ) : null}
+                          {node.kind === 'component' ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeComponentProperty(api, component.id, property.id)
+                              }
+                              className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-danger"
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  }
+                />
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+function ComponentPropertyRow({
+  icon,
+  name,
+  value,
+  control,
+}: {
+  icon: string
+  name: string
+  value: string
+  control: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-md bg-panel-raised">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex min-h-8 w-full items-center gap-2 px-2 text-left"
+      >
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-border bg-panel font-mono text-[11px] text-text-muted">
+          {icon}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text">
+          {name}
+          <span className="font-normal text-text-dim"> · {value}</span>
+        </span>
+      </button>
+      {open ? <div className="border-t border-border px-2 py-2">{control}</div> : null}
+    </div>
+  )
+}
+
+function ComponentPropertyControl({
+  property,
+  value,
+  onCommit,
+}: {
+  property: ComponentPropertyDefinition
+  value: unknown
+  onCommit: (value: unknown) => void
+}) {
+  if (property.type === 'text') {
+    return (
+      <TextField
+        value={typeof value === 'string' ? value : ''}
+        onCommit={onCommit}
+        allowEmpty
+      />
+    )
+  }
+  if (property.type === 'fill') {
+    return (
+      <FillField
+        label=""
+        value={(value as Node['appearance']['fill']) ?? null}
+        onCommit={onCommit}
+      />
+    )
+  }
+  if (property.type === 'color') {
+    return (
+      <ColorField
+        value={typeof value === 'string' ? value : '#0a0a0c'}
+        onCommit={(color) => {
+          if (color) onCommit(color)
+        }}
+      />
+    )
+  }
+  if (property.type === 'stroke') {
+    return (
+      <StrokeControls
+        value={(value as Stroke | null) ?? null}
+        onCommit={onCommit}
+      />
+    )
+  }
+  if (property.type === 'size') {
+    const size = value as Size | undefined
+    return (
+      <div className="space-y-1">
+        <SizeAxisField
+          value={size?.width ?? 'hug'}
+          onCommit={(width) => onCommit({ ...(size ?? {}), width })}
+        />
+        <SizeAxisField
+          value={size?.height ?? 'hug'}
+          onCommit={(height) => onCommit({ ...(size ?? {}), height })}
+        />
+      </div>
+    )
+  }
+  if (property.type === 'boolean') {
+    return (
+      <CheckboxField
+        value={typeof value === 'boolean' ? value : false}
+        onCommit={onCommit}
+      />
+    )
+  }
+  return (
+    <NumberField
+      value={typeof value === 'number' ? value : 0}
+      onCommit={onCommit}
+      step={property.path.includes('opacity') ? 0.05 : 1}
+      min={property.path.includes('opacity') ? 0 : undefined}
+      max={property.path.includes('opacity') ? 1 : undefined}
+    />
+  )
+}
+
+function exposeOptionsForNode(node: Node): ComponentPropertyDefinition[] {
+  const options: ComponentPropertyDefinition[] = []
+  if (node.kind === 'text') {
+    options.push(
+      exposeOption('Text', node.id, 'text', 'text'),
+      exposeOption('Text color', node.id, 'color', 'color'),
+    )
+  }
+  if ('size' in node) {
+    options.push(exposeOption('Size', node.id, 'size', 'size'))
+  }
+  if (node.kind !== 'camera') {
+    options.push(
+      exposeOption('Fill', node.id, 'appearance.fill', 'fill'),
+      exposeOption('Stroke', node.id, 'appearance.stroke', 'stroke'),
+      exposeOption('Border width', node.id, 'appearance.stroke.width', 'number'),
+      exposeOption('Radius', node.id, 'appearance.cornerRadius', 'number'),
+      exposeOption('Opacity', node.id, 'appearance.opacity', 'number'),
+    )
+  }
+  if (node.kind === 'frame') {
+    options.push(exposeOption('Clip content', node.id, 'clipsContent', 'boolean'))
+  }
+  return options
+}
+
+function exposeOption(
+  name: string,
+  nodeId: NodeId,
+  path: string,
+  type: ComponentPropertyDefinition['type'],
+): ComponentPropertyDefinition {
+  return { id: path, name, nodeId, path, type }
+}
+
+function componentPropertyValue(
+  instance: Extract<Node, { kind: 'instance' }>,
+  source: Node,
+  property: ComponentPropertyDefinition,
+): unknown {
+  const override = getPathValue(instance.overrides[property.nodeId] ?? {}, property.path)
+  if (override !== undefined) return override
+  return getPathValue(source as unknown as Record<string, unknown>, property.path)
+}
+
+function componentPropertyIcon(type: ComponentPropertyDefinition['type']): string {
+  switch (type) {
+    case 'text':
+      return 'T'
+    case 'boolean':
+      return 'O'
+    case 'fill':
+    case 'color':
+    case 'stroke':
+      return 'C'
+    case 'size':
+      return 'W'
+    case 'number':
+      return '#'
+    default:
+      return 'P'
+  }
+}
+
+function formatComponentPropertyValue(
+  value: unknown,
+  property: ComponentPropertyDefinition,
+): string {
+  if (property.type === 'boolean') return value ? 'True' : 'False'
+  if (property.type === 'text') {
+    return truncatePropertyValue(typeof value === 'string' ? value : '')
+  }
+  if (property.type === 'number') {
+    return typeof value === 'number' ? String(Number(value.toFixed(2))) : '0'
+  }
+  if (property.type === 'size') {
+    const size = value as Partial<Size> | undefined
+    return `${formatSizeAxis(size?.width)} x ${formatSizeAxis(size?.height)}`
+  }
+  if (property.type === 'color') return typeof value === 'string' ? value : 'Color'
+  if (property.type === 'fill') return value ? 'Fill' : 'None'
+  if (property.type === 'stroke') return value ? 'Stroke' : 'None'
+  return truncatePropertyValue(value == null ? 'None' : String(value))
+}
+
+function truncatePropertyValue(value: string): string {
+  return value.length > 34 ? `${value.slice(0, 31)}...` : value
+}
+
+function formatSizeAxis(value: unknown): string {
+  if (typeof value === 'number') return String(Math.round(value))
+  if (typeof value === 'string') return value
+  return '-'
+}
+
+function getPathValue(source: Record<string, unknown>, path: string): unknown {
+  let cur: unknown = source
+  for (const key of path.split('.')) {
+    if (!cur || typeof cur !== 'object') return undefined
+    cur = (cur as Record<string, unknown>)[key]
+  }
+  return cur
+}
+
+function hasPathValue(source: Record<string, unknown>, path: string): boolean {
+  return getPathValue(source, path) !== undefined
+}
+
+function variablePathLabel(path: string): string {
+  switch (path) {
+    case 'text':
+      return 'Text'
+    case 'color':
+      return 'Text color'
+    case 'appearance.fill':
+      return 'Fill'
+    case 'appearance.stroke':
+      return 'Stroke'
+    case 'appearance.stroke.width':
+      return 'Border width'
+    case 'appearance.cornerRadius':
+      return 'Radius'
+    case 'appearance.opacity':
+      return 'Opacity'
+    case 'size':
+      return 'Size'
+    case 'clipsContent':
+      return 'Clip content'
+    default:
+      return path
+  }
+}
+
+function isInsideNode(api: SceneAPI, nodeId: NodeId, ancestorId: NodeId): boolean {
+  let current = api.getNode(nodeId)
+  while (current?.parent) {
+    if (current.parent === ancestorId) return true
+    current = api.getNode(current.parent)
+  }
+  return false
+}
+
+function prototypeEventLabel(event: InteractionEventKind): string {
+  switch (event) {
+    case 'hoverIn':
+      return 'Hover'
+    case 'hoverOut':
+      return 'Hover out'
+    case 'pointerDown':
+      return 'Press'
+    case 'pointerUp':
+      return 'Release'
+    default:
+      return 'Click'
+  }
+}
+
+function interactionTargetState(interaction: Interaction): string | null {
+  const action = interaction.actions[0]
+  if (!action) return null
+  if (action.type === 'setVariant') return action.selection.State ?? null
+  if (action.type === 'after' && action.action.type === 'setVariant') {
+    return action.action.selection.State ?? null
+  }
+  return null
+}
+
+function setInteractionTargetState(
+  interaction: Interaction,
+  state: string,
+): Interaction['actions'] {
+  return interaction.actions.map((action) => {
+    if (action.type === 'setVariant') {
+      return { ...action, selection: { ...action.selection, State: state } }
+    }
+    if (action.type === 'after' && action.action.type === 'setVariant') {
+      return {
+        ...action,
+        action: {
+          ...action.action,
+          selection: { ...action.action.selection, State: state },
+        },
+      }
+    }
+    return action
+  })
+}
+
+function findOwningComponent(
+  api: SceneAPI,
+  nodeId: NodeId,
+): Extract<Node, { kind: 'component' }> | null {
+  let current = api.getNode(nodeId)
+  while (current?.parent) {
+    const parent = api.getNode(current.parent)
+    if (parent?.kind === 'component') return parent
+    current = parent
+  }
+  return current?.kind === 'component' ? current : null
+}
+
+function VariantsSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'component' | 'instance' }>
+  api: SceneAPI
+}) {
+  const [draftName, setDraftName] = useState('')
+  const [activeState, setActiveState] = useState<string | null>(null)
+  const playhead = useUI((s) => s.playhead)
+  const component =
+    node.kind === 'component' ? node : api.getNode(node.componentId)
+  if (!component || component.kind !== 'component') return null
+  const stateAxis = component.variants.find((axis) => axis.name === 'State')
+  const values = stateAxis?.values ?? ['Default']
+  const currentState =
+    node.kind === 'instance'
+      ? node.selection.State ?? component.defaultSelection.State ?? values[0]!
+      : component.defaultSelection.State ?? values[0]!
+  const selectedState =
+    activeState && values.includes(activeState) ? activeState : currentState
+  const transition = component.variantTransition ?? DEFAULT_VARIANT_TRANSITION
+
+  const patchTransition = (patch: Partial<VariantTransition>) => {
+    api.setNodeProperty(component.id, 'variantTransition', {
+      ...transition,
+      ...patch,
+    } as never)
+  }
+  const switchComponentState = (value: string) => {
+    if (value === selectedState) return
+    upsertComponentVariant(api, component.id, selectedState)
+    applyComponentVariantState(api, component.id, value)
+    setActiveState(value)
+  }
+
+  return (
+    <Section title="Component states">
+      {node.kind === 'component' ? (
+        <>
+          <FieldRow label="Axis">
+            <button
+              type="button"
+              onClick={() => ensureComponentStateAxis(api, component.id)}
+              className="h-7 rounded-md bg-app-bg px-2 text-[12px] font-medium text-text hover:ring-1 hover:ring-border"
+            >
+              State
+            </button>
+          </FieldRow>
+          <div className="flex flex-wrap gap-1.5">
+            {values.map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => switchComponentState(value)}
+                className={[
+                  'h-7 rounded-md border px-2.5 text-[11px] font-semibold',
+                  value === selectedState
+                    ? 'border-[oklch(0.64_0.24_300)] bg-[oklch(0.64_0.24_300_/_0.16)] text-[oklch(0.5_0.22_300)]'
+                    : 'border-border bg-panel-raised text-text-muted hover:text-text',
+                ].join(' ')}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+          <FieldRow label="New">
+            <div className="flex w-full gap-1">
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.currentTarget.value)}
+                placeholder={`Variant ${values.length + 1}`}
+                className="h-7 min-w-0 flex-1 rounded-md bg-app-bg px-2 text-[12px] text-text outline-none ring-1 ring-transparent placeholder:text-text-dim focus:ring-accent/45"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const nextName = draftName.trim() || `Variant ${values.length + 1}`
+                  upsertComponentVariant(api, component.id, selectedState)
+                  upsertComponentVariant(api, component.id, nextName)
+                  applyComponentVariantState(api, component.id, nextName)
+                  setActiveState(nextName)
+                  setDraftName('')
+                }}
+                className="h-7 rounded-md bg-[oklch(0.64_0.24_300)] px-2 text-[11px] font-semibold text-white"
+              >
+                Add
+              </button>
+            </div>
+          </FieldRow>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => upsertComponentVariant(api, component.id, selectedState)}
+              className="h-7 rounded-md border border-border bg-panel-raised px-2 text-[11px] font-semibold text-text-muted hover:text-text"
+            >
+              Update selected
+            </button>
+            <button
+              type="button"
+              disabled={selectedState === 'Default'}
+              onClick={() => {
+                removeComponentVariant(api, component.id, selectedState)
+                applyComponentVariantState(api, component.id, 'Default')
+                setActiveState('Default')
+              }}
+              className="h-7 rounded-md border border-border bg-panel-raised px-2 text-[11px] font-semibold text-text-muted hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Delete selected
+            </button>
+          </div>
+          <p className="text-[11px] leading-4 text-text-dim">
+            Edit the master to the target look, then add a new state or update
+            the selected state. Instances animate between these states.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] leading-4 text-text-dim">
+          Select an instance state in Variables. Transition settings below
+          control how that instance animates between component states.
+        </p>
+      )}
+
+      <div className="border-t border-border pt-4">
+        <FieldRow label="Duration">
+          <NumberField
+            value={transition.duration}
+            onCommit={(duration) => patchTransition({ duration: Math.max(0, duration) })}
+            min={0}
+            step={0.05}
+            suffix="s"
+          />
+        </FieldRow>
+        <EasingPicker
+          title="Transition"
+          presetId={(transition.presetId as EasingPresetId | undefined) ?? 'smooth'}
+          strength={transition.strength ?? 50}
+          onChange={({ presetId, strength, easing }) =>
+            patchTransition({ presetId, strength, easing })
+          }
+        />
+        <SpringControls transition={transition} onPatch={patchTransition} />
+      </div>
+    </Section>
+  )
+}
+
+function PrototypeSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'component' | 'instance' }>
+  api: SceneAPI
+}) {
+  const [event, setEvent] = useState<InteractionEventKind>('click')
+  const [targetState, setTargetState] = useState('Default')
+  const [delay, setDelay] = useState(0)
+  const component =
+    node.kind === 'component' ? node : api.getNode(node.componentId)
+  if (!component || component.kind !== 'component') return null
+  const stateAxis = component.variants.find((axis) => axis.name === 'State')
+  const values = stateAxis?.values.length ? stateAxis.values : ['Default']
+  const selectedInnerNode =
+    useUI.getState().selection.find((id) => id !== component.id && isInsideNode(api, id, component.id)) ??
+    undefined
+  const sourceNode = selectedInnerNode ? api.getNode(selectedInnerNode) : null
+  const currentTargetState = values.includes(targetState) ? targetState : values[0]!
+  const interactions = component.interactions
+
+  return (
+    <Section title="Prototype">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-dim">
+              Trigger
+            </div>
+            <SelectField<InteractionEventKind>
+              value={event}
+              options={['click', 'hoverIn', 'hoverOut', 'pointerDown', 'pointerUp']}
+              width="w-full"
+              onCommit={setEvent}
+            />
+          </div>
+          <div>
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-dim">
+              To state
+            </div>
+            <SelectField<string>
+              value={currentTargetState}
+              options={values}
+              width="w-full"
+              onCommit={setTargetState}
+            />
+          </div>
+        </div>
+        <FieldRow label="Delay">
+          <NumberField
+            value={delay}
+            onCommit={(value) => setDelay(Math.max(0, value))}
+            min={0}
+            step={0.05}
+            suffix="s"
+          />
+        </FieldRow>
+        <button
+          type="button"
+          onClick={() =>
+            addComponentVariantInteraction(api, component.id, {
+              event,
+              targetState: currentTargetState,
+              delay,
+              sourceNodeId: sourceNode?.id,
+            })
+          }
+          className="h-8 w-full rounded-md bg-[oklch(0.64_0.24_300)] text-[12px] font-semibold text-white"
+        >
+          Add variant connector
+        </button>
+        <p className="text-[11px] leading-4 text-text-dim">
+          Source is {sourceNode ? sourceNode.name : 'the component root'}. Select
+          a child layer inside the master to attach the trigger to that layer.
+        </p>
+
+        {interactions.length > 0 ? (
+          <div className="space-y-2 border-t border-border pt-3">
+            {interactions.map((interaction) => {
+              const target = interactionTargetState(interaction) ?? values[0]!
+              const triggerLabel = prototypeEventLabel(interaction.event)
+              return (
+                <div
+                  key={interaction.id}
+                  className="rounded-md border border-border bg-panel-raised p-2"
+                >
+                  <div className="mb-2 flex items-center gap-2 text-[11px]">
+                    <span className="rounded bg-app-bg px-1.5 py-0.5 font-semibold text-text">
+                      {triggerLabel}
+                    </span>
+                    <span className="h-px flex-1 bg-[oklch(0.64_0.24_300_/_0.55)]" />
+                    <span className="rounded bg-[oklch(0.64_0.24_300_/_0.16)] px-1.5 py-0.5 font-semibold text-[oklch(0.5_0.22_300)]">
+                      {target}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <SelectField<string>
+                      value={target}
+                      options={values}
+                      width="w-full"
+                      onCommit={(value) =>
+                        updateComponentInteraction(
+                          api,
+                          component.id,
+                          interaction.id,
+                          {
+                            actions: setInteractionTargetState(
+                              interaction,
+                              value,
+                            ),
+                          },
+                        )
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        removeComponentInteraction(api, component.id, interaction.id)
+                      }
+                      className="h-7 rounded border border-border px-2 text-[11px] text-text-muted hover:text-danger"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </Section>
+  )
+}
+
+const DEFAULT_VARIANT_TRANSITION: VariantTransition = {
+  duration: 0.3,
+  easing: 'ease-in-out',
+  presetId: 'smooth',
+  strength: 50,
+}
+
+function SpringControls({
+  transition,
+  onPatch,
+}: {
+  transition: VariantTransition
+  onPatch: (patch: Partial<VariantTransition>) => void
+}) {
+  const spring =
+    typeof transition.easing === 'object' && 'spring' in transition.easing
+      ? transition.easing.spring
+      : { stiffness: 240, damping: 22, mass: 1 }
+  return (
+    <div className="mt-3 rounded border border-border bg-panel-raised p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-text-dim">
+          Spring
+        </span>
+        <button
+          type="button"
+          onClick={() =>
+            onPatch({
+              presetId: 'elastic',
+              easing: { spring },
+            })
+          }
+          className="rounded bg-app-bg px-2 py-1 text-[10px] font-medium text-text-muted hover:text-text"
+        >
+          Use spring
+        </button>
+      </div>
+      <FieldRow label="Stiffness">
+        <NumberField
+          value={spring.stiffness}
+          onCommit={(stiffness) =>
+            onPatch({ easing: { spring: { ...spring, stiffness } } })
+          }
+          min={1}
+          step={10}
+        />
+      </FieldRow>
+      <FieldRow label="Damping">
+        <NumberField
+          value={spring.damping}
+          onCommit={(damping) =>
+            onPatch({ easing: { spring: { ...spring, damping } } })
+          }
+          min={0.1}
+          step={1}
+        />
+      </FieldRow>
+      <FieldRow label="Mass">
+        <NumberField
+          value={spring.mass}
+          onCommit={(mass) =>
+            onPatch({ easing: { spring: { ...spring, mass } } })
+          }
+          min={0.1}
+          step={0.1}
+        />
+      </FieldRow>
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -3189,6 +4301,12 @@ function ImageSection({ node, api }: { node: ImageNode; api: SceneAPI }) {
 
   return (
     <Section title="Image">
+      {node.importWarning ? (
+        <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-900">
+          <div className="mb-1 font-semibold">Imported as image fallback</div>
+          <div>{node.importWarning}</div>
+        </div>
+      ) : null}
       <FieldRow label="Preview">
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
           {node.src ? (

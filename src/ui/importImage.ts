@@ -33,8 +33,8 @@ import type { NodeId, Transform } from '@/scene'
 export async function importImageFile(
   file: File,
   api: SceneAPI,
-  parent: NodeId,
-  opts?: { dropPos?: { x: number; y: number } },
+  parent: NodeId | null,
+  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
   const dataUrl = await readFileAsDataUrl(file)
   const { width: natW, height: natH } = await decodeNaturalSize(dataUrl)
@@ -74,6 +74,7 @@ export async function importImageFile(
     transform,
     src: dataUrl,
     fit: 'cover',
+    workspaceOnly: opts?.workspaceOnly ?? false,
   } as Parameters<SceneAPI['createNode']>[2])
 
   return id
@@ -88,8 +89,8 @@ export async function importImageFile(
 export async function importImageFiles(
   files: FileList | File[],
   api: SceneAPI,
-  parent: NodeId,
-  opts?: { dropPos?: { x: number; y: number } },
+  parent: NodeId | null,
+  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId[]> {
   const ids: NodeId[] = []
   const list = Array.from(files).filter(isImageFile)

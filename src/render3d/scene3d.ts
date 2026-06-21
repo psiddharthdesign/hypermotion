@@ -42,6 +42,7 @@ export interface Plane3D {
   nodeId: NodeId
   node: Node
   rect: Rect
+  contentMode: 'self' | 'subtree'
   paintOrder: number
   center: Vec3
   rotation: Vec3
@@ -73,9 +74,11 @@ export interface FocusHit3D {
 }
 
 const IDENTITY_INHERITED = {
-  x: 0,
-  y: 0,
-  z: 0,
+  origin: { x: 0, y: 0, z: 0 },
+  anchor: { x: 0, y: 0, z: 0 },
+  basisX: { x: 1, y: 0, z: 0 },
+  basisY: { x: 0, y: 1, z: 0 },
+  basisZ: { x: 0, y: 0, z: 1 },
   rotation: 0,
   rotationX: 0,
   rotationY: 0,
@@ -84,9 +87,11 @@ const IDENTITY_INHERITED = {
 }
 
 interface Inherited3D {
-  x: number
-  y: number
-  z: number
+  origin: Vec3
+  anchor: Vec3
+  basisX: Vec3
+  basisY: Vec3
+  basisZ: Vec3
   rotation: number
   rotationX: number
   rotationY: number
@@ -261,6 +266,24 @@ export function buildWorldPlanes(
   if (!rootId) return []
   const planes: Plane3D[] = []
 
+  const mapPoint = (transform: Inherited3D, point: Vec3): Vec3 =>
+    add3(
+      transform.origin,
+      add3(
+        add3(
+          mul3(transform.basisX, point.x - transform.anchor.x),
+          mul3(transform.basisY, point.y - transform.anchor.y),
+        ),
+        mul3(transform.basisZ, point.z - transform.anchor.z),
+      ),
+    )
+
+  const mapLocalVector = (transform: Inherited3D, vector: Vec3): Vec3 =>
+    add3(
+      add3(mul3(transform.basisX, vector.x), mul3(transform.basisY, vector.y)),
+      mul3(transform.basisZ, vector.z),
+    )
+
   const visit = (id: NodeId, inherited: Inherited3D): void => {
     const node = api.getNode(id)
     const rect = layout[id]
@@ -280,24 +303,29 @@ export function buildWorldPlanes(
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
       z: a?.anchorZ ?? node.transform.anchorZ ?? 0,
     }
-    const nextInherited: Inherited3D = isRoot
-      ? {
-          ...inherited,
-          z: inherited.z + z,
-          rotation: inherited.rotation + rotation,
-          rotationX: inherited.rotationX + rotationX,
-          rotationY: inherited.rotationY + rotationY,
-        }
-      : {
-          x: inherited.x + x,
-          y: inherited.y + y,
-          z: inherited.z + z,
-          rotation: inherited.rotation + rotation,
-          rotationX: inherited.rotationX + rotationX,
-          rotationY: inherited.rotationY + rotationY,
-          scaleX: inherited.scaleX * scaleX,
-          scaleY: inherited.scaleY * scaleY,
-        }
+    const anchorPoint = {
+      x: rect.x + anchor.x,
+      y: rect.y + anchor.y,
+      z: anchor.z,
+    }
+    const translation = isRoot
+      ? mapLocalVector(inherited, { x: 0, y: 0, z })
+      : mapLocalVector(inherited, { x, y, z })
+    const localBasisX = rotateEuler({ x: isRoot ? 1 : scaleX, y: 0, z: 0 }, rotationX, rotationY, rotation)
+    const localBasisY = rotateEuler({ x: 0, y: isRoot ? 1 : scaleY, z: 0 }, rotationX, rotationY, rotation)
+    const localBasisZ = rotateEuler({ x: 0, y: 0, z: 1 }, rotationX, rotationY, rotation)
+    const nextInherited: Inherited3D = {
+      origin: add3(mapPoint(inherited, anchorPoint), translation),
+      anchor: anchorPoint,
+      basisX: mapLocalVector(inherited, localBasisX),
+      basisY: mapLocalVector(inherited, localBasisY),
+      basisZ: mapLocalVector(inherited, localBasisZ),
+      rotation: inherited.rotation + rotation,
+      rotationX: inherited.rotationX + rotationX,
+      rotationY: inherited.rotationY + rotationY,
+      scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
+      scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
+    }
 
     const parent = node.parent ? api.getNode(node.parent) : null
     const renderMode = node.transform.renderMode ?? 'flat'
@@ -314,18 +342,19 @@ export function buildWorldPlanes(
       const rotX = nextInherited.rotationX
       const rotY = nextInherited.rotationY
       const rotZ = nextInherited.rotation
-      const right = norm3(rotateEuler({ x: 1, y: 0, z: 0 }, rotX, rotY, rotZ))
-      const down = norm3(rotateEuler({ x: 0, y: 1, z: 0 }, rotX, rotY, rotZ))
-      const normal = norm3(rotateEuler({ x: 0, y: 0, z: 1 }, rotX, rotY, rotZ))
-      const center = {
-        x: rect.x + rect.width / 2 + nextInherited.x,
-        y: rect.y + rect.height / 2 + nextInherited.y,
-        z: nextInherited.z,
-      }
+      const right = norm3(nextInherited.basisX)
+      const down = norm3(nextInherited.basisY)
+      const normal = norm3(nextInherited.basisZ)
+      const center = mapPoint(nextInherited, {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        z: 0,
+      })
       planes.push({
         nodeId: id,
         node,
         rect,
+        contentMode: renderMode === 'group3d' ? 'self' : 'subtree',
         paintOrder: planes.length,
         center,
         rotation: { x: rotX, y: rotY, z: rotZ },

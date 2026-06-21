@@ -478,24 +478,81 @@ function createVectorAsImage(
   transform: ReturnType<typeof figmaToTransform>,
   appearance: Appearance,
   position: Position,
-): NodeId {
+): NodeId | null {
   // Encode the captured SVG markup as a data URL and store as an image
   // node. Renders correctly in the existing image path; users can
   // resize and animate transform / opacity. Replacing this with a real
   // SVG node type is a follow-up once vector authoring lands.
-  const svgEncoded = encodeURIComponent(node.svg)
-  const src = `data:image/svg+xml;charset=utf-8,${svgEncoded}`
+  const svg = node.svg.trim()
+  const shouldUseRasterFallback =
+    !!node.rasterPng &&
+    (!!node.rasterReason || !svg || node.width < 1 || node.height < 1)
+  if (!svg && !node.rasterPng) return null
+  const intrinsicSize = readSvgIntrinsicSize(svg)
+  const size = {
+    width: pickVectorAxisSize(node.width, intrinsicSize?.width, node.strokeWeight),
+    height: pickVectorAxisSize(node.height, intrinsicSize?.height, node.strokeWeight),
+  }
+  const svgEncoded = encodeURIComponent(svg)
+  const src = shouldUseRasterFallback
+    ? `data:image/png;base64,${node.rasterPng}`
+    : `data:image/svg+xml;charset=utf-8,${svgEncoded}`
+  const importWarning = shouldUseRasterFallback
+    ? [
+        node.rasterReason ??
+          'Figma SVG export was not reliable for this vector, so Hyper Motion imported a PNG fallback.',
+        'The visual appearance is preserved, but this layer is not editable as vector paths. If you need editable SVG, outline or flatten unusual strokes in Figma and copy again.',
+      ].join(' ')
+    : undefined
   return api.createNode('image', parentId, {
     name: node.name || 'Vector',
     visible: node.visible,
     locked: node.locked,
     transform,
-    appearance,
+    appearance: {
+      ...appearance,
+      fill: null,
+      stroke: null,
+    },
     position,
-    size: { width: node.width, height: node.height },
+    size,
     src,
     fit: 'contain',
+    ...(importWarning ? { importWarning } : {}),
   })
+}
+
+function pickVectorAxisSize(
+  captured: number,
+  intrinsic: number | undefined,
+  strokeWeight: number | undefined,
+): number {
+  if (Number.isFinite(captured) && captured >= 1) return captured
+  if (intrinsic !== undefined && Number.isFinite(intrinsic) && intrinsic > 0) return intrinsic
+  if (strokeWeight !== undefined && Number.isFinite(strokeWeight) && strokeWeight > 0) return strokeWeight
+  return 1
+}
+
+function readSvgIntrinsicSize(svg: string): { width?: number; height?: number } | null {
+  const width = readSvgLength(svg, 'width')
+  const height = readSvgLength(svg, 'height')
+  if (width !== undefined || height !== undefined) return { width, height }
+
+  const viewBox = svg.match(/\bviewBox\s*=\s*["']([^"']+)["']/i)?.[1]
+  if (!viewBox) return null
+  const parts = viewBox
+    .trim()
+    .split(/[\s,]+/)
+    .map((part) => Number.parseFloat(part))
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) return null
+  return { width: Math.abs(parts[2]), height: Math.abs(parts[3]) }
+}
+
+function readSvgLength(svg: string, attr: 'width' | 'height'): number | undefined {
+  const raw = svg.match(new RegExp(`\\b${attr}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
+  if (!raw) return undefined
+  const value = Number.parseFloat(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 /**

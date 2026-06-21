@@ -65,6 +65,8 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   focusWorldX: 'camera.focusWorldX',
   focusWorldY: 'camera.focusWorldY',
   focusWorldZ: 'camera.focusWorldZ',
+  focusRadius: 'camera.focusRadius',
+  focusFalloff: 'camera.focusFalloff',
   pointOfInterestX: 'camera.pointOfInterestX',
   pointOfInterestY: 'camera.pointOfInterestY',
   pointOfInterestZ: 'camera.pointOfInterestZ',

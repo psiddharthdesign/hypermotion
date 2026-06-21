@@ -107,6 +107,14 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'camera.focusWorldZ', group: 'camera', label: 'Focus Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'camera.focusRadius': {
+    id: 'camera.focusRadius', group: 'camera', label: 'Focus Radius',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 160,
+  },
+  'camera.focusFalloff': {
+    id: 'camera.focusFalloff', group: 'camera', label: 'Focus Falloff',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 180,
+  },
   'camera.pointOfInterestX': {
     id: 'camera.pointOfInterestX', group: 'camera', label: 'POI X',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,

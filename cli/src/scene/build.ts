@@ -60,6 +60,7 @@ export interface NodeJson {
   locked?: boolean
   position?: 'flow' | 'absolute'
   isMask?: boolean
+  componentSourceId?: string | null
   transform?: {
     x: number
     y: number
@@ -73,6 +74,15 @@ export interface NodeJson {
   appearance?: Record<string, unknown>
   size?: { width: number | 'hug' | 'fill'; height: number | 'hug' | 'fill' }
   layout?: Record<string, unknown>
+  variants?: unknown[]
+  defaultSelection?: Record<string, string>
+  variantOverrides?: unknown[]
+  variantTransition?: unknown
+  timelines?: Record<string, unknown>
+  interactions?: unknown[]
+  componentId?: string
+  selection?: Record<string, string>
+  overrides?: Record<string, Record<string, unknown>>
   clipsContent?: boolean
   layoutGuides?: unknown[]
   // kind-specific
@@ -112,6 +122,8 @@ export interface NodeJson {
   focusWorldZ?: number
   focusTargetNodeId?: string | null
   focusDistance?: number
+  focusRadius?: number
+  focusFalloff?: number
   aperture?: number
   iso?: number
   blurLevel?: number
@@ -238,6 +250,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('locked', node.locked ?? false)
     y.set('position', node.position ?? 'flow')
     y.set('isMask', node.isMask ?? false)
+    y.set('componentSourceId', node.componentSourceId ?? null)
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
@@ -252,6 +265,18 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       if (node.kind === 'frame') {
         y.set('clipsContent', node.clipsContent ?? true)
         y.set('layoutGuides', node.layoutGuides ?? [])
+      } else {
+        y.set('variants', node.variants ?? [])
+        y.set('defaultSelection', node.defaultSelection ?? {})
+        y.set('variantOverrides', node.variantOverrides ?? [])
+        y.set('variantTransition', node.variantTransition ?? {
+          duration: 0.3,
+          easing: 'ease-in-out',
+          presetId: 'smooth',
+          strength: 50,
+        })
+        y.set('timelines', node.timelines ?? {})
+        y.set('interactions', node.interactions ?? [])
       }
     }
     if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
@@ -260,6 +285,20 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     if (node.kind === 'image') {
       y.set('src', node.src ?? '')
       y.set('fit', node.fit ?? 'cover')
+    }
+    if (node.kind === 'instance') {
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
+      y.set(
+        'layout',
+        mergeWithDefaults(
+          DEFAULT_LAYOUT as Record<string, unknown>,
+          node.layout,
+        ),
+      )
+      y.set('componentId', node.componentId ?? '')
+      y.set('selection', node.selection ?? {})
+      y.set('overrides', node.overrides ?? {})
+      y.set('interactions', node.interactions ?? [])
     }
     if (node.kind === 'video' || node.kind === 'audio') {
       y.set(
@@ -290,6 +329,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('color', node.color ?? '#0a0a0c')
     }
     if (node.kind === 'camera') {
+      const centerX = metaIn.canvas.width / 2
+      const centerY = metaIn.canvas.height / 2
       y.set('projection', node.projection ?? '2d')
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
@@ -301,14 +342,16 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('nearClip', node.nearClip ?? 1)
       y.set('farClip', node.farClip ?? 100000)
       y.set('depthOfField', node.depthOfField ?? false)
-      y.set('focusMode', node.focusMode ?? 'plane')
-      y.set('focusX', node.focusX ?? node.transform?.x ?? 0)
-      y.set('focusY', node.focusY ?? node.transform?.y ?? 0)
-      y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? node.transform?.x ?? 0)
-      y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? node.transform?.y ?? 0)
+      y.set('focusMode', node.focusMode ?? 'screen')
+      y.set('focusX', node.focusX ?? centerX)
+      y.set('focusY', node.focusY ?? centerY)
+      y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
+      y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
       y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
       y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
       y.set('focusDistance', node.focusDistance ?? 0)
+      y.set('focusRadius', node.focusRadius ?? 160)
+      y.set('focusFalloff', node.focusFalloff ?? 180)
       y.set('aperture', node.aperture ?? 0)
       y.set('iso', node.iso ?? 100)
       y.set('blurLevel', node.blurLevel ?? 1)
