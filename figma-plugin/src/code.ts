@@ -130,6 +130,8 @@ interface CapturedText extends CapturedNodeBase {
 interface CapturedVector extends CapturedNodeBase {
   type: 'VECTOR'
   svg: string
+  rasterPng?: string
+  rasterReason?: string
 }
 
 type CapturedEffect =
@@ -204,6 +206,13 @@ async function captureNode(
     case 'GROUP':
     case 'COMPONENT':
     case 'INSTANCE':
+      if (shouldRasterizeVectorTree(node)) {
+        return captureVector(
+          node,
+          assets,
+          'Figma exported this icon as nested vector fragments, so Hyper Motion imports it as a PNG to preserve the exact appearance.',
+        )
+      }
       return captureFrame(node as FrameNode, assets)
     case 'RECTANGLE':
       return captureRect(node as RectangleNode, assets)
@@ -275,6 +284,48 @@ async function captureFrame(
   }
 }
 
+function shouldRasterizeVectorTree(node: SceneNode): boolean {
+  if (
+    node.type !== 'FRAME' &&
+    node.type !== 'GROUP' &&
+    node.type !== 'COMPONENT' &&
+    node.type !== 'INSTANCE'
+  ) {
+    return false
+  }
+  const children = (node as ChildrenMixin).children
+  if (!children || children.length === 0) return false
+  const layoutMode = (node as Partial<FrameNode>).layoutMode
+  if (layoutMode && layoutMode !== 'NONE') return false
+  return children.every(isVectorTreeNode)
+}
+
+function isVectorTreeNode(node: SceneNode): boolean {
+  if (!node.visible) return true
+  if (
+    node.type === 'VECTOR' ||
+    node.type === 'STAR' ||
+    node.type === 'POLYGON' ||
+    node.type === 'BOOLEAN_OPERATION' ||
+    node.type === 'LINE'
+  ) {
+    return true
+  }
+  if (
+    node.type === 'FRAME' ||
+    node.type === 'GROUP' ||
+    node.type === 'COMPONENT' ||
+    node.type === 'INSTANCE'
+  ) {
+    const children = (node as ChildrenMixin).children
+    if (!children || children.length === 0) return false
+    const layoutMode = (node as Partial<FrameNode>).layoutMode
+    if (layoutMode && layoutMode !== 'NONE') return false
+    return children.every(isVectorTreeNode)
+  }
+  return false
+}
+
 function nodeTypeAsFrame(t: string): CapturedFrame['type'] {
   if (t === 'FRAME' || t === 'GROUP' || t === 'COMPONENT' || t === 'INSTANCE') {
     return t
@@ -333,6 +384,7 @@ async function captureText(
 async function captureVector(
   node: SceneNode,
   assets: Record<string, string>,
+  rasterReason?: string,
 ): Promise<CapturedVector> {
   const base = await captureBase(
     node as unknown as SceneNode & GeometryMixin,
@@ -351,10 +403,34 @@ async function captureVector(
   } catch (err) {
     console.warn('[hyper-motion] SVG export failed', err)
   }
+  let rasterPng = ''
+  let reason = rasterReason
+  try {
+    const bytes = await (
+      node as unknown as { exportAsync: (s: ExportSettings) => Promise<Uint8Array> }
+    ).exportAsync({ format: 'PNG' })
+    rasterPng = bytesToBase64(bytes)
+  } catch (err) {
+    console.warn('[hyper-motion] PNG vector fallback export failed', err)
+    reason =
+      reason ??
+      'Figma could not export this vector as a fallback image. The SVG may not match exactly.'
+  }
+  if (!svg.trim()) {
+    reason =
+      reason ??
+      'Figma returned an empty SVG for this vector. Hyper Motion used a PNG fallback to preserve the visual result.'
+  } else if (base.width < 1 || base.height < 1) {
+    reason =
+      reason ??
+      'Figma reported collapsed bounds for this stroked vector. Hyper Motion used a PNG fallback to preserve the visual result.'
+  }
   return {
     ...base,
     type: 'VECTOR',
     svg,
+    ...(rasterPng ? { rasterPng } : {}),
+    ...(reason ? { rasterReason: reason } : {}),
   }
 }
 

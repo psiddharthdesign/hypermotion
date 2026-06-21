@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { AnimatedValue } from '@/anim'
 import type { Rect, SolvedLayout } from '@/layout'
@@ -57,6 +57,7 @@ export function ThreeSceneViewport({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const planesRef = useRef<Map<NodeId, PlaneRecord>>(new Map())
   const helpersRef = useRef<THREE.Group | null>(null)
+  const [webglUnavailable, setWebglUnavailable] = useState(false)
 
   const resolvedCamera = useMemo(
     () => resolveCamera3D(camera, cameraAnim, { width, height }),
@@ -68,9 +69,17 @@ export function ThreeSceneViewport({
   )
 
   useEffect(() => {
+    if (webglUnavailable) return
     const host = hostRef.current
     if (!host) return
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    } catch (error) {
+      console.warn('3D helper disabled: WebGL context creation failed.', error)
+      setWebglUnavailable(true)
+      return
+    }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
     renderer.setSize(width, height, false)
     renderer.sortObjects = true
@@ -109,18 +118,20 @@ export function ThreeSceneViewport({
     }
     // Create renderer once per mount; resizing is handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [webglUnavailable])
 
   useEffect(() => {
+    if (webglUnavailable) return
     const renderer = rendererRef.current
     const perspective = cameraRef.current
     if (!renderer || !perspective) return
     renderer.setSize(width, height, false)
     perspective.aspect = width / Math.max(1, height)
     perspective.updateProjectionMatrix()
-  }, [width, height])
+  }, [webglUnavailable, width, height])
 
   useEffect(() => {
+    if (webglUnavailable) return
     const scene = sceneRef.current
     const perspective = cameraRef.current
     const renderer = rendererRef.current
@@ -153,7 +164,9 @@ export function ThreeSceneViewport({
     )
 
     renderer.render(scene, perspective)
-  }, [api, layout, planes, resolvedCamera, sceneFill, selectedIds, showHelpers, showPlanes, focusWorldPoint, width, height])
+  }, [api, layout, planes, resolvedCamera, sceneFill, selectedIds, showHelpers, showPlanes, focusWorldPoint, width, height, webglUnavailable])
+
+  if (webglUnavailable) return null
 
   return (
     <div
@@ -290,6 +303,7 @@ function queueDomPlaneTexture(
   scene: THREE.Scene,
   perspective: THREE.PerspectiveCamera,
 ) {
+  if (plane.contentMode === 'self') return
   const request = record.textureRequest + 1
   record.textureRequest = request
   renderDomPlaneTexture(plane.rect, blurPx).then((canvas) => {
@@ -369,6 +383,9 @@ function renderPlaneCanvas(
   plane: Plane3D,
   blurPx: number,
 ): HTMLCanvasElement {
+  if (plane.contentMode === 'self') {
+    return renderPlaneTexture(plane.node, plane.rect, blurPx)
+  }
   return (
     renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, blurPx) ??
     renderPlaneTexture(plane.node, plane.rect, blurPx)

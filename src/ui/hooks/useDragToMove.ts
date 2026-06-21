@@ -55,6 +55,7 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
       if (isRoot) return
       const node = api.getNode(nodeId)
       if (!node || node.locked) return
+      e.stopPropagation()
       // Selecting on pointerdown (not click) matches Figma's feel —
       // the selection frame appears before you've released the mouse.
       //

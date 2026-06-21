@@ -171,6 +171,74 @@ process.env.VITE_PUBLIC = app.isPackaged
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
+const RECENT_PROJECTS_LIMIT = 10
+let recentProjects: string[] = []
+
+function recentProjectsStorePath(): string {
+  return path.join(app.getPath('userData'), 'recent-projects.json')
+}
+
+function loadRecentProjects(): void {
+  try {
+    const raw = fs.readFileSync(recentProjectsStorePath(), 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return
+    recentProjects = parsed
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => path.resolve(item))
+      .filter((item, index, all) => all.indexOf(item) === index)
+      .slice(0, RECENT_PROJECTS_LIMIT)
+  } catch {
+    recentProjects = []
+  }
+}
+
+function saveRecentProjects(): void {
+  try {
+    fs.mkdirSync(path.dirname(recentProjectsStorePath()), { recursive: true })
+    fs.writeFileSync(
+      recentProjectsStorePath(),
+      JSON.stringify(recentProjects, null, 2),
+    )
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[recent] write failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
+}
+
+function refreshRecentProjectsMenu(): void {
+  if (!app.isReady() || isHeadlessOnly) return
+  buildAppMenu()
+}
+
+function addRecentProject(filePath: string): void {
+  const resolved = path.resolve(filePath)
+  recentProjects = [
+    resolved,
+    ...recentProjects.filter((item) => item !== resolved),
+  ].slice(0, RECENT_PROJECTS_LIMIT)
+  app.addRecentDocument(resolved)
+  saveRecentProjects()
+  refreshRecentProjectsMenu()
+}
+
+function removeRecentProject(filePath: string): void {
+  const resolved = path.resolve(filePath)
+  const next = recentProjects.filter((item) => item !== resolved)
+  if (next.length === recentProjects.length) return
+  recentProjects = next
+  saveRecentProjects()
+  refreshRecentProjectsMenu()
+}
+
+function clearRecentProjects(): void {
+  recentProjects = []
+  app.clearRecentDocuments()
+  saveRecentProjects()
+  refreshRecentProjectsMenu()
+}
 
 interface AppUpdateInfo {
   currentVersion: string
@@ -300,6 +368,21 @@ function startUpdateChecks(): void {
  */
 function buildAppMenu() {
   const isMac = process.platform === 'darwin'
+  const recentProjectItems: MenuItemConstructorOptions[] =
+    recentProjects.length === 0
+      ? [{ label: 'No Recent Projects', enabled: false }]
+      : [
+          ...recentProjects.map((projectPath) => ({
+            label: path.basename(projectPath),
+            sublabel: path.dirname(projectPath),
+            click: () => mainWindow?.webContents.send('file:open-path', projectPath),
+          })),
+          { type: 'separator' as const },
+          {
+            label: 'Clear Recent Projects',
+            click: () => clearRecentProjects(),
+          },
+        ]
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
@@ -332,6 +415,10 @@ function buildAppMenu() {
           label: 'Open…',
           accelerator: 'CmdOrCtrl+O',
           click: () => mainWindow?.webContents.send('file:open'),
+        },
+        {
+          label: 'Recent Projects',
+          submenu: recentProjectItems,
         },
         { type: 'separator' as const },
         {
@@ -572,6 +659,38 @@ ipcMain.handle('clipboard:writeText', (_e, text: string) => {
 
 ipcMain.handle('updates:check', () => checkForUpdates())
 ipcMain.handle('updates:get-status', () => lastUpdateInfo)
+
+ipcMain.handle('preview:open-window', async () => {
+  const previewWindow = new BrowserWindow({
+    title: 'hyper-motion preview',
+    width: 1280,
+    height: 720,
+    minWidth: 640,
+    minHeight: 360,
+    backgroundColor: '#000000',
+    titleBarStyle: 'default',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: true,
+      backgroundThrottling: false,
+    },
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    await previewWindow.loadURL(`${VITE_DEV_SERVER_URL}?preview=1`)
+  } else {
+    await previewWindow.loadFile(
+      path.join(process.env.DIST_RENDERER!, 'index.html'),
+      { query: { preview: '1' } },
+    )
+  }
+
+  previewWindow.focus()
+  return { ok: true }
+})
 
 /**
  * Export capture bridge.
@@ -1019,6 +1138,7 @@ ipcMain.handle(
     const filePath = result.filePaths[0]
     try {
       const bytes = fs.readFileSync(filePath)
+      addRecentProject(filePath)
       // Buffer → Uint8Array marshals across IPC.
       return { path: filePath, bytes: new Uint8Array(bytes) }
     } catch (err) {
@@ -1034,6 +1154,7 @@ ipcMain.handle(
   (_e, payload: { path: string; bytes: Uint8Array }): boolean => {
     try {
       fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
+      addRecentProject(payload.path)
       return true
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -1050,12 +1171,14 @@ ipcMain.handle(
   (_e, filePath: string): Uint8Array | null => {
     try {
       const bytes = fs.readFileSync(filePath)
+      addRecentProject(filePath)
       return new Uint8Array(bytes)
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(
         `[file] read failed: ${err instanceof Error ? err.message : err}`,
       )
+      removeRecentProject(filePath)
       return null
     }
   },
@@ -1152,6 +1275,7 @@ app.whenReady().then(() => {
     return
   }
 
+  loadRecentProjects()
   buildAppMenu()
   createMainWindow()
   startUpdateChecks()

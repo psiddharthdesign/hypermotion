@@ -171,6 +171,7 @@ export interface NodeBaseMutable {
   size: Size
   visible: boolean
   locked: boolean
+  position: import('@/scene/types').Position
   text: string
   // image-kind fields — settable via Inspector on ImageNode. The scene
   // API doesn't (yet) enforce that these keys only land on an image
@@ -178,6 +179,7 @@ export interface NodeBaseMutable {
   // `node.kind === 'image'`.
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
+  importWarning: string
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
@@ -199,6 +201,8 @@ export interface NodeBaseMutable {
   focusWorldZ: number
   focusTargetNodeId: NodeId | null
   focusDistance: number
+  focusRadius: number
+  focusFalloff: number
   aperture: number
   iso: number
   blurLevel: number
@@ -314,6 +318,13 @@ function normalizeLayout(raw: unknown): Layout {
 
 const DEFAULT_SIZE: Size = { width: 100, height: 100 }
 
+const DEFAULT_VARIANT_TRANSITION: import('@/scene/types').VariantTransition = {
+  duration: 0.3,
+  easing: 'ease-in-out',
+  presetId: 'smooth',
+  strength: 50,
+}
+
 // ---------------------------------------------------------------------------
 // Y.Doc factory + API
 // ---------------------------------------------------------------------------
@@ -370,13 +381,21 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   }
 
   const yNodeToNode = (y: Y.Map<unknown>): Node => {
-    const childrenArr = y.get('children') as Y.Array<NodeId> | undefined
+    const childrenValue = y.get('children') as
+      | Y.Array<NodeId>
+      | NodeId[]
+      | undefined
+    const children = Array.isArray(childrenValue)
+      ? childrenValue
+      : childrenValue
+        ? childrenValue.toArray()
+        : []
     const base = {
       id: y.get('id') as NodeId,
       name: (y.get('name') as string) ?? 'Layer',
       kind: y.get('kind') as NodeKind,
       parent: (y.get('parent') as NodeId | null) ?? null,
-      children: childrenArr ? childrenArr.toArray() : [],
+      children,
       // Ensure `z` exists on every read — older docs predate the
       // 3D-camera era and persisted Transform without `z`. Spread
       // defaults under the persisted shape so the field is always
@@ -395,6 +414,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       // mask feature. createNode writes false explicitly so newly-
       // created nodes are also non-masks until the user opts in.
       isMask: ((y.get('isMask') as boolean | undefined) ?? false),
+      componentSourceId:
+        (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
+      workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
     }
     const kind = base.kind
     switch (kind) {
@@ -418,7 +440,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           kind,
           size: (y.get('size') as Size) ?? DEFAULT_SIZE,
           ...(kind === 'image'
-            ? { src: (y.get('src') as string) ?? '', fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover' }
+            ? {
+                src: (y.get('src') as string) ?? '',
+                fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
+                importWarning: (y.get('importWarning') as string | undefined) ?? undefined,
+              }
             : {}),
         } as Node
       case 'video':
@@ -471,19 +497,44 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           kind,
           size: (y.get('size') as Size) ?? DEFAULT_SIZE,
           layout: normalizeLayout(y.get('layout')),
-          variants: (y.get('variants') as never[]) ?? [],
-          defaultSelection: (y.get('defaultSelection') as Record<string, string>) ?? {},
-          variantOverrides: (y.get('variantOverrides') as never[]) ?? [],
+          variants:
+            (y.get('variants') as import('@/scene/types').VariantAxis[]) ?? [],
+          defaultSelection:
+            (y.get('defaultSelection') as Record<string, string>) ?? {},
+          variantOverrides:
+            (y.get('variantOverrides') as import('@/scene/types').VariantOverride[]) ?? [],
+          variantPositions:
+            (y.get('variantPositions') as import('@/scene/types').ComponentNode['variantPositions']) ?? {},
+          componentProperties:
+            (y.get('componentProperties') as import('@/scene/types').ComponentPropertyDefinition[]) ?? [],
+          variantTransition:
+            (y.get('variantTransition') as import('@/scene/types').VariantTransition) ??
+            DEFAULT_VARIANT_TRANSITION,
+          timelines:
+            (y.get('timelines') as import('@/scene/types').ComponentNode['timelines']) ?? {},
+          interactions:
+            (y.get('interactions') as import('@/scene/types').Interaction[]) ?? [],
         } as Node
       case 'instance':
         return {
           ...base,
           kind,
+          size: (y.get('size') as Size) ?? DEFAULT_SIZE,
+          layout: normalizeLayout(y.get('layout')),
           componentId: y.get('componentId') as NodeId,
           selection: (y.get('selection') as Record<string, string>) ?? {},
           overrides: (y.get('overrides') as Record<NodeId, Record<string, unknown>>) ?? {},
+          interactions:
+            (y.get('interactions') as import('@/scene/types').Interaction[]) ?? [],
         } as Node
       case 'camera': {
+        const canvas =
+          (meta.get('canvas') as SceneMeta['canvas'] | undefined) ??
+          DEFAULT_META.canvas
+        const centerX = canvas.width / 2
+        const centerY = canvas.height / 2
+        const rawFocusX = y.get('focusX') as number | undefined
+        const rawFocusY = y.get('focusY') as number | undefined
         return {
           ...base,
           kind,
@@ -515,27 +566,23 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           farClip: (y.get('farClip') as number | undefined) ?? 100000,
           depthOfField: (y.get('depthOfField') as boolean | undefined) ?? false,
           focusMode:
-            (y.get('focusMode') as CameraNode['focusMode'] | undefined) ?? 'plane',
-          focusX:
-            (y.get('focusX') as number | undefined) ??
-            ((y.get('transform') as Transform | undefined)?.x ?? 0),
-          focusY:
-            (y.get('focusY') as number | undefined) ??
-            ((y.get('transform') as Transform | undefined)?.y ?? 0),
+            (y.get('focusMode') as CameraNode['focusMode'] | undefined) ?? 'screen',
+          focusX: rawFocusX ?? centerX,
+          focusY: rawFocusY ?? centerY,
           focusWorldX:
             (y.get('focusWorldX') as number | undefined) ??
-            ((y.get('focusX') as number | undefined) ??
-              ((y.get('transform') as Transform | undefined)?.x ?? 0)),
+            (rawFocusX ?? centerX),
           focusWorldY:
             (y.get('focusWorldY') as number | undefined) ??
-            ((y.get('focusY') as number | undefined) ??
-              ((y.get('transform') as Transform | undefined)?.y ?? 0)),
+            (rawFocusY ?? centerY),
           focusWorldZ:
             (y.get('focusWorldZ') as number | undefined) ??
             ((y.get('focusDistance') as number | undefined) ?? 0),
           focusTargetNodeId:
             (y.get('focusTargetNodeId') as NodeId | null | undefined) ?? null,
           focusDistance: (y.get('focusDistance') as number | undefined) ?? 0,
+          focusRadius: (y.get('focusRadius') as number | undefined) ?? 160,
+          focusFalloff: (y.get('focusFalloff') as number | undefined) ?? 180,
           aperture: (y.get('aperture') as number | undefined) ?? 0,
           iso: (y.get('iso') as number | undefined) ?? 100,
           blurLevel: (y.get('blurLevel') as number | undefined) ?? 1,
@@ -602,9 +649,16 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     getChildren: (id) => {
       const y = nodes.get(id)
       if (!y) return []
-      const arr = y.get('children') as Y.Array<NodeId> | undefined
-      if (!arr) return []
-      return arr.toArray()
+      const childrenValue = y.get('children') as
+        | Y.Array<NodeId>
+        | NodeId[]
+        | undefined
+      const childIds = Array.isArray(childrenValue)
+        ? childrenValue
+        : childrenValue
+          ? childrenValue.toArray()
+          : []
+      return childIds
         .map((cid) => nodes.get(cid))
         .filter((n): n is Y.Map<unknown> => !!n)
         .map(yNodeToNode)
@@ -655,6 +709,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? 'flow')
         // Mask flag — see NodeBase.isMask for semantics. Default false.
         y.set('isMask', (props as { isMask?: boolean })?.isMask ?? false)
+        y.set(
+          'componentSourceId',
+          (props as { componentSourceId?: NodeId | null })?.componentSourceId ?? null,
+        )
+        y.set('workspaceOnly', (props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
 
         // kind-specific defaults
         if (kind === 'frame' || kind === 'component') {
@@ -666,6 +725,15 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
               'layoutGuides',
               (props as Partial<FrameNode>)?.layoutGuides ?? [],
             )
+          } else {
+            const cp = props as Partial<import('@/scene/types').ComponentNode> | undefined
+            y.set('variants', cp?.variants ?? [])
+            y.set('defaultSelection', cp?.defaultSelection ?? {})
+            y.set('variantOverrides', cp?.variantOverrides ?? [])
+            y.set('componentProperties', cp?.componentProperties ?? [])
+            y.set('variantTransition', cp?.variantTransition ?? DEFAULT_VARIANT_TRANSITION)
+            y.set('timelines', cp?.timelines ?? {})
+            y.set('interactions', cp?.interactions ?? [])
           }
         }
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image') {
@@ -708,6 +776,16 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           const ip = props as Partial<ImageNode> | undefined
           y.set('src', ip?.src ?? '')
           y.set('fit', ip?.fit ?? 'cover')
+          if (ip?.importWarning) y.set('importWarning', ip.importWarning)
+        }
+        if (kind === 'instance') {
+          const ip = props as Partial<import('@/scene/types').InstanceNode> | undefined
+          y.set('size', ip?.size ?? DEFAULT_SIZE)
+          y.set('layout', ip?.layout ?? DEFAULT_LAYOUT)
+          y.set('componentId', ip?.componentId ?? '')
+          y.set('selection', ip?.selection ?? {})
+          y.set('overrides', ip?.overrides ?? {})
+          y.set('interactions', ip?.interactions ?? [])
         }
         if (kind === 'text') {
           // Text boxes default to hug/hug so a plain stamp ("click with
@@ -751,15 +829,22 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('pointOfInterestZ', cp?.pointOfInterestZ ?? (cp?.focusWorldZ ?? 0))
           y.set('nearClip', cp?.nearClip ?? 1)
           y.set('farClip', cp?.farClip ?? 100000)
+          const canvas =
+            (meta.get('canvas') as SceneMeta['canvas'] | undefined) ??
+            DEFAULT_META.canvas
+          const centerX = canvas.width / 2
+          const centerY = canvas.height / 2
           y.set('depthOfField', cp?.depthOfField ?? false)
-          y.set('focusMode', cp?.focusMode ?? 'plane')
-          y.set('focusX', cp?.focusX ?? (cp?.transform?.x ?? 0))
-          y.set('focusY', cp?.focusY ?? (cp?.transform?.y ?? 0))
-          y.set('focusWorldX', cp?.focusWorldX ?? (cp?.focusX ?? (cp?.transform?.x ?? 0)))
-          y.set('focusWorldY', cp?.focusWorldY ?? (cp?.focusY ?? (cp?.transform?.y ?? 0)))
+          y.set('focusMode', cp?.focusMode ?? 'screen')
+          y.set('focusX', cp?.focusX ?? centerX)
+          y.set('focusY', cp?.focusY ?? centerY)
+          y.set('focusWorldX', cp?.focusWorldX ?? (cp?.focusX ?? centerX))
+          y.set('focusWorldY', cp?.focusWorldY ?? (cp?.focusY ?? centerY))
           y.set('focusWorldZ', cp?.focusWorldZ ?? (cp?.focusDistance ?? 0))
           y.set('focusTargetNodeId', cp?.focusTargetNodeId ?? null)
           y.set('focusDistance', cp?.focusDistance ?? 0)
+          y.set('focusRadius', cp?.focusRadius ?? 160)
+          y.set('focusFalloff', cp?.focusFalloff ?? 180)
           y.set('aperture', cp?.aperture ?? 0)
           y.set('iso', cp?.iso ?? 100)
           y.set('blurLevel', cp?.blurLevel ?? 1)
@@ -774,7 +859,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           const p = ensureNode(parent)
           const arr = p.get('children') as Y.Array<NodeId>
           arr.push([id])
-        } else if (!scene.get('root') && kind !== 'camera') {
+        } else if (
+          !scene.get('root') &&
+          kind !== 'camera' &&
+          !((props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
+        ) {
           // First parentless non-camera node becomes the root. Cameras
           // are always parent=null but must never win root — the root
           // slot is reserved for the artboard Frame.
@@ -1043,6 +1132,30 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             scaleX: 1,
             scaleY: 1,
           } satisfies Transform)
+        })
+      }
+      const hasFocusPositionTrack = Array.from(tracks.values()).some((track) => {
+        if ((track.get('nodeId') as NodeId | undefined) !== existingId) return false
+        const propertyId = track.get('propertyId') as PropertyId | undefined
+        return propertyId === 'camera.focusX' || propertyId === 'camera.focusY'
+      })
+      const focusMode = camY.get('focusMode') as CameraNode['focusMode'] | undefined
+      const focusX = camY.get('focusX') as number | undefined
+      const focusY = camY.get('focusY') as number | undefined
+      const isOldPlaneOriginFocus =
+        !hasFocusPositionTrack &&
+        (focusMode === undefined || focusMode === 'plane' || focusMode === 'screen') &&
+        (focusX === undefined || focusX === 0) &&
+        (focusY === undefined || focusY === 0)
+      if (isOldPlaneOriginFocus) {
+        doc.transact(() => {
+          camY.set('focusMode', 'screen')
+          camY.set('focusX', targetX)
+          camY.set('focusY', targetY)
+          camY.set('focusWorldX', targetX)
+          camY.set('focusWorldY', targetY)
+          camY.set('focusWorldZ', camY.get('focusWorldZ') ?? 0)
+          camY.set('focusTargetNodeId', null)
         })
       }
     }

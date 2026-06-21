@@ -50,16 +50,19 @@ export const createSceneTool: Tool = {
     "tracks with keyframes), passes it here, and gets a .hype file the desktop app " +
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
     "SceneJson shape (top level): { meta?, root?, activeCameraId?, nodes, tracks?, sections? }\n" +
-    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'video'|'audio'|'camera', " +
+    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, ...kind-specific }\n" +
     "Auto-layout frames take layout: { mode: 'flex', direction: 'row'|'column', justify, align, gap, padding }\n" +
+    "Components can define variants, defaultSelection, variantOverrides, timelines, and interactions. " +
+    "Instances point at componentId and carry selection, overrides, and instance-local interaction additions. " +
+    "Component timelines are local tracks triggered by interactions, e.g. onClick -> playTimeline, and are scoped per instance.\n" +
     "Tracks: { id, nodeId, propertyId, keyframes: [{ id, time, value, easingOut? }], defaultEasing? }\n" +
     "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
-    "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, aperture, iso, blurLevel, " +
+    "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
     "blurQuality, and showFocusPlane.\n" +
     "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
     "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
-    "camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, camera.focusDistance, " +
+    "camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, camera.focusDistance, camera.focusRadius, camera.focusFalloff, " +
     "camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ, " +
     "camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip, " +
     "camera.aperture, camera.blurLevel, camera.blurQuality, " +

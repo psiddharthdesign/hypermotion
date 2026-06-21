@@ -15,8 +15,7 @@ import { useLayout } from '@/ui/hooks/useLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import {
-  SceneLayer,
-  CameraFocusBlurOverlay,
+  ScenePostProcessLayer,
   composeInheritedAnim,
   computeCameraDepthOfField,
   resolveCameraFocusTargetPoint,
@@ -287,9 +286,9 @@ function RenderCanvas({ job }: { job: RenderJob }) {
 
   const animated = useAnimatedValues(renderOrder)
   const inherited = useMemo(
-    () => composeInheritedAnim(api, rootId, animated),
+    () => composeInheritedAnim(api, rootId, animated, solved),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, rootId, animated, version],
+    [api, rootId, animated, solved, version],
   )
 
   // Camera composition — match the editor's behavior bit-for-bit.
@@ -344,6 +343,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
         solved ?? {},
         animated,
         inherited,
+        { width: canvasWidth, height: canvasHeight },
       )
       return computeCameraDepthOfField(
         camera && camera.kind === 'camera' ? camera : null,
@@ -434,19 +434,32 @@ function RenderCanvas({ job }: { job: RenderJob }) {
           // become truthy before starting. Defensive marker so a stalled
           // boot is visible during debugging.
           <span style={{ color: '#fff' }}>preparing layout…</span>
-        ) : (
-          <div
-            className="absolute inset-0"
-            style={
+        ) : camera && camera.kind === 'camera' ? (
+          <ScenePostProcessLayer
+            rootId={rootId}
+            solved={solved}
+            order={renderOrder}
+            animated={animated}
+            inherited={inherited}
+            cameraDepthOfField={cameraDepthOfField}
+            sceneFill={sceneFill}
+            canvasWidth={canvasWidth}
+            canvasHeight={canvasHeight}
+            sceneCorner={sceneCorner}
+            includeSceneFill
+            sceneContentStyle={
               cameraTransform
                 ? {
                     transform: cameraTransform,
                     transformOrigin: '0 0',
                     transformStyle: 'preserve-3d',
+                    backfaceVisibility: 'visible',
                   }
                 : undefined
             }
-          >
+          />
+        ) : (
+          <>
             {sceneFill ? (
               <div
                 className="pointer-events-none absolute"
@@ -460,17 +473,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
                 }}
               />
             ) : null}
-            <SceneLayer
-              rootId={rootId}
-              solved={solved}
-              order={renderOrder}
-              animated={animated}
-              inherited={inherited}
-              cameraDepthOfField={cameraDepthOfField}
-              // No-op — render window has no selection to drive.
-              onNodeClick={() => {}}
-            />
-            <CameraFocusBlurOverlay
+            <ScenePostProcessLayer
               rootId={rootId}
               solved={solved}
               order={renderOrder}
@@ -482,7 +485,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               canvasHeight={canvasHeight}
               sceneCorner={sceneCorner}
             />
-          </div>
+          </>
         )}
       </div>
     </div>
@@ -617,6 +620,15 @@ async function runExportLoop(
               e instanceof Error ? e.message : String(e)
             }`,
           )
+        }
+        const focusEffect = resolveRenderWindowFocusEffect(
+          api,
+          engine.getSnapshot(),
+          sceneCanvas,
+          { width: canvasEl.width, height: canvasEl.height },
+        )
+        if (focusEffect) {
+          canvasEl = applyCanvasFocusBlur(canvasEl, focusEffect)
         }
 
         if (!encoder) {
@@ -768,6 +780,160 @@ function mimeForFormat(format: 'mp4' | 'webm' | 'gif'): string {
     case 'gif':
       return 'image/gif'
   }
+}
+
+interface ExportFocusEffect {
+  focusX: number
+  focusY: number
+  radius: number
+  feather: number
+  blurPx: number
+}
+
+function resolveRenderWindowFocusEffect(
+  api: ReturnType<typeof useSceneAPI>,
+  animated: ReturnType<ReturnType<typeof getAnimEngine>['getSnapshot']>,
+  sceneCanvas: { width: number; height: number },
+  outputCanvas: { width: number; height: number },
+): ExportFocusEffect | null {
+  const cameraId = api.getActiveCameraId()
+  const camera = cameraId ? api.getNode(cameraId) : null
+  if (!camera || camera.kind !== 'camera' || !camera.depthOfField) return null
+  const cameraAnim = animated[cameraId]
+  const cameraFocalLength = Math.max(50, camera.focalLength ?? 1000)
+  const cameraZ = cameraAnim?.z ?? camera.transform.z
+  const cameraDollyZ = cameraZ / 100
+  const cameraScale =
+    cameraFocalLength / Math.max(1, cameraFocalLength - cameraDollyZ)
+  const dof = computeCameraDepthOfField(
+    camera,
+    cameraAnim,
+    cameraScale,
+    sceneCanvas.width,
+    sceneCanvas.height,
+    null,
+  )
+  if (!dof || !dof.enabled || dof.blurPx <= 0.05) {
+    return null
+  }
+  const scaleX = outputCanvas.width / sceneCanvas.width
+  const scaleY = outputCanvas.height / sceneCanvas.height
+  const scale = (scaleX + scaleY) / 2
+  return {
+    focusX: dof.focusX * scaleX,
+    focusY: dof.focusY * scaleY,
+    radius: Math.max(1, dof.focusRadius * scale),
+    feather: Math.max(1, dof.featherPx * scale),
+    blurPx: Math.max(0, dof.blurPx * scale),
+  }
+}
+
+function applyCanvasFocusBlur(
+  source: HTMLCanvasElement,
+  focus: ExportFocusEffect,
+): HTMLCanvasElement {
+  const width = source.width
+  const height = source.height
+  const blur = Math.max(0, Math.min(128, focus.blurPx))
+  if (width <= 0 || height <= 0 || blur <= 0.05) return source
+
+  const blurred = document.createElement('canvas')
+  blurred.width = width
+  blurred.height = height
+  const blurredCtx = blurred.getContext('2d', { alpha: false })
+  if (!blurredCtx) return source
+
+  // Blur needs pixels outside the frame. If we blur the exact-size canvas,
+  // Chromium samples transparent/black beyond the edges, which creates a
+  // dark vignette at high blur values. Build a padded edge-clamped copy
+  // first, blur that, then crop the original frame region back out.
+  const pad = Math.max(8, Math.ceil(blur * 3))
+  const padded = document.createElement('canvas')
+  padded.width = width + pad * 2
+  padded.height = height + pad * 2
+  const paddedCtx = padded.getContext('2d', { alpha: false })
+  if (!paddedCtx) return source
+  paddedCtx.drawImage(source, pad, pad, width, height)
+  paddedCtx.drawImage(source, 0, 0, width, 1, pad, 0, width, pad)
+  paddedCtx.drawImage(
+    source,
+    0,
+    height - 1,
+    width,
+    1,
+    pad,
+    pad + height,
+    width,
+    pad,
+  )
+  paddedCtx.drawImage(source, 0, 0, 1, height, 0, pad, pad, height)
+  paddedCtx.drawImage(
+    source,
+    width - 1,
+    0,
+    1,
+    height,
+    pad + width,
+    pad,
+    pad,
+    height,
+  )
+  paddedCtx.drawImage(source, 0, 0, 1, 1, 0, 0, pad, pad)
+  paddedCtx.drawImage(source, width - 1, 0, 1, 1, pad + width, 0, pad, pad)
+  paddedCtx.drawImage(source, 0, height - 1, 1, 1, 0, pad + height, pad, pad)
+  paddedCtx.drawImage(
+    source,
+    width - 1,
+    height - 1,
+    1,
+    1,
+    pad + width,
+    pad + height,
+    pad,
+    pad,
+  )
+
+  const paddedBlur = document.createElement('canvas')
+  paddedBlur.width = padded.width
+  paddedBlur.height = padded.height
+  const paddedBlurCtx = paddedBlur.getContext('2d', { alpha: false })
+  if (!paddedBlurCtx) return source
+  paddedBlurCtx.filter = `blur(${Number(blur.toFixed(2))}px)`
+  paddedBlurCtx.drawImage(padded, 0, 0)
+  blurredCtx.drawImage(paddedBlur, pad, pad, width, height, 0, 0, width, height)
+
+  const sharp = document.createElement('canvas')
+  sharp.width = width
+  sharp.height = height
+  const sharpCtx = sharp.getContext('2d')
+  if (!sharpCtx) return source
+  sharpCtx.drawImage(source, 0, 0, width, height)
+  sharpCtx.globalCompositeOperation = 'destination-in'
+  const radius = Math.max(1, focus.radius)
+  const feather = Math.max(1, focus.feather)
+  const gradient = sharpCtx.createRadialGradient(
+    focus.focusX,
+    focus.focusY,
+    radius,
+    focus.focusX,
+    focus.focusY,
+    radius + feather,
+  )
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 1)')
+  gradient.addColorStop(0.35, 'rgba(0, 0, 0, 0.85)')
+  gradient.addColorStop(0.72, 'rgba(0, 0, 0, 0.38)')
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
+  sharpCtx.fillStyle = gradient
+  sharpCtx.fillRect(0, 0, width, height)
+
+  const output = document.createElement('canvas')
+  output.width = width
+  output.height = height
+  const outputCtx = output.getContext('2d', { alpha: false })
+  if (!outputCtx) return source
+  outputCtx.drawImage(blurred, 0, 0)
+  outputCtx.drawImage(sharp, 0, 0)
+  return output
 }
 
 function waitForFrames(n: number): Promise<void> {

@@ -139,6 +139,7 @@ export function TopBar() {
         <span className="mx-1 h-4 w-px bg-border" />
 
         <ThemeToggle />
+        <PreviewButton />
         <PanelTogglePopover panels={panels} togglePanel={togglePanel} />
 
         <span className="mx-1 h-4 w-px bg-border" />
@@ -408,6 +409,30 @@ function ThemeToggle() {
   )
 }
 
+function PreviewButton() {
+  const openPreview = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('preview', '1')
+    url.searchParams.delete('render-window')
+    url.searchParams.delete('requestId')
+    window.history.pushState(null, '', url.toString())
+    window.dispatchEvent(new Event('popstate'))
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={openPreview}
+      title="Preview (Cmd P)"
+      aria-label="Preview (Cmd P)"
+      className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
+    >
+      <PlayIcon />
+      <span>Preview</span>
+    </button>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Icon glyphs. 16×16 base, currentColor stroke, hand-drawn so they fit
 // the rest of the app's icon language. Mode tabs use slightly smaller
@@ -481,6 +506,14 @@ function SystemIcon() {
     <svg {...svgProps()}>
       <rect x="2" y="3" width="12" height="9" rx="1" />
       <path d="M5.5 14.5h5M8 12.5v2" />
+    </svg>
+  )
+}
+
+function PlayIcon() {
+  return (
+    <svg {...svgProps(14)} fill="currentColor" stroke="none">
+      <path d="M5 3.25v7.5c0 .45.5.72.88.48l5.75-3.75a.56.56 0 000-.96L5.88 2.77A.57.57 0 005 3.25z" />
     </svg>
   )
 }

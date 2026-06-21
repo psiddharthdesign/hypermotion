@@ -11,7 +11,11 @@ import type {
   PropertyId,
 } from '@/scene'
 import { useUI, type Tool } from '@/state/ui'
-import { wrapInAutoLayout } from '@/ui/actions'
+import {
+  createComponentFromSelection,
+  instantiateComponent,
+  wrapInAutoLayout,
+} from '@/ui/actions'
 import { addKeyframe, removeTrack } from '@/anim'
 
 /**
@@ -173,6 +177,17 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // Create component — Cmd/Ctrl + Alt/Opt + K.
+      // Converts the selection into a master component and keeps it
+      // selected so the next Cmd+C / Cmd+V can instantiate it.
+      if (meta && e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        const sel = useUI.getState().selection
+        const componentId = createComponentFromSelection(api, sel)
+        if (componentId) setSelection([componentId])
+        return
+      }
+
       // Copy — serialize each selected subtree into our module-scoped
       // clipboard. Skip when no selection so Cmd+C inside a focused
       // input still works for ordinary text copy (events from text
@@ -224,9 +239,15 @@ export function useKeyboardShortcuts() {
       //     you have a frame selected and hit Cmd+V).
       //   - Otherwise the scene root (paste at the top level).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
-        e.preventDefault()
-        if (pasteKeyframesAtPlayhead(api)) return
+        if (pasteKeyframesAtPlayhead(api)) {
+          e.preventDefault()
+          return
+        }
+        // If Hyper Motion's in-app clipboard is empty, do not consume
+        // Cmd+V. Let the browser/Electron paste event fire so external
+        // payloads from the Figma plugin can be read by useFigmaPaste().
         if (clipboard.length === 0) return
+        e.preventDefault()
         const sel = useUI.getState().selection
         const root = api.getRoot()
         let targetParent: NodeId | null = root || null
@@ -237,7 +258,7 @@ export function useKeyboardShortcuts() {
           }
         }
         const newIds = clipboard
-          .map((item) => pasteSubtree(api, item, targetParent))
+          .map((item) => pasteClipboardItem(api, item, targetParent))
           .filter((id): id is NodeId => id !== null)
         if (newIds.length > 0) setSelection(newIds)
         return
@@ -508,7 +529,10 @@ export function useKeyboardShortcuts() {
         }
         for (const id of ui.selection) {
           const n = api.getNode(id)
-          if (n && n.parent) api.deleteNode(id) // never delete root via keyboard
+          if (!n) continue
+          if (id === api.getRoot()) continue // never delete the scene root
+          if (n.kind === 'camera') continue
+          if (n.parent || n.workspaceOnly) api.deleteNode(id)
         }
         clearSelection()
         return
@@ -579,6 +603,7 @@ function duplicateNode(
   const original = api.getNode(id)
   if (!original || !original.parent) return null
   if (original.kind === 'camera') return null
+  if (original.kind === 'component') return instantiateComponent(api, original.id)
 
   const cloneSubtree = (src: SceneNode, parent: NodeId): NodeId => {
     const newId = api.createNode(src.kind, parent, {
@@ -671,6 +696,8 @@ interface ClipboardNode {
     defaultEasing: unknown
     keyframes: unknown[]
   }>
+  /** When set, paste creates a linked instance instead of a detached clone. */
+  componentId?: NodeId
 }
 
 let clipboard: ClipboardNode[] = []
@@ -710,7 +737,19 @@ function serializeSubtree(
     kind: node.kind,
     children,
     tracks,
+    ...(node.kind === 'component' ? { componentId: node.id } : {}),
   }
+}
+
+function pasteClipboardItem(
+  api: ReturnType<typeof useSceneAPI>,
+  item: ClipboardNode,
+  parentId: NodeId | null,
+): NodeId | null {
+  if (item.componentId) {
+    return instantiateComponent(api, item.componentId, parentId)
+  }
+  return pasteSubtree(api, item, parentId)
 }
 
 /**

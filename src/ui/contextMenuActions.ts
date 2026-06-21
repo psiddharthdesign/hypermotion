@@ -4,7 +4,13 @@ import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import type { ContextMenuItem } from '@/state/ui'
 import { useUI } from '@/state/ui'
-import { ungroupFrame, wrapInAutoLayout, wrapInGrid } from '@/ui/actions'
+import {
+  createComponentFromSelection,
+  instantiateComponent,
+  ungroupFrame,
+  wrapInAutoLayout,
+  wrapInGrid,
+} from '@/ui/actions'
 
 /**
  * Build the right-click context menu for the given selection.
@@ -117,6 +123,30 @@ export function buildNodeContextMenu(
     items.push({ kind: 'separator' })
   }
 
+  items.push({
+    label: 'Create component',
+    shortcut: '⌥⌘K',
+    disabled: allRoots,
+    onClick: () => {
+      const componentId = createComponentFromSelection(api, ids)
+      if (componentId) useUI.getState().setSelection([componentId])
+    },
+  })
+
+  const singleComponent =
+    ids.length === 1 && nodes[0]?.kind === 'component' ? nodes[0] : null
+  if (singleComponent) {
+    items.push({
+      label: 'Create instance',
+      onClick: () => {
+        const instanceId = instantiateComponent(api, singleComponent.id)
+        if (instanceId) useUI.getState().setSelection([instanceId])
+      },
+    })
+  }
+
+  items.push({ kind: 'separator' })
+
   // Rename — opens the multi-select rename dialog. Available for any
   // selection (1+); single-layer rename via the dialog is still useful
   // because the dialog lets users insert ascending numbers and run a
@@ -167,6 +197,7 @@ export function buildNodeContextMenu(
 function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
   const original = api.getNode(id)
   if (!original || !original.parent) return null
+  if (original.kind === 'component') return instantiateComponent(api, original.id)
 
   const cloneSubtree = (srcId: NodeId, parent: NodeId): NodeId => {
     const src = api.getNode(srcId)

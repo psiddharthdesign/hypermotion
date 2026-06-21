@@ -25,16 +25,18 @@ export function SelectionOverlay({
   animated,
   inherited,
   zoom,
+  rootId: rootIdOverride,
 }: {
   solved: SolvedLayout
   animated: Record<NodeId, AnimatedValue>
   inherited: Record<NodeId, InheritedAnim>
   zoom: number
+  rootId?: NodeId | null
 }) {
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
-  const rootId = api.getRoot()
+  const rootId = rootIdOverride ?? api.getRoot()
 
   if (selection.length === 0) return null
 
@@ -72,6 +74,9 @@ export function SelectionOverlay({
         const ownRot = anim?.rotation ?? node.transform.rotation
         const ownSX = anim?.scaleX ?? node.transform.scaleX
         const ownSY = anim?.scaleY ?? node.transform.scaleY
+        const anchorX = isRoot ? 0.5 : anim?.anchorX ?? node.transform.anchorX ?? 0.5
+        const anchorY = isRoot ? 0.5 : anim?.anchorY ?? node.transform.anchorY ?? 0.5
+        const anchorZ = isRoot ? 0 : anim?.anchorZ ?? node.transform.anchorZ ?? 0
         const tx = isRoot ? 0 : ownX + (inh?.x ?? 0)
         const ty = isRoot ? 0 : ownY + (inh?.y ?? 0)
         const rotation = isRoot ? 0 : ownRot + (inh?.rotation ?? 0)
@@ -85,6 +90,14 @@ export function SelectionOverlay({
         const transform = parts.length > 0 ? parts.join(' ') : undefined
 
         const isSingle = singleSelection === id
+        const isComponentNode =
+          node.kind === 'component' || node.kind === 'instance'
+        const outlineColor = isComponentNode
+          ? 'oklch(0.64 0.24 300)'
+          : 'var(--color-accent)'
+        const outlineSoft = isComponentNode
+          ? 'oklch(0.64 0.24 300 / 0.18)'
+          : 'var(--color-accent-soft)'
 
         return (
           <div
@@ -99,12 +112,12 @@ export function SelectionOverlay({
               width: rect.width,
               height: rect.height,
               transform,
-              transformOrigin: 'center center',
-              outline: `${strokeWidth}px solid var(--color-accent)`,
+              transformOrigin: `${Number((anchorX * 100).toFixed(3))}% ${Number((anchorY * 100).toFixed(3))}% ${Number(anchorZ.toFixed(3))}px`,
+              outline: `${strokeWidth}px solid ${outlineColor}`,
               outlineOffset: `${0.5 / Math.max(zoom, 0.001)}px`,
               // Subtle corner ticks make the selection read at a glance
               // even on tiny nodes at high zoom. 6px at 1x, scaled.
-              boxShadow: `0 0 0 ${strokeWidth / 3}px var(--color-accent-soft) inset`,
+              boxShadow: `0 0 0 ${strokeWidth / 3}px ${outlineSoft} inset`,
             }}
           >
             {isSingle && showHandles ? (

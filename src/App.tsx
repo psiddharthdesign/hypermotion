@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { TopBar } from '@/ui/TopBar'
 import { LayersPanel } from '@/ui/LayersPanel'
 import { Canvas } from '@/ui/Canvas'
+import { ComponentEditor } from '@/ui/ComponentEditor'
 import { Inspector } from '@/ui/Inspector'
 import { Timeline } from '@/ui/Timeline'
 import { ContextMenu } from '@/ui/ContextMenu'
@@ -17,13 +24,16 @@ import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useFigmaPaste } from '@/ui/hooks/useFigmaPaste'
 import { useFileMenu } from '@/ui/hooks/useFileMenu'
+import { getAnimEngine } from '@/anim'
 import {
   centerCameraOnCanvas,
   migrateCameraScaleToZ,
   normalizeRoot,
   pruneCameraScaleYTracks,
   recenterStaleCamera,
+  syncComponentInstances,
 } from '@/ui/actions'
+import type { NodeId } from '@/scene'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { useCustomFonts } from '@/ui/fonts/useCustomFonts'
 import { useExportProgress } from '@/export/progressStore'
@@ -51,10 +61,42 @@ import { useExportProgress } from '@/export/progressStore'
  * a single place — easier to reason about than scattering listeners.
  */
 export default function App() {
+  const [isPreview, setIsPreview] = useState(
+    () => new URLSearchParams(window.location.search).get('preview') === '1',
+  )
+
+  useEffect(() => {
+    const syncRoute = () => {
+      setIsPreview(
+        new URLSearchParams(window.location.search).get('preview') === '1',
+      )
+    }
+    window.addEventListener('popstate', syncRoute)
+    return () => window.removeEventListener('popstate', syncRoute)
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'p') {
+        return
+      }
+      event.preventDefault()
+      const url = new URL(window.location.href)
+      if (isPreview) url.searchParams.delete('preview')
+      else url.searchParams.set('preview', '1')
+      url.searchParams.delete('render-window')
+      url.searchParams.delete('requestId')
+      window.history.pushState(null, '', url.toString())
+      window.dispatchEvent(new Event('popstate'))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isPreview])
+
   return (
     <ErrorBoundary>
       <SceneProvider fallback={<BootSplash />}>
-        <Shell />
+        {isPreview ? <PreviewShell /> : <Shell />}
       </SceneProvider>
     </ErrorBoundary>
   )
@@ -64,6 +106,7 @@ function Shell() {
   const showLayers = useUI((s) => s.panels.layers)
   const showInspector = useUI((s) => s.panels.inspector)
   const showTimeline = useUI((s) => s.panels.timeline)
+  const componentEditId = useUI((s) => s.componentEditId)
   const api = useSceneAPI()
   const exportPhase = useExportProgress((s) => s.phase)
 
@@ -143,8 +186,9 @@ function Shell() {
   // the previous one. We diff against a previous-size ref so the
   // effect only writes when the size actually changed; this keeps
   // unrelated scene mutations from spamming setNodeProperty.
-  useSceneVersion()
+  const sceneVersion = useSceneVersion()
   const prevCanvasRef = useRef<{ w: number; h: number } | null>(null)
+  const componentSignatureRef = useRef<Record<NodeId, string>>({})
   useEffect(() => {
     const meta = api.getMeta()
     const w = meta.canvas?.width ?? 0
@@ -161,21 +205,427 @@ function Shell() {
     }
   })
 
+  // Keep materialized component instances in sync with their master.
+  // This is deliberately signature-gated: syncing writes to the scene,
+  // which bumps the version, so we only sync when the master's own
+  // subtree actually changed.
+  useEffect(() => {
+    const nextSignatures: Record<NodeId, string> = {}
+    for (const id of api.getAllNodeIds()) {
+      const node = api.getNode(id)
+      if (!node || node.kind !== 'component') continue
+      const signature = componentSignature(api, id)
+      nextSignatures[id] = signature
+      if (componentSignatureRef.current[id] === undefined) continue
+      if (componentSignatureRef.current[id] !== signature) {
+        api.doc.transact(() => {
+          syncComponentInstances(api, id)
+        }, 'component-sync')
+      }
+    }
+    componentSignatureRef.current = nextSignatures
+  }, [api, sceneVersion])
+
   return (
     <div className="flex h-full w-full flex-col bg-app-bg text-text">
       <TopBar />
       <div className="flex min-h-0 flex-1">
         {showLayers && <LayersPanel />}
-        <Canvas />
+        {componentEditId ? <ComponentEditor /> : <Canvas />}
         {showInspector && <Inspector />}
       </div>
-      {showTimeline && <Timeline />}
+      {showTimeline && !componentEditId && <Timeline />}
       <ContextMenu />
       <RenameDialog />
       <ExportRecordingIndicator />
       <UpdateNotice />
     </div>
   )
+}
+
+function PreviewShell() {
+  const api = useSceneAPI()
+  const setPlaying = useUI((s) => s.setPlaying)
+  const setPlayhead = useUI((s) => s.setPlayhead)
+  const setView = useUI((s) => s.setView)
+  const clearSelection = useUI((s) => s.clearSelection)
+  const currentFilePath = useUI((s) => s.currentFilePath)
+  const playing = useUI((s) => s.playing)
+  const playhead = useUI((s) => s.playhead)
+  const setIsolatedRange = useUI((s) => s.setIsolatedRange)
+  const trackRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<PreviewDragState | null>(null)
+  const [workArea, setWorkArea] = useState<PreviewWorkArea>(() => ({
+    start: 0,
+    end: 1,
+  }))
+  useSceneVersion()
+  const meta = api.getMeta()
+  const duration = Math.max(0.1, meta.duration)
+  const frameStep = 1 / Math.max(1, meta.frameRate)
+  const minWorkArea = Math.max(frameStep, 0.05)
+  const normalizedWorkArea = normalizePreviewWorkArea(
+    workArea,
+    duration,
+    minWorkArea,
+  )
+
+  const displayName = (() => {
+    if (currentFilePath) {
+      const base = currentFilePath.replace(/^.*[\\/]/, '')
+      return base.replace(/\.hype$/i, '')
+    }
+    return api.getMeta().name || 'Untitled'
+  })()
+
+  const closePreview = useCallback(() => {
+    setPlaying(false)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('preview')
+    window.history.pushState(null, '', url.toString())
+    window.dispatchEvent(new Event('popstate'))
+  }, [setPlaying])
+
+  useAnim()
+  useEagerLoadSceneFonts()
+  useCustomFonts()
+
+  useEffect(() => {
+    document.body.setAttribute('data-preview-mode', '1')
+    setIsolatedRange(null)
+    const fitPreview = () => {
+      const canvas = api.getMeta().canvas ?? { width: 960, height: 540 }
+      const paddingX = 48
+      const paddingY = 136
+      const zoom = Math.min(
+        2,
+        Math.max(
+          0.05,
+          Math.min(
+            (window.innerWidth - paddingX) / canvas.width,
+            (window.innerHeight - paddingY) / canvas.height,
+          ),
+        ),
+      )
+      setView({ panX: 0, panY: 0, zoom })
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setPlaying(false)
+      closePreview()
+    }
+
+    clearSelection()
+    setPlayhead(0)
+    setPlaying(true)
+    fitPreview()
+    window.addEventListener('resize', fitPreview)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      setPlaying(false)
+      document.body.removeAttribute('data-preview-mode')
+      window.removeEventListener('resize', fitPreview)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [
+    api,
+    clearSelection,
+    closePreview,
+    setIsolatedRange,
+    setPlayhead,
+    setPlaying,
+    setView,
+  ])
+
+  const seekPreview = (next: number) => {
+    const clamped = clamp(next, 0, duration)
+    setPlaying(false)
+    setPlayhead(clamped)
+  }
+
+  const togglePlayback = () => {
+    if (
+      !playing &&
+      (playhead < normalizedWorkArea.start ||
+        playhead >= normalizedWorkArea.end - 0.001)
+    ) {
+      setPlayhead(normalizedWorkArea.start)
+    }
+    setPlaying(!playing)
+  }
+
+  useEffect(() => {
+    setWorkArea((range) => normalizePreviewWorkArea(range, duration, minWorkArea))
+  }, [duration, minWorkArea])
+
+  useEffect(() => {
+    getAnimEngine().setLoopRange(normalizedWorkArea)
+    return () => getAnimEngine().setLoopRange(null)
+  }, [normalizedWorkArea.start, normalizedWorkArea.end])
+
+  useEffect(() => {
+    if (
+      playhead < normalizedWorkArea.start ||
+      playhead > normalizedWorkArea.end
+    ) {
+      setPlayhead(normalizedWorkArea.start)
+    }
+  }, [normalizedWorkArea.start, normalizedWorkArea.end, playhead, setPlayhead])
+
+  const timeFromPreviewPointer = (clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0) return 0
+    return clamp(((clientX - rect.left) / rect.width) * duration, 0, duration)
+  }
+
+  const updateWorkAreaDrag = (clientX: number) => {
+    const drag = dragRef.current
+    if (!drag) return
+    const t = timeFromPreviewPointer(clientX)
+    if (drag.mode === 'scrub') {
+      setPlayhead(t)
+      return
+    }
+    if (drag.mode === 'start') {
+      const nextStart = clamp(
+        t,
+        0,
+        normalizedWorkArea.end - minWorkArea,
+      )
+      setWorkArea({ start: nextStart, end: normalizedWorkArea.end })
+      setPlayhead(nextStart)
+      return
+    }
+    if (drag.mode === 'end') {
+      const nextEnd = clamp(
+        t,
+        normalizedWorkArea.start + minWorkArea,
+        duration,
+      )
+      setWorkArea({ start: normalizedWorkArea.start, end: nextEnd })
+      setPlayhead(Math.min(playhead, nextEnd))
+      return
+    }
+    const delta = t - drag.anchorTime
+    const span = drag.startArea.end - drag.startArea.start
+    const nextStart = clamp(drag.startArea.start + delta, 0, duration - span)
+    setWorkArea({ start: nextStart, end: nextStart + span })
+    setPlayhead(clamp(drag.startPlayhead + delta, nextStart, nextStart + span))
+  }
+
+  const beginPreviewDrag = (
+    event: ReactPointerEvent,
+    mode: PreviewDragState['mode'],
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setPlaying(false)
+    const anchorTime = timeFromPreviewPointer(event.clientX)
+    dragRef.current = {
+      mode,
+      anchorTime,
+      startArea: normalizedWorkArea,
+      startPlayhead: playhead,
+    }
+    if (mode === 'scrub') setPlayhead(anchorTime)
+    trackRef.current?.setPointerCapture(event.pointerId)
+  }
+
+  const continuePreviewDrag = (event: ReactPointerEvent) => {
+    if (!dragRef.current) return
+    event.preventDefault()
+    updateWorkAreaDrag(event.clientX)
+  }
+
+  const endPreviewDrag = (event: ReactPointerEvent) => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    if (trackRef.current?.hasPointerCapture(event.pointerId)) {
+      trackRef.current.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const restartPreview = () => {
+    seekPreview(normalizedWorkArea.start)
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col bg-black text-text">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-white/10 bg-black px-3 text-white">
+        <button
+          type="button"
+          onClick={closePreview}
+          className="flex h-7 items-center rounded-md px-3 text-[12px] text-white/55 hover:bg-white/10 hover:text-white"
+          title="Return to editor"
+        >
+          {displayName}
+        </button>
+        <span className="text-white/25">/</span>
+        <button
+          type="button"
+          className="flex h-7 items-center gap-2 rounded-md bg-white/12 px-3 text-[12px] font-medium text-white"
+          title="Preview tab"
+        >
+          <span>Preview</span>
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={closePreview}
+          className="flex h-7 items-center rounded-md px-3 text-[12px] text-white/55 hover:bg-white/10 hover:text-white"
+          title="Close preview (Esc)"
+        >
+          Esc
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1">
+        <Canvas />
+      </div>
+      <div className="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black px-4 text-white">
+        <button
+          type="button"
+          onClick={restartPreview}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white"
+          title="Restart preview"
+        >
+          <PreviewStartIcon />
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayback}
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-black hover:brightness-90"
+          title={playing ? 'Pause preview' : 'Play preview'}
+        >
+          {playing ? <PreviewPauseIcon /> : <PreviewPlayIcon />}
+        </button>
+        <span className="w-14 text-right font-mono text-[11px] tabular-nums text-white/70">
+          {formatPreviewTime(Math.min(playhead, duration))}
+        </span>
+        <div
+          ref={trackRef}
+          className="relative h-9 flex-1 cursor-pointer rounded-md bg-white/18"
+          onPointerDown={(event) => beginPreviewDrag(event, 'scrub')}
+          onPointerMove={continuePreviewDrag}
+          onPointerUp={endPreviewDrag}
+          onPointerCancel={endPreviewDrag}
+          title="Click to scrub. Drag the yellow work area to loop a range."
+        >
+          <div
+            className="absolute bottom-0 top-0 border-x border-white/10 bg-white/10"
+            style={{
+              left: `${(Math.min(playhead, duration) / duration) * 100}%`,
+              width: 1,
+            }}
+          />
+          <div
+            className="absolute top-1 bottom-1 rounded border-2 border-[oklch(0.84_0.18_85)] bg-[oklch(0.84_0.18_85)]/14 shadow-[0_0_0_1px_rgba(0,0,0,0.2)]"
+            style={{
+              left: `${(normalizedWorkArea.start / duration) * 100}%`,
+              width: `${
+                ((normalizedWorkArea.end - normalizedWorkArea.start) /
+                  duration) *
+                100
+              }%`,
+            }}
+            onPointerDown={(event) => beginPreviewDrag(event, 'move')}
+          >
+            <div
+              className="absolute -left-1 top-0 bottom-0 w-3 cursor-ew-resize rounded-l bg-[oklch(0.84_0.18_85)]"
+              onPointerDown={(event) => beginPreviewDrag(event, 'start')}
+            />
+            <div
+              className="absolute -right-1 top-0 bottom-0 w-3 cursor-ew-resize rounded-r bg-[oklch(0.84_0.18_85)]"
+              onPointerDown={(event) => beginPreviewDrag(event, 'end')}
+            />
+          </div>
+        </div>
+        <span className="w-14 font-mono text-[11px] tabular-nums text-white/45">
+          {formatPreviewTime(duration)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n))
+}
+
+interface PreviewWorkArea {
+  start: number
+  end: number
+}
+
+interface PreviewDragState {
+  mode: 'scrub' | 'start' | 'end' | 'move'
+  anchorTime: number
+  startArea: PreviewWorkArea
+  startPlayhead: number
+}
+
+function normalizePreviewWorkArea(
+  range: PreviewWorkArea,
+  duration: number,
+  minSpan: number,
+): PreviewWorkArea {
+  const safeDuration = Math.max(0.1, duration)
+  const safeMinSpan = Math.min(Math.max(0.001, minSpan), safeDuration)
+  const start = clamp(range.start, 0, Math.max(0, safeDuration - safeMinSpan))
+  const end = clamp(range.end, start + safeMinSpan, safeDuration)
+  return { start, end }
+}
+
+function formatPreviewTime(seconds: number): string {
+  const safe = Math.max(0, seconds)
+  const whole = Math.floor(safe)
+  const tenths = Math.floor((safe - whole) * 10)
+  const minutes = Math.floor(whole / 60)
+  const secs = whole % 60
+  return `${minutes}:${String(secs).padStart(2, '0')}.${tenths}`
+}
+
+function PreviewStartIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M4 3v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M12 4.2 6.5 8l5.5 3.8V4.2Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function PreviewPlayIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M5.5 3.5v9L12 8 5.5 3.5Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function PreviewPauseIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M5 3.5v9M11 3.5v9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function componentSignature(api: ReturnType<typeof useSceneAPI>, id: NodeId): string {
+  const visit = (nodeId: NodeId): unknown => {
+    const node = api.getNode(nodeId)
+    if (!node) return null
+    const { id: _id, parent: _parent, children: _children, ...rest } =
+      node as unknown as Record<string, unknown>
+    void _id
+    void _parent
+    void _children
+    return {
+      ...rest,
+      tracks: api.getTracksForNode(nodeId),
+      children: api.getChildren(nodeId).map((child) => visit(child.id)),
+    }
+  }
+  return JSON.stringify(visit(id))
 }
 
 function BootSplash() {

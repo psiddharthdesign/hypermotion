@@ -25,8 +25,8 @@ const DATA_URL_SOFT_CEILING_MB = 25
 export async function importVideoFile(
   file: File,
   api: SceneAPI,
-  parent: NodeId,
-  opts?: { dropPos?: { x: number; y: number } },
+  parent: NodeId | null,
+  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
   const dataUrl = await readFileAsDataUrl(file)
   const { width: natW, height: natH, duration } = await decodeVideoMeta(dataUrl)
@@ -72,6 +72,7 @@ export async function importVideoFile(
     startTime: 0,
     trimStart: 0,
     loop: false,
+    workspaceOnly: opts?.workspaceOnly ?? false,
   } as Parameters<SceneAPI['createNode']>[2])
 
   return id
@@ -80,8 +81,8 @@ export async function importVideoFile(
 export async function importAudioFile(
   file: File,
   api: SceneAPI,
-  parent: NodeId,
-  opts?: { dropPos?: { x: number; y: number } },
+  parent: NodeId | null,
+  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
   const dataUrl = await readFileAsDataUrl(file)
   const { duration } = await decodeAudioMeta(dataUrl)
@@ -119,6 +120,7 @@ export async function importAudioFile(
     startTime: 0,
     trimStart: 0,
     loop: false,
+    workspaceOnly: opts?.workspaceOnly ?? false,
   } as Parameters<SceneAPI['createNode']>[2])
 
   return id
@@ -132,8 +134,8 @@ export async function importAudioFile(
 export async function importMediaFiles(
   files: FileList | File[],
   api: SceneAPI,
-  parent: NodeId,
-  opts?: { dropPos?: { x: number; y: number } },
+  parent: NodeId | null,
+  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId[]> {
   const ids: NodeId[] = []
   for (const file of Array.from(files)) {

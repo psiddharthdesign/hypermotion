@@ -1,14 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 /*
- * Typography — Apple system stack.
+ * Typography — app chrome.
  *
- * SF Pro on macOS / iOS, Segoe UI Variable on Windows, Inter as a
- * web fallback when the PWA ships beyond Apple devices. The UI text
- * reads "native macOS app" without us shipping any web fonts. Mono is
- * reserved for places where tabular alignment matters (timeline frame
- * counts, coordinate readouts) — applied per use site via `font-mono`,
- * not globally.
+ * UI chrome uses Geist Mono in all caps. Scene/canvas content is reset
+ * below so designed text layers keep their authored font, casing, and
+ * letter spacing.
  */
 
 /*
@@ -45,17 +43,12 @@
   --color-segment-bar-hover: oklch(0.48 0.10 250);
   --color-playhead: oklch(0.70 0.20 250);
 
-  /* Apple system font stacks. SF Pro / -apple-system on macOS &
-     iOS; falls back through native faces on Windows (Segoe UI
-     Variable Display) and Linux (Inter). */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "SF Pro", "Segoe UI Variable", "Segoe UI", "Helvetica Neue",
-    Arial, "Inter", system-ui, sans-serif;
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-    "SF Pro", "Segoe UI Variable Display", "Segoe UI", "Helvetica Neue",
-    Arial, "Inter", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas",
-    "Liberation Mono", "Courier New", monospace;
+  --font-sans: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
+    "Consolas", "Liberation Mono", "Courier New", monospace;
+  --font-display: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
+    "Consolas", "Liberation Mono", "Courier New", monospace;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
+    "Consolas", "Liberation Mono", "Courier New", monospace;
 
   /* Spacing scale — Gestalt-proximity rad-spacing rule. Each parent
      level ~1.4× its child, snapped to 4 / 8 px multiples. */
@@ -183,8 +176,35 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  letter-spacing: 0;
   overflow: hidden; /* the app owns the scrolling, not the page */
+}
+
+[data-canvas-root],
+[data-canvas-root] *,
+[data-node-id],
+[data-node-id] * {
+  text-transform: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+}
+
+[data-canvas-root] button,
+[data-canvas-root] input,
+[data-canvas-root] textarea,
+[data-canvas-root] select,
+[data-node-id] button,
+[data-node-id] input,
+[data-node-id] textarea,
+[data-node-id] select {
+  text-transform: none;
 }
 
 /* Mac-style thin scrollbars. */
@@ -242,6 +262,22 @@ body[data-export-recording='1'] {
 body[data-export-recording='1'] main {
   background: #000 !important;
   pointer-events: none !important;
+}
+
+body[data-preview-mode='1'] {
+  background: #000 !important;
+}
+body[data-preview-mode='1'] [data-export-hide],
+body[data-preview-mode='1'] [data-export-hide='1'] {
+  display: none !important;
+}
+body[data-preview-mode='1'] main {
+  background: #000 !important;
+  pointer-events: none !important;
+}
+body[data-preview-mode='1'] [data-canvas-root] {
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 /* Pulse keyframe used by the floating REC indicator during tab

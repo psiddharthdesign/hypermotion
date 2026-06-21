@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadYoga, type Node as YogaNode, type Yoga } from 'yoga-layout/load'
-import type { NodeId } from '@/scene'
+import type { Node as SceneNode, NodeId, SizeAxis } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { applyChildLayoutForParent, applyNodeStyle } from '@/layout/mapper'
 import type { ContainerSize, Rect, SolvedLayout } from '@/layout/types'
@@ -55,6 +55,7 @@ export function solveLayout(
     const yNode = yoga.Node.create()
     created.push(yNode)
     applyNodeStyle(yoga, yNode, node)
+    applyComponentHugFallback(yNode, api, node)
 
     const parentLayout = 'layout' in node ? node.layout : null
 
@@ -103,14 +104,19 @@ export function solveLayout(
   const yRoot = build(rootId)
   if (!yRoot) return out
 
-  // The root node IS the artboard. Regardless of what size the root
-  // node stores (stale data, old sample scenes, edits that drift from
-  // meta.canvas), we pin Yoga's root width/height to the container —
-  // so the artboard always fills its visible box. Without this, a 640
-  // root inside a 1470 canvas leaves a dead strip on the right that
-  // users read as "the scene is smaller than the artboard."
-  yRoot.setWidth(container.width)
-  yRoot.setHeight(container.height)
+  // The scene root IS the artboard, so it fills the visible box. A
+  // component root is different: it can be edited as a Figma-style
+  // component whose width/height hug its children. Do not pin a hug
+  // component axis to the editor container or the inspector's Hug mode
+  // appears broken.
+  const rootNode = api.getNode(rootId)
+  const rootIsHugComponent = rootNode?.kind === 'component'
+  if (!rootIsHugComponent || rootNode.size.width !== 'hug') {
+    yRoot.setWidth(container.width)
+  }
+  if (!rootIsHugComponent || rootNode.size.height !== 'hug') {
+    yRoot.setHeight(container.height)
+  }
 
   // Solve into the provided container. Yoga lays out left-to-right; RTL
   // is a future concern, gated by a scene-meta flag we don't have yet.
@@ -141,4 +147,64 @@ export function solveLayout(
   for (const n of created) n.free()
 
   return out
+}
+
+function applyComponentHugFallback(
+  yNode: YogaNode,
+  api: SceneAPI,
+  node: SceneNode,
+): void {
+  if (node.kind !== 'component' || node.layout.mode !== 'none') return
+  const needsWidth = node.size.width === 'hug'
+  const needsHeight = node.size.height === 'hug'
+  if (!needsWidth && !needsHeight) return
+  const bounds = measureAbsoluteChildren(api, node.id)
+  if (!bounds) return
+  if (needsWidth) yNode.setWidth(Math.max(1, bounds.width))
+  if (needsHeight) yNode.setHeight(Math.max(1, bounds.height))
+}
+
+function measureAbsoluteChildren(
+  api: SceneAPI,
+  parentId: NodeId,
+): { width: number; height: number } | null {
+  const children = api.getChildren(parentId)
+  if (children.length === 0) return null
+  let maxX = 0
+  let maxY = 0
+  for (const child of children) {
+    const size = measureNodeSize(api, child)
+    maxX = Math.max(maxX, child.transform.x + size.width)
+    maxY = Math.max(maxY, child.transform.y + size.height)
+  }
+  return { width: maxX, height: maxY }
+}
+
+function measureNodeSize(
+  api: SceneAPI,
+  node: SceneNode,
+): { width: number; height: number } {
+  if (node.kind === 'text') {
+    const textWidth = Math.max(1, node.text.length * node.fontSize * 0.58)
+    const textHeight = Math.max(1, node.fontSize * node.lineHeight)
+    return {
+      width: measureAxis(node.size.width, textWidth),
+      height: measureAxis(node.size.height, textHeight),
+    }
+  }
+  if ('size' in node) {
+    const nested =
+      'layout' in node && node.layout.mode === 'none'
+        ? measureAbsoluteChildren(api, node.id)
+        : null
+    return {
+      width: measureAxis(node.size.width, nested?.width ?? 100),
+      height: measureAxis(node.size.height, nested?.height ?? 100),
+    }
+  }
+  return { width: 100, height: 100 }
+}
+
+function measureAxis(value: SizeAxis, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }

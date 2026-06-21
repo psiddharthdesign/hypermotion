@@ -34,10 +34,38 @@ export function evaluator(easing: EasingKind | undefined): EasingEvaluator {
   }
   if ('bezier' in easing) return bezierEvaluator(easing.bezier)
   if ('spring' in easing) {
-    // Spring stub — treat as ease-out until the proper solver lands.
-    return bezierEvaluator(PRESETS['ease-out']!)
+    return springEvaluator(easing.spring)
   }
   return IDENTITY
+}
+
+function springEvaluator(spring: {
+  stiffness: number
+  damping: number
+  mass: number
+}): EasingEvaluator {
+  const stiffness = Math.max(1, spring.stiffness)
+  const damping = Math.max(0.1, spring.damping)
+  const mass = Math.max(0.1, spring.mass)
+  const omega0 = Math.sqrt(stiffness / mass)
+  const zeta = damping / (2 * Math.sqrt(stiffness * mass))
+
+  return (t: number) => {
+    if (t <= 0) return 0
+    if (t >= 1) return 1
+    if (zeta < 1) {
+      const omegaD = omega0 * Math.sqrt(1 - zeta * zeta)
+      const envelope = Math.exp(-zeta * omega0 * t)
+      const value =
+        1 -
+        envelope *
+          (Math.cos(omegaD * t) +
+            (zeta * omega0 / omegaD) * Math.sin(omegaD * t))
+      return value
+    }
+    const value = 1 - Math.exp(-omega0 * t) * (1 + omega0 * t)
+    return Math.max(0, Math.min(1.5, value))
+  }
 }
 
 function bezierEvaluator(
