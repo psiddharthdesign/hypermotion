@@ -171,7 +171,7 @@ export async function recordTabCapture(
           width: { ideal: width },
           height: { ideal: height },
         },
-        audio: false,
+        audio: true,
         ...({ preferCurrentTab: true } as unknown as Record<string, unknown>),
       })
     } catch {

@@ -81,24 +81,18 @@ export async function importVideoFile(
 export async function importAudioFile(
   file: File,
   api: SceneAPI,
-  parent: NodeId | null,
-  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
+  _parent: NodeId | null,
+  _opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
   const dataUrl = await readFileAsDataUrl(file)
   const { duration } = await decodeAudioMeta(dataUrl)
 
-  const meta = api.getMeta()
-  const w = 140
-  const h = 44
-  const cx = opts?.dropPos?.x ?? meta.canvas.width / 2
-  const cy = opts?.dropPos?.y ?? meta.canvas.height / 2
   const transform: Transform = {
-    // Audio chips land at the canvas's top-left region by default — a
-    // stack of audio tracks can accumulate there without crowding the
-    // visual layout. We still honor dropPos if the user drags to a
-    // specific spot.
-    x: opts?.dropPos ? Math.round(cx - w / 2) : 16,
-    y: opts?.dropPos ? Math.round(cy - h / 2) : 16,
+    // Audio is a sound-timeline asset, not an artboard object. Keep a
+    // neutral transform for schema compatibility; the editor controls
+    // timing through startTime / trim fields instead.
+    x: 0,
+    y: 0,
     z: 0,
     rotation: 0,
     rotationX: 0,
@@ -109,18 +103,19 @@ export async function importAudioFile(
 
   warnIfLarge(file)
 
-  const id = api.createNode('audio', parent, {
+  const id = api.createNode('audio', null, {
     name: file.name.replace(/\.[^.]+$/, '') || 'Audio',
-    size: { width: w, height: h },
+    size: { width: 1, height: 1 },
     transform,
     src: dataUrl,
     duration,
     trimEnd: duration,
     volume: 1,
+    muted: false,
     startTime: 0,
     trimStart: 0,
     loop: false,
-    workspaceOnly: opts?.workspaceOnly ?? false,
+    workspaceOnly: true,
   } as Parameters<SceneAPI['createNode']>[2])
 
   return id

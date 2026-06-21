@@ -647,7 +647,7 @@ function Row({
   const toggleLayerCollapsed = useUI((s) => s.toggleLayerCollapsed)
   const selected = selection.includes(node.id)
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
-  const children = api.getChildren(node.id)
+  const children = api.getChildren(node.id).filter((child) => child.kind !== 'audio')
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(node.name)
@@ -1007,6 +1007,8 @@ const GLYPHS: Record<NodeKind, string> = {
   component: '◆',
   instance: '◇',
   camera: '◉',
+  video: '▶',
+  audio: '♪',
 }
 
 /**

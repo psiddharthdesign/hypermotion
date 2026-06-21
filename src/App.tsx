@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -20,6 +21,7 @@ import { ErrorBoundary } from '@/ui/ErrorBoundary'
 import { UpdateNotice } from '@/ui/UpdateNotice'
 import { useUI } from '@/state/ui'
 import { SceneProvider, useSceneAPI, useSceneVersion } from '@/scene'
+import type { SceneNode } from '@/scene'
 import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useFigmaPaste } from '@/ui/hooks/useFigmaPaste'
@@ -235,12 +237,82 @@ function Shell() {
         {showInspector && <Inspector />}
       </div>
       {showTimeline && !componentEditId && <Timeline />}
+      <AudioPlaybackHost />
       <ContextMenu />
       <RenameDialog />
       <ExportRecordingIndicator />
       <UpdateNotice />
     </div>
   )
+}
+
+function AudioPlaybackHost() {
+  const api = useSceneAPI()
+  const version = useSceneVersion()
+  const clips = useMemo(() => {
+    const out: Array<Extract<SceneNode, { kind: 'audio' }>> = []
+    for (const id of api.getAllNodeIds()) {
+      const node = api.getNode(id)
+      if (node?.kind === 'audio') out.push(node)
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, version])
+
+  return (
+    <div hidden aria-hidden="true">
+      {clips.map((clip) => (
+        <AudioPlaybackElement key={clip.id} node={clip} />
+      ))}
+    </div>
+  )
+}
+
+function AudioPlaybackElement({
+  node,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+}) {
+  const ref = useRef<HTMLAudioElement | null>(null)
+  const playing = useUI((s) => s.playing)
+  const playhead = useUI((s) => s.playhead)
+  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
+  const local = clampAudioLocal(playhead - node.startTime + node.trimStart, node)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.muted = node.muted
+    el.volume = Math.max(0, Math.min(1, node.volume))
+  }, [node.muted, node.volume])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
+    if (playing && inRange && !node.muted) {
+      if (el.paused) {
+        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
+        el.play().catch(() => {})
+      }
+    } else {
+      if (!el.paused) el.pause()
+      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
+    }
+  }, [playing, playhead, local, clipLen, node.startTime, node.muted])
+
+  if (!node.src) return null
+  return <audio ref={ref} src={node.src} preload="auto" />
+}
+
+function clampAudioLocal(
+  t: number,
+  node: Extract<SceneNode, { kind: 'audio' }>,
+): number {
+  const trimEnd = node.trimEnd || node.duration || 0
+  if (t < node.trimStart) return node.trimStart
+  if (t > trimEnd) return trimEnd
+  return t
 }
 
 function PreviewShell() {
@@ -253,19 +325,21 @@ function PreviewShell() {
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
   const setIsolatedRange = useUI((s) => s.setIsolatedRange)
+  const storedWorkArea = useUI((s) => s.workAreaRange)
+  const setStoredWorkArea = useUI((s) => s.setWorkAreaRange)
   const trackRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<PreviewDragState | null>(null)
-  const [workArea, setWorkArea] = useState<PreviewWorkArea>(() => ({
-    start: 0,
-    end: 1,
-  }))
+  const [dragTooltip, setDragTooltip] = useState<{
+    mode: 'start' | 'end'
+    time: number
+  } | null>(null)
   useSceneVersion()
   const meta = api.getMeta()
   const duration = Math.max(0.1, meta.duration)
   const frameStep = 1 / Math.max(1, meta.frameRate)
   const minWorkArea = Math.max(frameStep, 0.05)
   const normalizedWorkArea = normalizePreviewWorkArea(
-    workArea,
+    storedWorkArea ?? { start: 0, end: duration },
     duration,
     minWorkArea,
   )
@@ -356,8 +430,14 @@ function PreviewShell() {
   }
 
   useEffect(() => {
-    setWorkArea((range) => normalizePreviewWorkArea(range, duration, minWorkArea))
-  }, [duration, minWorkArea])
+    setStoredWorkArea(normalizePreviewWorkArea(normalizedWorkArea, duration, minWorkArea))
+  }, [
+    duration,
+    minWorkArea,
+    normalizedWorkArea.start,
+    normalizedWorkArea.end,
+    setStoredWorkArea,
+  ])
 
   useEffect(() => {
     getAnimEngine().setLoopRange(normalizedWorkArea)
@@ -385,6 +465,7 @@ function PreviewShell() {
     const t = timeFromPreviewPointer(clientX)
     if (drag.mode === 'scrub') {
       setPlayhead(t)
+      setDragTooltip(null)
       return
     }
     if (drag.mode === 'start') {
@@ -393,8 +474,9 @@ function PreviewShell() {
         0,
         normalizedWorkArea.end - minWorkArea,
       )
-      setWorkArea({ start: nextStart, end: normalizedWorkArea.end })
+      setStoredWorkArea({ start: nextStart, end: normalizedWorkArea.end })
       setPlayhead(nextStart)
+      setDragTooltip({ mode: 'start', time: nextStart })
       return
     }
     if (drag.mode === 'end') {
@@ -403,15 +485,17 @@ function PreviewShell() {
         normalizedWorkArea.start + minWorkArea,
         duration,
       )
-      setWorkArea({ start: normalizedWorkArea.start, end: nextEnd })
+      setStoredWorkArea({ start: normalizedWorkArea.start, end: nextEnd })
       setPlayhead(Math.min(playhead, nextEnd))
+      setDragTooltip({ mode: 'end', time: nextEnd })
       return
     }
     const delta = t - drag.anchorTime
     const span = drag.startArea.end - drag.startArea.start
     const nextStart = clamp(drag.startArea.start + delta, 0, duration - span)
-    setWorkArea({ start: nextStart, end: nextStart + span })
+    setStoredWorkArea({ start: nextStart, end: nextStart + span })
     setPlayhead(clamp(drag.startPlayhead + delta, nextStart, nextStart + span))
+    setDragTooltip(null)
   }
 
   const beginPreviewDrag = (
@@ -429,6 +513,14 @@ function PreviewShell() {
       startPlayhead: playhead,
     }
     if (mode === 'scrub') setPlayhead(anchorTime)
+    if (mode === 'start' || mode === 'end') {
+      setDragTooltip({
+        mode,
+        time: mode === 'start' ? normalizedWorkArea.start : normalizedWorkArea.end,
+      })
+    } else {
+      setDragTooltip(null)
+    }
     trackRef.current?.setPointerCapture(event.pointerId)
   }
 
@@ -444,6 +536,7 @@ function PreviewShell() {
     if (trackRef.current?.hasPointerCapture(event.pointerId)) {
       trackRef.current.releasePointerCapture(event.pointerId)
     }
+    setDragTooltip(null)
   }
 
   const restartPreview = () => {
@@ -482,6 +575,7 @@ function PreviewShell() {
       <div className="flex min-h-0 flex-1">
         <Canvas />
       </div>
+      <AudioPlaybackHost />
       <div className="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black px-4 text-white">
         <button
           type="button"
@@ -539,6 +633,23 @@ function PreviewShell() {
               onPointerDown={(event) => beginPreviewDrag(event, 'end')}
             />
           </div>
+          {dragTooltip ? (
+            <div
+              className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 rounded-full border border-white/30 bg-white px-2.5 py-1 font-mono text-[11px] tabular-nums text-black shadow-lg"
+              style={{
+                left: `${
+                  ((dragTooltip.mode === 'start'
+                    ? normalizedWorkArea.start
+                    : normalizedWorkArea.end) /
+                    duration) *
+                  100
+                }%`,
+              }}
+            >
+              {formatPreviewTimePrecise(dragTooltip.time)}
+              <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/30 bg-white" />
+            </div>
+          ) : null}
         </div>
         <span className="w-14 font-mono text-[11px] tabular-nums text-white/45">
           {formatPreviewTime(duration)}
@@ -583,6 +694,16 @@ function formatPreviewTime(seconds: number): string {
   const minutes = Math.floor(whole / 60)
   const secs = whole % 60
   return `${minutes}:${String(secs).padStart(2, '0')}.${tenths}`
+}
+
+function formatPreviewTimePrecise(seconds: number): string {
+  const safe = Math.max(0, seconds)
+  const minutes = Math.floor(safe / 60)
+  const secs = Math.floor(safe % 60)
+  const hundredths = Math.floor((safe - Math.floor(safe)) * 100)
+  return `${minutes.toString().padStart(2, '0')}:${secs
+    .toString()
+    .padStart(2, '0')}.${hundredths.toString().padStart(2, '0')}`
 }
 
 function PreviewStartIcon() {

@@ -49,6 +49,11 @@ export type ThemePreference = 'dark' | 'light' | 'system'
  * Persisted so the user's choice survives reload.
  */
 export type RulerLabelsMode = 'both' | 'time' | 'frames'
+export interface WorkAreaRange {
+  start: number
+  end: number
+}
+export type WorkAreaPlaybackMode = 'loop' | 'stop'
 
 const THEME_STORAGE_KEY = 'hyper-motion.theme'
 const RULER_LABELS_KEY = 'hyper-motion.rulerLabels'
@@ -427,6 +432,14 @@ interface UIState {
   setIsolatedRange: (
     range: { start: number; end: number; label?: string } | null,
   ) => void
+  /**
+   * Shared preview/export work area. Preview edits this range directly;
+   * Export can use it as a range mode so both surfaces agree.
+   */
+  workAreaRange: WorkAreaRange | null
+  setWorkAreaRange: (range: WorkAreaRange | null) => void
+  workAreaPlaybackMode: WorkAreaPlaybackMode
+  setWorkAreaPlaybackMode: (mode: WorkAreaPlaybackMode) => void
   // Track groups also live in Yjs — see uiState slab + groupActions.
   /** Clamp + commit a new Layers panel width. */
   setLayersWidth: (px: number) => void
@@ -509,6 +522,10 @@ export const useUI = create<UIState>((set) => ({
     }),
   isolatedRange: null,
   setIsolatedRange: (range) => set({ isolatedRange: range }),
+  workAreaRange: null,
+  setWorkAreaRange: (range) => set({ workAreaRange: range }),
+  workAreaPlaybackMode: 'loop',
+  setWorkAreaPlaybackMode: (mode) => set({ workAreaPlaybackMode: mode }),
   // trackGroups moved into Yjs (uiState slab). Helpers in
   // @/state/groupActions handle the mutations.
   scaleLinked: false,

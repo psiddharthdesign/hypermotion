@@ -561,6 +561,7 @@ export interface AudioNode extends NodeBase {
   src: string
   duration: number
   volume: number
+  muted: boolean
   startTime: number
   trimStart: number
   trimEnd: number

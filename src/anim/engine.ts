@@ -112,6 +112,9 @@ export interface AnimEngine {
    * user exits isolation.
    */
   setLoopRange(range: { start: number; end: number } | null): void
+  setPlaybackRange(
+    range: { start: number; end: number; mode?: 'loop' | 'stop' } | null,
+  ): void
   /** Subscribe via the `useSyncExternalStore` convention. */
   subscribe: (cb: () => void) => () => void
   getSnapshot: () => Record<NodeId, AnimatedValue>
@@ -135,7 +138,7 @@ function createAnimEngine(): AnimEngine {
   // Restrict play looping to a sub-range of the comp. Null = full
   // duration (the default). Set by useAnim to mirror UI-side
   // isolation. tick() wraps modulo this range when set.
-  let loopRange: { start: number; end: number } | null = null
+  let playbackRange: { start: number; end: number; mode: 'loop' | 'stop' } | null = null
   // Snapshot is a fresh object each update (React sees identity change).
   let snapshot: Record<NodeId, AnimatedValue> = {}
   const listeners = new Set<() => void>()
@@ -154,16 +157,22 @@ function createAnimEngine(): AnimEngine {
     lastTick = now
     const meta = api.getMeta()
     const next = playhead + dt
-    if (loopRange) {
-      // Loop within [start, end]. Wrap modulo the span; if the
-      // playhead drifted out of the range from a prior seek, clamp
-      // back into it on the first tick.
-      const span = Math.max(0.0001, loopRange.end - loopRange.start)
+    if (playbackRange) {
+      // Restrict playback within [start, end]. In loop mode, wrap
+      // modulo the span. In stop mode, park exactly at end and pause.
+      const span = Math.max(0.0001, playbackRange.end - playbackRange.start)
       let p = next
-      if (p < loopRange.start) p = loopRange.start
-      else if (p > loopRange.end) {
-        const over = (p - loopRange.start) % span
-        p = loopRange.start + over
+      if (p < playbackRange.start) p = playbackRange.start
+      else if (p > playbackRange.end) {
+        if (playbackRange.mode === 'stop') {
+          p = playbackRange.end
+          playing = false
+          if (rafHandle) cancelAnimationFrame(rafHandle)
+          rafHandle = 0
+        } else {
+          const over = (p - playbackRange.start) % span
+          p = playbackRange.start + over
+        }
       }
       playhead = p
     } else {
@@ -213,13 +222,13 @@ function createAnimEngine(): AnimEngine {
     },
     play() {
       if (playing || !api) return
-      // If the playhead is sitting outside the active loop range
+      // If the playhead is sitting outside the active playback range
       // when the user hits Play, snap it to the start of the range
       // so playback begins at the right place rather than near the
       // boundary the user already left.
-      if (loopRange) {
-        if (playhead < loopRange.start || playhead >= loopRange.end) {
-          playhead = loopRange.start
+      if (playbackRange) {
+        if (playhead < playbackRange.start || playhead >= playbackRange.end) {
+          playhead = playbackRange.start
         }
       }
       playing = true
@@ -238,7 +247,12 @@ function createAnimEngine(): AnimEngine {
       recompute()
     },
     setLoopRange(range) {
-      loopRange = range
+      playbackRange = range ? { ...range, mode: 'loop' } : null
+    },
+    setPlaybackRange(range) {
+      playbackRange = range
+        ? { start: range.start, end: range.end, mode: range.mode ?? 'loop' }
+        : null
     },
     getPlayhead: () => playhead,
     subscribe: (cb) => {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer'
+import type { PcmAudioTrack } from './audioMix'
 
 /**
  * MP4 encoder built on WebCodecs + mp4-muxer.
@@ -29,6 +30,7 @@ export interface Mp4EncoderOptions {
   fps: number
   /** Bits per second — defaults to ~0.1 bpp × pixels × fps. */
   bitrate?: number
+  audio?: PcmAudioTrack | null
 }
 
 export interface Mp4Encoder {
@@ -100,6 +102,7 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
   }
 
   const target = new ArrayBufferTarget()
+  const audio = opts.audio && opts.audio.samples[0]?.length ? opts.audio : null
   const muxer = new Muxer({
     target,
     video: {
@@ -108,6 +111,15 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
       height,
       frameRate: fps,
     },
+    ...(audio
+      ? {
+          audio: {
+            codec: 'aac' as const,
+            sampleRate: audio.sampleRate,
+            numberOfChannels: audio.numberOfChannels,
+          },
+        }
+      : {}),
     fastStart: 'in-memory',
   })
 
@@ -158,11 +170,87 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
       if (encoderError) throw encoderError
       await encoder.flush()
       encoder.close()
+      if (audio) await encodeAudioTrack(audio, muxer)
       muxer.finalize()
       if (encoderError) throw encoderError
       return new Blob([target.buffer], { type: 'video/mp4' })
     },
   }
+}
+
+async function encodeAudioTrack(
+  track: PcmAudioTrack,
+  muxer: Muxer<ArrayBufferTarget>,
+): Promise<void> {
+  const AudioEncoderCtor = (window as unknown as {
+    AudioEncoder?: typeof AudioEncoder
+    AudioData?: typeof AudioData
+  }).AudioEncoder
+  const AudioDataCtor = (window as unknown as {
+    AudioEncoder?: typeof AudioEncoder
+    AudioData?: typeof AudioData
+  }).AudioData
+  if (!AudioEncoderCtor || !AudioDataCtor) {
+    throw new Error('MP4 audio export needs WebCodecs AudioEncoder support.')
+  }
+
+  const config: AudioEncoderConfig = {
+    codec: 'mp4a.40.2',
+    sampleRate: track.sampleRate,
+    numberOfChannels: track.numberOfChannels,
+    bitrate: 160_000,
+  }
+  const support = await AudioEncoderCtor.isConfigSupported(config)
+  if (!support.supported) {
+    throw new Error('This browser cannot encode AAC audio for MP4 export.')
+  }
+
+  let encoderError: Error | null = null
+  const encoder = new AudioEncoderCtor({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: (e) => {
+      encoderError = e instanceof Error ? e : new Error(String(e))
+    },
+  })
+  encoder.configure(config)
+
+  const frameSize = 1024
+  const total = track.samples[0]?.length ?? 0
+  for (let offset = 0; offset < total; offset += frameSize) {
+    if (encoderError) throw encoderError
+    const frames = Math.min(frameSize, total - offset)
+    const interleaved = new Float32Array(frames * track.numberOfChannels)
+    for (let i = 0; i < frames; i++) {
+      for (let ch = 0; ch < track.numberOfChannels; ch++) {
+        interleaved[i * track.numberOfChannels + ch] =
+          track.samples[ch]?.[offset + i] ?? 0
+      }
+    }
+    const data = new AudioDataCtor({
+      format: 'f32',
+      sampleRate: track.sampleRate,
+      numberOfFrames: frames,
+      numberOfChannels: track.numberOfChannels,
+      timestamp: Math.round((offset / track.sampleRate) * 1_000_000),
+      data: interleaved,
+    })
+    encoder.encode(data)
+    data.close()
+    if (encoder.encodeQueueSize > 8) {
+      await new Promise<void>((resolve) => {
+        const id = window.setInterval(() => {
+          if (encoder.encodeQueueSize <= 4) {
+            window.clearInterval(id)
+            resolve()
+          }
+        }, 8)
+      })
+    }
+  }
+  if (encoderError) throw encoderError
+  await encoder.flush()
+  encoder.close()
+  if (encoderError) throw encoderError
 }
 
 /**
