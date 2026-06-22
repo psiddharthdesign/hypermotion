@@ -3,6 +3,32 @@
 Human-friendly release notes. The GitHub Releases page mirrors the entries
 below for the corresponding tag, plus auto-generated commit summaries.
 
+## v0.1.11 — Audio timeline + focus export workflow (2026-06-22)
+
+This release makes Hyper Motion feel more like a complete motion timeline:
+you can import media, place audio clips, preview a work area, and export
+the final MP4 with sound.
+
+- Added timeline-only audio clips with manual import, start-time
+  positioning, trim handles, duplicate/delete actions, mute/unmute, volume,
+  and loop controls.
+- Added waveform rendering from the actual decoded audio buffer, including
+  the currently visible trimmed region, so clips read like audio instead of
+  generic blocks.
+- Audio now plays inside the editor and preview in sync with the playhead,
+  without creating visible canvas layers.
+- MP4 export now mixes audio/video media into the rendered output, so scenes
+  can ship with sound from the same Hyper Motion timeline.
+- Added a shared work area for preview and export: drag the start/end
+  handles, loop inside it while iterating, or stop playback at the end.
+- Export can use the work area directly, alongside the existing full,
+  custom, and chapter export modes.
+- Camera focus blur/export path is cleaner: focus/blur survives final
+  renders, high blur no longer creates dark vignette edges, and the blur
+  controls are easier to judge in preview/export.
+- Audio clips stay out of the normal visual layer tree and canvas, keeping
+  media timing separate from scene objects.
+
 ## v0.1.10 — Import fidelity + update notifications (2026-05-22)
 
 This release tightens the Figma-to-Hyper Motion path and adds the first
