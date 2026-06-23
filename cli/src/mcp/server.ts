@@ -7,7 +7,7 @@
  *
  * Registered tools:
  *
- *   - `render_scene` — render a `.arnimotion` file to MP4 / WebM / GIF.
+ *   - `render_scene` — render the current desktop scene to MP4 / WebM / GIF.
  *                      Internally shells out to the installed desktop app.
  *   - `info_scene`   — read a scene file, return metadata (canvas size,
  *                      duration, layer count, track count).

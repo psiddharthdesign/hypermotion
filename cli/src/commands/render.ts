@@ -9,9 +9,8 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * ships the bytes back. The CLI writes them to `<out>`.
  *
- * v0.1.0 scope: renders the CURRENT scene. A future `--scene <path>`
- * flag will render arbitrary `.arnimotion` files once the file format
- * lands in v0.1.1.
+ * Current scope: renders the CURRENT scene. The `--scene <path>` flag is
+ * forwarded to the desktop app for future `.hype` file-specific rendering.
  */
 
 import { Command } from 'commander'
@@ -42,9 +41,8 @@ export function renderCommand(): Command {
     .option('--fps <n>', 'Frame rate', '30')
     .option(
       '--scene <path>',
-      'Path to a .arnimotion file. NOTE: file format ships in v0.1.1 — ' +
-        'in v0.1.0 this flag is accepted but ignored; the current desktop ' +
-        'scene is rendered instead.',
+      'Path to a .hype file. Accepted for forward compatibility; the ' +
+        'current desktop scene is rendered today.',
     )
     .action(async (opts: Record<string, string>) => {
       const outputPath = path.resolve(opts.output)
@@ -85,8 +83,8 @@ export function renderCommand(): Command {
 
       if (opts.scene) {
         console.warn(
-          '[render] note: --scene is reserved for v0.1.1 (file format). ' +
-            'Ignoring; rendering the current desktop scene.',
+          '[render] note: --scene is accepted for forward compatibility. ' +
+            'Rendering the current desktop scene today.',
         )
       }
 

@@ -5,8 +5,8 @@
  *
  * Renders the user's CURRENT hyper-motion scene (whatever was last
  * persisted to IndexedDB by the desktop app) to MP4 / WebM / GIF by
- * driving the installed desktop app. v0.1.0 scope — see the render
- * command for context on the file-format roadmap.
+ * driving the installed desktop app. A `scene` path can be forwarded to
+ * the desktop app for future file-specific render support.
  *
  * Returns the absolute output path on success, or a descriptive error
  * if the app isn't installed or the render fails.
@@ -34,8 +34,8 @@ const RenderInput = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a .arnimotion scene file. Reserved for v0.1.1 (file format); ' +
-        'currently ignored — the desktop app\'s current scene is rendered.',
+      'Path to a .hype scene file. Accepted for forward compatibility; ' +
+        'the current desktop scene is rendered today.',
     ),
 })
 
@@ -45,8 +45,8 @@ export const renderSceneTool: Tool = {
     "Render the user's current hyper-motion scene (whatever's loaded in " +
     'the desktop app right now) to MP4, WebM, or GIF. Drives the installed ' +
     'desktop app under the hood — returns a clean error if the app is not ' +
-    'installed. To render a specific .arnimotion file, the v0.1.1 release ' +
-    'will accept a `scene` path; today only the current scene is supported.',
+    'installed. A `scene` path is accepted for forward compatibility, but ' +
+    'today only the current desktop scene is supported.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -64,7 +64,7 @@ export const renderSceneTool: Tool = {
       fps: { type: 'number', description: 'Frame rate (1–120). Default: 30.' },
       scene: {
         type: 'string',
-        description: 'Path to a .arnimotion file (reserved for v0.1.1; ignored today).',
+        description: 'Path to a .hype file (accepted for forward compatibility).',
       },
     },
     required: ['output'],
