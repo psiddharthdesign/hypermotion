@@ -14,10 +14,12 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, MP4 / WebM
 / GIF / Lottie export.
 
-## Status — v0.1.0 research preview
+## Status — v0.1.11 research preview
 
-The semantic-layout-animation bet works end-to-end. Real users haven't
-validated it yet — that's the next milestone. Expect rough edges.
+The semantic-layout-animation bet works end-to-end, with desktop
+editing, Figma import, pixel-correct export, and CLI / MCP workflows for
+AI agents. This is still a research preview, so expect rough edges while
+the product shape is validated with real projects.
 
 ## Install (macOS)
 
@@ -32,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.6`.
+For a specific version: `curl ... | bash -s -- v0.1.11`.
 
 ### Manual install
 
@@ -89,7 +91,7 @@ pnpm build
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.0
+## What's in v0.1.11
 
 - **Semantic keyframes.** Animate variant, opacity, scale, rotation, gap,
   padding — never raw `x` / `y`. Layouts can shift without breaking
@@ -107,13 +109,13 @@ Figma Community publish (one-click install) is on the v0.2 roadmap.
   per-corner radii, individual stroke weights, and layout grids into the
   canvas.
 - **AI-driveable** — included CLI + Model Context Protocol server. Claude
-  Code, Codex CLI, and any MCP-compatible agent can render scenes from
-  the terminal. See [`cli/README.md`](./cli/README.md).
+  Code, Codex CLI, and any MCP-compatible agent can create `.hype`
+  scenes, inspect scene metadata, and render MP4 / WebM / GIF exports
+  from the terminal. See [`AGENTS.md`](./AGENTS.md).
 - **Open source from day one.** Apache 2.0. Yjs-backed data model so
   real-time collab arrives without a rewrite.
 
-See [RELEASES.md](./RELEASES.md) for the full v0.1.0 notes and the
-v0.1.1 roadmap.
+See [RELEASES.md](./RELEASES.md) for release notes and roadmap details.
 
 ## CLI + AI agents
 
