@@ -94,6 +94,17 @@ test('buildSceneBytes creates a readable .hype summary', () => {
   assert.equal(summary.keyframeCount, 2)
 })
 
+test('buildSceneBytes infers root and active camera ids', () => {
+  const scene = sampleScene()
+  delete scene.root
+  delete scene.activeCameraId
+
+  const summary = readSceneSummary(buildSceneBytes(scene))
+
+  assert.equal(summary.root, 'root')
+  assert.equal(summary.activeCameraId, 'camera')
+})
+
 test('buildSceneBytes fills nested defaults expected by the desktop app', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
