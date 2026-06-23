@@ -226,6 +226,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('nodes', nodes)
 
   for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+    if (node.id !== agentId) {
+      throw new Error(`node id mismatch: nodes.${agentId}.id is ${JSON.stringify(node.id)}`)
+    }
+
     const y = new Y.Map<unknown>()
     y.set('id', agentId)
     y.set('kind', node.kind)
