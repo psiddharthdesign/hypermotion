@@ -2,7 +2,8 @@
 
 /**
  * `hypermotion info <scene>` — read a `.hype` scene file and print a
- * summary of its meta, layer count, track count, and section count.
+ * summary of its meta, layer, track, section, keyframe, root, and
+ * active camera fields.
  *
  * No desktop app required — the CLI parses `.hype` bytes directly.
  */
