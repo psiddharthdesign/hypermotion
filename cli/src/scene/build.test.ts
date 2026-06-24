@@ -134,6 +134,18 @@ test('buildSceneBytes seeds an empty uiState map for editor compatibility', () =
   assert.deepEqual(data.uiState, {})
 })
 
+test('buildSceneBytes centers camera focus defaults on the canvas', () => {
+  const data = inspectScene(buildSceneBytes(sampleScene()))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const camera = nodes.camera
+
+  assert.equal(camera.focusX, 640)
+  assert.equal(camera.focusY, 360)
+  assert.equal(camera.focusWorldX, 640)
+  assert.equal(camera.focusWorldY, 360)
+  assert.equal(camera.focusWorldZ, 0)
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
