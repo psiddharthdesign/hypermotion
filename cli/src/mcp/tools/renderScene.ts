@@ -5,8 +5,8 @@
  *
  * Renders the user's CURRENT hyper-motion scene (whatever was last
  * persisted to IndexedDB by the desktop app) to MP4 / WebM / GIF by
- * driving the installed desktop app. v0.1.0 scope — see the render
- * command for context on the file-format roadmap.
+ * driving the installed desktop app. `scene` is accepted for forward
+ * compatibility with file-based rendering, but is ignored today.
  *
  * Returns the absolute output path on success, or a descriptive error
  * if the app isn't installed or the render fails.
@@ -45,8 +45,8 @@ export const renderSceneTool: Tool = {
     "Render the user's current hyper-motion scene (whatever's loaded in " +
     'the desktop app right now) to MP4, WebM, or GIF. Drives the installed ' +
     'desktop app under the hood — returns a clean error if the app is not ' +
-    'installed. A future release will accept a `scene` path for a specific ' +
-    '.hype file; today only the current scene is supported.',
+    'installed. The optional `scene` path is reserved for future file-based ' +
+    'rendering and is ignored today.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -112,7 +112,9 @@ export async function handleRenderScene(args: Record<string, unknown>) {
     content: [
       {
         type: 'text' as const,
-        text: `Rendered current scene → ${outputPath} (${format} · ${quality} · ${fps}fps)`,
+        text:
+          `Rendered current desktop scene → ${outputPath} (${format} · ${quality} · ${fps}fps)` +
+          (parsed.scene ? `\nNote: ignored scene path ${parsed.scene}` : ''),
       },
     ],
   }
