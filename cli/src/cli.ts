@@ -6,7 +6,7 @@
  * Two ways this binary is invoked:
  *
  *   `hypermotion <subcommand>` — interactive CLI for humans (render, info,
- *                                  serve).
+ *                                  create, serve).
  *   `hypermotion-mcp`          — alias that calls `hypermotion serve --mcp`,
  *                                  used by AI coding agents (Claude Code,
  *                                  Codex) over stdio.
