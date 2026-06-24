@@ -70,6 +70,11 @@ export interface NodeJson {
     rotationY?: number
     scaleX: number
     scaleY: number
+    anchorX?: number
+    anchorY?: number
+    anchorZ?: number
+    space?: 'local' | 'world'
+    renderMode?: 'flat' | 'plane' | 'group3d'
   }
   appearance?: Record<string, unknown>
   size?: { width: number | 'hug' | 'fill'; height: number | 'hug' | 'fill' }
