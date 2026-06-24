@@ -112,7 +112,7 @@ export interface NodeJson {
   trimEnd?: number
   loop?: boolean
   muted?: boolean
-  projection?: '2d' | '3d'
+  projection?: '2d' | 'perspective'
   enabled?: boolean
   background?: unknown
   focalLength?: number

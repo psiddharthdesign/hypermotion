@@ -269,6 +269,18 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   assert.equal(camera.focusWorldZ, 0)
 })
 
+test('buildSceneBytes preserves perspective camera projection', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  camera.projection = 'perspective'
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.equal(nodes.camera.projection, 'perspective')
+})
+
 test('buildSceneBytes respects explicit root and active camera ids', () => {
   const scene = sampleScene()
   scene.nodes = {
