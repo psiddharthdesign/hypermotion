@@ -146,6 +146,20 @@ test('buildSceneBytes keys nodes by their declared ids', () => {
   assert.equal(data.activeCameraId, 'camera')
 })
 
+test('buildSceneBytes keys tracks by their declared ids', () => {
+  const scene = sampleScene()
+  const sceneTracks = scene.tracks ?? {}
+  scene.tracks = {
+    alias: sceneTracks['fade-title'],
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(Object.keys(tracks), ['fade-title'])
+  assert.equal(tracks['fade-title'].id, 'fade-title')
+})
+
 test('buildSceneBytes seeds an empty uiState map for editor compatibility', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
 
