@@ -164,6 +164,29 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   assert.equal(camera.focusWorldZ, 0)
 })
 
+test('readSceneSummary counts keyframes stored as Y.Array values', () => {
+  const doc = new Y.Doc()
+  const scene = doc.getMap<unknown>('scene')
+  scene.set('meta', new Y.Map<unknown>())
+  scene.set('nodes', new Y.Map<Y.Map<unknown>>())
+  scene.set('sections', new Y.Map<unknown>())
+
+  const tracks = new Y.Map<Y.Map<unknown>>()
+  const track = new Y.Map<unknown>()
+  const keyframes = new Y.Array<unknown>()
+  keyframes.push([
+    { id: 'k1', time: 0, value: 0 },
+    { id: 'k2', time: 1, value: 1 },
+  ])
+  track.set('keyframes', keyframes)
+  tracks.set('fade', track)
+  scene.set('tracks', tracks)
+
+  const summary = readSceneSummary(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(summary.keyframeCount, 2)
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
