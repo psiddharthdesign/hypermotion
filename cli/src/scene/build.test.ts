@@ -159,6 +159,30 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
+test('buildSceneBytes preserves image import warnings', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    image: {
+      id: 'image',
+      kind: 'image',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      src: '/tmp/source.png',
+      fit: 'contain',
+      importWarning: 'Vector fallback was preserved as a bitmap.',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.equal(
+    nodes.image.importWarning,
+    'Vector fallback was preserved as a bitmap.',
+  )
+})
+
 test('buildSceneBytes keys nodes by their declared ids', () => {
   const scene = sampleScene()
   const sceneNodes = scene.nodes ?? {}

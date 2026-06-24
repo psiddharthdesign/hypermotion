@@ -104,6 +104,7 @@ export interface NodeJson {
   color?: string
   src?: string
   fit?: 'cover' | 'contain' | 'fill' | 'none'
+  importWarning?: string
   duration?: number
   volume?: number
   startTime?: number
@@ -347,6 +348,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     if (node.kind === 'image') {
       y.set('src', node.src ?? '')
       y.set('fit', node.fit ?? 'cover')
+      if (node.importWarning !== undefined) y.set('importWarning', node.importWarning)
     }
     if (node.kind === 'instance') {
       y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
