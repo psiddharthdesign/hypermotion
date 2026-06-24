@@ -385,14 +385,14 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   // --- tracks ---
   const tracks = new Y.Map<Y.Map<unknown>>()
   scene.set('tracks', tracks)
-  for (const [trackId, track] of Object.entries(json.tracks ?? {})) {
+  for (const track of Object.values(json.tracks ?? {})) {
     const y = new Y.Map<unknown>()
-    y.set('id', track.id ?? trackId)
+    y.set('id', track.id)
     y.set('nodeId', track.nodeId)
     y.set('propertyId', track.propertyId)
     y.set('defaultEasing', track.defaultEasing ?? 'ease-in-out')
     y.set('keyframes', track.keyframes ?? [])
-    tracks.set(trackId, y)
+    tracks.set(track.id, y)
   }
 
   // --- sections ---
