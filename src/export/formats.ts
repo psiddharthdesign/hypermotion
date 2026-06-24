@@ -316,7 +316,7 @@ export function resolveFrameSegments(
 ): Array<{ firstFrame: number; lastFrame: number }> {
   const lastSceneFrame = Math.max(0, Math.round(durationSec * fps) - 1)
   const clampPair = (a: number, b: number) => {
-    let first = Math.max(0, Math.min(lastSceneFrame, Math.round(a)))
+    const first = Math.max(0, Math.min(lastSceneFrame, Math.round(a)))
     let last = Math.max(0, Math.min(lastSceneFrame, Math.round(b)))
     if (last < first) last = first
     return { firstFrame: first, lastFrame: last }
