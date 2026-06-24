@@ -92,7 +92,7 @@ export interface NodeJson {
   selection?: Record<string, string>
   overrides?: Record<string, Record<string, unknown>>
   clipsContent?: boolean
-  layoutGuides?: unknown[]
+  layoutGuides?: LayoutGuideJson[]
   // kind-specific
   text?: string
   fontFamily?: string
@@ -160,6 +160,12 @@ export interface SectionJson {
   color: string
   start: number
   end: number
+}
+
+export interface LayoutGuideJson {
+  id: string
+  axis: 'x' | 'y'
+  position: number
 }
 
 export interface SceneSummary {
