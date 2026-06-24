@@ -128,6 +128,12 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
+test('buildSceneBytes seeds an empty uiState map for editor compatibility', () => {
+  const data = inspectScene(buildSceneBytes(sampleScene()))
+
+  assert.deepEqual(data.uiState, {})
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
