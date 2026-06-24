@@ -99,6 +99,21 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
   const nodes = data.nodes as Record<string, Record<string, unknown>>
   const root = nodes.root
 
+  assert.deepEqual(root.transform, {
+    x: 0,
+    y: 0,
+    z: 0,
+    rotation: 0,
+    rotationX: 0,
+    rotationY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    anchorX: 0.5,
+    anchorY: 0.5,
+    anchorZ: 0,
+    space: 'local',
+    renderMode: 'flat',
+  })
   assert.deepEqual(root.layout, {
     mode: 'flex',
     direction: 'column',
