@@ -263,10 +263,12 @@ const DEFAULT_META: SceneMeta = {
  * Construct a Y.Doc that matches what the desktop app would persist,
  * then return its encoded update bytes (the `.hype` payload).
  *
- * IDs in the JSON are used as-is — no mapping. The desktop app's
- * `applyJsonToScene` does map IDs because it loads INTO an existing
- * doc with auto-seeded entries; here we're building a fresh doc so
- * there's nothing to collide with.
+ * Declared IDs in the JSON are used as-is and become the Y.Map keys.
+ * Input record keys are treated as aliases so generated JSON can be
+ * forgiving about object shape. The desktop app's `applyJsonToScene`
+ * does map IDs because it loads INTO an existing doc with auto-seeded
+ * entries; here we're building a fresh doc so there's nothing to
+ * collide with.
  */
 export function buildSceneBytes(json: SceneJson): Uint8Array {
   const doc = new Y.Doc()
