@@ -192,6 +192,41 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   assert.equal(camera.focusWorldZ, 0)
 })
 
+test('buildSceneBytes respects explicit root and active camera ids', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    ...scene.nodes,
+    overlay: {
+      id: 'overlay',
+      kind: 'frame',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      layout: { mode: 'none' },
+    },
+    sideCamera: {
+      id: 'sideCamera',
+      kind: 'camera',
+      parent: null,
+      transform: {
+        x: 320,
+        y: 180,
+        z: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+    },
+  }
+  scene.root = 'overlay'
+  scene.activeCameraId = 'sideCamera'
+
+  const data = inspectScene(buildSceneBytes(scene))
+
+  assert.equal(data.root, 'overlay')
+  assert.equal(data.activeCameraId, 'sideCamera')
+})
+
 test('readSceneSummary counts keyframes stored as Y.Array values', () => {
   const doc = new Y.Doc()
   const scene = doc.getMap<unknown>('scene')
