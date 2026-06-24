@@ -215,6 +215,13 @@ test('readSceneSummary counts keyframes stored as Y.Array values', () => {
   assert.equal(summary.keyframeCount, 2)
 })
 
+test('readSceneSummary counts keyframes stored as plain array values', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const summary = readSceneSummary(bytes)
+
+  assert.equal(summary.keyframeCount, 2)
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
