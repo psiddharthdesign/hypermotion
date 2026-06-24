@@ -102,14 +102,14 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   // Fail fast with a clear message so the agent can fall back to MP4
   // or GIF instead of waiting out the 5-minute CLI timeout. Rebuilding
   // WebM on top of capturePage (frame-by-frame WebM encoding) is the
-  // proper fix; tracked for v0.1.1.
+  // proper fix.
   //
   // This check sits BEFORE the inFlight guard so a WebM rejection
   // doesn't consume the queue slot — other renders can proceed.
   if (req.format === 'webm') {
     await bridge.invoke(
       'export:headless-error',
-      'WebM is not supported in headless mode yet (the tab-capture pipeline requires a user gesture). Use --format mp4 or --format gif instead, or run the WebM export from the desktop app GUI. Fixed in v0.1.1.',
+      'WebM is not supported in headless mode yet (the tab-capture pipeline requires a user gesture). Use --format mp4 or --format gif instead, or run the WebM export from the desktop app GUI.',
     )
     return
   }
