@@ -459,9 +459,9 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>> | undefined
   const sections = scene.get('sections') as Y.Map<unknown> | undefined
 
-  // Count keyframes across every track. Each track's `keyframes` is a
-  // plain JS array (we store it via .set(arr), not as a Y.Array) so
-  // we read it back with .get and check length.
+  // Count keyframes across every track. Newly-authored CLI scenes store
+  // keyframes as plain arrays, while older or hand-built docs may contain
+  // Y.Array values, so accept both shapes.
   let keyframeCount = 0
   if (tracks) {
     for (const t of tracks.values()) {
