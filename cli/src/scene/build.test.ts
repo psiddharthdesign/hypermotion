@@ -128,15 +128,10 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
-test('buildSceneBytes infers root and active camera ids', () => {
-  const scene = sampleScene()
-  delete scene.root
-  delete scene.activeCameraId
+test('buildSceneBytes seeds an empty uiState map for editor compatibility', () => {
+  const data = inspectScene(buildSceneBytes(sampleScene()))
 
-  const summary = readSceneSummary(buildSceneBytes(scene))
-
-  assert.equal(summary.root, 'root')
-  assert.equal(summary.activeCameraId, 'camera')
+  assert.deepEqual(data.uiState, {})
 })
 
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {

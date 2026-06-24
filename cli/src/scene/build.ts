@@ -153,7 +153,17 @@ export interface SectionJson {
   end: number
 }
 
-const DEFAULT_TRANSFORM = {
+type SceneTransform = NonNullable<NodeJson['transform']> & {
+  anchorX: number
+  anchorY: number
+  anchorZ: number
+  space: 'local'
+  renderMode: 'flat'
+}
+
+type SceneSize = NonNullable<NodeJson['size']>
+
+const DEFAULT_TRANSFORM: SceneTransform = {
   x: 0,
   y: 0,
   z: 0,
@@ -192,7 +202,7 @@ const DEFAULT_LAYOUT = {
   columnGap: 0,
 }
 
-const DEFAULT_SIZE = { width: 100, height: 100 }
+const DEFAULT_SIZE: SceneSize = { width: 100, height: 100 }
 
 const DEFAULT_META = {
   id: 'scene',
@@ -237,7 +247,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('children', childArr)
     y.set(
       'transform',
-      mergeWithDefaults(DEFAULT_TRANSFORM, node.transform as Partial<typeof DEFAULT_TRANSFORM>),
+      mergeWithDefaults(DEFAULT_TRANSFORM, node.transform),
     )
     y.set(
       'appearance',
@@ -254,7 +264,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
-      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
       y.set(
         'layout',
         mergeWithDefaults(
@@ -280,14 +290,14 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       }
     }
     if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
-      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
     }
     if (node.kind === 'image') {
       y.set('src', node.src ?? '')
       y.set('fit', node.fit ?? 'cover')
     }
     if (node.kind === 'instance') {
-      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size as Partial<typeof DEFAULT_SIZE>))
+      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
       y.set(
         'layout',
         mergeWithDefaults(

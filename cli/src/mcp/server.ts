@@ -7,7 +7,8 @@
  *
  * Registered tools:
  *
- *   - `render_scene` — render a `.arnimotion` file to MP4 / WebM / GIF.
+ *   - `create_scene` — build a `.hype` scene file from JSON.
+ *   - `render_scene` — render a scene to MP4 / WebM / GIF.
  *                      Internally shells out to the installed desktop app.
  *   - `info_scene`   — read a scene file, return metadata (canvas size,
  *                      duration, layer count, track count).
