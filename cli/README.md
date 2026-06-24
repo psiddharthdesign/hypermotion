@@ -43,8 +43,8 @@ Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 `2k` (2560×1440), `4k` (3840×2160). Default: `comp`.
 
 Render targets whichever scene is currently loaded in your desktop app's
-IndexedDB — i.e. whatever you last edited. Render an arbitrary scene
-from a file? That lands in v0.1.1 with the `.arnimotion` file format.
+IndexedDB — i.e. whatever you last edited. Scene files created by the CLI
+use the `.hype` format and can be inspected with `hypermotion info`.
 
 ## MCP server — AI agent integration
 
@@ -56,9 +56,9 @@ claude mcp add hypermotion -- hypermotion-mcp
 
 Then in Claude Code, the agent has access to:
 
+- **`create_scene`** — build a `.hype` scene file from a JSON description.
 - **`render_scene`** — render the current desktop scene to MP4 / WebM / GIF.
-- **`info_scene`** — read scene metadata. (v0.1.1; today returns a structured
-  "not yet implemented" message so agents know the shape that's coming.)
+- **`info_scene`** — read metadata from a `.hype` scene file.
 
 ### Codex CLI
 
@@ -74,26 +74,20 @@ command = "hypermotion-mcp"
 Spawn `hypermotion-mcp` as a subprocess. The server speaks MCP over
 stdio per the [Model Context Protocol spec](https://modelcontextprotocol.io).
 
-## v0.1.0 scope
+## v0.1.2 scope
 
 What works today:
 
 - `hypermotion render -o out.mp4` — renders the desktop app's current scene.
+- `hypermotion create out.hype --from scene.json` — writes a scene file from JSON.
+- `hypermotion info out.hype` — prints scene metadata for scripts and agents.
 - `hypermotion-mcp` — registers + responds to MCP clients.
 - `render_scene` MCP tool — renders the current scene.
-
-What's coming in v0.1.1:
-
-- `.arnimotion` file format (Y.Doc serialize/deserialize, File → Save /
-  Open in the desktop app).
-- `hypermotion render scene.arnimotion -o out.mp4` — render any scene file.
-- `hypermotion info scene.arnimotion` — print scene metadata.
-- `info_scene` MCP tool wired to actually work.
+- `create_scene` / `info_scene` MCP tools — author and inspect `.hype` files.
 
 What's longer-term:
 
-- Scene authoring API (create / modify scenes programmatically) so
-  agents can generate scenes from scratch, not just render existing ones.
+- In-place scene editing and file-based render ranges for agent workflows.
 
 ## How rendering works
 
