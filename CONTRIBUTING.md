@@ -47,8 +47,8 @@ discuss the trade-off.
 
 Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md).
 Include: what you did, what you expected, what happened, your OS +
-browser, and a minimal repro (a `.arnimotion` file or short screen
-recording works great).
+browser, and a minimal repro (a `.hype` file or short screen recording
+works great).
 
 ## Proposing features
 
