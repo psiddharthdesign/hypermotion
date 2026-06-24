@@ -180,6 +180,28 @@ test('buildSceneBytes seeds an empty uiState map for editor compatibility', () =
   assert.deepEqual(data.uiState, {})
 })
 
+test('buildSceneBytes writes explicit component metadata defaults', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    component: {
+      id: 'component',
+      kind: 'component',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      layout: { mode: 'none' },
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const component = nodes.component
+
+  assert.equal(component.workspaceOnly, false)
+  assert.deepEqual(component.variantPositions, {})
+  assert.deepEqual(component.componentProperties, [])
+})
+
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
