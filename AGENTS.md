@@ -4,9 +4,9 @@ hyper-motion ships a CLI and a Model Context Protocol (MCP) server so you
 can drive renders from a script, a CI job, or an AI coding agent. This
 document is the canonical guide.
 
-The CLI's only job today is to render the scene currently loaded in the
-desktop app. Future versions will accept scene files and let agents
-author scenes from scratch (see [Roadmap](#roadmap)).
+The CLI can render the scene currently loaded in the desktop app, create
+`.hype` scene files from JSON, inspect saved scenes, and render saved
+scene files.
 
 ---
 
