@@ -465,8 +465,7 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   let keyframeCount = 0
   if (tracks) {
     for (const t of tracks.values()) {
-      const kfs = t.get('keyframes') as unknown[] | undefined
-      keyframeCount += kfs?.length ?? 0
+      keyframeCount += keyframeLength(t.get('keyframes'))
     }
   }
 
@@ -517,6 +516,12 @@ function mergeWithDefaults<T extends Record<string, unknown>>(
     }
   }
   return out as T
+}
+
+function keyframeLength(value: unknown): number {
+  if (Array.isArray(value)) return value.length
+  if (value instanceof Y.Array) return value.length
+  return 0
 }
 
 function defaultName(kind: NodeJson['kind']): string {
