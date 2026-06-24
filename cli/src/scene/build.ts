@@ -398,8 +398,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   // --- sections ---
   const sections = new Y.Map<unknown>()
   scene.set('sections', sections)
-  for (const [sectionId, section] of Object.entries(json.sections ?? {})) {
-    sections.set(sectionId, section)
+  for (const section of Object.values(json.sections ?? {})) {
+    sections.set(section.id, section)
   }
 
   // --- scalars ---
