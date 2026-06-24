@@ -235,9 +235,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   const nodes = new Y.Map<Y.Map<unknown>>()
   scene.set('nodes', nodes)
 
-  for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+  for (const node of Object.values(json.nodes ?? {})) {
     const y = new Y.Map<unknown>()
-    y.set('id', agentId)
+    y.set('id', node.id)
     y.set('kind', node.kind)
     y.set('name', node.name ?? defaultName(node.kind))
     y.set('parent', node.parent ?? null)
@@ -369,7 +369,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('showFocusPlane', node.showFocusPlane ?? false)
     }
 
-    nodes.set(agentId, y)
+    nodes.set(node.id, y)
   }
 
   // --- tracks ---
@@ -400,9 +400,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   if (json.root) scene.set('root', json.root)
   else {
     // Infer: first parentless non-camera node.
-    for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+    for (const node of Object.values(json.nodes ?? {})) {
       if (!node.parent && node.kind !== 'camera') {
-        scene.set('root', agentId)
+        scene.set('root', node.id)
         break
       }
     }
@@ -411,9 +411,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     scene.set('activeCameraId', json.activeCameraId)
   } else {
     // Infer: first camera node.
-    for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+    for (const node of Object.values(json.nodes ?? {})) {
       if (node.kind === 'camera') {
-        scene.set('activeCameraId', agentId)
+        scene.set('activeCameraId', node.id)
         break
       }
     }

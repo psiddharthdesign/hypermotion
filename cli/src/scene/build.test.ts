@@ -128,6 +128,24 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
+test('buildSceneBytes keys nodes by their declared ids', () => {
+  const scene = sampleScene()
+  const sceneNodes = scene.nodes ?? {}
+  scene.nodes = {
+    artboard: sceneNodes.root,
+    headline: sceneNodes.title,
+    viewport: sceneNodes.camera,
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(Object.keys(nodes).sort(), ['camera', 'root', 'title'])
+  assert.equal(nodes.root.id, 'root')
+  assert.equal(data.root, 'root')
+  assert.equal(data.activeCameraId, 'camera')
+})
+
 test('buildSceneBytes seeds an empty uiState map for editor compatibility', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
 
