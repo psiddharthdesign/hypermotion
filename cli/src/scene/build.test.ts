@@ -128,6 +128,18 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
+test('buildSceneBytes rejects mismatched node ids', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  assert.ok(root)
+  root.id = 'not-root'
+
+  assert.throws(
+    () => buildSceneBytes(scene),
+    /node id mismatch: nodes\.root\.id is "not-root"/,
+  )
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
