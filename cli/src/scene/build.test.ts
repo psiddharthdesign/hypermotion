@@ -276,6 +276,40 @@ test('buildSceneBytes writes explicit component metadata defaults', () => {
   assert.deepEqual(component.componentProperties, [])
 })
 
+test('buildSceneBytes writes media timing defaults', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    narration: {
+      id: 'narration',
+      kind: 'audio',
+      parent: null,
+      children: [],
+      src: '/tmp/narration.wav',
+    },
+    clip: {
+      id: 'clip',
+      kind: 'video',
+      parent: null,
+      children: [],
+      src: '/tmp/clip.mp4',
+      duration: 3,
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.narration.size, { width: 120, height: 40 })
+  assert.equal(nodes.narration.duration, 0)
+  assert.equal(nodes.narration.volume, 1)
+  assert.equal(nodes.narration.trimEnd, 0)
+  assert.equal(nodes.narration.muted, false)
+  assert.deepEqual(nodes.clip.size, { width: 100, height: 100 })
+  assert.equal(nodes.clip.trimEnd, 3)
+  assert.equal(nodes.clip.fit, 'cover')
+  assert.equal(nodes.clip.muted, true)
+})
+
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
