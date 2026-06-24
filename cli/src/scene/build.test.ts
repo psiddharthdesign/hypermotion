@@ -128,6 +128,17 @@ test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   assert.equal(nodes.title.parent, 'root')
 })
 
+test('buildSceneBytes preserves explicit root and active camera ids', () => {
+  const scene = sampleScene()
+  scene.root = 'title'
+  scene.activeCameraId = 'camera'
+
+  const summary = readSceneSummary(buildSceneBytes(scene))
+
+  assert.equal(summary.root, 'title')
+  assert.equal(summary.activeCameraId, 'camera')
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
