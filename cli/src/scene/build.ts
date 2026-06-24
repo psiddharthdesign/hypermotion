@@ -153,6 +153,16 @@ export interface SectionJson {
   end: number
 }
 
+export interface SceneSummary {
+  meta: Record<string, unknown>
+  root: string | null
+  activeCameraId: string | null
+  layerCount: number
+  trackCount: number
+  sectionCount: number
+  keyframeCount: number
+}
+
 type SceneTransform = NonNullable<NodeJson['transform']> & {
   anchorX: number
   anchorY: number
@@ -434,15 +444,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
  * trip isn't needed here, so we skip Y.Array → plain conversion for
  * children and keyframes if the caller doesn't ask for them.
  */
-export function readSceneSummary(bytes: Uint8Array): {
-  meta: Record<string, unknown>
-  root: string | null
-  activeCameraId: string | null
-  layerCount: number
-  trackCount: number
-  sectionCount: number
-  keyframeCount: number
-} {
+export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
   const scene = doc.getMap<unknown>('scene')
