@@ -61,6 +61,7 @@ export interface NodeJson {
   position?: 'flow' | 'absolute'
   isMask?: boolean
   componentSourceId?: string | null
+  workspaceOnly?: boolean
   transform?: {
     x: number
     y: number
@@ -77,6 +78,8 @@ export interface NodeJson {
   variants?: unknown[]
   defaultSelection?: Record<string, string>
   variantOverrides?: unknown[]
+  variantPositions?: Record<string, { x: number; y: number }>
+  componentProperties?: unknown[]
   variantTransition?: unknown
   timelines?: Record<string, unknown>
   interactions?: unknown[]
@@ -271,6 +274,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('position', node.position ?? 'flow')
     y.set('isMask', node.isMask ?? false)
     y.set('componentSourceId', node.componentSourceId ?? null)
+    y.set('workspaceOnly', node.workspaceOnly ?? false)
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
@@ -289,6 +293,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
         y.set('variants', node.variants ?? [])
         y.set('defaultSelection', node.defaultSelection ?? {})
         y.set('variantOverrides', node.variantOverrides ?? [])
+        y.set('variantPositions', node.variantPositions ?? {})
+        y.set('componentProperties', node.componentProperties ?? [])
         y.set('variantTransition', node.variantTransition ?? {
           duration: 0.3,
           easing: 'ease-in-out',
