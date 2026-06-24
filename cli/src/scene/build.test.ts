@@ -310,6 +310,40 @@ test('buildSceneBytes writes media timing defaults', () => {
   assert.equal(nodes.clip.muted, true)
 })
 
+test('buildSceneBytes preserves explicit media timing fields', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    clip: {
+      id: 'clip',
+      kind: 'video',
+      parent: null,
+      children: [],
+      src: '/tmp/clip.mp4',
+      duration: 5,
+      volume: 0.6,
+      startTime: 1.25,
+      trimStart: 0.5,
+      trimEnd: 4,
+      loop: true,
+      muted: false,
+      fit: 'contain',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const clip = nodes.clip
+
+  assert.equal(clip.duration, 5)
+  assert.equal(clip.volume, 0.6)
+  assert.equal(clip.startTime, 1.25)
+  assert.equal(clip.trimStart, 0.5)
+  assert.equal(clip.trimEnd, 4)
+  assert.equal(clip.loop, true)
+  assert.equal(clip.muted, false)
+  assert.equal(clip.fit, 'contain')
+})
+
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
