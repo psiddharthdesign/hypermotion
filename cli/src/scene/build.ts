@@ -145,13 +145,15 @@ export interface TrackJson {
   nodeId: string
   propertyId: string
   defaultEasing?: unknown
-  keyframes: Array<{
-    id: string
-    time: number
-    value: unknown
-    easingOut?: unknown
-    presetOrigin?: 'in' | 'out'
-  }>
+  keyframes: KeyframeJson[]
+}
+
+export interface KeyframeJson {
+  id: string
+  time: number
+  value: unknown
+  easingOut?: unknown
+  presetOrigin?: 'in' | 'out'
 }
 
 export interface SectionJson {
