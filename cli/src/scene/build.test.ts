@@ -120,6 +120,37 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
   })
 })
 
+test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.transform = {
+    x: 0,
+    y: 0,
+    z: 12,
+    rotation: 0,
+    rotationX: 8,
+    rotationY: -12,
+    scaleX: 1,
+    scaleY: 1,
+    anchorX: 0,
+    anchorY: 1,
+    anchorZ: 6,
+    space: 'world',
+    renderMode: 'plane',
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const transform = nodes.root.transform as Record<string, unknown>
+
+  assert.equal(transform.anchorX, 0)
+  assert.equal(transform.anchorY, 1)
+  assert.equal(transform.anchorZ, 6)
+  assert.equal(transform.space, 'world')
+  assert.equal(transform.renderMode, 'plane')
+})
+
 test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
