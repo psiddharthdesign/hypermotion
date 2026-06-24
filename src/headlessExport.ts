@@ -21,8 +21,9 @@
  * `exportScene()` with an `onBlob` interceptor that ships bytes back to
  * main via `export:headless-done`.
  *
- * v0.1.0 scope: renders the user's CURRENT scene from IndexedDB. The
- * `.arnimotion` file format work in v0.1.1 will honor `--scene <path>`.
+ * Current scope: renders the user's CURRENT scene from IndexedDB. Future
+ * file-based headless rendering will honor `--scene <path>` for `.hype`
+ * files.
  */
 
 import {
