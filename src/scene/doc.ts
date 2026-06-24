@@ -95,6 +95,7 @@ export interface SceneAPI {
   /** All node ids in the scene. */
   getAllNodeIds(): NodeId[]
   getTrack(id: TrackId): Track | null
+  getAllTracks(): Track[]
   getTracksForNode(nodeId: NodeId): Track[]
 
   // --- mutations -----------------------------------------------------------
@@ -680,6 +681,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       return y ? yTrackToTrack(y) : null
     },
 
+    getAllTracks: () => Array.from(tracks.values(), yTrackToTrack),
+
     getTracksForNode: (nodeId) => {
       const out: Track[] = []
       for (const t of tracks.values()) {
@@ -1222,7 +1225,7 @@ export function snapshotScene(api: SceneAPI): Scene {
     root: api.getRoot(),
     activeCameraId: api.getActiveCameraId() ?? '',
     nodes,
-    tracks: {}, // TODO: fill when tracks become mutable through the API
+    tracks: Object.fromEntries(api.getAllTracks().map((t) => [t.id, t])),
     sections,
     customFonts,
   }
