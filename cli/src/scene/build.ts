@@ -175,6 +175,35 @@ type SceneTransform = NonNullable<NodeJson['transform']> & {
 }
 
 type SceneSize = NonNullable<NodeJson['size']>
+type SceneMeta = Required<NonNullable<SceneJson['meta']>>
+
+interface SceneAppearance {
+  opacity: number
+  fill: unknown | null
+  stroke: unknown | null
+  cornerRadius: number
+  effects: unknown[]
+}
+
+interface ScenePadding {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+type SceneLayout = Record<string, unknown> & {
+  mode: string
+  direction: string
+  justify: string
+  align: string
+  gap: number
+  padding: ScenePadding
+  wrap: boolean
+  columns: number
+  rowGap: number
+  columnGap: number
+}
 
 const DEFAULT_TRANSFORM: SceneTransform = {
   x: 0,
@@ -192,7 +221,7 @@ const DEFAULT_TRANSFORM: SceneTransform = {
   renderMode: 'flat',
 }
 
-const DEFAULT_APPEARANCE = {
+const DEFAULT_APPEARANCE: SceneAppearance = {
   opacity: 1,
   fill: null,
   stroke: null,
@@ -200,9 +229,9 @@ const DEFAULT_APPEARANCE = {
   effects: [],
 }
 
-const DEFAULT_PADDING = { top: 0, right: 0, bottom: 0, left: 0 }
+const DEFAULT_PADDING: ScenePadding = { top: 0, right: 0, bottom: 0, left: 0 }
 
-const DEFAULT_LAYOUT = {
+const DEFAULT_LAYOUT: SceneLayout = {
   mode: 'none',
   direction: 'column',
   justify: 'start',
@@ -217,7 +246,7 @@ const DEFAULT_LAYOUT = {
 
 const DEFAULT_SIZE: SceneSize = { width: 100, height: 100 }
 
-const DEFAULT_META = {
+const DEFAULT_META: SceneMeta = {
   id: 'scene',
   name: 'Untitled',
   duration: 5,
@@ -282,7 +311,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set(
         'layout',
         mergeWithDefaults(
-          DEFAULT_LAYOUT as Record<string, unknown>,
+          DEFAULT_LAYOUT,
           node.layout,
         ),
       )
@@ -317,7 +346,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set(
         'layout',
         mergeWithDefaults(
-          DEFAULT_LAYOUT as Record<string, unknown>,
+          DEFAULT_LAYOUT,
           node.layout,
         ),
       )
