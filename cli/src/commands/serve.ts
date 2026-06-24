@@ -7,7 +7,8 @@
  *
  *   `--mcp` — Model Context Protocol server over stdio. This is the
  *             integration point for AI coding agents (Claude Code,
- *             Codex). Tools exposed: `render_scene`, `info_scene`.
+ *             Codex). Tools exposed: `create_scene`, `render_scene`,
+ *             `info_scene`.
  *
  * `hypermotion-mcp` is a separate bin that defaults to this mode, so
  * `claude mcp add hypermotion -- hypermotion-mcp` "just works".
