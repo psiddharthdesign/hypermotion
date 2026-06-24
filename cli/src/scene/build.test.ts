@@ -120,6 +120,36 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
   })
 })
 
+test('buildSceneBytes gives each node independent nested defaults', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    first: {
+      id: 'first',
+      kind: 'frame',
+      parent: null,
+      children: [],
+      size: { width: 100, height: 100 },
+      layout: { mode: 'none', padding: { top: 8 } },
+    },
+    second: {
+      id: 'second',
+      kind: 'frame',
+      parent: null,
+      children: [],
+      size: { width: 100, height: 100 },
+      layout: { mode: 'none' },
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const firstLayout = nodes.first.layout as Record<string, unknown>
+  const secondLayout = nodes.second.layout as Record<string, unknown>
+
+  assert.deepEqual(firstLayout.padding, { top: 8, right: 0, bottom: 0, left: 0 })
+  assert.deepEqual(secondLayout.padding, { top: 0, right: 0, bottom: 0, left: 0 })
+})
+
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
