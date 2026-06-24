@@ -235,6 +235,25 @@ test('buildSceneBytes seeds an empty uiState map for editor compatibility', () =
   assert.deepEqual(data.uiState, {})
 })
 
+test('buildSceneBytes preserves frame editor metadata', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.clipsContent = false
+  root.layoutGuides = [
+    { id: 'guide-1', axis: 'x', position: 320 },
+  ]
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const rootNode = nodes.root
+
+  assert.equal(rootNode.clipsContent, false)
+  assert.deepEqual(rootNode.layoutGuides, [
+    { id: 'guide-1', axis: 'x', position: 320 },
+  ])
+})
+
 test('buildSceneBytes writes explicit component metadata defaults', () => {
   const scene = sampleScene()
   scene.nodes = {
