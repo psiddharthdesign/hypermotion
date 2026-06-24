@@ -42,16 +42,10 @@ hypermotion render -o out.mp4 -q 4k
 Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 `2k` (2560×1440), `4k` (3840×2160). Default: `comp`.
 
-Render targets whichever scene is currently loaded in your desktop app's
-IndexedDB — i.e. whatever you last edited.
-
-You can also create and inspect `.hype` scene files without launching the
-desktop app:
-
-```sh
-hypermotion create demo.hype --from scene.json
-hypermotion info demo.hype
-```
+Render without a scene path targets whichever scene is currently loaded
+in your desktop app. To script a scene from JSON, build a `.hype` file
+with `hypermotion create`, inspect it with `hypermotion info`, then pass
+it to `hypermotion render` with `--scene`.
 
 ## MCP server — AI agent integration
 
@@ -65,7 +59,7 @@ Then in Claude Code, the agent has access to:
 
 - **`render_scene`** — render the current desktop scene to MP4 / WebM / GIF.
 - **`create_scene`** — build a `.hype` scene file from a JSON description.
-- **`info_scene`** — read metadata from a `.hype` scene file.
+- **`info_scene`** — read `.hype` scene metadata.
 
 ### Codex CLI
 
@@ -81,26 +75,20 @@ command = "hypermotion-mcp"
 Spawn `hypermotion-mcp` as a subprocess. The server speaks MCP over
 stdio per the [Model Context Protocol spec](https://modelcontextprotocol.io).
 
-## Current scope
+## v0.1.2 scope
 
 What works today:
 
 - `hypermotion render -o out.mp4` — renders the desktop app's current scene.
-- `hypermotion create out.hype --from scene.json` — builds a `.hype` scene file.
+- `hypermotion create out.hype --from scene.json` — builds a scene file.
 - `hypermotion info out.hype` — prints scene metadata.
 - `hypermotion-mcp` — registers + responds to MCP clients.
-- `render_scene` MCP tool — renders the current scene.
-- `create_scene` MCP tool — creates `.hype` files from JSON scene descriptions.
-- `info_scene` MCP tool — reads `.hype` scene metadata.
-
-Still on the roadmap:
-
-- `hypermotion render scene.hype -o out.mp4` — render an arbitrary scene file.
+- `create_scene`, `render_scene`, and `info_scene` MCP tools.
 
 What's longer-term:
 
-- Scene authoring API (create / modify scenes programmatically) so
-  agents can generate scenes from scratch, not just render existing ones.
+- In-place editing for existing `.hype` files.
+- Chapter / range rendering and batch workflows.
 
 ## How rendering works
 

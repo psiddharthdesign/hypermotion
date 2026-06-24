@@ -34,7 +34,7 @@ const RenderInput = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a .arnimotion scene file. Reserved for v0.1.1 (file format); ' +
+      'Path to a .hype scene file. Reserved for file-based headless rendering; ' +
         'currently ignored — the desktop app\'s current scene is rendered.',
     ),
 })
@@ -45,8 +45,8 @@ export const renderSceneTool: Tool = {
     "Render the user's current hyper-motion scene (whatever's loaded in " +
     'the desktop app right now) to MP4, WebM, or GIF. Drives the installed ' +
     'desktop app under the hood — returns a clean error if the app is not ' +
-    'installed. To render a specific .arnimotion file, the v0.1.1 release ' +
-    'will accept a `scene` path; today only the current scene is supported.',
+    'installed. A future release will accept a `scene` path for a specific ' +
+    '.hype file; today only the current scene is supported.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -64,7 +64,7 @@ export const renderSceneTool: Tool = {
       fps: { type: 'number', description: 'Frame rate (1–120). Default: 30.' },
       scene: {
         type: 'string',
-        description: 'Path to a .arnimotion file (reserved for v0.1.1; ignored today).',
+        description: 'Path to a .hype file (reserved for file-based headless rendering; ignored today).',
       },
     },
     required: ['output'],
