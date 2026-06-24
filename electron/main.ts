@@ -70,14 +70,14 @@ if (!gotSingleInstanceLock) {
  *   4. Renderer runs export, posts bytes via `export:headless-done`
  *   5. We write the bytes to <out>, exit 0
  *
- * v0.1.0: renders the user's CURRENT scene (whatever's in IndexedDB).
- * v0.1.1 picks up the `.arnimotion` file format and honors `--scene`.
+ * Current scope: renders the user's CURRENT scene (whatever's in IndexedDB).
+ * Future file-based headless rendering will honor `--scene` for `.hype`.
  *
  * The CLI in `@psiddharthdesign/hypermotion` is what spawns this binary
  * with these flags. See `cli/src/electron/driver.ts` for the parent side.
  */
 interface HeadlessRequest {
-  /** Future-compat: path to a .arnimotion scene file. Ignored in v0.1.0. */
+  /** Future-compat: path to a .hype scene file. Ignored today. */
   scenePath?: string
   outputPath: string
   format: 'mp4' | 'webm' | 'gif'
