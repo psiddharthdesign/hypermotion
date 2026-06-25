@@ -13,7 +13,14 @@
  *   {
  *     "meta": { "name": "My scene", "canvas": { "width": 1080, "height": 1920 } },
  *     "nodes": {
- *       "root":   { "id": "root", "kind": "frame", "parent": null, "children": ["text"] },
+ *       "root":   {
+ *         "id": "root",
+ *         "kind": "frame",
+ *         "parent": null,
+ *         "children": ["text"],
+ *         "size": { "width": 1080, "height": 1920 },
+ *         "layout": { "mode": "none" }
+ *       },
  *       "text":   { "id": "text", "kind": "text", "parent": "root", "text": "Hello" },
  *       "camera": { "id": "camera", "kind": "camera", "parent": null }
  *     }
