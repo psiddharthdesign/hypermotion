@@ -161,10 +161,17 @@ export type EasingJson =
 export interface KeyframeJson {
   id: string
   time: number
-  value: unknown
+  value: KeyframeValueJson
   easingOut?: EasingJson
   presetOrigin?: 'in' | 'out'
 }
+
+export type KeyframeValueJson =
+  | number
+  | string
+  | Record<string, string>
+  | 'row'
+  | 'column'
 
 export interface SectionJson {
   id: string
