@@ -13,8 +13,19 @@ test('create_scene description lists supported appearance property ids', () => {
   if (typeof description !== 'string') {
     throw new Error('create_scene description is missing')
   }
-  assert.match(description, /appearance\.fill/)
-  assert.match(description, /appearance\.cornerRadii,/)
+  for (const propertyId of [
+    'appearance.opacity',
+    'appearance.cornerRadius',
+    'appearance.cornerRadii',
+    'appearance.cornerRadii.tl',
+    'appearance.cornerRadii.tr',
+    'appearance.cornerRadii.br',
+    'appearance.cornerRadii.bl',
+    'appearance.fill',
+  ]) {
+    const escapedPropertyId = propertyId.replaceAll('.', '\\.')
+    assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
+  }
 })
 
 test('create_scene reports persisted layer and track counts', async () => {
