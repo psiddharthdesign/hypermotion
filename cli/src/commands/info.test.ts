@@ -132,14 +132,14 @@ test('info command prints human-readable scene summaries', async () => {
     })
 
     assert.match(stdout, /^Scene: Info Text$/m)
-    assert.match(stdout, /^  Canvas:    640 × 360$/m)
-    assert.match(stdout, /^  Duration:  2s @ 30fps$/m)
-    assert.match(stdout, /^  Layers:    2$/m)
-    assert.match(stdout, /^  Tracks:    1$/m)
-    assert.match(stdout, /^  Sections:  1$/m)
-    assert.match(stdout, /^  Keyframes: 2$/m)
-    assert.match(stdout, /^  Root id:   root$/m)
-    assert.match(stdout, /^  Camera id: camera$/m)
+    assert.match(stdout, /^ {2}Canvas: {4}640 × 360$/m)
+    assert.match(stdout, /^ {2}Duration: {2}2s @ 30fps$/m)
+    assert.match(stdout, /^ {2}Layers: {4}2$/m)
+    assert.match(stdout, /^ {2}Tracks: {4}1$/m)
+    assert.match(stdout, /^ {2}Sections: {2}1$/m)
+    assert.match(stdout, /^ {2}Keyframes: 2$/m)
+    assert.match(stdout, /^ {2}Root id: {3}root$/m)
+    assert.match(stdout, /^ {2}Camera id: camera$/m)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
