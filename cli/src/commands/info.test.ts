@@ -31,6 +31,19 @@ test('info command prints JSON scene summaries', async () => {
             size: { width: 320, height: 180 },
             layout: { mode: 'none' },
           },
+          camera: {
+            id: 'camera',
+            kind: 'camera',
+            parent: null,
+            transform: {
+              x: 160,
+              y: 90,
+              z: 0,
+              rotation: 0,
+              scaleX: 1,
+              scaleY: 1,
+            },
+          },
         },
       }),
     )
@@ -45,8 +58,9 @@ test('info command prints JSON scene summaries', async () => {
 
     assert.equal(summary.meta.name, 'Info JSON')
     assert.deepEqual(summary.meta.canvas, { width: 320, height: 180 })
-    assert.equal(summary.layerCount, 1)
+    assert.equal(summary.layerCount, 2)
     assert.equal(summary.root, 'root')
+    assert.equal(summary.activeCameraId, 'camera')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
