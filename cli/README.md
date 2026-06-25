@@ -42,10 +42,12 @@ hypermotion render -o out.mp4 -q 4k
 Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 `2k` (2560×1440), `4k` (3840×2160). Default: `comp`.
 
-Render without a scene path targets whichever scene is currently loaded
-in your desktop app. To script a scene from JSON, build a `.hype` file
-with `hypermotion create`, inspect it with `hypermotion info`, then pass
-it to `hypermotion render` with `--scene`.
+Render targets whichever scene is currently loaded in your desktop app.
+To script a scene from JSON, build a `.hype` file with
+`hypermotion create` and inspect it with `hypermotion info`. File-based
+headless rendering is still longer-term work, so `hypermotion render
+--scene` is accepted for forward compatibility but currently renders the
+desktop app's current scene.
 
 ## MCP server — AI agent integration
 
