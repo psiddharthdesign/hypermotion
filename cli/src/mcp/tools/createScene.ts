@@ -63,7 +63,8 @@ export const createSceneTool: Tool = {
     "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
     "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
     "transform.anchorX, transform.anchorY, transform.anchorZ, " +
-    "camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, camera.focusDistance, camera.focusRadius, camera.focusFalloff, " +
+    "camera.focusX, camera.focusY, camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, " +
+    "camera.focusDistance, camera.focusRadius, camera.focusFalloff, " +
     "camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ, " +
     "camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip, " +
     "camera.aperture, camera.blurLevel, camera.blurQuality, " +
