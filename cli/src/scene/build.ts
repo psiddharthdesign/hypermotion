@@ -87,6 +87,24 @@ export type FillJson =
       fit: 'cover' | 'contain' | 'fill' | 'tile'
     }
 
+export type StrokeStyleJson = 'solid' | 'dashed' | 'dotted'
+
+export interface StrokeJson {
+  color: string
+  width: number
+  align: 'inside' | 'center' | 'outside'
+  style: StrokeStyleJson
+  dashLength: number
+  dashGap: number
+  widths?: {
+    top: number
+    right: number
+    bottom: number
+    left: number
+  }
+  fill?: FillJson | null
+}
+
 export interface LayoutJson extends Record<string, unknown> {
   mode?: 'none' | 'flex' | 'grid'
   direction?: 'row' | 'column'
@@ -202,7 +220,7 @@ export interface AppearanceJson {
   [key: string]: unknown
   opacity?: number
   fill?: unknown | null
-  stroke?: unknown | null
+  stroke?: StrokeJson | null
   cornerRadius?: number
   cornerRadii?: {
     tl: number
