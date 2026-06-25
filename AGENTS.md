@@ -493,36 +493,7 @@ it without env hints.
 
 ## Roadmap
 
-### v0.1.1 — `.arnimotion` file format
-
-Saves and loads scenes as files. Unlocks:
-
-- `hypermotion render scene.arnimotion -o out.mp4` — render arbitrary
-  scenes from disk.
-- `hypermotion info scene.arnimotion` — print scene metadata.
-- `info_scene` MCP tool works end-to-end.
-
-The file format is `Y.encodeStateAsUpdate(doc)` bytes — i.e. a
-serialized Yjs document. Gzipped, with `.arnimotion` extension.
-
-### v0.1.2+ — Scene authoring API
-
-Lets agents create and modify scenes programmatically rather than only
-rendering ones a human designed. Likely shape:
-
-```ts
-// Hypothetical
-const scene = createScene({ name: 'Demo', canvas: { width: 1920, height: 1080 } })
-scene.addLayer({ type: 'rect', name: 'Hero card', ... })
-scene.addKeyframe({ layer: 'Hero card', property: 'opacity', time: 0, value: 0 })
-scene.addKeyframe({ layer: 'Hero card', property: 'opacity', time: 1, value: 1 })
-scene.save('demo.arnimotion')
-```
-
-Exposed through the CLI as `hypermotion new <name>` and through MCP as
-`create_scene`, `add_layer`, `add_keyframe`, etc.
-
-### Later — chapter / range rendering, batch rendering, headless watch mode
+### Later — in-place editing, chapter / range rendering, batch rendering, headless watch mode
 
 Likely v0.2.x once the above lands. Track or propose in
 [GitHub Discussions](https://github.com/psiddharthdesign/hypermotion/discussions).
