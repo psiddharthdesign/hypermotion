@@ -223,6 +223,31 @@ test('buildSceneBytes preserves per-corner radii in appearance', () => {
   assert.deepEqual(appearance.cornerRadii, { tl: 4, tr: 8, br: 12, bl: 16 })
 })
 
+test('buildSceneBytes preserves image fills in appearance', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.appearance = {
+    fill: {
+      kind: 'image',
+      src: '/tmp/texture.png',
+      fit: 'tile',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const appearance = nodes.root.appearance as Record<string, unknown>
+
+  assert.deepEqual(appearance.fill, {
+    kind: 'image',
+    src: '/tmp/texture.png',
+    fit: 'tile',
+  })
+  assert.equal(appearance.opacity, 1)
+  assert.equal(appearance.cornerRadius, 0)
+})
+
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
