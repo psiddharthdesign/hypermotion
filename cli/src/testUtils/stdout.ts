@@ -4,11 +4,11 @@ export async function captureStdout(run: () => Promise<void>): Promise<string> {
   let stdout = ''
   const write = process.stdout.write
   process.stdout.write = ((
-    value: string | Uint8Array,
-    encodingOrCallback?: BufferEncoding | ((err?: Error) => void),
-    callback?: (err?: Error) => void,
+    chunk: Parameters<typeof process.stdout.write>[0],
+    encodingOrCallback?: Parameters<typeof process.stdout.write>[1],
+    callback?: Parameters<typeof process.stdout.write>[2],
   ) => {
-    stdout += value.toString()
+    stdout += chunk.toString()
     const done =
       typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
     done?.()
