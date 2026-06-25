@@ -4,9 +4,10 @@
  * `hypermotion create <output.hype> --from <scene.json>` — author a
  * scene file from a plain JSON description.
  *
- * The agent (or any external tool) produces a JSON scene shape, this
- * command writes a `.hype` byte stream the desktop app can open. No
- * desktop app launch required — the CLI builds the Y.Doc directly.
+ * A script, agent, or other external tool can produce the JSON scene
+ * shape; this command writes a `.hype` byte stream the desktop app can
+ * open. No desktop app launch required — the CLI builds the Y.Doc
+ * directly.
  *
  * JSON shape: see `cli/src/scene/build.ts` (`SceneJson`). At minimum:
  *
