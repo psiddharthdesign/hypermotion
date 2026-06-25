@@ -546,7 +546,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   // --- meta ---
   const meta = new Y.Map<unknown>()
   scene.set('meta', meta)
-  const metaIn = { ...DEFAULT_META, ...(json.meta ?? {}) }
+  const metaIn = mergeWithDefaults(DEFAULT_META, json.meta)
   for (const [k, v] of Object.entries(metaIn)) meta.set(k, v)
 
   // --- nodes ---
