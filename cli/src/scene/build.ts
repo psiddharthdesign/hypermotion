@@ -59,6 +59,19 @@ export interface SizeJson extends Record<string, unknown> {
   height?: number | 'hug' | 'fill'
 }
 
+export interface LayoutJson extends Record<string, unknown> {
+  mode?: 'none' | 'flex' | 'grid'
+  direction?: 'row' | 'column'
+  justify?: 'start' | 'center' | 'end' | 'space-between' | 'space-around'
+  align?: 'start' | 'center' | 'end' | 'stretch'
+  gap?: number
+  padding?: Partial<ScenePadding>
+  wrap?: boolean
+  columns?: number
+  rowGap?: number
+  columnGap?: number
+}
+
 export interface NodeJson {
   id: string
   kind: NodeKindJson
@@ -88,7 +101,7 @@ export interface NodeJson {
   }
   appearance?: AppearanceJson
   size?: SizeJson
-  layout?: Record<string, unknown>
+  layout?: LayoutJson
   variants?: unknown[]
   defaultSelection?: Record<string, string>
   variantOverrides?: unknown[]
@@ -433,7 +446,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
       y.set(
         'layout',
-        mergeWithDefaults(
+        mergeLayoutWithDefaults(
           DEFAULT_LAYOUT,
           node.layout,
         ),
@@ -469,7 +482,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
       y.set(
         'layout',
-        mergeWithDefaults(
+        mergeLayoutWithDefaults(
           DEFAULT_LAYOUT,
           node.layout,
         ),
@@ -682,6 +695,13 @@ function mergeWithDefaults<T extends Record<string, unknown>>(
     }
   }
   return out as T
+}
+
+function mergeLayoutWithDefaults(
+  defaults: SceneLayout,
+  patch: LayoutJson | undefined,
+): SceneLayout {
+  return mergeWithDefaults(defaults, patch as Partial<SceneLayout> | undefined)
 }
 
 function clonePlainObject<T extends Record<string, unknown>>(value: T): T {
