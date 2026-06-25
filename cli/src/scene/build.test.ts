@@ -642,8 +642,19 @@ test('buildSceneBytes writes explicit component metadata defaults', () => {
   const component = nodes.component
 
   assert.equal(component.workspaceOnly, false)
+  assert.deepEqual(component.variants, [])
+  assert.deepEqual(component.defaultSelection, {})
+  assert.deepEqual(component.variantOverrides, [])
   assert.deepEqual(component.variantPositions, {})
   assert.deepEqual(component.componentProperties, [])
+  assert.deepEqual(component.variantTransition, {
+    duration: 0.3,
+    easing: 'ease-in-out',
+    presetId: 'smooth',
+    strength: 50,
+  })
+  assert.deepEqual(component.timelines, {})
+  assert.deepEqual(component.interactions, [])
 })
 
 test('buildSceneBytes preserves authored component timelines and interactions', () => {
