@@ -275,6 +275,7 @@ export interface KeyframeJson {
 export type KeyframeValueJson =
   | number
   | string
+  | null
   | JsonObject
   | 'row'
   | 'column'

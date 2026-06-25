@@ -378,6 +378,26 @@ test('buildSceneBytes preserves variant selection keyframe values', () => {
   assert.deepEqual(keyframes[0].value, { size: 'compact', tone: 'muted' })
 })
 
+test('buildSceneBytes accepts null keyframe values', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    clearFill: {
+      id: 'clearFill',
+      nodeId: 'title',
+      propertyId: 'appearance.fill',
+      keyframes: [
+        { id: 'k1', time: 0, value: null },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const keyframes = tracks.clearFill.keyframes as Array<Record<string, unknown>>
+
+  assert.equal(keyframes[0].value, null)
+})
+
 test('buildSceneBytes accepts non-string variant keyframe fields', () => {
   const scene = sampleScene()
   scene.tracks = {
