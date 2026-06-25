@@ -31,7 +31,7 @@ export interface SceneJson {
     name?: string
     duration?: number
     frameRate?: number
-    canvas?: { width: number; height: number }
+    canvas?: SceneCanvas
   }
   root?: string
   activeCameraId?: string
@@ -204,6 +204,10 @@ type SceneTransform = NonNullable<NodeJson['transform']> & {
 }
 
 type SceneSize = NonNullable<NodeJson['size']>
+interface SceneCanvas {
+  width: number
+  height: number
+}
 type SceneMeta = Required<NonNullable<SceneJson['meta']>>
 
 interface SceneAppearance {
