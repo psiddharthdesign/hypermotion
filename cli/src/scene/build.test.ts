@@ -183,6 +183,31 @@ test('buildSceneBytes preserves image import warnings', () => {
   )
 })
 
+test('buildSceneBytes writes text defaults expected by the desktop app', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    title: {
+      id: 'title',
+      kind: 'text',
+      parent: null,
+      text: 'Default text',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const text = nodes.title
+
+  assert.deepEqual(text.size, { width: 'hug', height: 'hug' })
+  assert.equal(text.fontFamily, 'Inter')
+  assert.equal(text.fontSize, 16)
+  assert.equal(text.fontWeight, 400)
+  assert.equal(text.lineHeight, 1.4)
+  assert.equal(text.letterSpacing, 0)
+  assert.equal(text.textAlign, 'start')
+  assert.equal(text.color, '#0a0a0c')
+})
+
 test('buildSceneBytes keys nodes by their declared ids', () => {
   const scene = sampleScene()
   const sceneNodes = scene.nodes ?? {}
