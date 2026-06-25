@@ -33,7 +33,7 @@ export interface HeadlessRenderRequest {
   format: 'mp4' | 'webm' | 'gif'
   quality: 'comp' | '720p' | '2k' | '4k'
   fps: number
-  /** Future file-based headless render support; currently ignored. */
+  /** Optional file-based scene to render instead of the current editor scene. */
   scenePath?: string
 }
 
