@@ -847,6 +847,38 @@ test('buildSceneBytes preserves explicit media timing fields', () => {
   assert.equal(clip.fit, 'contain')
 })
 
+test('buildSceneBytes preserves explicit audio timing fields', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    narration: {
+      id: 'narration',
+      kind: 'audio',
+      parent: null,
+      children: [],
+      src: '/tmp/narration.wav',
+      duration: 8,
+      volume: 0.4,
+      startTime: 1,
+      trimStart: 0.25,
+      trimEnd: 6.5,
+      loop: true,
+      muted: true,
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const narration = nodes.narration
+
+  assert.equal(narration.duration, 8)
+  assert.equal(narration.volume, 0.4)
+  assert.equal(narration.startTime, 1)
+  assert.equal(narration.trimStart, 0.25)
+  assert.equal(narration.trimEnd, 6.5)
+  assert.equal(narration.loop, true)
+  assert.equal(narration.muted, true)
+})
+
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
