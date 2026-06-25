@@ -268,6 +268,7 @@ export type PropertyIdJson =
   | 'camera.nearClip'
   | 'camera.farClip'
   | 'camera.aperture'
+  | 'camera.iso'
   | 'camera.blurLevel'
   | 'camera.blurQuality'
   | 'appearance.opacity'
