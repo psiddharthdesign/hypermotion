@@ -439,6 +439,27 @@ test('buildSceneBytes accepts transform anchor keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts per-corner radius keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    topLeft: {
+      id: 'topLeft',
+      nodeId: 'root',
+      propertyId: 'appearance.cornerRadii.tl',
+      keyframes: [
+        { id: 'k1', time: 0, value: 4 },
+        { id: 'k2', time: 1, value: 16 },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.equal(tracks.topLeft.propertyId, 'appearance.cornerRadii.tl')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes keys sections by their declared ids', () => {
   const scene = sampleScene()
   const sceneSections = scene.sections ?? {}
