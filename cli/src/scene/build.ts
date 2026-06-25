@@ -42,19 +42,21 @@ export interface SceneJson {
 
 export type TextAlignJson = 'start' | 'center' | 'end'
 
+export type NodeKindJson =
+  | 'frame'
+  | 'rect'
+  | 'ellipse'
+  | 'text'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'component'
+  | 'instance'
+  | 'camera'
+
 export interface NodeJson {
   id: string
-  kind:
-    | 'frame'
-    | 'rect'
-    | 'ellipse'
-    | 'text'
-    | 'image'
-    | 'video'
-    | 'audio'
-    | 'component'
-    | 'instance'
-    | 'camera'
+  kind: NodeKindJson
   name?: string
   parent?: string | null
   children?: string[]
@@ -616,7 +618,7 @@ function keyframeLength(value: unknown): number {
   return 0
 }
 
-function defaultName(kind: NodeJson['kind']): string {
+function defaultName(kind: NodeKindJson): string {
   switch (kind) {
     case 'frame': return 'Frame'
     case 'rect': return 'Rectangle'
@@ -631,7 +633,7 @@ function defaultName(kind: NodeJson['kind']): string {
   }
 }
 
-function defaultAppearance(kind: NodeJson['kind']): Record<string, unknown> {
+function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
   if (kind === 'text') {
     return { ...DEFAULT_APPEARANCE, fill: null }
   }
