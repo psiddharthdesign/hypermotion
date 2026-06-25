@@ -276,6 +276,41 @@ test('buildSceneBytes writes explicit component metadata defaults', () => {
   assert.deepEqual(component.componentProperties, [])
 })
 
+test('buildSceneBytes writes explicit instance metadata defaults', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    instance: {
+      id: 'instance',
+      kind: 'instance',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      componentId: 'component',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const instance = nodes.instance
+
+  assert.equal(instance.componentId, 'component')
+  assert.deepEqual(instance.layout, {
+    mode: 'none',
+    direction: 'column',
+    justify: 'start',
+    align: 'start',
+    gap: 0,
+    padding: { top: 0, right: 0, bottom: 0, left: 0 },
+    wrap: false,
+    columns: 1,
+    rowGap: 0,
+    columnGap: 0,
+  })
+  assert.deepEqual(instance.selection, {})
+  assert.deepEqual(instance.overrides, {})
+  assert.deepEqual(instance.interactions, [])
+})
+
 test('buildSceneBytes writes media timing defaults', () => {
   const scene = sampleScene()
   scene.nodes = {
