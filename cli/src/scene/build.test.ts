@@ -540,6 +540,27 @@ test('buildSceneBytes accepts camera point-of-interest keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts camera ISO keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    iso: {
+      id: 'iso',
+      nodeId: 'camera',
+      propertyId: 'camera.iso',
+      keyframes: [
+        { id: 'k1', time: 0, value: 100 },
+        { id: 'k2', time: 1, value: 400 },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.equal(tracks.iso.propertyId, 'camera.iso')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes accepts layout direction keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
