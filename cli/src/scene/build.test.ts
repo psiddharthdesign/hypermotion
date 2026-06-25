@@ -316,6 +316,27 @@ test('buildSceneBytes preserves variant selection keyframe values', () => {
   assert.deepEqual(keyframes[0].value, { size: 'compact', tone: 'muted' })
 })
 
+test('buildSceneBytes accepts transform anchor keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    anchor: {
+      id: 'anchor',
+      nodeId: 'title',
+      propertyId: 'transform.anchorX',
+      keyframes: [
+        { id: 'k1', time: 0, value: 0.5 },
+        { id: 'k2', time: 1, value: 0 },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.equal(tracks.anchor.propertyId, 'transform.anchorX')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes keys sections by their declared ids', () => {
   const scene = sampleScene()
   const sceneSections = scene.sections ?? {}
