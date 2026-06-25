@@ -518,6 +518,29 @@ test('buildSceneBytes accepts transform anchor keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts layout direction keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    direction: {
+      id: 'direction',
+      nodeId: 'root',
+      propertyId: 'layout.direction',
+      keyframes: [
+        { id: 'k1', time: 0, value: 'column' },
+        { id: 'k2', time: 1, value: 'row' },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const keyframes = tracks.direction.keyframes as Array<Record<string, unknown>>
+
+  assert.equal(tracks.direction.propertyId, 'layout.direction')
+  assert.equal(keyframes[1].value, 'row')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes accepts per-corner radius keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
