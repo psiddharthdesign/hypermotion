@@ -252,6 +252,24 @@ test('buildSceneBytes keys tracks by their declared ids', () => {
   assert.equal(tracks['fade-title'].id, 'fade-title')
 })
 
+test('buildSceneBytes defaults omitted track keyframes to empty', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    'fade-title': {
+      id: 'fade-title',
+      nodeId: 'title',
+      propertyId: 'appearance.opacity',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const summary = readSceneSummary(buildSceneBytes(scene))
+
+  assert.deepEqual(tracks['fade-title'].keyframes, [])
+  assert.equal(summary.keyframeCount, 0)
+})
+
 test('buildSceneBytes keys sections by their declared ids', () => {
   const scene = sampleScene()
   const sceneSections = scene.sections ?? {}
