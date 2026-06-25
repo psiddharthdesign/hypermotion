@@ -610,6 +610,50 @@ test('buildSceneBytes writes explicit instance metadata defaults', () => {
   assert.deepEqual(instance.interactions, [])
 })
 
+test('buildSceneBytes preserves authored instance interactions', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    instance: {
+      id: 'instance',
+      kind: 'instance',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      componentId: 'component',
+      interactions: [
+        {
+          id: 'open-on-click',
+          event: 'click',
+          actions: [
+            {
+              type: 'setVariant',
+              selection: { state: 'open' },
+              target: { kind: 'self' },
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.instance.interactions, [
+    {
+      id: 'open-on-click',
+      event: 'click',
+      actions: [
+        {
+          type: 'setVariant',
+          selection: { state: 'open' },
+          target: { kind: 'self' },
+        },
+      ],
+    },
+  ])
+})
+
 test('buildSceneBytes writes media timing defaults', () => {
   const scene = sampleScene()
   scene.nodes = {
