@@ -555,8 +555,8 @@ function mergeWithDefaults<T extends Record<string, unknown>>(
   defaults: T,
   patch: Partial<T> | undefined,
 ): T {
-  if (!patch) return { ...defaults }
-  const out: Record<string, unknown> = { ...defaults }
+  const out: Record<string, unknown> = clonePlainObject(defaults)
+  if (!patch) return out as T
   for (const [k, v] of Object.entries(patch)) {
     const d = (defaults as Record<string, unknown>)[k]
     if (
@@ -571,6 +571,20 @@ function mergeWithDefaults<T extends Record<string, unknown>>(
         d as Record<string, unknown>,
         v as Record<string, unknown>,
       )
+    } else {
+      out[k] = v
+    }
+  }
+  return out as T
+}
+
+function clonePlainObject<T extends Record<string, unknown>>(value: T): T {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value)) {
+    if (Array.isArray(v)) {
+      out[k] = [...v]
+    } else if (v != null && typeof v === 'object') {
+      out[k] = clonePlainObject(v as Record<string, unknown>)
     } else {
       out[k] = v
     }
