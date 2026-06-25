@@ -231,6 +231,7 @@ test('buildSceneBytes preserves image import warnings', () => {
   const data = inspectScene(buildSceneBytes(scene))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
 
+  assert.equal(nodes.image.fit, 'contain')
   assert.equal(
     nodes.image.importWarning,
     'Vector fallback was preserved as a bitmap.',
