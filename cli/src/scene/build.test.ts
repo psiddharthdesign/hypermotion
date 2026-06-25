@@ -94,6 +94,32 @@ test('buildSceneBytes creates a readable .hype summary', () => {
   assert.equal(summary.keyframeCount, 2)
 })
 
+test('buildSceneBytes fills default metadata for minimal scenes', () => {
+  const bytes = buildSceneBytes({
+    nodes: {
+      root: {
+        id: 'root',
+        kind: 'frame',
+        parent: null,
+        children: [],
+        size: { width: 960, height: 540 },
+        layout: { mode: 'none' },
+      },
+    },
+  })
+  const summary = readSceneSummary(bytes)
+
+  assert.deepEqual(summary.meta, {
+    id: 'scene',
+    name: 'Untitled',
+    duration: 5,
+    frameRate: 60,
+    canvas: { width: 960, height: 540 },
+  })
+  assert.equal(summary.root, 'root')
+  assert.equal(summary.activeCameraId, null)
+})
+
 test('buildSceneBytes fills nested defaults expected by the desktop app', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
