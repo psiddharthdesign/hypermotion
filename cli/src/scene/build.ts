@@ -500,7 +500,11 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       }
     }
     if (node.kind === 'text') {
-      y.set('size', node.size ?? { width: 'hug', height: 'hug' })
+      const defaultTextSize: SceneSize = { width: 'hug', height: 'hug' }
+      y.set(
+        'size',
+        mergeWithDefaults(defaultTextSize, node.size),
+      )
       y.set('text', node.text ?? 'Text')
       y.set('fontFamily', node.fontFamily ?? 'Inter')
       y.set('fontSize', node.fontSize ?? 16)
