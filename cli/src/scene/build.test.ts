@@ -495,6 +495,28 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   assert.equal(camera.focusWorldZ, 0)
 })
 
+test('buildSceneBytes writes camera lens and depth defaults', () => {
+  const data = inspectScene(buildSceneBytes(sampleScene()))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const camera = nodes.camera
+
+  assert.equal(camera.focalLength, 1000)
+  assert.equal(camera.fieldOfView, 35)
+  assert.equal(camera.nearClip, 1)
+  assert.equal(camera.farClip, 100000)
+  assert.equal(camera.depthOfField, false)
+  assert.equal(camera.focusMode, 'screen')
+  assert.equal(camera.focusTargetNodeId, null)
+  assert.equal(camera.focusDistance, 0)
+  assert.equal(camera.focusRadius, 160)
+  assert.equal(camera.focusFalloff, 180)
+  assert.equal(camera.aperture, 0)
+  assert.equal(camera.iso, 100)
+  assert.equal(camera.blurLevel, 1)
+  assert.equal(camera.blurQuality, 8)
+  assert.equal(camera.showFocusPlane, false)
+})
+
 test('buildSceneBytes derives camera point of interest from transform', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
