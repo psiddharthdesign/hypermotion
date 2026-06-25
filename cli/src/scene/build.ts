@@ -40,6 +40,8 @@ export interface SceneJson {
   sections?: Record<string, SectionJson>
 }
 
+export type TextAlignJson = 'start' | 'center' | 'end'
+
 export interface NodeJson {
   id: string
   kind:
@@ -100,7 +102,7 @@ export interface NodeJson {
   fontWeight?: number
   lineHeight?: number
   letterSpacing?: number
-  textAlign?: 'start' | 'center' | 'end'
+  textAlign?: TextAlignJson
   color?: string
   src?: string
   fit?: 'cover' | 'contain' | 'fill' | 'none'
