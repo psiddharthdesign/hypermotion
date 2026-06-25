@@ -54,6 +54,11 @@ export type NodeKindJson =
   | 'instance'
   | 'camera'
 
+export interface SizeJson extends Record<string, unknown> {
+  width?: number | 'hug' | 'fill'
+  height?: number | 'hug' | 'fill'
+}
+
 export interface NodeJson {
   id: string
   kind: NodeKindJson
@@ -82,7 +87,7 @@ export interface NodeJson {
     renderMode?: 'flat' | 'plane' | 'group3d'
   }
   appearance?: AppearanceJson
-  size?: { width: number | 'hug' | 'fill'; height: number | 'hug' | 'fill' }
+  size?: SizeJson
   layout?: Record<string, unknown>
   variants?: unknown[]
   defaultSelection?: Record<string, string>
@@ -282,7 +287,10 @@ type SceneTransform = NonNullable<NodeJson['transform']> & {
   renderMode: 'flat' | 'plane' | 'group3d'
 }
 
-type SceneSize = NonNullable<NodeJson['size']>
+type SceneSize = Record<string, unknown> & {
+  width: number | 'hug' | 'fill'
+  height: number | 'hug' | 'fill'
+}
 interface SceneCanvas {
   width: number
   height: number
