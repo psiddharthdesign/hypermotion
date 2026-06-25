@@ -118,6 +118,13 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
     cornerRadius: 0,
     effects: [],
   })
+  assert.deepEqual(nodes.title.size, { width: 'hug', height: 'hug' })
+  assert.equal(nodes.title.fontFamily, 'Inter')
+  assert.equal(nodes.title.fontWeight, 400)
+  assert.equal(nodes.title.lineHeight, 1.4)
+  assert.equal(nodes.title.letterSpacing, 0)
+  assert.equal(nodes.title.textAlign, 'start')
+  assert.equal(nodes.title.color, '#0a0a0c')
 })
 
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
