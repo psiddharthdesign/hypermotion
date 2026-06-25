@@ -640,11 +640,13 @@ test('buildSceneBytes preserves perspective camera projection', () => {
   const camera = scene.nodes?.camera
   if (!camera) throw new Error('missing sample camera')
   camera.projection = 'perspective'
+  camera.background = { kind: 'solid', color: '#111827' }
 
   const data = inspectScene(buildSceneBytes(scene))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
 
   assert.equal(nodes.camera.projection, 'perspective')
+  assert.deepEqual(nodes.camera.background, { kind: 'solid', color: '#111827' })
 })
 
 test('buildSceneBytes respects explicit root and active camera ids', () => {
