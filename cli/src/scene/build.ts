@@ -59,6 +59,34 @@ export interface SizeJson extends Record<string, unknown> {
   height?: number | 'hug' | 'fill'
 }
 
+export interface GradientStopJson {
+  at: number
+  color: string
+}
+
+export type FillJson =
+  | { kind: 'solid'; color: string }
+  | { kind: 'linear'; stops: GradientStopJson[]; angle: number }
+  | {
+      kind: 'radial'
+      stops: GradientStopJson[]
+      cx: number
+      cy: number
+      shape: 'circle' | 'ellipse'
+    }
+  | {
+      kind: 'conic'
+      stops: GradientStopJson[]
+      angle: number
+      cx: number
+      cy: number
+    }
+  | {
+      kind: 'image'
+      src: string
+      fit: 'cover' | 'contain' | 'fill' | 'tile'
+    }
+
 export interface LayoutJson extends Record<string, unknown> {
   mode?: 'none' | 'flex' | 'grid'
   direction?: 'row' | 'column'
@@ -136,7 +164,7 @@ export interface NodeJson {
   muted?: boolean
   projection?: '2d' | 'perspective'
   enabled?: boolean
-  background?: unknown
+  background?: FillJson | null
   focalLength?: number
   fieldOfView?: number
   pointOfInterestX?: number
