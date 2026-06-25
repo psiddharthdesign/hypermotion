@@ -95,6 +95,26 @@ test('info command prints human-readable scene summaries', async () => {
             },
           },
         },
+        tracks: {
+          fade: {
+            id: 'fade',
+            nodeId: 'root',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'fade-start', time: 0, value: 0 },
+              { id: 'fade-end', time: 1, value: 1 },
+            ],
+          },
+        },
+        sections: {
+          intro: {
+            id: 'intro',
+            name: 'Intro',
+            start: 0,
+            end: 2,
+            color: '#60a5fa',
+          },
+        },
       }),
     )
 
@@ -116,6 +136,9 @@ test('info command prints human-readable scene summaries', async () => {
     assert.match(stdout, /^  Canvas:    640 × 360$/m)
     assert.match(stdout, /^  Duration:  2s @ 30fps$/m)
     assert.match(stdout, /^  Layers:    2$/m)
+    assert.match(stdout, /^  Tracks:    1$/m)
+    assert.match(stdout, /^  Sections:  1$/m)
+    assert.match(stdout, /^  Keyframes: 2$/m)
     assert.match(stdout, /^  Root id:   root$/m)
     assert.match(stdout, /^  Camera id: camera$/m)
   } finally {
