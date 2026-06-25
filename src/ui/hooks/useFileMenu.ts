@@ -18,9 +18,10 @@ import { useUI } from '@/state/ui'
  *   file:save    — write current scene to remembered path (or Save As)
  *   file:save-as — show save dialog, write current scene to chosen path
  *
- * Current file path is tracked at module scope. Saved path persists for
- * the session; reopening the app resets to "no current path" (Save then
- * acts like Save As). Persisting the recent-files list is a v0.1.2 add.
+ * Current file path lives in UI state. Saved path persists for the
+ * session; reopening the app resets to "no current path" (Save then
+ * acts like Save As). The Electron main process owns the persisted
+ * recent-projects list.
  */
 
 declare global {
