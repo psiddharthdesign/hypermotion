@@ -230,7 +230,7 @@ export interface AppearanceJson {
     br: number
     bl: number
   }
-  effects?: unknown[]
+  effects?: JsonValue[]
 }
 
 export type PropertyIdJson =
