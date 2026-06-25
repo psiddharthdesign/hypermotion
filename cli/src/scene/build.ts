@@ -459,9 +459,12 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('interactions', node.interactions ?? [])
     }
     if (node.kind === 'video' || node.kind === 'audio') {
+      const defaultMediaSize: SceneSize = node.kind === 'audio'
+        ? { width: 120, height: 40 }
+        : { width: 100, height: 100 }
       y.set(
         'size',
-        node.size ?? (node.kind === 'audio' ? { width: 120, height: 40 } : { width: 100, height: 100 }),
+        mergeWithDefaults(defaultMediaSize, node.size),
       )
       y.set('src', node.src ?? '')
       y.set('duration', node.duration ?? 0)

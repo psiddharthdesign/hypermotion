@@ -6,6 +6,7 @@ import * as Y from 'yjs'
 import {
   buildSceneBytes,
   readSceneSummary,
+  type NodeJson,
   type SceneJson,
 } from './build.js'
 
@@ -482,6 +483,25 @@ test('buildSceneBytes writes media timing defaults', () => {
   assert.equal(nodes.clip.trimEnd, 3)
   assert.equal(nodes.clip.fit, 'cover')
   assert.equal(nodes.clip.muted, true)
+})
+
+test('buildSceneBytes fills omitted media size axes', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    clip: {
+      id: 'clip',
+      kind: 'video',
+      parent: null,
+      children: [],
+      src: '/tmp/clip.mp4',
+      size: { width: 640 } as NodeJson['size'],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.clip.size, { width: 640, height: 100 })
 })
 
 test('buildSceneBytes preserves explicit media timing fields', () => {
