@@ -373,8 +373,7 @@ or pop (`transform.scaleX` + `transform.scaleY`).
 
 ```
 1. create_scene({ output: '/tmp/calendar.hype', scene: { ... } })
-2. render_scene({ scene: '/tmp/calendar.hype', output: '~/Desktop/cal.mp4',
-                  format: 'mp4', quality: '2k', fps: 60 })
+2. info_scene({ scene: '/tmp/calendar.hype' })
 ```
 
 Or from the terminal:
@@ -386,8 +385,8 @@ hypermotion render -o ~/Desktop/current-scene.mp4 --quality 2k --fps 60
 ```
 
 Terminal render still targets the scene currently loaded in the desktop
-app; use `create_scene` + `render_scene` from MCP when an agent needs to
-pass a `.hype` scene path through the render request.
+app; `render_scene` also accepts but currently ignores a `.hype` scene
+path until file-based headless rendering lands.
 
 ---
 
