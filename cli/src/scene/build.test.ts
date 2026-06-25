@@ -262,6 +262,24 @@ test('buildSceneBytes writes text defaults expected by the desktop app', () => {
   assert.equal(text.color, '#0a0a0c')
 })
 
+test('buildSceneBytes fills omitted text size axes', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    title: {
+      id: 'title',
+      kind: 'text',
+      parent: null,
+      text: 'Sized text',
+      size: { width: 320 },
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.title.size, { width: 320, height: 'hug' })
+})
+
 test('buildSceneBytes keys nodes by their declared ids', () => {
   const scene = sampleScene()
   const sceneNodes = scene.nodes ?? {}
