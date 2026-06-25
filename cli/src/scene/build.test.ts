@@ -315,6 +315,9 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const nodes = data.nodes as Record<string, Record<string, unknown>>
   const camera = nodes.camera
 
+  assert.equal(camera.projection, '2d')
+  assert.equal(camera.enabled, true)
+  assert.equal(camera.background, null)
   assert.equal(camera.focusX, 640)
   assert.equal(camera.focusY, 360)
   assert.equal(camera.focusWorldX, 640)
