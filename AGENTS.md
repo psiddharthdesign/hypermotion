@@ -338,7 +338,9 @@ camera.focusRadius, camera.focusFalloff,
 camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ,
 camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip,
 camera.aperture, camera.blurLevel, camera.blurQuality,
-appearance.opacity, appearance.cornerRadius, appearance.fill,
+appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
+appearance.cornerRadii.tl, appearance.cornerRadii.tr,
+appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
 layout.gap, layout.padding.top, layout.padding.right, layout.padding.bottom,
 layout.padding.left, layout.direction, size.width, size.height, variant
 ```
