@@ -772,9 +772,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
 /**
  * Decode `.hype` bytes and return a plain JSON summary. Used by the
  * `info` command and the `info_scene` MCP tool. We pull just the
- * fields agents (and humans at a terminal) care about — full round-
- * trip isn't needed here, so we skip Y.Array → plain conversion for
- * children and keyframes if the caller doesn't ask for them.
+ * fields agents (and humans at a terminal) care about — full
+ * round-trip conversion for node children and keyframe payloads is not
+ * needed for a count-only summary.
  */
 export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   const doc = new Y.Doc()
