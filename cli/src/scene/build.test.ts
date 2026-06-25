@@ -167,6 +167,7 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
     cornerRadius: 0,
     effects: [],
   })
+  assert.equal(root.visible, true)
   assert.deepEqual(nodes.title.size, { width: 'hug', height: 'hug' })
   assert.equal(nodes.title.fontFamily, 'Inter')
   assert.equal(nodes.title.fontWeight, 400)
