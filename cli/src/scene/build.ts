@@ -282,6 +282,7 @@ interface SceneAppearance {
   fill: unknown | null
   stroke: unknown | null
   cornerRadius: number
+  cornerRadii?: AppearanceJson['cornerRadii']
   effects: unknown[]
 }
 
