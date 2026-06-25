@@ -856,6 +856,18 @@ test('readSceneSummary treats missing keyframes as empty', () => {
   assert.equal(summary.keyframeCount, 0)
 })
 
+test('readSceneSummary treats missing sections as empty', () => {
+  const doc = new Y.Doc()
+  const scene = doc.getMap<unknown>('scene')
+  scene.set('meta', new Y.Map<unknown>())
+  scene.set('nodes', new Y.Map<Y.Map<unknown>>())
+  scene.set('tracks', new Y.Map<Y.Map<unknown>>())
+
+  const summary = readSceneSummary(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(summary.sectionCount, 0)
+})
+
 function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
