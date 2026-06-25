@@ -178,6 +178,11 @@ export interface LayoutGuideJson {
   position: number
 }
 
+type LayoutMode = 'none' | 'flex' | 'grid'
+type FlexDirection = 'row' | 'column'
+type FlexJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around'
+type FlexAlign = 'start' | 'center' | 'end' | 'stretch'
+
 export interface SceneSummary {
   meta: Record<string, unknown>
   root: string | null
@@ -215,10 +220,10 @@ interface ScenePadding {
 }
 
 type SceneLayout = Record<string, unknown> & {
-  mode: string
-  direction: string
-  justify: string
-  align: string
+  mode: LayoutMode
+  direction: FlexDirection
+  justify: FlexJustify
+  align: FlexAlign
   gap: number
   padding: ScenePadding
   wrap: boolean
