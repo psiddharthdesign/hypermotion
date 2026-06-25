@@ -95,6 +95,8 @@ export interface SceneAPI {
   /** All node ids in the scene. */
   getAllNodeIds(): NodeId[]
   getTrack(id: TrackId): Track | null
+  /** All animation tracks in insertion order. */
+  getAllTracks(): Track[]
   getTracksForNode(nodeId: NodeId): Track[]
 
   // --- mutations -----------------------------------------------------------
@@ -680,6 +682,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       return y ? yTrackToTrack(y) : null
     },
 
+    getAllTracks: () => Array.from(tracks.values()).map(yTrackToTrack),
+
     getTracksForNode: (nodeId) => {
       const out: Track[] = []
       for (const t of tracks.values()) {
@@ -1217,12 +1221,14 @@ export function snapshotScene(api: SceneAPI): Scene {
   for (const s of api.getSections()) sections[s.id] = s
   const customFonts: Record<string, import('@/scene/types').CustomFont> = {}
   for (const f of api.getAllCustomFonts()) customFonts[f.id] = f
+  const tracks: Record<TrackId, Track> = {}
+  for (const t of api.getAllTracks()) tracks[t.id] = t
   return {
     meta: api.getMeta(),
     root: api.getRoot(),
     activeCameraId: api.getActiveCameraId() ?? '',
     nodes,
-    tracks: {}, // TODO: fill when tracks become mutable through the API
+    tracks,
     sections,
     customFonts,
   }
