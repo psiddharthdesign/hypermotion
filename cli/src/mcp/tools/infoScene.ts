@@ -80,11 +80,8 @@ export async function handleInfoScene(args: Record<string, unknown>) {
     }
   }
 
-  // Return both a human-readable text block AND the structured JSON,
-  // so the agent can either render it as a chat reply or parse the
-  // JSON to make a decision. The JSON is wrapped in a fenced code
-  // block so MCP clients that only display the first content block
-  // still get readable output.
+  // Return the summary as JSON text so MCP clients can either display
+  // it directly or parse it before deciding what to render next.
   return {
     content: [
       {
