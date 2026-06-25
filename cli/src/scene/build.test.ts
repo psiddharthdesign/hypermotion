@@ -371,6 +371,23 @@ test('buildSceneBytes defaults omitted track keyframes to empty', () => {
   assert.equal(summary.keyframeCount, 0)
 })
 
+test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    'fade-title': {
+      id: 'fade-title',
+      nodeId: 'title',
+      propertyId: 'appearance.opacity',
+      keyframes: [],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.equal(tracks['fade-title'].defaultEasing, 'ease-in-out')
+})
+
 test('buildSceneBytes preserves variant selection keyframe values', () => {
   const scene = sampleScene()
   scene.tracks = {
