@@ -22,7 +22,12 @@
  *         "layout": { "mode": "none" }
  *       },
  *       "text":   { "id": "text", "kind": "text", "parent": "root", "text": "Hello" },
- *       "camera": { "id": "camera", "kind": "camera", "parent": null }
+ *       "camera": {
+ *         "id": "camera",
+ *         "kind": "camera",
+ *         "parent": null,
+ *         "transform": { "x": 540, "y": 960, "z": 0, "rotation": 0, "scaleX": 1, "scaleY": 1 }
+ *       }
  *     }
  *   }
  *
