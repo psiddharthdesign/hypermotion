@@ -31,7 +31,7 @@ export interface SceneJson {
     name?: string
     duration?: number
     frameRate?: number
-    canvas?: SceneCanvas
+    canvas?: Partial<SceneCanvas>
   }
   root?: string
   activeCameraId?: string
@@ -403,6 +403,14 @@ interface JsonObject {
   [key: string]: JsonValue
 }
 
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends unknown[]
+    ? T[K]
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K]
+}
+
 export interface SectionJson {
   id: string
   name: string
@@ -448,7 +456,9 @@ interface SceneCanvas {
   width: number
   height: number
 }
-type SceneMeta = Required<NonNullable<SceneJson['meta']>>
+type SceneMeta = Required<Omit<NonNullable<SceneJson['meta']>, 'canvas'>> & {
+  canvas: SceneCanvas
+}
 
 interface SceneAppearance {
   opacity: number
@@ -812,7 +822,7 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
  */
 function mergeWithDefaults<T extends Record<string, unknown>>(
   defaults: T,
-  patch: Partial<T> | undefined,
+  patch: DeepPartial<T> | undefined,
 ): T {
   const out: Record<string, unknown> = clonePlainObject(defaults)
   if (!patch) return out as T
@@ -841,7 +851,7 @@ function mergeLayoutWithDefaults(
   defaults: SceneLayout,
   patch: LayoutJson | undefined,
 ): SceneLayout {
-  return mergeWithDefaults(defaults, patch as Partial<SceneLayout> | undefined)
+  return mergeWithDefaults(defaults, patch as DeepPartial<SceneLayout> | undefined)
 }
 
 function clonePlainObject<T extends Record<string, unknown>>(value: T): T {

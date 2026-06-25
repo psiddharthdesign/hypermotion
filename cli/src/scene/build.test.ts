@@ -125,7 +125,7 @@ test('buildSceneBytes deep-merges partial metadata defaults', () => {
     meta: {
       name: 'Partial canvas',
       canvas: { width: 1080 },
-    } as SceneJson['meta'],
+    },
     nodes: {
       root: {
         id: 'root',
