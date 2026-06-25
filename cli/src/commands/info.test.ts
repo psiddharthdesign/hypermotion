@@ -8,6 +8,21 @@ import test from 'node:test'
 import { infoCommand } from './info.js'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
 
+async function captureStdout(run: () => Promise<void>): Promise<string> {
+  let stdout = ''
+  const write = process.stdout.write
+  process.stdout.write = ((value: string | Uint8Array) => {
+    stdout += value.toString()
+    return true
+  }) as typeof process.stdout.write
+  try {
+    await run()
+  } finally {
+    process.stdout.write = write
+  }
+  return stdout
+}
+
 test('info command prints JSON scene summaries', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
@@ -34,19 +49,11 @@ test('info command prints JSON scene summaries', async () => {
       }),
     )
 
-    let stdout = ''
-    const write = process.stdout.write
-    process.stdout.write = ((value: string | Uint8Array) => {
-      stdout += value.toString()
-      return true
-    }) as typeof process.stdout.write
-    try {
+    const stdout = await captureStdout(async () => {
       await infoCommand()
         .exitOverride()
         .parseAsync([scenePath, '--json'], { from: 'user' })
-    } finally {
-      process.stdout.write = write
-    }
+    })
 
     const summary = JSON.parse(stdout) as SceneSummary
 
@@ -118,19 +125,11 @@ test('info command prints human-readable scene summaries', async () => {
       }),
     )
 
-    let stdout = ''
-    const write = process.stdout.write
-    process.stdout.write = ((value: string | Uint8Array) => {
-      stdout += value.toString()
-      return true
-    }) as typeof process.stdout.write
-    try {
+    const stdout = await captureStdout(async () => {
       await infoCommand().exitOverride().parseAsync([scenePath], {
         from: 'user',
       })
-    } finally {
-      process.stdout.write = write
-    }
+    })
 
     assert.match(stdout, /^Scene: Info Text$/m)
     assert.match(stdout, /^  Canvas:    640 × 360$/m)
