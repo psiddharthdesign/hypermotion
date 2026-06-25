@@ -6,7 +6,16 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { readSceneSummary } from '../scene/build.js'
-import { handleCreateScene } from './tools/createScene.js'
+import { createSceneTool, handleCreateScene } from './tools/createScene.js'
+
+test('create_scene description lists supported appearance property ids', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+  assert.match(description, /appearance\.fill/)
+  assert.match(description, /appearance\.cornerRadii,/)
+})
 
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
