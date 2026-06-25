@@ -295,7 +295,7 @@ Every paintable node carries:
 ```json
 {
   "opacity": 1,
-  "fill": null | { "kind": "solid", "color": "#hex" } | { "kind": "linear", "stops": [...], "angle": 0 },
+  "fill": null | { "kind": "solid", "color": "#hex" } | { "kind": "linear", "stops": [...], "angle": 0 } | { "kind": "radial", "stops": [...], "cx": 0.5, "cy": 0.5, "shape": "circle" } | { "kind": "conic", "stops": [...], "angle": 0, "cx": 0.5, "cy": 0.5 } | { "kind": "image", "src": "...", "fit": "cover" },
   "stroke": null | { "color": "#hex", "width": 1, "align": "inside", "style": "solid", "dashLength": 0, "dashGap": 0 },
   "cornerRadius": 0,
   "effects": []
