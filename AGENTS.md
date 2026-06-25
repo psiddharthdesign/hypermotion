@@ -495,7 +495,7 @@ it without env hints.
 
 ### Later — in-place editing, chapter / range rendering, batch rendering, headless watch mode
 
-Likely v0.2.x once the above lands. Track or propose in
+Likely v0.2.x. Track or propose in
 [GitHub Discussions](https://github.com/psiddharthdesign/hypermotion/discussions).
 
 ---
