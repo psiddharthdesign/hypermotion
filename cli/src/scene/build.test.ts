@@ -760,6 +760,29 @@ test('buildSceneBytes preserves explicit camera focus targets', () => {
   assert.equal(cameraNode.focusWorldZ, 288)
 })
 
+test('buildSceneBytes preserves explicit camera focus plane fields', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  camera.focusX = 320
+  camera.focusY = 180
+  camera.focusDistance = 42
+  camera.focusRadius = 96
+  camera.focusFalloff = 144
+  camera.showFocusPlane = true
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const cameraNode = nodes.camera
+
+  assert.equal(cameraNode.focusX, 320)
+  assert.equal(cameraNode.focusY, 180)
+  assert.equal(cameraNode.focusDistance, 42)
+  assert.equal(cameraNode.focusRadius, 96)
+  assert.equal(cameraNode.focusFalloff, 144)
+  assert.equal(cameraNode.showFocusPlane, true)
+})
+
 test('buildSceneBytes preserves perspective camera projection', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
