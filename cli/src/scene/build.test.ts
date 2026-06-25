@@ -575,6 +575,89 @@ test('buildSceneBytes writes explicit component metadata defaults', () => {
   assert.deepEqual(component.componentProperties, [])
 })
 
+test('buildSceneBytes preserves authored component timelines and interactions', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    component: {
+      id: 'component',
+      kind: 'component',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      layout: { mode: 'none' },
+      timelines: {
+        hover: {
+          id: 'hover',
+          name: 'Hover',
+          duration: 0.4,
+          loop: true,
+          tracks: [
+            {
+              id: 'grow',
+              nodeId: 'component',
+              propertyId: 'transform.scaleX',
+              keyframes: [
+                { id: 'start', time: 0, value: 1 },
+                { id: 'end', time: 0.4, value: 1.08 },
+              ],
+            },
+          ],
+        },
+      },
+      interactions: [
+        {
+          id: 'play-hover',
+          event: 'hoverIn',
+          actions: [
+            {
+              type: 'playTimeline',
+              timelineId: 'hover',
+              restart: true,
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const component = nodes.component
+
+  assert.deepEqual(component.timelines, {
+    hover: {
+      id: 'hover',
+      name: 'Hover',
+      duration: 0.4,
+      loop: true,
+      tracks: [
+        {
+          id: 'grow',
+          nodeId: 'component',
+          propertyId: 'transform.scaleX',
+          keyframes: [
+            { id: 'start', time: 0, value: 1 },
+            { id: 'end', time: 0.4, value: 1.08 },
+          ],
+        },
+      ],
+    },
+  })
+  assert.deepEqual(component.interactions, [
+    {
+      id: 'play-hover',
+      event: 'hoverIn',
+      actions: [
+        {
+          type: 'playTimeline',
+          timelineId: 'hover',
+          restart: true,
+        },
+      ],
+    },
+  ])
+})
+
 test('buildSceneBytes writes explicit instance metadata defaults', () => {
   const scene = sampleScene()
   scene.nodes = {
