@@ -295,6 +295,27 @@ test('buildSceneBytes defaults omitted track keyframes to empty', () => {
   assert.equal(summary.keyframeCount, 0)
 })
 
+test('buildSceneBytes preserves variant selection keyframe values', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    variant: {
+      id: 'variant',
+      nodeId: 'title',
+      propertyId: 'variant',
+      keyframes: [
+        { id: 'k1', time: 0, value: { size: 'compact', tone: 'muted' } },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const variantTrack = tracks.variant
+  const keyframes = variantTrack.keyframes as Array<Record<string, unknown>>
+
+  assert.deepEqual(keyframes[0].value, { size: 'compact', tone: 'muted' })
+})
+
 test('buildSceneBytes keys sections by their declared ids', () => {
   const scene = sampleScene()
   const sceneSections = scene.sections ?? {}
