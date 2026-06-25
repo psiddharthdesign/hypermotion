@@ -1263,7 +1263,7 @@ app.whenReady().then(() => {
     headlessRequest = parsed
     // eslint-disable-next-line no-console
     console.log(
-      `[headless] rendering ${parsed.scenePath} → ${parsed.outputPath} ` +
+      `[headless] rendering ${parsed.scenePath ?? 'current scene'} → ${parsed.outputPath} ` +
         `(${parsed.format} · ${parsed.quality} · ${parsed.fps}fps)`,
     )
     createMainWindow()
