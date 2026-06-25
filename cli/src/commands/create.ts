@@ -39,7 +39,7 @@
 import { Command } from 'commander'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildSceneBytes, type SceneJson } from '../scene/build.js'
+import { buildSceneBytes, readSceneSummary, type SceneJson } from '../scene/build.js'
 
 export function createCommand(): Command {
   return new Command('create')
@@ -123,8 +123,9 @@ export function createCommand(): Command {
         process.exit(1)
       }
 
-      const layers = Object.keys(json.nodes ?? {}).length
-      const tracks = Object.keys(json.tracks ?? {}).length
+      const summary = readSceneSummary(bytes)
+      const layers = summary.layerCount
+      const tracks = summary.trackCount
       console.log(
         `Wrote ${output} (${formatBytes(bytes.length)}, ${layers} layer${layers === 1 ? '' : 's'}, ${tracks} track${tracks === 1 ? '' : 's'})`,
       )

@@ -50,3 +50,65 @@ test('create command makes nested output directories', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('create command reports authored layer and track counts', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-'))
+  const sourcePath = path.join(dir, 'scene.json')
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        nodes: {
+          oldName: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          newName: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+        tracks: {
+          oldName: {
+            id: 'fade-root',
+            nodeId: 'root',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'fade-start', time: 0, value: 0 },
+              { id: 'fade-end', time: 0.2, value: 1 },
+            ],
+          },
+          newerName: {
+            id: 'fade-root',
+            nodeId: 'root',
+            propertyId: 'appearance.opacity',
+            keyframes: [],
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await createCommand()
+        .exitOverride()
+        .parseAsync([scenePath, '--from', sourcePath], { from: 'user' })
+    })
+
+    const summary = readSceneSummary(fs.readFileSync(scenePath))
+
+    assert.match(stdout, /^Wrote .+scene\.hype \(.*1 layer, 1 track\)$/m)
+    assert.equal(summary.layerCount, 1)
+    assert.equal(summary.trackCount, 1)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
