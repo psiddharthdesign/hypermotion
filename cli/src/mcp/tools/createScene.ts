@@ -26,7 +26,7 @@ import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildSceneBytes, type SceneJson } from '../../scene/build.js'
+import { buildSceneBytes, readSceneSummary, type SceneJson } from '../../scene/build.js'
 
 const CreateInput = z.object({
   output: z
@@ -195,8 +195,9 @@ export async function handleCreateScene(
     }
   }
 
-  const layers = Object.keys(scene.nodes ?? {}).length
-  const tracks = Object.keys(scene.tracks ?? {}).length
+  const summary = readSceneSummary(bytes)
+  const layers = summary.layerCount
+  const tracks = summary.trackCount
   return {
     content: [
       {
