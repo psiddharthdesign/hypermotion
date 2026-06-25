@@ -144,15 +144,23 @@ export interface TrackJson {
   id: string
   nodeId: string
   propertyId: string
-  defaultEasing?: unknown
+  defaultEasing?: EasingJson
   keyframes: KeyframeJson[]
 }
+
+export type EasingJson =
+  | 'linear'
+  | 'ease-in'
+  | 'ease-out'
+  | 'ease-in-out'
+  | { bezier: [number, number, number, number] }
+  | { spring: { stiffness: number; damping: number; mass: number } }
 
 export interface KeyframeJson {
   id: string
   time: number
   value: unknown
-  easingOut?: unknown
+  easingOut?: EasingJson
   presetOrigin?: 'in' | 'out'
 }
 
