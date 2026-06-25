@@ -28,6 +28,26 @@ test('create_scene description lists supported appearance property ids', () => {
   }
 })
 
+test('create_scene description lists supported camera property ids', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+  for (const propertyId of [
+    'camera.focalLength',
+    'camera.fieldOfView',
+    'camera.nearClip',
+    'camera.farClip',
+    'camera.aperture',
+    'camera.iso',
+    'camera.blurLevel',
+    'camera.blurQuality',
+  ]) {
+    const escapedPropertyId = propertyId.replaceAll('.', '\\.')
+    assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
+  }
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
