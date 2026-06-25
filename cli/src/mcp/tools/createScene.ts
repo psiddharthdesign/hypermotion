@@ -203,7 +203,7 @@ export async function handleCreateScene(
         type: 'text' as const,
         text:
           `Wrote ${outputPath} (${formatBytes(bytes.length)}, ${layers} layer${layers === 1 ? '' : 's'}, ${tracks} track${tracks === 1 ? '' : 's'}). ` +
-          `Pass this path to render_scene to produce an MP4 / WebM / GIF, or open it in the desktop app for hand-editing.`,
+          `Open it in the desktop app for hand-editing or rendering to MP4 / WebM / GIF.`,
       },
     ],
   }
