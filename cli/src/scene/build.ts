@@ -81,7 +81,7 @@ export interface NodeJson {
     space?: 'local' | 'world'
     renderMode?: 'flat' | 'plane' | 'group3d'
   }
-  appearance?: Record<string, unknown>
+  appearance?: AppearanceJson
   size?: { width: number | 'hug' | 'fill'; height: number | 'hug' | 'fill' }
   layout?: Record<string, unknown>
   variants?: unknown[]
@@ -150,6 +150,21 @@ export interface TrackJson {
   propertyId: PropertyIdJson
   defaultEasing?: EasingJson
   keyframes?: KeyframeJson[]
+}
+
+export interface AppearanceJson {
+  [key: string]: unknown
+  opacity?: number
+  fill?: unknown | null
+  stroke?: unknown | null
+  cornerRadius?: number
+  cornerRadii?: {
+    tl: number
+    tr: number
+    br: number
+    bl: number
+  }
+  effects?: unknown[]
 }
 
 export type PropertyIdJson =

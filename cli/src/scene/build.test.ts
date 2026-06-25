@@ -157,6 +157,23 @@ test('buildSceneBytes gives each node independent nested defaults', () => {
   assert.deepEqual(secondLayout.padding, { top: 0, right: 0, bottom: 0, left: 0 })
 })
 
+test('buildSceneBytes preserves per-corner radii in appearance', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.appearance = {
+    cornerRadius: 8,
+    cornerRadii: { tl: 4, tr: 8, br: 12, bl: 16 },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const appearance = nodes.root.appearance as Record<string, unknown>
+
+  assert.equal(appearance.cornerRadius, 8)
+  assert.deepEqual(appearance.cornerRadii, { tl: 4, tr: 8, br: 12, bl: 16 })
+})
+
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
