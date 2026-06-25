@@ -56,7 +56,7 @@ export const createSceneTool: Tool = {
     "Components can define variants, defaultSelection, variantOverrides, timelines, and interactions. " +
     "Instances point at componentId and carry selection, overrides, and instance-local interaction additions. " +
     "Component timelines are local tracks triggered by interactions, e.g. onClick -> playTimeline, and are scoped per instance.\n" +
-    "Tracks: { id, nodeId, propertyId, keyframes: [{ id, time, value, easingOut? }], defaultEasing? }\n" +
+    "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing? } — omitted keyframes default to [].\n" +
     "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
     "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
     "blurQuality, and showFocusPlane.\n" +
