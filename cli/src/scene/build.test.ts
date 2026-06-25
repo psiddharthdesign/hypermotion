@@ -6,7 +6,6 @@ import * as Y from 'yjs'
 import {
   buildSceneBytes,
   readSceneSummary,
-  type NodeJson,
   type SceneJson,
 } from './build.js'
 
@@ -514,7 +513,7 @@ test('buildSceneBytes fills omitted media size axes', () => {
       parent: null,
       children: [],
       src: '/tmp/clip.mp4',
-      size: { width: 640 } as NodeJson['size'],
+      size: { width: 640 },
     },
   }
 
