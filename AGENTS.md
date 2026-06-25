@@ -52,7 +52,7 @@ Requires Node 20+.
 
 ```sh
 hypermotion --version
-# 0.1.0
+# 0.1.2
 
 hypermotion render --help
 ```
