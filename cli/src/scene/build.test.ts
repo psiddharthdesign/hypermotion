@@ -711,6 +711,35 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   assert.equal(camera.showFocusPlane, false)
 })
 
+test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  camera.focalLength = 640
+  camera.fieldOfView = 50
+  camera.nearClip = 2
+  camera.farClip = 5000
+  camera.depthOfField = true
+  camera.aperture = 1.8
+  camera.iso = 400
+  camera.blurLevel = 3
+  camera.blurQuality = 12
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const cameraNode = nodes.camera
+
+  assert.equal(cameraNode.focalLength, 640)
+  assert.equal(cameraNode.fieldOfView, 50)
+  assert.equal(cameraNode.nearClip, 2)
+  assert.equal(cameraNode.farClip, 5000)
+  assert.equal(cameraNode.depthOfField, true)
+  assert.equal(cameraNode.aperture, 1.8)
+  assert.equal(cameraNode.iso, 400)
+  assert.equal(cameraNode.blurLevel, 3)
+  assert.equal(cameraNode.blurQuality, 12)
+})
+
 test('buildSceneBytes derives camera point of interest x/y from transform', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
