@@ -62,11 +62,13 @@ export const createSceneTool: Tool = {
     "blurQuality, and showFocusPlane.\n" +
     "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
     "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
+    "transform.anchorX, transform.anchorY, transform.anchorZ, " +
     "camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, camera.focusDistance, camera.focusRadius, camera.focusFalloff, " +
     "camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ, " +
     "camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip, " +
     "camera.aperture, camera.blurLevel, camera.blurQuality, " +
-    "appearance.opacity, appearance.cornerRadius, layout.gap, layout.padding.top, " +
+    "appearance.opacity, appearance.cornerRadius, appearance.cornerRadii.tl, appearance.cornerRadii.tr, " +
+    "appearance.cornerRadii.br, appearance.cornerRadii.bl, layout.gap, layout.padding.top, " +
     "layout.padding.right, layout.padding.bottom, layout.padding.left, size.width, size.height, " +
     "layout.direction, variant.\n\n" +
     "Include a 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
