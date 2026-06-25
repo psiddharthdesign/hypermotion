@@ -147,7 +147,7 @@ export interface TrackJson {
   nodeId: string
   propertyId: string
   defaultEasing?: EasingJson
-  keyframes: KeyframeJson[]
+  keyframes?: KeyframeJson[]
 }
 
 export type EasingJson =
