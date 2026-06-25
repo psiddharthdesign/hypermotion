@@ -23,6 +23,14 @@ import { driveHeadlessRender } from '../electron/driver.js'
 type Format = 'mp4' | 'webm' | 'gif'
 type Quality = 'comp' | '720p' | '2k' | '4k'
 
+interface RenderOptions {
+  output: string
+  format?: string
+  quality?: string
+  fps?: string
+  scene?: string
+}
+
 export function renderCommand(): Command {
   return new Command('render')
     .description(
@@ -46,7 +54,7 @@ export function renderCommand(): Command {
         'available yet; this flag is accepted but ignored and the current desktop ' +
         'scene is rendered instead.',
     )
-    .action(async (opts: Record<string, string>) => {
+    .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
       const format = (opts.format ?? inferFormat(outputPath)) as Format
