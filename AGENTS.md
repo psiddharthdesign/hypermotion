@@ -375,8 +375,12 @@ Or from the terminal:
 ```sh
 cat scene.json | hypermotion create ~/Desktop/calendar.hype --from -
 hypermotion info ~/Desktop/calendar.hype
-hypermotion render ~/Desktop/calendar.hype ~/Desktop/calendar.mp4 --quality 2k --fps 60
+hypermotion render -o ~/Desktop/current-scene.mp4 --quality 2k --fps 60
 ```
+
+Terminal render still targets the scene currently loaded in the desktop
+app; use `create_scene` + `render_scene` from MCP when an agent needs to
+pass a `.hype` scene path through the render request.
 
 ---
 
