@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { readSceneSummary } from '../../scene/build.js'
 
@@ -31,7 +31,9 @@ export const infoSceneTool: Tool = {
   },
 }
 
-export async function handleInfoScene(args: Record<string, unknown>) {
+export async function handleInfoScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = InfoInput.safeParse(args)
   if (!parsed.success) {
     return {
