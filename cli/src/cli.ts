@@ -7,9 +7,9 @@
  *
  *   `hypermotion <subcommand>` — interactive CLI for humans (render, info,
  *                                  create, serve).
- *   `hypermotion-mcp`          — alias that calls `hypermotion serve --mcp`,
- *                                  used by AI coding agents (Claude Code,
- *                                  Codex) over stdio.
+ *   `hypermotion-mcp`          — dedicated MCP server binary used by AI
+ *                                  coding agents (Claude Code, Codex) over
+ *                                  stdio.
  *
  * The renderer itself lives in the Electron desktop app. The CLI's `render`
  * command shells out to the installed hyper-motion app with the `--render`
