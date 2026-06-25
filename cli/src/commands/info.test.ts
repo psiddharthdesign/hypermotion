@@ -7,21 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { infoCommand } from './info.js'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
-
-async function captureStdout(run: () => Promise<void>): Promise<string> {
-  let stdout = ''
-  const write = process.stdout.write
-  process.stdout.write = ((value: string | Uint8Array) => {
-    stdout += value.toString()
-    return true
-  }) as typeof process.stdout.write
-  try {
-    await run()
-  } finally {
-    process.stdout.write = write
-  }
-  return stdout
-}
+import { captureStdout } from '../testUtils/stdout.js'
 
 test('info command prints JSON scene summaries', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
