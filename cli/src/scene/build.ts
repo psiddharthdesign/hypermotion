@@ -89,6 +89,8 @@ export type FillJson =
 
 export type StrokeStyleJson = 'solid' | 'dashed' | 'dotted'
 
+export type MediaFitJson = 'cover' | 'contain' | 'fill' | 'none'
+
 export interface StrokeJson {
   color: string
   width: number
@@ -171,7 +173,7 @@ export interface NodeJson {
   textAlign?: TextAlignJson
   color?: string
   src?: string
-  fit?: 'cover' | 'contain' | 'fill' | 'none'
+  fit?: MediaFitJson
   importWarning?: string
   duration?: number
   volume?: number
