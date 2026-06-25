@@ -155,7 +155,7 @@ export interface NodeJson {
   variantOverrides?: unknown[]
   variantPositions?: Record<string, { x: number; y: number }>
   componentProperties?: unknown[]
-  variantTransition?: unknown
+  variantTransition?: VariantTransitionJson
   timelines?: Record<string, unknown>
   interactions?: unknown[]
   componentId?: string
@@ -287,6 +287,13 @@ export type EasingJson =
   | 'ease-in-out'
   | { bezier: [number, number, number, number] }
   | { spring: { stiffness: number; damping: number; mass: number } }
+
+export interface VariantTransitionJson {
+  duration: number
+  easing: EasingJson
+  presetId?: string
+  strength?: number
+}
 
 export interface KeyframeJson {
   id: string
