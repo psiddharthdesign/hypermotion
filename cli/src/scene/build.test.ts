@@ -514,6 +514,29 @@ test('buildSceneBytes accepts per-corner radius keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts aggregate corner radii keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    corners: {
+      id: 'corners',
+      nodeId: 'root',
+      propertyId: 'appearance.cornerRadii',
+      keyframes: [
+        { id: 'k1', time: 0, value: { tl: 4, tr: 4, br: 4, bl: 4 } },
+        { id: 'k2', time: 1, value: { tl: 4, tr: 8, br: 12, bl: 16 } },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const keyframes = tracks.corners.keyframes as Array<Record<string, unknown>>
+
+  assert.equal(tracks.corners.propertyId, 'appearance.cornerRadii')
+  assert.deepEqual(keyframes[1].value, { tl: 4, tr: 8, br: 12, bl: 16 })
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes keys sections by their declared ids', () => {
   const scene = sampleScene()
   const sceneSections = scene.sections ?? {}

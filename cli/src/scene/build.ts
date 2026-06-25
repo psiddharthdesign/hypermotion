@@ -265,6 +265,7 @@ export type PropertyIdJson =
   | 'camera.blurQuality'
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
+  | 'appearance.cornerRadii'
   | 'appearance.cornerRadii.tl'
   | 'appearance.cornerRadii.tr'
   | 'appearance.cornerRadii.br'
