@@ -117,6 +117,7 @@ pointing you at the download page.
 ```sh
 pnpm install
 pnpm run build   # tsc → dist/
+pnpm run test    # build + node:test coverage
 pnpm run dev     # tsc --watch
 ```
 
