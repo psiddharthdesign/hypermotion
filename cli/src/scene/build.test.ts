@@ -555,7 +555,7 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   assert.equal(camera.showFocusPlane, false)
 })
 
-test('buildSceneBytes derives camera point of interest from transform', () => {
+test('buildSceneBytes derives camera point of interest x/y from transform', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
   if (!camera) throw new Error('missing sample camera')
