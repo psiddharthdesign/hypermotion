@@ -702,6 +702,33 @@ test('buildSceneBytes derives camera point of interest x/y from transform', () =
   assert.equal(cameraNode.pointOfInterestZ, 0)
 })
 
+test('buildSceneBytes preserves explicit camera focus targets', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  camera.pointOfInterestX = 128
+  camera.pointOfInterestY = 256
+  camera.pointOfInterestZ = 384
+  camera.focusMode = 'target'
+  camera.focusTargetNodeId = 'title'
+  camera.focusWorldX = 96
+  camera.focusWorldY = 192
+  camera.focusWorldZ = 288
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const cameraNode = nodes.camera
+
+  assert.equal(cameraNode.pointOfInterestX, 128)
+  assert.equal(cameraNode.pointOfInterestY, 256)
+  assert.equal(cameraNode.pointOfInterestZ, 384)
+  assert.equal(cameraNode.focusMode, 'target')
+  assert.equal(cameraNode.focusTargetNodeId, 'title')
+  assert.equal(cameraNode.focusWorldX, 96)
+  assert.equal(cameraNode.focusWorldY, 192)
+  assert.equal(cameraNode.focusWorldZ, 288)
+})
+
 test('buildSceneBytes preserves perspective camera projection', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
