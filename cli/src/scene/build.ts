@@ -113,11 +113,18 @@ export interface LayoutJson extends Record<string, unknown> {
   justify?: 'start' | 'center' | 'end' | 'space-between' | 'space-around'
   align?: 'start' | 'center' | 'end' | 'stretch'
   gap?: number
-  padding?: Partial<ScenePadding>
+  padding?: Partial<PaddingJson>
   wrap?: boolean
   columns?: number
   rowGap?: number
   columnGap?: number
+}
+
+export interface PaddingJson {
+  top: number
+  right: number
+  bottom: number
+  left: number
 }
 
 export interface NodeJson {
@@ -470,12 +477,7 @@ interface SceneAppearance {
   effects: unknown[]
 }
 
-interface ScenePadding {
-  top: number
-  right: number
-  bottom: number
-  left: number
-}
+type ScenePadding = PaddingJson
 
 type SceneLayout = Record<string, unknown> & {
   mode: LayoutMode
