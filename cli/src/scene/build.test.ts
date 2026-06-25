@@ -120,6 +120,29 @@ test('buildSceneBytes fills default metadata for minimal scenes', () => {
   assert.equal(summary.activeCameraId, null)
 })
 
+test('buildSceneBytes deep-merges partial metadata defaults', () => {
+  const bytes = buildSceneBytes({
+    meta: {
+      name: 'Partial canvas',
+      canvas: { width: 1080 },
+    } as SceneJson['meta'],
+    nodes: {
+      root: {
+        id: 'root',
+        kind: 'frame',
+        parent: null,
+        children: [],
+        size: { width: 1080, height: 540 },
+        layout: { mode: 'none' },
+      },
+    },
+  })
+  const summary = readSceneSummary(bytes)
+
+  assert.equal(summary.meta.name, 'Partial canvas')
+  assert.deepEqual(summary.meta.canvas, { width: 1080, height: 540 })
+})
+
 test('buildSceneBytes fills nested defaults expected by the desktop app', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as Record<string, Record<string, unknown>>
