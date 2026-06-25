@@ -150,14 +150,14 @@ export interface NodeJson {
   appearance?: AppearanceJson
   size?: SizeJson
   layout?: LayoutJson
-  variants?: unknown[]
+  variants?: VariantAxisJson[]
   defaultSelection?: Record<string, string>
-  variantOverrides?: unknown[]
+  variantOverrides?: VariantOverrideJson[]
   variantPositions?: Record<string, { x: number; y: number }>
-  componentProperties?: unknown[]
+  componentProperties?: ComponentPropertyDefinitionJson[]
   variantTransition?: VariantTransitionJson
-  timelines?: Record<string, unknown>
-  interactions?: unknown[]
+  timelines?: Record<string, ComponentTimelineJson>
+  interactions?: InteractionJson[]
   componentId?: string
   selection?: Record<string, string>
   overrides?: Record<string, Record<string, unknown>>
@@ -293,6 +293,86 @@ export interface VariantTransitionJson {
   easing: EasingJson
   presetId?: string
   strength?: number
+}
+
+export interface VariantAxisJson {
+  name: string
+  values: string[]
+}
+
+export type VariantSelectionJson = Record<string, string>
+
+export interface VariantOverrideJson {
+  match: VariantSelectionJson
+  overrides: Record<string, Record<string, unknown>>
+}
+
+export type ComponentPropertyTypeJson =
+  | 'text'
+  | 'fill'
+  | 'color'
+  | 'number'
+  | 'size'
+  | 'stroke'
+  | 'boolean'
+
+export interface ComponentPropertyDefinitionJson {
+  id: string
+  name: string
+  nodeId: string
+  path: string
+  type: ComponentPropertyTypeJson
+}
+
+export interface ComponentTimelineJson {
+  id: string
+  name: string
+  duration: number
+  tracks: TrackJson[]
+  loop?: boolean
+}
+
+export type InteractionEventKindJson =
+  | 'click'
+  | 'pointerDown'
+  | 'pointerUp'
+  | 'hoverIn'
+  | 'hoverOut'
+
+export type InteractionTargetJson =
+  | { kind: 'self' }
+  | { kind: 'instance'; instanceId: string }
+  | { kind: 'node'; nodeId: string }
+
+export type InteractionActionJson =
+  | {
+      type: 'playTimeline'
+      timelineId: string
+      target?: InteractionTargetJson
+      restart?: boolean
+    }
+  | {
+      type: 'setVariant'
+      selection: VariantSelectionJson
+      target?: InteractionTargetJson
+    }
+  | {
+      type: 'toggleVariant'
+      axis: string
+      values: [string, string]
+      target?: InteractionTargetJson
+    }
+  | {
+      type: 'after'
+      delay: number
+      action: InteractionActionJson
+    }
+
+export interface InteractionJson {
+  id: string
+  sourceNodeId?: string
+  event: InteractionEventKindJson
+  actions: InteractionActionJson[]
 }
 
 export interface KeyframeJson {
