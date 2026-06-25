@@ -229,9 +229,21 @@ export interface KeyframeJson {
 export type KeyframeValueJson =
   | number
   | string
-  | Record<string, string>
+  | JsonObject
   | 'row'
   | 'column'
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | JsonObject
+
+interface JsonObject {
+  [key: string]: JsonValue
+}
 
 export interface SectionJson {
   id: string

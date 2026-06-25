@@ -334,6 +334,26 @@ test('buildSceneBytes preserves variant selection keyframe values', () => {
   assert.deepEqual(keyframes[0].value, { size: 'compact', tone: 'muted' })
 })
 
+test('buildSceneBytes accepts non-string variant keyframe fields', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    variant: {
+      id: 'variant',
+      nodeId: 'title',
+      propertyId: 'variant',
+      keyframes: [
+        { id: 'k1', time: 0, value: { enabled: true, columns: 3 } },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const keyframes = tracks.variant.keyframes as Array<Record<string, unknown>>
+
+  assert.deepEqual(keyframes[0].value, { enabled: true, columns: 3 })
+})
+
 test('buildSceneBytes accepts transform anchor keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
