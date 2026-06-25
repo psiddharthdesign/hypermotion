@@ -23,7 +23,7 @@
  */
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildSceneBytes, type SceneJson } from '../../scene/build.js'
@@ -87,7 +87,9 @@ export const createSceneTool: Tool = {
   },
 }
 
-export async function handleCreateScene(args: Record<string, unknown>) {
+export async function handleCreateScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = CreateInput.safeParse(args)
   if (!parsed.success) {
     return {

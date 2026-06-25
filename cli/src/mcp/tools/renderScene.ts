@@ -13,7 +13,7 @@
  */
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import path from 'node:path'
 import fs from 'node:fs'
 import { locateDesktopApp } from '../../electron/locator.js'
@@ -71,7 +71,9 @@ export const renderSceneTool: Tool = {
   },
 }
 
-export async function handleRenderScene(args: Record<string, unknown>) {
+export async function handleRenderScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = RenderInput.parse(args)
 
   const outputPath = path.resolve(parsed.output)
