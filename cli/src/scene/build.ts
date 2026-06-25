@@ -221,7 +221,7 @@ export interface TrackJson {
 export interface AppearanceJson {
   [key: string]: unknown
   opacity?: number
-  fill?: unknown | null
+  fill?: FillJson | null
   stroke?: StrokeJson | null
   cornerRadius?: number
   cornerRadii?: {
