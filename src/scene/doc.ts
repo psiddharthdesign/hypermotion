@@ -619,6 +619,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     propertyId: y.get('propertyId') as PropertyId,
     keyframes: (y.get('keyframes') as Keyframe[]) ?? [],
     defaultEasing: (y.get('defaultEasing') as Track['defaultEasing']) ?? 'ease-in-out',
+    textAnimation: normalizeTextAnimation(y.get('textAnimation')),
   })
 
   // --- API implementation -----------------------------------------------
@@ -967,6 +968,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('nodeId', track.nodeId)
         y.set('propertyId', track.propertyId)
         y.set('defaultEasing', track.defaultEasing)
+        y.set('textAnimation', normalizeTextAnimation(track.textAnimation) ?? null)
         // Keyframes are a plain array — swap wholesale. Fine for v1;
         // collaborators editing the same track keyframe list will
         // last-writer-wins. Split into nested Y.Array later if needed.

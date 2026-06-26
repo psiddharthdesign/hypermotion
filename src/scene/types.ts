@@ -948,6 +948,8 @@ export interface Track {
   keyframes: Keyframe[]
   /** Fallback easing if a keyframe doesn't specify its own easingOut. */
   defaultEasing: EasingKind
+  /** Per-range text effect config for stacked text animation tracks. */
+  textAnimation?: import('@/anim/textAnimations').TextAnimationConfig | null
 }
 
 // ---------------------------------------------------------------------------

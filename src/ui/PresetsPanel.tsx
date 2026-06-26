@@ -401,6 +401,10 @@ function TextAnimationPanel() {
   const selection = useUI((s) => s.selection)
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   const selectedKeyframes = useUI((s) => s.selectedKeyframes)
+  const staggerOn = useUI((s) => s.staggerOn)
+  const staggerDelay = useUI((s) => s.staggerDelay)
+  const setStaggerOn = useUI((s) => s.setStaggerOn)
+  const setStaggerDelay = useUI((s) => s.setStaggerDelay)
   const playhead = useUI((s) => s.playhead)
   const [showPicker, setShowPicker] = useState(false)
   const [showEasing, setShowEasing] = useState(false)
@@ -412,11 +416,11 @@ function TextAnimationPanel() {
     .filter((node): node is NonNullable<typeof node> & { kind: 'text' } => node?.kind === 'text')
   const primary = selectedTextNodes[0]
   const primaryTextAnimationTrack = primary
-    ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter)
+    ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter, playhead)
     : null
   const current = primaryTextAnimationTrack
     ? withTextTrackTiming(
-        normalizeTextAnimation(primary?.textAnimation),
+        normalizeTextAnimation(primaryTextAnimationTrack.textAnimation ?? primary?.textAnimation),
         primaryTextAnimationTrack,
         primary?.text ?? '',
       )
@@ -428,18 +432,20 @@ function TextAnimationPanel() {
   const patch = (next: Partial<TextAnimationConfig>) => {
     if (!current) return
     for (const node of selectedTextNodes) {
-      const base = normalizeTextAnimation(node.textAnimation) ?? current
+      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead)
+      const base = normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation) ?? current
       const config = {
         ...base,
         ...next,
       }
-      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter)
       const timedConfig = withTextTrackTiming(config, textTrack, node.text, next) ?? config
       api.setNodeProperty(node.id, 'textAnimation', timedConfig)
       if (isTextEasingOnlyPatch(next)) {
-        updateTextAnimationEasing(api, node.id, timedConfig)
+        updateTextAnimationEasing(api, node.id, timedConfig, textTrack?.id)
       } else {
-        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text)
+        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text, {
+          trackId: textTrack?.id,
+        })
       }
     }
   }
@@ -460,13 +466,19 @@ function TextAnimationPanel() {
   }
 
   const pickPreset = (id: TextAnimationId) => {
-    for (const node of selectedTextNodes) {
+    for (let i = 0; i < selectedTextNodes.length; i++) {
+      const node = selectedTextNodes[i]!
+      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead)
+      const startTime = textTrack
+        ? trackStartTime(textTrack)
+        : playhead + (staggerOn && selectedTextNodes.length > 1 ? i * staggerDelay : 0)
       applyTextAnimation(
         api,
         node.id,
         id,
-        playhead,
-        normalizeTextAnimation(node.textAnimation),
+        startTime,
+        normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation),
+        { trackId: textTrack?.id },
       )
     }
     setShowPicker(false)
@@ -495,6 +507,13 @@ function TextAnimationPanel() {
           </div>
         </div>
         {showPicker ? <TextPresetPicker current={null} onPick={pickPreset} /> : null}
+        <TextStaggerControls
+          enabled={staggerOn}
+          delay={staggerDelay}
+          disabled={selectedTextNodes.length < 2}
+          onEnabledChange={setStaggerOn}
+          onDelayChange={setStaggerDelay}
+        />
       </div>
     )
   }
@@ -548,6 +567,13 @@ function TextAnimationPanel() {
       </div>
 
       {showPicker ? <TextPresetPicker current={current.id} onPick={pickPreset} /> : null}
+      <TextStaggerControls
+        enabled={staggerOn}
+        delay={staggerDelay}
+        disabled={selectedTextNodes.length < 2 || Boolean(primaryTextAnimationTrack)}
+        onEnabledChange={setStaggerOn}
+        onDelayChange={setStaggerDelay}
+      />
 
       <ControlCard title="Effect">
         {(current.id === 'blur' || current.id === 'blur-slide') ? (
@@ -768,6 +794,66 @@ function TextAnimationCardPreview({
         {preset.label}
       </span>
     </>
+  )
+}
+
+function TextStaggerControls({
+  enabled,
+  delay,
+  disabled,
+  onEnabledChange,
+  onDelayChange,
+}: {
+  enabled: boolean
+  delay: number
+  disabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onDelayChange: (delay: number) => void
+}) {
+  return (
+    <div className="rounded-md border border-border bg-panel-raised p-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-text">Stagger</div>
+          <div className="mt-0.5 text-[10px] text-text-dim">
+            Offset newly added text animations across selected layers.
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onEnabledChange(!enabled)}
+          className={[
+            'h-6 w-10 rounded-full border p-0.5 transition',
+            enabled && !disabled
+              ? 'border-accent bg-accent/20'
+              : 'border-border-strong bg-panel',
+            disabled ? 'cursor-not-allowed opacity-45' : '',
+          ].join(' ')}
+          aria-pressed={enabled}
+        >
+          <span
+            className={[
+              'block h-4 w-4 rounded-full bg-text-dim transition-transform',
+              enabled && !disabled ? 'translate-x-4 bg-accent' : '',
+            ].join(' ')}
+          />
+        </button>
+      </div>
+      {enabled && !disabled ? (
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <span className="text-[10px] uppercase tracking-wide text-text-dim">Delay</span>
+          <NumberField
+            value={delay}
+            onCommit={(next) => onDelayChange(Math.max(0, next))}
+            min={0}
+            step={0.05}
+            suffix="s"
+            width="w-24"
+          />
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1068,6 +1154,7 @@ function findTextAnimationTrack(
   api: SceneAPI,
   nodeId: NodeId,
   trackFilter?: ReadonlySet<string>,
+  playhead?: number,
 ): ReturnType<typeof listTracksForNode>[number] | null {
   const tracks = listTracksForNode(api, nodeId).filter(
     (track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2,
@@ -1076,7 +1163,26 @@ function findTextAnimationTrack(
     const selected = tracks.find((track) => trackFilter.has(track.id))
     if (selected) return selected
   }
+  if (playhead !== undefined) {
+    return tracks.find((track) => trackContainsTime(track, playhead)) ?? null
+  }
   return tracks[0] ?? null
+}
+
+function trackContainsTime(
+  track: ReturnType<typeof listTracksForNode>[number],
+  time: number,
+): boolean {
+  if (track.keyframes.length < 2) return false
+  const sorted = [...track.keyframes].sort((a, b) => a.time - b.time)
+  const start = sorted[0]!.time
+  const end = sorted[sorted.length - 1]!.time
+  return time >= start - 0.01 && time <= end + 0.01
+}
+
+function trackStartTime(track: ReturnType<typeof listTracksForNode>[number]): number {
+  if (track.keyframes.length === 0) return 0
+  return Math.min(...track.keyframes.map((keyframe) => keyframe.time))
 }
 
 function withTextTrackTiming(

@@ -5,6 +5,7 @@ import type { SceneAPI } from '@/scene/doc'
 import { PROPERTIES } from '@/scene/props'
 import { lerpOklchStrings } from './color'
 import { evaluator, type EasingEvaluator } from './easing'
+import type { TextAnimationConfig } from './textAnimations'
 
 /**
  * Animation engine — the only thing in the codebase allowed to drive
@@ -74,6 +75,8 @@ export interface AnimatedValue {
   fill?: string
   /** 0→1 progress for text-specific animation effects. */
   textProgress?: number
+  /** Text effect config attached to the active text.progress track. */
+  textAnimation?: TextAnimationConfig
   focusDistance?: number
   focusX?: number
   focusY?: number
@@ -281,6 +284,10 @@ function applyTrack(
 ): void {
   const kfs = track.keyframes
   if (kfs.length === 0) return
+  if (track.propertyId === 'text.progress') {
+    applyTextProgressTrack(track, t, into, cache)
+    return
+  }
   // Boundary cases — single keyframe, or t outside range.
   let a = kfs[0]!
   let b = kfs[kfs.length - 1]!
@@ -335,6 +342,46 @@ function applyTrack(
     // Mixed or unsupported value shapes — step.
     writeProperty(track.propertyId, u < 1 ? av : bv, into)
   }
+}
+
+function applyTextProgressTrack(
+  track: Track,
+  t: number,
+  into: AnimatedValue,
+  cache: Map<string, EasingEvaluator>,
+): void {
+  const kfs = [...track.keyframes].sort((a, b) => a.time - b.time)
+  if (kfs.length < 2) return
+  const first = kfs[0]!
+  const last = kfs[kfs.length - 1]!
+  if (t < first.time || t > last.time) return
+
+  let a = first
+  let b = last
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const k0 = kfs[i]!
+    const k1 = kfs[i + 1]!
+    if (t >= k0.time && t <= k1.time) {
+      a = k0
+      b = k1
+      break
+    }
+  }
+
+  const span = b.time - a.time
+  const rawU = span <= 0 ? 0 : (t - a.time) / span
+  const cacheKey = track.id + ':' + a.id
+  let easer = cache.get(cacheKey)
+  if (!easer) {
+    easer = evaluator(a.easingOut ?? track.defaultEasing)
+    cache.set(cacheKey, easer)
+  }
+  const u = easer(rawU)
+  const av = a.value
+  const bv = b.value
+  if (typeof av !== 'number' || typeof bv !== 'number') return
+  into.textProgress = av + (bv - av) * u
+  if (track.textAnimation) into.textAnimation = track.textAnimation
 }
 
 /**
