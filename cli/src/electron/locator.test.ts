@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { locateDesktopApp } from './locator.js'
+import { captureStderr } from '../testUtils/stdout.js'
 
 test('locator returns an existing HYPERMOTION_APP_PATH override', async () => {
   const previousOverride = process.env.HYPERMOTION_APP_PATH
@@ -29,24 +30,19 @@ test('locator returns an existing HYPERMOTION_APP_PATH override', async () => {
 
 test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
   const previousOverride = process.env.HYPERMOTION_APP_PATH
-  const previousConsoleError = console.error
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-missing-'))
   const missingPath = path.join(dir, 'hyper-motion')
-  const messages: unknown[] = []
 
   try {
     process.env.HYPERMOTION_APP_PATH = missingPath
-    console.error = (...args: unknown[]) => {
-      messages.push(...args)
-    }
 
-    assert.equal(await locateDesktopApp(), null)
-    assert.equal(messages.length, 1)
-    const message = String(messages[0])
-    assert.match(message, /HYPERMOTION_APP_PATH is set/)
-    assert.equal(message.includes(missingPath), true)
+    const stderr = await captureStderr(async () => {
+      assert.equal(await locateDesktopApp(), null)
+    })
+
+    assert.match(stderr, /HYPERMOTION_APP_PATH is set/)
+    assert.equal(stderr.includes(missingPath), true)
   } finally {
-    console.error = previousConsoleError
     if (previousOverride === undefined) {
       delete process.env.HYPERMOTION_APP_PATH
     } else {
