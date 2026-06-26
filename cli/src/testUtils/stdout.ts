@@ -21,3 +21,25 @@ export async function captureStdout(run: () => Promise<void>): Promise<string> {
   }
   return stdout
 }
+
+export async function captureStderr(run: () => Promise<void>): Promise<string> {
+  let stderr = ''
+  const write = process.stderr.write
+  process.stderr.write = ((
+    chunk: Parameters<typeof process.stderr.write>[0],
+    encodingOrCallback?: Parameters<typeof process.stderr.write>[1],
+    callback?: Parameters<typeof process.stderr.write>[2],
+  ) => {
+    stderr += chunk.toString()
+    const done =
+      typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
+    done?.()
+    return true
+  }) as typeof process.stderr.write
+  try {
+    await run()
+  } finally {
+    process.stderr.write = write
+  }
+  return stderr
+}
