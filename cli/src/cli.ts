@@ -22,6 +22,11 @@ import { renderCommand } from './commands/render.js'
 import { infoCommand } from './commands/info.js'
 import { createCommand } from './commands/create.js'
 import { serveCommand } from './commands/serve.js'
+import { doctorCommand } from './commands/doctor.js'
+import { inspectCommand } from './commands/inspect.js'
+import { patchCommand } from './commands/patch.js'
+import { openCommand } from './commands/open.js'
+import { validateCommand } from './commands/validate.js'
 
 const PKG_VERSION = '0.1.2'
 
@@ -39,6 +44,11 @@ program
 program.addCommand(renderCommand())
 program.addCommand(infoCommand())
 program.addCommand(createCommand())
+program.addCommand(inspectCommand())
+program.addCommand(patchCommand())
+program.addCommand(validateCommand())
+program.addCommand(openCommand())
+program.addCommand(doctorCommand())
 program.addCommand(serveCommand())
 
 // Surface unknown commands cleanly instead of a stack trace.

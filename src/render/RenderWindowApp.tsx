@@ -436,29 +436,34 @@ function RenderCanvas({ job }: { job: RenderJob }) {
           // boot is visible during debugging.
           <span style={{ color: '#fff' }}>preparing layout…</span>
         ) : camera && camera.kind === 'camera' ? (
-          <ScenePostProcessLayer
-            rootId={rootId}
-            solved={solved}
-            order={renderOrder}
-            animated={animated}
-            inherited={inherited}
-            cameraDepthOfField={cameraDepthOfField}
-            sceneFill={sceneFill}
-            canvasWidth={canvasWidth}
-            canvasHeight={canvasHeight}
-            sceneCorner={sceneCorner}
-            includeSceneFill
-            sceneContentStyle={
-              cameraTransform
-                ? {
-                    transform: cameraTransform,
-                    transformOrigin: '0 0',
-                    transformStyle: 'preserve-3d',
-                    backfaceVisibility: 'visible',
-                  }
-                : undefined
-            }
-          />
+          <div
+            className="absolute inset-0"
+            style={{ transformStyle: 'preserve-3d' }}
+          >
+            <ScenePostProcessLayer
+              rootId={rootId}
+              solved={solved}
+              order={renderOrder}
+              animated={animated}
+              inherited={inherited}
+              cameraDepthOfField={cameraDepthOfField}
+              sceneFill={sceneFill}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              sceneCorner={sceneCorner}
+              includeSceneFill
+              sceneContentStyle={
+                cameraTransform
+                  ? {
+                      transform: cameraTransform,
+                      transformOrigin: '0 0',
+                      transformStyle: 'preserve-3d',
+                      backfaceVisibility: 'visible',
+                    }
+                  : undefined
+              }
+            />
+          </div>
         ) : (
           <>
             {sceneFill ? (
@@ -809,7 +814,7 @@ function resolveRenderWindowFocusEffect(
   const cameraId = api.getActiveCameraId()
   const camera = cameraId ? api.getNode(cameraId) : null
   if (!camera || camera.kind !== 'camera' || !camera.depthOfField) return null
-  const cameraAnim = animated[cameraId]
+  const cameraAnim = animated[camera.id]
   const cameraFocalLength = Math.max(50, camera.focalLength ?? 1000)
   const cameraZ = cameraAnim?.z ?? camera.transform.z
   const cameraDollyZ = cameraZ / 100

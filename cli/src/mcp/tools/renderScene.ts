@@ -3,10 +3,9 @@
 /**
  * `render_scene` MCP tool.
  *
- * Renders the user's CURRENT hyper-motion scene (whatever was last
- * persisted to IndexedDB by the desktop app) to MP4 / WebM / GIF by
- * driving the installed desktop app. `scene` is forwarded for
- * compatibility with desktop builds that support file-based rendering.
+ * Renders a .hype scene file, or the user's current desktop scene when
+ * no scene path is supplied, to MP4 / WebM / GIF by driving the installed
+ * desktop app.
  *
  * Returns the absolute output path on success, or a descriptive error
  * if the app isn't installed or the render fails.
@@ -33,20 +32,15 @@ const RenderInput = z.object({
   scene: z
     .string()
     .optional()
-    .describe(
-      'Path to a .hype scene file. Forwarded to compatible desktop builds; ' +
-        'older builds render the desktop app\'s current scene.',
-    ),
+    .describe('Path to a .hype scene file. When omitted, renders the current desktop scene.'),
 })
 
 export const renderSceneTool: Tool = {
   name: 'render_scene',
   description:
-    "Render the user's current hyper-motion scene (whatever's loaded in " +
-    'the desktop app right now) to MP4, WebM, or GIF. Drives the installed ' +
-    'desktop app under the hood — returns a clean error if the app is not ' +
-    'installed. The optional `scene` path is forwarded to compatible ' +
-    'desktop builds for file-based rendering.',
+    'Render a .hype scene file to MP4, WebM, or GIF. If `scene` is omitted, ' +
+    "renders the current scene loaded in the desktop app. Drives the installed " +
+    'desktop app under the hood.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -64,7 +58,7 @@ export const renderSceneTool: Tool = {
       fps: { type: 'number', description: 'Frame rate (1–120). Default: 30.' },
       scene: {
         type: 'string',
-        description: 'Path to a .hype file for compatible file-based headless rendering builds.',
+        description: 'Path to a .hype scene file. Omit to render the current desktop scene.',
       },
     },
     required: ['output'],
@@ -88,6 +82,7 @@ export async function handleRenderScene(
   }
 
   const outputPath = path.resolve(parsed.data.output)
+  const scenePath = parsed.data.scene ? path.resolve(parsed.data.scene) : undefined
   const format = parsed.data.format ?? inferFormat(outputPath)
   const quality = parsed.data.quality ?? 'comp'
   const fps = parsed.data.fps ?? 30
@@ -118,16 +113,14 @@ export async function handleRenderScene(
     format,
     quality,
     fps,
-    scenePath: parsed.data.scene,
+    scenePath,
   })
 
   return {
     content: [
       {
         type: 'text' as const,
-        text:
-          `Rendered via desktop app → ${outputPath} (${format} · ${quality} · ${fps}fps)` +
-          (parsed.data.scene ? `\nForwarded scene path: ${parsed.data.scene}` : ''),
+        text: `Rendered ${scenePath ?? 'current desktop scene'} → ${outputPath} (${format} · ${quality} · ${fps}fps)`,
       },
     ],
   }

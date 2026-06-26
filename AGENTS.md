@@ -208,8 +208,38 @@ Still on the roadmap:
 Agents call `create_scene` with `{ output, scene }`. The `scene` is a
 JSON object — same shape the desktop app uses internally, slightly
 simplified for terminal use. Required pieces: at least one frame node
-to be the artboard, optionally a camera, and any children you want
+to be the artboard, optionally one camera, and any children you want
 inside the frame.
+
+Camera constraint: Hyper Motion currently supports only one camera node
+per scene. Keep that camera as a scene-level node with `parent: null`,
+set `activeCameraId` to its id, and do not include the camera id in any
+frame or artboard `children` list. When designing scenes, default that
+camera to `focalLength: 50` unless the user explicitly requests a
+different camera/lens feel.
+
+Layout constraint: when agents design scenes, use auto-layout by
+default from the first frame onward. Prefer `layout.mode: 'flex'` for
+rows/columns and `layout.mode: 'grid'` for grids; use fixed transforms
+or `layout.mode: 'none'` only when the user explicitly asks for manual
+positioning or when a specific visual effect cannot be expressed with
+auto-layout.
+
+Sizing constraint: inside auto-layout frames, prefer `height: 'hug'`
+for content-driven groups and controls wherever supported. Use
+`width: 'fill'` for rows, inputs, dividers, and sections that should
+span the available container width. Fixed width/height should be
+reserved for artboards, icons, media, controls that need stable
+dimensions, or cases where hug/fill cannot express the intended layout.
+
+Spacing constraint: for UI design work, use a 4-point or 8-point grid.
+Prefer spacing, padding, gaps, radii, and dimensions in multiples of 4
+or 8 unless there is a specific visual reason to deviate.
+
+Icon constraint: when a design calls for UI icons, use icons from the
+Lucide or Phosphor icon libraries. Do not approximate icons with plain
+text characters or ad hoc hand-drawn shapes unless the requested icon
+is unavailable and the fallback is explicitly called out.
 
 ### Minimal example
 
@@ -274,15 +304,26 @@ A single-frame artboard with a title:
 | `ellipse`   | `size`                                                                             |
 | `text`      | `text`, `fontFamily`, `fontSize` (default Inter / 16 / weight 400)                 |
 | `image`     | `src` (data URL or absolute path), `size`, `fit`                                   |
-| `camera`    | `transform` (position is the camera pivot — typically canvas centre)               |
+| `camera`    | `transform` (one scene-level camera only; `parent: null`, referenced by `activeCameraId`) |
 | `video` / `audio` | `src`, `duration`, `volume` — for sequences with media; rarely used by agents |
+
+Use Lucide or Phosphor assets for UI icons. Prefer placing them as
+image/vector assets inside auto-layout frames, sized consistently with
+the surrounding text and controls.
 
 ### Layout
 
-Frames default to `mode: 'none'` (Figma's "no auto-layout"). For
-anything you'd lay out by hand, set `mode: 'flex'` and the kids stack
-according to `direction / justify / align / gap / padding`. Grid mode
-(`mode: 'grid'`) takes `columns`, `rowGap`, `columnGap` instead.
+Agents should create auto-layout frames by default. Use `mode: 'flex'`
+for rows/columns and stack children with `direction / justify / align /
+gap / padding`. Use `mode: 'grid'` for grid layouts with `columns`,
+`rowGap`, and `columnGap`. Reserve `mode: 'none'` and absolute
+`transform.x/y` positioning for explicit manual-positioning requests or
+visual effects that auto-layout cannot express cleanly. Prefer
+`height: 'hug'` for content stacks and controls, `width: 'fill'` for
+elements that should span their parent, and fixed dimensions only when
+the layout genuinely needs a stable size. Use a 4-point or 8-point grid
+for UI spacing, padding, gaps, radii, and dimensions, favoring multiples
+of 4 or 8 unless a specific visual reason requires otherwise.
 
 Children specify themselves as either `width: 'fill'` (take the
 remaining slot), `width: 'hug'` (size to content), or a fixed number.

@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { Command } from 'commander'
+import fs from 'node:fs'
+import path from 'node:path'
+import { applyScenePatch, type ScenePatch, type PatchOperation } from '../scene/build.js'
+
+export function patchCommand(): Command {
+  return new Command('patch')
+    .description('Apply targeted JSON patch operations to a .hype scene file.')
+    .argument('<scene>', 'Path to the input .hype scene file')
+    .requiredOption('-f, --from <json>', 'Patch JSON file. Use "-" to read from stdin.')
+    .option('-o, --output <path>', 'Path to write. Defaults to overwriting <scene>.')
+    .action(async (scenePath: string, options: { from: string; output?: string }) => {
+      const output = path.resolve(options.output ?? scenePath)
+      let sceneBytes: Buffer
+      try {
+        sceneBytes = fs.readFileSync(scenePath)
+      } catch (err) {
+        console.error(`[patch] failed to read ${scenePath}: ${err instanceof Error ? err.message : err}`)
+        process.exit(2)
+      }
+
+      let patch: ScenePatch | PatchOperation[]
+      try {
+        const raw = options.from === '-' ? await readStdin() : fs.readFileSync(options.from, 'utf-8')
+        patch = JSON.parse(raw) as ScenePatch | PatchOperation[]
+      } catch (err) {
+        console.error(`[patch] failed to read patch: ${err instanceof Error ? err.message : err}`)
+        process.exit(2)
+      }
+
+      let next: Uint8Array
+      try {
+        next = applyScenePatch(new Uint8Array(sceneBytes), patch)
+      } catch (err) {
+        console.error(`[patch] failed to apply patch: ${err instanceof Error ? err.message : err}`)
+        process.exit(1)
+      }
+
+      fs.mkdirSync(path.dirname(output), { recursive: true })
+      fs.writeFileSync(output, Buffer.from(next))
+      console.log(`Patched ${scenePath} → ${output}`)
+    })
+}
+
+function readStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = ''
+    process.stdin.setEncoding('utf-8')
+    process.stdin.on('data', (chunk) => {
+      data += chunk
+    })
+    process.stdin.on('end', () => resolve(data))
+    process.stdin.on('error', reject)
+  })
+}
