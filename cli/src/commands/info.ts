@@ -16,6 +16,11 @@ type InfoCommandOptions = {
   json?: boolean
 }
 
+type PrintableCanvas = {
+  width: number | string
+  height: number | string
+}
+
 export function infoCommand(): Command {
   return new Command('info')
     .description('Read a .hype scene file and print a summary.')
@@ -51,14 +56,11 @@ export function infoCommand(): Command {
         return
       }
 
-      const m = summary.meta as Record<string, unknown>
-      const canvas = (m.canvas ?? { width: '?', height: '?' }) as {
-        width: number | string
-        height: number | string
-      }
-      const name = (m.name as string | undefined) ?? '(unnamed)'
-      const duration = (m.duration as number | undefined) ?? 0
-      const frameRate = (m.frameRate as number | undefined) ?? 60
+      const { meta } = summary
+      const canvas = printableCanvas(meta.canvas)
+      const name = meta.name ?? '(unnamed)'
+      const duration = meta.duration ?? 0
+      const frameRate = meta.frameRate ?? 60
 
       console.log(`Scene: ${name}`)
       console.log(`  Canvas:    ${canvas.width} × ${canvas.height}`)
@@ -71,4 +73,19 @@ export function infoCommand(): Command {
       if (summary.activeCameraId)
         console.log(`  Camera id: ${summary.activeCameraId}`)
     })
+}
+
+function printableCanvas(canvas: unknown): PrintableCanvas {
+  if (canvas && typeof canvas === 'object') {
+    const width = 'width' in canvas ? canvas.width : '?'
+    const height = 'height' in canvas ? canvas.height : '?'
+
+    return {
+      width: typeof width === 'number' || typeof width === 'string' ? width : '?',
+      height:
+        typeof height === 'number' || typeof height === 'string' ? height : '?',
+    }
+  }
+
+  return { width: '?', height: '?' }
 }
