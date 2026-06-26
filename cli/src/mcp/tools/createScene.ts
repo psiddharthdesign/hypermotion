@@ -105,6 +105,7 @@ export const createSceneTool: Tool = {
       open: {
         type: 'boolean',
         description: 'Open the newly-created scene in the desktop app. Defaults to true.',
+        default: true,
       },
     },
     required: ['output', 'scene'],

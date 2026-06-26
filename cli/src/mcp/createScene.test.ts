@@ -104,6 +104,15 @@ test('create_scene description lists supported layout property ids', () => {
   }
 })
 
+test('create_scene input schema exposes the open default', () => {
+  const openProperty = createSceneTool.inputSchema.properties?.open as
+    | Record<string, unknown>
+    | undefined
+
+  assert.equal(openProperty?.type, 'boolean')
+  assert.equal(openProperty?.default, true)
+})
+
 test('create_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleCreateScene({
     output: 42,
