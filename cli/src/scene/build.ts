@@ -1026,6 +1026,10 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
     y.set('textAlign', node.textAlign ?? 'start')
     y.set('color', node.color ?? '#0a0a0c')
   }
+  if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
+    handledKeys.add('size')
+    y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+  }
   for (const [k, v] of Object.entries(node)) {
     if (handledKeys.has(k)) continue
     y.set(k, v)
