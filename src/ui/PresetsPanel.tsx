@@ -486,7 +486,7 @@ function TextAnimationPanel() {
 
   if (!current) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-3" data-timeline-selection-surface="1">
         <div className="rounded-md border border-border-strong/60 bg-panel-raised p-2">
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
@@ -523,7 +523,7 @@ function TextAnimationPanel() {
     TEXT_ANIMATION_PRESETS[0]!
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-timeline-selection-surface="1">
       <div className="rounded-md border border-border bg-panel-raised">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-2.5">
           <div className="grid min-w-0 grid-cols-[minmax(72px,96px)_minmax(0,1fr)] items-center gap-2">
