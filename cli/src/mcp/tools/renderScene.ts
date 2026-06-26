@@ -5,8 +5,8 @@
  *
  * Renders the user's CURRENT hyper-motion scene (whatever was last
  * persisted to IndexedDB by the desktop app) to MP4 / WebM / GIF by
- * driving the installed desktop app. `scene` is accepted for forward
- * compatibility with file-based rendering, but is ignored today.
+ * driving the installed desktop app. `scene` is forwarded for
+ * compatibility with desktop builds that support file-based rendering.
  *
  * Returns the absolute output path on success, or a descriptive error
  * if the app isn't installed or the render fails.
@@ -34,8 +34,8 @@ const RenderInput = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a .hype scene file. Reserved for file-based headless rendering; ' +
-        'currently ignored — the desktop app\'s current scene is rendered.',
+      'Path to a .hype scene file. Forwarded to compatible desktop builds; ' +
+        'older builds render the desktop app\'s current scene.',
     ),
 })
 
@@ -45,8 +45,8 @@ export const renderSceneTool: Tool = {
     "Render the user's current hyper-motion scene (whatever's loaded in " +
     'the desktop app right now) to MP4, WebM, or GIF. Drives the installed ' +
     'desktop app under the hood — returns a clean error if the app is not ' +
-    'installed. The optional `scene` path is reserved for future file-based ' +
-    'rendering and is ignored today.',
+    'installed. The optional `scene` path is forwarded to compatible ' +
+    'desktop builds for file-based rendering.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -64,7 +64,7 @@ export const renderSceneTool: Tool = {
       fps: { type: 'number', description: 'Frame rate (1–120). Default: 30.' },
       scene: {
         type: 'string',
-        description: 'Path to a .hype file (reserved for file-based headless rendering; ignored today).',
+        description: 'Path to a .hype file for compatible file-based headless rendering builds.',
       },
     },
     required: ['output'],
@@ -126,8 +126,8 @@ export async function handleRenderScene(
       {
         type: 'text' as const,
         text:
-          `Rendered current desktop scene → ${outputPath} (${format} · ${quality} · ${fps}fps)` +
-          (parsed.data.scene ? `\nNote: ignored scene path ${parsed.data.scene}` : ''),
+          `Rendered via desktop app → ${outputPath} (${format} · ${quality} · ${fps}fps)` +
+          (parsed.data.scene ? `\nForwarded scene path: ${parsed.data.scene}` : ''),
       },
     ],
   }
