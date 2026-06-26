@@ -557,6 +557,27 @@ test('buildSceneBytes accepts camera point-of-interest keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts camera focus keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    focus: {
+      id: 'focus',
+      nodeId: 'camera',
+      propertyId: 'camera.focusWorldZ',
+      keyframes: [
+        { id: 'k1', time: 0, value: 0 },
+        { id: 'k2', time: 1, value: 240 },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.equal(tracks.focus.propertyId, 'camera.focusWorldZ')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes accepts camera ISO keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
