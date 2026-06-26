@@ -400,7 +400,7 @@ export type KeyframeValueJson =
   | 'row'
   | 'column'
 
-type JsonValue =
+export type JsonValue =
   | string
   | number
   | boolean
@@ -408,7 +408,7 @@ type JsonValue =
   | JsonValue[]
   | JsonObject
 
-interface JsonObject {
+export interface JsonObject {
   [key: string]: JsonValue
 }
 
