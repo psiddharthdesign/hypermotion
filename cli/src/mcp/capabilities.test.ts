@@ -19,7 +19,13 @@ test('capability tools list the full supported keyframe property set', async () 
 function parseToolJson(result: {
   content: Array<{ type: 'text'; text: string }>
 }): { keyframeableProperties: string[] } {
-  return JSON.parse(result.content[0]?.text ?? '{}') as {
-    keyframeableProperties: string[]
-  }
+  const parsed: unknown = JSON.parse(result.content[0]?.text ?? '{}')
+  assert.equal(typeof parsed, 'object')
+  assert.notEqual(parsed, null)
+
+  const properties = (parsed as { keyframeableProperties?: unknown }).keyframeableProperties
+  assert.ok(Array.isArray(properties))
+  assert.ok(properties.every((propertyId) => typeof propertyId === 'string'))
+
+  return { keyframeableProperties: properties }
 }
