@@ -179,7 +179,7 @@ export function stampTextAnimationKeyframes(
   config: TextAnimationConfig,
   text: string,
 ): void {
-  clearTextAnimationKeyframes(api, nodeId, config.mode)
+  clearTextAnimationKeyframes(api, nodeId)
   const start = config.startTime
   const end = start + config.duration + Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
   const from = config.mode === 'in' ? 0 : 1
@@ -208,14 +208,10 @@ export function updateTextAnimationEasing(
 function clearTextAnimationKeyframes(
   api: SceneAPI,
   nodeId: NodeId,
-  mode: TextAnimationMode,
 ): void {
   for (const track of api.getTracksForNode(nodeId)) {
     if (track.propertyId !== 'text.progress') continue
-    const kept = track.keyframes.filter((keyframe) => keyframe.presetOrigin !== mode)
-    if (kept.length === track.keyframes.length) continue
-    if (kept.length === 0) api.deleteTrack(track.id)
-    else api.setTrack({ ...track, keyframes: kept })
+    api.deleteTrack(track.id)
   }
 }
 
