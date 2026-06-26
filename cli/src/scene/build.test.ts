@@ -862,6 +862,58 @@ test('buildSceneBytes preserves authored instance interactions', () => {
   ])
 })
 
+test('buildSceneBytes preserves delayed interaction actions', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    component: {
+      id: 'component',
+      kind: 'component',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      layout: { mode: 'none' },
+      interactions: [
+        {
+          id: 'delay-open',
+          event: 'click',
+          actions: [
+            {
+              type: 'after',
+              delay: 0.2,
+              action: {
+                type: 'setVariant',
+                selection: { state: 'open' },
+                target: { kind: 'self' },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.component.interactions, [
+    {
+      id: 'delay-open',
+      event: 'click',
+      actions: [
+        {
+          type: 'after',
+          delay: 0.2,
+          action: {
+            type: 'setVariant',
+            selection: { state: 'open' },
+            target: { kind: 'self' },
+          },
+        },
+      ],
+    },
+  ])
+})
+
 test('buildSceneBytes writes media timing defaults', () => {
   const scene = sampleScene()
   scene.nodes = {
