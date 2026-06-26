@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { validateScene } from '../../scene/build.js'
 
@@ -21,7 +21,9 @@ export const validateSceneTool: Tool = {
   },
 }
 
-export async function handleValidateScene(args: Record<string, unknown>) {
+export async function handleValidateScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = ValidateInput.safeParse(args)
   if (!parsed.success) {
     return {
