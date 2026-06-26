@@ -503,6 +503,16 @@ test('validateScene rejects unsupported track property ids', () => {
   ])
 })
 
+test('validateScene rejects non-frame root nodes', () => {
+  const scene = sampleScene()
+  scene.root = 'title'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
+})
+
 test('buildSceneBytes preserves variant selection keyframe values', () => {
   const scene = sampleScene()
   scene.tracks = {
