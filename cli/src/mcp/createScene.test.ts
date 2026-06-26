@@ -59,6 +59,27 @@ test('create_scene description lists supported camera property ids', () => {
   }
 })
 
+test('create_scene description lists supported layout property ids', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+  for (const propertyId of [
+    'layout.gap',
+    'layout.padding.top',
+    'layout.padding.right',
+    'layout.padding.bottom',
+    'layout.padding.left',
+    'layout.direction',
+    'size.width',
+    'size.height',
+    'variant',
+  ]) {
+    const escapedPropertyId = propertyId.replaceAll('.', '\\.')
+    assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
+  }
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
