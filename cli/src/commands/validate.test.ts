@@ -92,3 +92,45 @@ test('validate command prints human-readable validation errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('validate command rejects a non-camera active camera id', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Active Camera',
+          canvas: { width: 320, height: 180 },
+        },
+        activeCameraId: 'root',
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: scene\.activeCameraId is not a camera node: root$/m)
+    assert.doesNotMatch(stdout, /^warning: scene\.activeCameraId is missing$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
