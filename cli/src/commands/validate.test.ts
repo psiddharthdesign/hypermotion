@@ -51,3 +51,44 @@ test('validate command prints JSON validation results', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('validate command prints human-readable validation errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Text',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['missing-child'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: node root has missing child: missing-child$/m)
+    assert.match(stdout, /^warning: scene\.activeCameraId is missing$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
