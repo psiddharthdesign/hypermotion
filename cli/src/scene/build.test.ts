@@ -675,6 +675,18 @@ test('validateScene rejects cameras nested under scene nodes', () => {
   ])
 })
 
+test('validateScene rejects duplicate child references', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.children = ['title', 'title']
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['node root lists duplicate child: title'])
+})
+
 test('validateScene rejects node ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))

@@ -845,11 +845,14 @@ export function validateScene(bytes: Uint8Array): {
       }
     }
     const children = Array.isArray(node.children) ? node.children : []
+    const seenChildren = new Set<string>()
     for (const child of children) {
       if (typeof child !== 'string' || !nodes[child]) errors.push(`node ${id} has missing child: ${String(child)}`)
+      else if (seenChildren.has(child)) errors.push(`node ${id} lists duplicate child: ${child}`)
       else if (asRecord(nodes[child]).parent !== id) {
         errors.push(`node ${id} lists child ${child}, but child's parent is ${String(asRecord(nodes[child]).parent)}`)
       }
+      if (typeof child === 'string') seenChildren.add(child)
     }
   }
 
