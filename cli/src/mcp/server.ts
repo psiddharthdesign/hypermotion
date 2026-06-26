@@ -53,9 +53,9 @@ import {
   listLayersTool,
   listTracksTool,
 } from './tools/queryScene.js'
+import { CLI_VERSION } from '../version.js'
 
 const SERVER_NAME = 'hypermotion'
-const SERVER_VERSION = '0.1.2'
 
 const TOOLS: Tool[] = [
   doctorTool,
@@ -76,7 +76,7 @@ const TOOLS: Tool[] = [
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
-    { name: SERVER_NAME, version: SERVER_VERSION },
+    { name: SERVER_NAME, version: CLI_VERSION },
     { capabilities: { tools: {} } },
   )
 
@@ -137,5 +137,5 @@ export async function startMcpServer(): Promise<void> {
   await server.connect(transport)
 
   // stderr is fine — MCP uses stdout for protocol traffic, stderr for logs.
-  console.error(`[hypermotion-mcp] connected (${SERVER_NAME} ${SERVER_VERSION}, ${TOOLS.length} tools)`)
+  console.error(`[hypermotion-mcp] connected (${SERVER_NAME} ${CLI_VERSION}, ${TOOLS.length} tools)`)
 }

@@ -27,8 +27,7 @@ import { inspectCommand } from './commands/inspect.js'
 import { patchCommand } from './commands/patch.js'
 import { openCommand } from './commands/open.js'
 import { validateCommand } from './commands/validate.js'
-
-const PKG_VERSION = '0.1.2'
+import { CLI_VERSION } from './version.js'
 
 const program = new Command()
 
@@ -39,7 +38,7 @@ program
       'and let AI coding agents (Claude Code, Codex) drive motion sequences ' +
       'programmatically.',
   )
-  .version(PKG_VERSION, '-v, --version', 'output the current version')
+  .version(CLI_VERSION, '-v, --version', 'output the current version')
 
 program.addCommand(renderCommand())
 program.addCommand(infoCommand())
