@@ -215,7 +215,7 @@ Camera constraint: Hyper Motion currently supports only one camera node
 per scene. Keep that camera as a scene-level node with `parent: null`,
 set `activeCameraId` to its id, and do not include the camera id in any
 frame or artboard `children` list. When designing scenes, default that
-camera to `focalLength: 50` unless the user explicitly requests a
+camera to `focalLength: 1000` unless the user explicitly requests a
 different camera/lens feel.
 
 Layout constraint: when agents design scenes, use auto-layout by

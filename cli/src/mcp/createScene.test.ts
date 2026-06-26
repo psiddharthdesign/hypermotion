@@ -26,6 +26,7 @@ test('create_scene description lists supported appearance property ids', () => {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
   }
+  assert.match(description, /default focalLength to 1000/)
 })
 
 test('create_scene description lists supported camera property ids', () => {
