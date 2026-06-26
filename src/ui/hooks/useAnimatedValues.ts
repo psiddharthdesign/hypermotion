@@ -34,6 +34,7 @@ export interface AnimatedValue {
   opacity?: number
   cornerRadius?: number
   fill?: string
+  textProgress?: number
   focusDistance?: number
   focusX?: number
   focusY?: number

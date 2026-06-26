@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState, type CSSProperties, type ReactNode } from 'react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
-import type { EasingKind, NodeId } from '@/scene'
+import type { EasingKind, Fill, NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   PRESETS,
@@ -10,11 +11,37 @@ import {
   listTracksForNode,
   removeTrack,
   findEasingPreset,
+  bezierOf,
+  TEXT_ANIMATION_PRESETS,
+  applyTextAnimation,
+  normalizeTextAnimation,
+  stampTextAnimationKeyframes,
+  updateTextAnimationEasing,
 } from '@/anim'
-import type { AnimPresetId } from '@/anim'
+import type {
+  AnimPresetId,
+  TextAnimationApplyTo,
+  TextAnimationConfig,
+  TextAnimationDirection,
+  TextAnimationId,
+  TextAnimationOrder,
+  TextAnimationSmoothing,
+} from '@/anim'
 import { EasingPicker } from '@/ui/EasingPicker'
 import { GraphEditor } from '@/ui/GraphEditor'
 import { NumberField } from '@/ui/fields'
+
+const TEXT_EASING_PRESETS = [
+  'smooth',
+  'natural',
+  'slow-down',
+  'accelerate',
+  'impulse',
+  'swing',
+  'none',
+  'custom',
+] as const
+const TEXT_ANIMATION_PREVIEW_WORD = 'HYPER'
 
 /**
  * Animate-mode right panel.
@@ -54,6 +81,15 @@ export function PresetsPanel() {
   const staggerDelay = useUI((s) => s.staggerDelay)
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
+  const [showLayerOptions, setShowLayerOptions] = useState(false)
+  const [layerPresetTab, setLayerPresetTab] = useState<'in' | 'out'>('in')
+  const [openSectionState, setOpenSectionState] = useState({
+    selectionKey: '',
+    sections: {
+      layer: true,
+      text: false,
+    },
+  })
   // Timeline selection sources, in order of precedence:
   //   1. selectedKeyframes — individual diamonds the user marquee'd or
   //      shift-clicked. Compound keys "trackId:kfId" — we derive track
@@ -73,6 +109,37 @@ export function PresetsPanel() {
     for (const id of selectedTrackIds) set.add(id)
     return set.size > 0 ? set : undefined
   })()
+
+  const selectedNodes = selection
+    .map((id) => api.getNode(id))
+    .filter(Boolean)
+  const selectedTextNodes = selectedNodes.filter((node) => node?.kind === 'text')
+  const hasTextSelection = selectedTextNodes.length > 0
+  const selectionKey = selection.join('|')
+  const defaultOpenSections = {
+    layer: !hasTextSelection,
+    text: hasTextSelection,
+  }
+  const openSections =
+    openSectionState.selectionKey === selectionKey
+      ? openSectionState.sections
+      : defaultOpenSections
+  const toggleSection = (section: 'layer' | 'text') => {
+    setOpenSectionState((current) => {
+      const activeSections =
+        current.selectionKey === selectionKey
+          ? current.sections
+          : defaultOpenSections
+      const nextOpen = !activeSections[section]
+      return {
+        selectionKey,
+        sections: {
+          layer: section === 'layer' ? nextOpen : false,
+          text: section === 'text' ? nextOpen : false,
+        },
+      }
+    })
+  }
 
   if (selection.length === 0) {
     return (
@@ -96,7 +163,10 @@ export function PresetsPanel() {
   const clearAll = () => {
     for (const id of selection) {
       const tracks = listTracksForNode(api, id)
-      for (const t of tracks) removeTrack(api, t.id)
+      for (const t of tracks) {
+        if (t.propertyId === 'text.progress') continue
+        removeTrack(api, t.id)
+      }
     }
   }
 
@@ -129,31 +199,77 @@ export function PresetsPanel() {
 
   const ins = PRESETS.filter((p) => p.direction === 'in')
   const outs = PRESETS.filter((p) => p.direction === 'out')
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded border border-border bg-panel-raised p-2.5">
-        <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
-          Applies at playhead
+  const visibleLayerPresets = layerPresetTab === 'in' ? ins : outs
+  const primaryTextNode = selectedTextNodes[0]
+  const primaryTextTrack = primaryTextNode
+    ? api
+        .getTracksForNode(primaryTextNode.id)
+        .find((track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2)
+    : null
+  const primaryTextConfig = primaryTextTrack
+    ? normalizeTextAnimation(primaryTextNode?.textAnimation)
+    : null
+  const primaryTextPreset = primaryTextConfig
+    ? textPresetForConfig(primaryTextConfig)
+    : null
+  const layerSummary = `${playhead.toFixed(2)}s · ${
+    selection.length === 1 ? '1 layer' : `${selection.length} layers`
+  }`
+  const textSummary = primaryTextConfig
+    ? `${primaryTextPreset?.label ?? 'Text effect'} · ${textApplyLabel(primaryTextConfig.applyTo)} · ${
+        primaryTextConfig.mode === 'in' ? 'In' : 'Out'
+      }`
+    : 'No text animation'
+  const layerSection = (
+    <AnimationAccordion
+      title="Layer animation"
+      summary={layerSummary}
+      open={openSections.layer}
+      primary={!hasTextSelection}
+      onToggle={() => toggleSection('layer')}
+    >
+      <div className="rounded-md border border-border bg-panel-raised">
+        <div className="flex items-center gap-2 p-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[13px] text-text tabular-nums">
+              {playhead.toFixed(2)}s
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-text-dim">
+              {describeTargets(selection, targets, isStaggerActive)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowLayerOptions((v) => !v)}
+            className={[
+              'rounded px-2.5 py-1.5 text-[11px] font-semibold',
+              showLayerOptions || staggerOn
+                ? 'bg-accent/12 text-accent hover:bg-accent/18'
+                : 'bg-panel text-text-muted hover:text-text',
+            ].join(' ')}
+          >
+            Timing
+          </button>
         </div>
-        <div className="mt-0.5 font-mono text-[11px] text-text tabular-nums">
-          {playhead.toFixed(2)}s
-        </div>
-        <div className="mt-1 text-[11px] text-text-dim">
-          {describeTargets(selection, targets, isStaggerActive)}
-        </div>
+        {showLayerOptions ? (
+          <div className="border-t border-border p-2.5">
+            <StaggerControls
+              on={staggerOn}
+              delay={staggerDelay}
+              onToggle={() => setStaggerOn(!staggerOn)}
+              onDelayChange={setStaggerDelay}
+            />
+          </div>
+        ) : null}
       </div>
 
-      <StaggerControls
-        on={staggerOn}
-        delay={staggerDelay}
-        onToggle={() => setStaggerOn(!staggerOn)}
-        onDelayChange={setStaggerDelay}
+      <PresetTabs
+        value={layerPresetTab}
+        onChange={setLayerPresetTab}
+        inCount={ins.length}
+        outCount={outs.length}
       />
-
-      <PresetGroup title="In" presets={ins} onPick={stampPreset} />
-
-      <PresetGroup title="Out" presets={outs} onPick={stampPreset} />
+      <PresetGrid presets={visibleLayerPresets} onPick={stampPreset} />
 
       <EasingPicker
         presetId={easingPresetId}
@@ -174,27 +290,827 @@ export function PresetsPanel() {
         className="w-full rounded border border-border bg-panel px-3 py-2 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
       >
         {selection.length > 1
-          ? 'Clear all animation on selected layers'
-          : 'Clear all animation on this layer'}
+          ? 'Clear layer animation on selected layers'
+          : 'Clear layer animation on this layer'}
       </button>
+    </AnimationAccordion>
+  )
+  const textSection = hasTextSelection ? (
+    <AnimationAccordion
+      title="Text animation"
+      summary={textSummary}
+      open={openSections.text}
+      primary={hasTextSelection}
+      onToggle={() => toggleSection('text')}
+    >
+      <TextAnimationPanel />
+    </AnimationAccordion>
+  ) : null
+
+  return (
+    <div className="space-y-2">
+      {hasTextSelection ? (
+        <>
+          {textSection}
+          {layerSection}
+        </>
+      ) : (
+        <>
+          {layerSection}
+          {textSection}
+        </>
+      )}
     </div>
   )
 }
 
-function PresetGroup({
+function AnimationAccordion({
   title,
+  summary,
+  open,
+  primary,
+  onToggle,
+  children,
+}: {
+  title: string
+  summary: string
+  open: boolean
+  primary?: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <section
+      className={[
+        'overflow-hidden rounded-md border bg-panel-raised',
+        primary ? 'border-border-strong shadow-sm' : 'border-border',
+      ].join(' ')}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2.5 text-left hover:bg-panel"
+      >
+        <span
+          className={[
+            'text-[11px] font-semibold tracking-wider uppercase',
+            open || primary ? 'text-text' : 'text-text-muted',
+          ].join(' ')}
+        >
+          {title}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-right text-[10px] text-text-dim">
+          {summary}
+        </span>
+        <span
+          className={[
+            'grid h-5 w-5 shrink-0 place-items-center rounded text-[12px]',
+            open ? 'text-accent' : 'text-text-dim',
+          ].join(' ')}
+          aria-hidden="true"
+        >
+          {open ? '−' : '+'}
+        </span>
+      </button>
+      <div
+        className={[
+          'grid transition-[grid-template-rows] duration-200 ease-out',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        ].join(' ')}
+        aria-hidden={!open}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            className={[
+              'space-y-3 border-t border-border p-2.5 transition-opacity duration-150',
+              open ? 'opacity-100' : 'pointer-events-none opacity-0',
+            ].join(' ')}
+          >
+            {children}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TextAnimationPanel() {
+  useSceneVersion()
+  const api = useSceneAPI()
+  const selection = useUI((s) => s.selection)
+  const playhead = useUI((s) => s.playhead)
+  const [showPicker, setShowPicker] = useState(false)
+  const [showEasing, setShowEasing] = useState(false)
+  const [copiedEasing, setCopiedEasing] = useState(false)
+  const [easingDraft, setEasingDraft] = useState({ source: '', value: '' })
+  const selectedTextNodes = selection
+    .map((id) => api.getNode(id))
+    .filter((node): node is NonNullable<typeof node> & { kind: 'text' } => node?.kind === 'text')
+  const primary = selectedTextNodes[0]
+  const primaryTextAnimationTrack = primary
+    ? api
+        .getTracksForNode(primary.id)
+        .find((track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2)
+    : null
+  const current = primaryTextAnimationTrack
+    ? normalizeTextAnimation(primary?.textAnimation)
+    : null
+  const currentEasingText = current ? easingToText(current) : ''
+  const visibleEasingDraft =
+    easingDraft.source === currentEasingText ? easingDraft.value : currentEasingText
+
+  const patch = (next: Partial<TextAnimationConfig>) => {
+    if (!current) return
+    for (const node of selectedTextNodes) {
+      const base = normalizeTextAnimation(node.textAnimation) ?? current
+      const config = {
+        ...base,
+        ...next,
+      }
+      api.setNodeProperty(node.id, 'textAnimation', config)
+      if (isTextEasingOnlyPatch(next)) {
+        updateTextAnimationEasing(api, node.id, config)
+      } else {
+        stampTextAnimationKeyframes(api, node.id, config, node.text)
+      }
+    }
+  }
+  const updateEasingText = (value: string) => {
+    setEasingDraft({ source: currentEasingText, value })
+    const parsed = parseEasingText(value)
+    if (!parsed) return
+    patch(parsed)
+  }
+  const copyEasing = async () => {
+    try {
+      await navigator.clipboard?.writeText(visibleEasingDraft)
+      setCopiedEasing(true)
+      window.setTimeout(() => setCopiedEasing(false), 1200)
+    } catch {
+      setCopiedEasing(false)
+    }
+  }
+
+  const pickPreset = (id: TextAnimationId) => {
+    for (const node of selectedTextNodes) {
+      applyTextAnimation(
+        api,
+        node.id,
+        id,
+        playhead,
+        normalizeTextAnimation(node.textAnimation),
+      )
+    }
+    setShowPicker(false)
+  }
+
+  if (!current) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-md border border-border-strong/60 bg-panel-raised p-2">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold text-text">
+                No text animation
+              </div>
+              <div className="mt-0.5 text-[10px] text-text-dim">
+                Apply at {playhead.toFixed(2)}s
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPicker((v) => !v)}
+              className="rounded bg-accent/12 px-3 py-1.5 text-[12px] font-semibold text-accent hover:bg-accent/18"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+        {showPicker ? <TextPresetPicker current={null} onPick={pickPreset} /> : null}
+      </div>
+    )
+  }
+
+  const currentPreset =
+    textPresetForConfig(current) ??
+    TEXT_ANIMATION_PRESETS[0]!
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-panel-raised">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-2.5">
+          <div className="grid min-w-0 grid-cols-[minmax(72px,96px)_minmax(0,1fr)] items-center gap-2">
+            <TextAnimationThumb preset={currentPreset} active />
+            <div className="min-w-0">
+              <div className="truncate text-[12px] font-semibold text-text">
+                {currentPreset.label}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] text-text-dim">
+                {textApplyLabel(current.applyTo)} · {current.mode === 'in' ? 'In' : 'Out'}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPicker((v) => !v)}
+            className="h-8 rounded bg-accent/12 px-3 text-[11px] font-semibold text-accent hover:bg-accent/18"
+          >
+            Change
+          </button>
+        </div>
+        <div className="border-t border-border p-2.5">
+          <div className="grid grid-cols-2 rounded bg-panel p-0.5">
+            {(['in', 'out'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => patch({ mode })}
+                className={[
+                  'h-8 rounded text-[12px] font-semibold',
+                  current.mode === mode
+                    ? 'bg-panel-raised text-text shadow-sm'
+                    : 'text-text-dim hover:text-text-muted',
+                ].join(' ')}
+              >
+                {mode === 'in' ? 'In' : 'Out'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {showPicker ? <TextPresetPicker current={current.id} onPick={pickPreset} /> : null}
+
+      <ControlCard title="Effect">
+        {(current.id === 'blur' || current.id === 'blur-slide') ? (
+          <ParamRow label="Blur radius">
+            <NumberField
+              value={current.blurRadius}
+              onCommit={(blurRadius) => patch({ blurRadius })}
+              min={0}
+              max={128}
+              width="w-24"
+            />
+          </ParamRow>
+        ) : null}
+        {usesDirection(current.id) ? (
+          <ParamRow label="Direction">
+            <DirectionButtons
+              value={current.direction}
+              onChange={(direction) =>
+                patch(textDirectionPatch(current, direction))
+              }
+            />
+          </ParamRow>
+        ) : null}
+        {usesTravel(current.id) ? (
+          <ParamRow label="Travel distance">
+            <NumberField
+              value={Math.round(current.travelDistance * 100)}
+              onCommit={(pct) => patch({ travelDistance: pct / 100 })}
+              min={0}
+              max={300}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+        ) : null}
+        <ParamRow label="Duration">
+          <NumberField
+            value={Math.round(current.duration * 1000)}
+            onCommit={(ms) => patch({ duration: ms / 1000 })}
+            min={50}
+            suffix="ms"
+            width="w-24"
+          />
+        </ParamRow>
+        {current.id === 'gradient-reveal' ? (
+          <>
+            <ParamRow label="Start gradient">
+              <GradientTextField
+                key={`start-${gradientToText(current.startGradient)}`}
+                value={gradientToText(current.startGradient)}
+                onCommit={(value) => {
+                  const fill = parseGradientText(value)
+                  if (fill) patch({ startGradient: fill })
+                }}
+              />
+            </ParamRow>
+            <ParamRow label="End gradient">
+              <GradientTextField
+                key={`end-${gradientToText(current.endGradient)}`}
+                value={gradientToText(current.endGradient)}
+                onCommit={(value) => {
+                  const fill = parseGradientText(value)
+                  if (fill) patch({ endGradient: fill })
+                }}
+              />
+            </ParamRow>
+          </>
+        ) : null}
+        <ParamRow label="Acceleration">
+          <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1">
+            <input
+              value={visibleEasingDraft}
+              onChange={(e) => updateEasingText(e.currentTarget.value)}
+              className="h-8 min-w-0 rounded bg-panel px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+              title="Comma-separated cubic bezier values"
+            />
+            <button
+              type="button"
+              onClick={copyEasing}
+              className="h-8 rounded bg-panel px-2 text-[11px] text-text-muted hover:text-text"
+              title="Copy easing values"
+            >
+              {copiedEasing ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowEasing((v) => !v)}
+              aria-pressed={showEasing}
+              className={[
+                'grid h-8 w-8 place-items-center rounded bg-panel text-text-muted hover:text-text',
+                showEasing ? 'bg-accent/14 text-accent' : '',
+              ].join(' ')}
+              title="Show curve presets and graph editor"
+            >
+              <SlidersIcon />
+            </button>
+          </div>
+        </ParamRow>
+        {showEasing ? (
+          <>
+            <EasingPicker
+              title={null}
+              allowedPresetIds={[...TEXT_EASING_PRESETS]}
+              presetId={current.easingPresetId}
+              strength={current.easingStrength}
+              onChange={({ presetId, strength }) =>
+                patch({
+                  easingPresetId: presetId,
+                  easingStrength: strength,
+                  customEasing: undefined,
+                })
+              }
+            />
+            <GraphEditor />
+          </>
+        ) : null}
+      </ControlCard>
+
+      <ControlCard title="Text">
+        <ParamRow label="Apply effect to">
+          <SelectField<TextAnimationApplyTo>
+            value={current.applyTo}
+            options={[
+              ['letters', 'Letters'],
+              ['words', 'Words'],
+              ['lines', 'Lines'],
+              ['layer', 'Layer'],
+            ]}
+            onChange={(applyTo) => patch({ applyTo })}
+          />
+        </ParamRow>
+        <ParamRow label="Order">
+          <SelectField<TextAnimationOrder>
+            value={current.order}
+            options={[
+              ['forward', 'Forward'],
+              ['backward', 'Backward'],
+            ]}
+            onChange={(order) => patch({ order })}
+          />
+        </ParamRow>
+        <ParamRow label="Smoothing">
+          <SelectField<TextAnimationSmoothing>
+            value={current.smoothing}
+            options={[
+              ['none', 'None'],
+              ['soft', 'Soft'],
+              ['smooth', 'Smooth'],
+            ]}
+            onChange={(smoothing) => patch({ smoothing })}
+          />
+        </ParamRow>
+      </ControlCard>
+    </div>
+  )
+}
+
+function TextPresetPicker({
+  current,
+  onPick,
+}: {
+  current: TextAnimationId | null
+  onPick: (id: TextAnimationId) => void
+}) {
+  const categories = Array.from(new Set(TEXT_ANIMATION_PRESETS.map((p) => p.category)))
+  return (
+    <div className="max-h-[420px] overflow-auto border-b border-border bg-panel-raised p-3">
+      {categories.map((category) => (
+        <div key={category} className="mb-5 last:mb-0">
+          <div className="mb-2 text-[15px] font-bold text-text">{category}</div>
+          <div className="grid grid-cols-2 gap-2">
+            {TEXT_ANIMATION_PRESETS.filter((p) => p.category === category).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                data-preview-on="1"
+                onClick={() => onPick(preset.id)}
+                className="group flex flex-col gap-1.5 rounded-md border border-border-strong/60 bg-panel-raised p-1.5 text-left transition-colors hover:border-border-strong hover:bg-panel"
+              >
+                <TextAnimationCardPreview preset={preset} selected={current === preset.id} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TextAnimationCardPreview({
+  preset,
+  selected = false,
+}: {
+  preset: (typeof TEXT_ANIMATION_PRESETS)[number]
+  selected?: boolean
+}) {
+  return (
+    <>
+      <div
+        className={[
+          'hm-text-preset-stage h-14 w-full rounded-[5px] bg-panel',
+          selected ? 'ring-1 ring-accent/65' : '',
+        ].join(' ')}
+      >
+        <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
+          {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
+            <span
+              key={`${preset.id}-${index}`}
+              className="hm-text-preview-letter"
+              style={{ '--i': index } as CSSProperties}
+            >
+              {char}
+            </span>
+          ))}
+        </span>
+      </div>
+      <span className="block px-1 pt-1 pb-0.5 text-[11px] text-text">
+        {preset.label}
+      </span>
+    </>
+  )
+}
+
+function TextAnimationThumb({
+  preset,
+  active = false,
+}: {
+  preset: (typeof TEXT_ANIMATION_PRESETS)[number]
+  active?: boolean
+}) {
+  return (
+    <div
+      className={[
+        'hm-text-preset-stage h-12 min-w-0 rounded-[5px] bg-panel',
+        active ? 'ring-1 ring-accent/55' : '',
+      ].join(' ')}
+    >
+      <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
+        {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
+          <span
+            key={`${preset.id}-thumb-${index}`}
+            className="hm-text-preview-letter"
+            style={{ '--i': index } as CSSProperties}
+          >
+            {char}
+          </span>
+        ))}
+      </span>
+    </div>
+  )
+}
+
+function textApplyLabel(value: TextAnimationApplyTo): string {
+  if (value === 'letters') return 'Letters'
+  if (value === 'words') return 'Words'
+  if (value === 'lines') return 'Lines'
+  return 'Layer'
+}
+
+function ControlCard({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <div className="rounded-md border border-border bg-panel-raised">
+      <div className="border-b border-border px-2.5 py-2 text-[10px] font-semibold tracking-wider text-text-muted uppercase">
+        {title}
+      </div>
+      <div className="space-y-2.5 p-2.5">{children}</div>
+    </div>
+  )
+}
+
+function ParamRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-3">
+      <div className="min-w-0 truncate text-[12px] text-text-dim">{label}</div>
+      <div className="min-w-0 justify-self-end">{children}</div>
+    </div>
+  )
+}
+
+function SelectField<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T
+  options: Array<[T, string]>
+  onChange: (next: T) => void
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value as T)}
+      className="h-8 max-w-full rounded bg-panel px-2 text-[12px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+    >
+      {options.map(([id, label]) => (
+        <option key={id} value={id}>
+          {label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function DirectionButtons({
+  value,
+  onChange,
+}: {
+  value: TextAnimationDirection
+  onChange: (next: TextAnimationDirection) => void
+}) {
+  const buttons: Array<[TextAnimationDirection, string]> = [
+    ['up', '↑'],
+    ['down', '↓'],
+    ['left', '←'],
+    ['right', '→'],
+  ]
+  return (
+    <div className="grid grid-cols-4 rounded bg-panel p-0.5">
+      {buttons.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={[
+            'h-8 w-8 rounded text-[17px]',
+            value === id ? 'bg-accent/14 text-accent' : 'text-text-dim hover:text-text',
+          ].join(' ')}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function GradientTextField({
+  value,
+  onCommit,
+}: {
+  value: string
+  onCommit: (next: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          onCommit(draft)
+          e.currentTarget.blur()
+        }
+      }}
+      className="h-8 w-48 max-w-full rounded bg-panel px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+      title="Comma-separated gradient colors"
+    />
+  )
+}
+
+function SlidersIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    >
+      <path d="M2 4h3" />
+      <path d="M9 4h5" />
+      <path d="M7 2.5v3" />
+      <path d="M2 8h7" />
+      <path d="M13 8h1" />
+      <path d="M11 6.5v3" />
+      <path d="M2 12h2" />
+      <path d="M8 12h6" />
+      <path d="M6 10.5v3" />
+    </svg>
+  )
+}
+
+function usesDirection(id: TextAnimationId): boolean {
+  return (
+    id === 'slide-up' ||
+    id === 'slide-down' ||
+    id === 'slide-left' ||
+    id === 'slide-right' ||
+    id === 'mask-up' ||
+    id === 'mask-down' ||
+    id === 'blur-slide' ||
+    id === 'character-wave' ||
+    id === 'skew'
+  )
+}
+
+function usesTravel(id: TextAnimationId): boolean {
+  return (
+    id === 'slide-up' ||
+    id === 'slide-down' ||
+    id === 'slide-left' ||
+    id === 'slide-right' ||
+    id === 'mask-up' ||
+    id === 'mask-down' ||
+    id === 'blur-slide' ||
+    id === 'character-wave' ||
+    id === 'skew'
+  )
+}
+
+function textPresetForConfig(config: TextAnimationConfig) {
+  return (
+    TEXT_ANIMATION_PRESETS.find(
+      (preset) => preset.id === directionalTextAnimationId(config),
+    ) ?? TEXT_ANIMATION_PRESETS.find((preset) => preset.id === config.id)
+  )
+}
+
+function textDirectionPatch(
+  config: TextAnimationConfig,
+  direction: TextAnimationDirection,
+): Partial<TextAnimationConfig> {
+  const nextId = directionalTextAnimationId({ ...config, direction })
+  return nextId === config.id ? { direction } : { id: nextId, direction }
+}
+
+function directionalTextAnimationId(
+  config: Pick<TextAnimationConfig, 'id' | 'direction'>,
+): TextAnimationId {
+  if (
+    config.id === 'slide-up' ||
+    config.id === 'slide-down' ||
+    config.id === 'slide-left' ||
+    config.id === 'slide-right'
+  ) {
+    return `slide-${config.direction}` as TextAnimationId
+  }
+  if (config.id === 'mask-up' || config.id === 'mask-down') {
+    return config.direction === 'down' ? 'mask-down' : 'mask-up'
+  }
+  return config.id
+}
+
+function easingToText(config: TextAnimationConfig): string {
+  const curve = bezierOf(
+    config.easingPresetId === 'custom' && config.customEasing
+      ? config.customEasing
+      : findEasingPreset(config.easingPresetId).build(config.easingStrength),
+  )
+  return curve.map((n) => formatCurveNumber(n)).join(', ')
+}
+
+function gradientToText(fill: Fill | null | undefined): string {
+  if (!fill || fill.kind !== 'linear') return '#7c3aed, #06b6d4'
+  return fill.stops.map((stop) => stop.color).join(', ')
+}
+
+function parseGradientText(value: string): Fill | null {
+  const colors = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (colors.length < 2) return null
+  const max = Math.max(1, colors.length - 1)
+  return {
+    kind: 'linear',
+    angle: 90,
+    stops: colors.map((color, index) => ({
+      color,
+      at: index / max,
+    })),
+  }
+}
+
+function isTextEasingOnlyPatch(patch: Partial<TextAnimationConfig>): boolean {
+  const keys = Object.keys(patch)
+  return (
+    keys.length > 0 &&
+    keys.every((key) =>
+      key === 'easingPresetId' ||
+      key === 'easingStrength' ||
+      key === 'customEasing' ||
+      key === 'acceleration'
+    )
+  )
+}
+
+function parseEasingText(
+  value: string,
+): Pick<TextAnimationConfig, 'easingPresetId' | 'easingStrength' | 'customEasing'> | null {
+  const parts = value
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((n) => Number.isFinite(n))
+  if (parts.length !== 4) return null
+  const [x1, y1, x2, y2] = parts
+  const clampedX1 = Math.max(0, Math.min(1, x1!))
+  const clampedX2 = Math.max(0, Math.min(1, x2!))
+  return {
+    easingPresetId: 'custom',
+    easingStrength: 50,
+    customEasing: { bezier: [clampedX1, y1!, clampedX2, y2!] },
+  }
+}
+
+function formatCurveNumber(n: number): string {
+  const rounded = Math.round(n * 1000) / 1000
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function PresetTabs({
+  value,
+  onChange,
+  inCount,
+  outCount,
+}: {
+  value: 'in' | 'out'
+  onChange: (next: 'in' | 'out') => void
+  inCount: number
+  outCount: number
+}) {
+  return (
+    <div className="grid grid-cols-2 rounded-md border border-border bg-panel p-0.5">
+      {([
+        ['in', `In (${inCount})`],
+        ['out', `Out (${outCount})`],
+      ] as const).map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={[
+            'h-8 rounded text-[12px] font-semibold',
+            value === id
+              ? 'bg-panel-raised text-text shadow-sm'
+              : 'text-text-dim hover:text-text-muted',
+          ].join(' ')}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function PresetGrid({
   presets,
   onPick,
 }: {
-  title: string
   presets: { id: AnimPresetId; label: string }[]
   onPick: (id: AnimPresetId) => void
 }) {
   return (
-    <div>
-      <div className="mb-2 text-[10px] font-medium tracking-wider text-text-dim uppercase">
-        {title}
-      </div>
+    <div className="rounded-md border border-border bg-panel-raised p-2.5">
       <div className="grid grid-cols-2 gap-2">
         {presets.map((p) => (
           <PresetButton key={p.id} preset={p} onPick={onPick} />
@@ -267,7 +1183,7 @@ function StaggerControls({
   onDelayChange: (next: number) => void
 }) {
   return (
-    <div className="rounded border border-border bg-panel-raised p-2.5">
+    <div>
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
           Stagger
@@ -323,12 +1239,6 @@ function StaggerControls({
           />
         </div>
       </div>
-      {on ? (
-        <div className="mt-2 text-[10px] leading-snug text-text-dim">
-          Presets apply to children when a single parent is selected,
-          otherwise to the selection itself. First layer first.
-        </div>
-      ) : null}
     </div>
   )
 }

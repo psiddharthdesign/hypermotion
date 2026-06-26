@@ -17,7 +17,7 @@ import type { PropertyId } from '@/scene/types'
  *   3. Anim engine will pick it up automatically
  */
 
-export type PropertyGroup = 'transform' | 'camera' | 'appearance' | 'layout' | 'size' | 'semantic'
+export type PropertyGroup = 'transform' | 'camera' | 'appearance' | 'text' | 'layout' | 'size' | 'semantic'
 export type Interpolation = 'numeric' | 'discrete' | 'color' | 'angle'
 
 export interface PropertyDescriptor {
@@ -178,6 +178,12 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
   'appearance.fill': {
     id: 'appearance.fill', group: 'appearance', label: 'Fill',
     layoutAffecting: false, interpolation: 'color', defaultValue: 'oklch(0.8 0.05 250)',
+  },
+
+  // text effect group — post-layout; controls text-specific reveal progress
+  'text.progress': {
+    id: 'text.progress', group: 'text', label: 'Text Animation',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
 
   // layout group — triggers relayout + FLIP

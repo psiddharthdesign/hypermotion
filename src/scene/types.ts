@@ -499,6 +499,12 @@ export interface TextNode extends NodeBase {
   letterSpacing: number
   textAlign: 'start' | 'center' | 'end'
   color: Color
+  /**
+   * Text-specific animation effect. Unlike ordinary layer presets,
+   * this can target letters, words, lines, or the whole layer while
+   * keeping one editable effect row in the Animate inspector.
+   */
+  textAnimation?: import('@/anim/textAnimations').TextAnimationConfig | null
 }
 
 export interface ImageNode extends NodeBase {
@@ -889,6 +895,8 @@ export type PropertyId =
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
   | 'appearance.fill'
+  // text effect group — drives text-specific reveal effects
+  | 'text.progress'
   // layout group — triggers relayout + FLIP
   | 'layout.gap'
   | 'layout.padding.top'

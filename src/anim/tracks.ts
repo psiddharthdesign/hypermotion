@@ -57,7 +57,11 @@ export function ensureTrack(
 }
 
 export function removeTrack(api: SceneAPI, trackId: TrackId): void {
+  const track = api.getTrack(trackId)
   api.deleteTrack(trackId)
+  if (track?.propertyId === 'text.progress') {
+    api.setNodeProperty(track.nodeId, 'textAnimation', null)
+  }
 }
 
 /**
@@ -140,9 +144,16 @@ export function removeKeyframe(
   const track = api.getTrack(trackId)
   if (!track) return
   const kfs = track.keyframes.filter((k) => k.id !== kfId)
-  if (kfs.length === 0) {
-    // Empty track is dead weight — clean it up.
+  if (
+    kfs.length === 0 ||
+    (track.propertyId === 'text.progress' && kfs.length < 2)
+  ) {
+    // Empty track is dead weight. Text animations need a start and end
+    // progress keyframe; with fewer than two, the effect is inactive.
     api.deleteTrack(trackId)
+    if (track.propertyId === 'text.progress') {
+      api.setNodeProperty(track.nodeId, 'textAnimation', null)
+    }
   } else {
     api.setTrack({ ...track, keyframes: kfs })
   }

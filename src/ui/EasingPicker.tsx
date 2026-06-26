@@ -37,6 +37,8 @@ export interface EasingPickerProps {
   }) => void
   /** Title shown above the picker; hidden when null. */
   title?: string | null
+  /** Optional subset for contexts where some curves are too noisy. */
+  allowedPresetIds?: EasingPresetId[]
 }
 
 export function EasingPicker({
@@ -44,13 +46,23 @@ export function EasingPicker({
   strength,
   onChange,
   title = 'Easing',
+  allowedPresetIds,
 }: EasingPickerProps) {
-  const current = EASING_PRESETS.find((p) => p.id === presetId) ?? EASING_PRESETS[0]!
-  const easing = useMemo(() => current.build(strength), [current, strength])
-  const curve = useMemo(() => bezierOf(easing), [easing])
+  const allowedKey = allowedPresetIds?.join('|') ?? ''
+  const presets = useMemo(
+    () =>
+      allowedPresetIds
+        ? EASING_PRESETS.filter((p) => allowedPresetIds.includes(p.id))
+        : EASING_PRESETS,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allowedKey],
+  )
+  const current = presets.find((p) => p.id === presetId) ?? presets[0] ?? EASING_PRESETS[0]!
+  const easing = current.build(strength)
+  const curve = bezierOf(easing)
 
   const pickPreset = (id: EasingPresetId) => {
-    const def = EASING_PRESETS.find((p) => p.id === id) ?? current
+    const def = presets.find((p) => p.id === id) ?? current
     onChange({ presetId: id, strength, easing: def.build(strength) })
   }
 
@@ -71,7 +83,7 @@ export function EasingPicker({
 
       {/* Preset tile grid — 3 columns, compact. */}
       <div className="grid grid-cols-3 gap-1 p-2">
-        {EASING_PRESETS.map((p) => {
+        {presets.map((p) => {
           const active = p.id === presetId
           const curveForTile = bezierOf(p.build(strength))
           return (
