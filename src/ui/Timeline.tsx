@@ -8,6 +8,7 @@ import type { SceneNode, Section, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   groupKeyframes as groupKeyframesHelper,
+  ungroupKeyframeGroups as ungroupKeyframeGroupsHelper,
   ungroupKeyframes as ungroupKeyframesHelper,
   toggleKfGroupCollapsed as toggleKfGroupCollapsedHelper,
   groupTracks as groupTracksHelper,
@@ -463,6 +464,14 @@ export function Timeline() {
         }
         if (selectedKfs.size === 0) return
         const keys = Array.from(selectedKfs)
+        // Ungroup should dissolve the actual selected keyframe groups,
+        // even when that group spans multiple tracks. The grouping path
+        // can still infer track intent from multi-track keyframe picks.
+        if (e.shiftKey) {
+          ungroupKeyframesHelper(api, keys)
+          return
+        }
+
         // Pull unique track ids from the selected kf keys
         // (`trackId:kfId` shape). One track → keyframe grouping.
         // Multiple tracks → infer the track-group intent and route
@@ -475,16 +484,12 @@ export function Timeline() {
         }
         if (tracksFromKfs.size >= 2) {
           const ids = Array.from(tracksFromKfs)
-          if (e.shiftKey) {
-            ungroupTracksHelper(api, ids)
-          } else if (!tryMergeIntoExisting(ids)) {
+          if (!tryMergeIntoExisting(ids)) {
             groupTracksHelper(api, ids)
           }
           return
         }
-        if (e.shiftKey) {
-          ungroupKeyframesHelper(api, keys)
-        } else if (selectedKfs.size >= 2) {
+        if (selectedKfs.size >= 2) {
           groupKeyframesHelper(api, keys)
         }
       }
@@ -744,6 +749,12 @@ export function Timeline() {
     () => tracksByNode.flatMap((g) => g.tracks),
     [tracksByNode],
   )
+  const selectedNodeSet = useMemo(() => new Set(selection), [selection])
+  const trackNodeById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const track of flatTracks) m.set(track.id, track.nodeId)
+    return m
+  }, [flatTracks])
 
   /**
    * Resolve every persistent track-group into a render shape.
@@ -1654,6 +1665,9 @@ export function Timeline() {
                   )}
                   {hostedGroups.map((g) => {
                     const isActive = activeGroupId === g.groupId
+                    const layerRelated = g.members.some((m) =>
+                      selectedNodeSet.has(trackNodeById.get(m.trackId) ?? ''),
+                    )
                     const collapsed = !!kfGroupCollapsedDict[g.groupId]
                     const memberKeys = g.members.map((m) =>
                       kfKey(m.trackId, m.kfId),
@@ -1708,7 +1722,9 @@ export function Timeline() {
                                 label: 'Ungroup (⌘⇧G)',
                                 danger: true,
                                 onClick: () =>
-                                  ungroupKeyframesHelper(api, memberKeys),
+                                  ungroupKeyframeGroupsHelper(api, [
+                                    g.groupId,
+                                  ]),
                               },
                             ],
                           })
@@ -1717,6 +1733,8 @@ export function Timeline() {
                           'flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 px-3 pl-3 text-accent',
                           isActive
                             ? 'bg-accent-soft/60 hover:bg-accent-soft/80'
+                            : layerRelated
+                              ? 'bg-accent-soft/45 hover:bg-accent-soft/65'
                             : 'bg-accent-soft/30 hover:bg-accent-soft/50',
                         ].join(' ')}
                         title={
@@ -1757,6 +1775,9 @@ export function Timeline() {
                       key={tg.groupId}
                       group={tg}
                       nodeKind={group.nodeKind}
+                      layerRelated={tg.memberTracks.some((t) =>
+                        selectedNodeSet.has(t.nodeId),
+                      )}
                       onToggle={() => toggleTrackGroupCollapsed(tg.groupId)}
                       onSelectMembers={() =>
                         setSelectedTrackIds(
@@ -2011,6 +2032,9 @@ export function Timeline() {
                   )}
                   {hostedGroups.map((g) => {
                     const isActive = activeGroupId === g.groupId
+                    const layerRelated = g.members.some((m) =>
+                      selectedNodeSet.has(trackNodeById.get(m.trackId) ?? ''),
+                    )
                     const memberKeys = g.members.map((m) =>
                       kfKey(m.trackId, m.kfId),
                     )
@@ -2044,14 +2068,20 @@ export function Timeline() {
                                 label: 'Ungroup (⌘⇧G)',
                                 danger: true,
                                 onClick: () =>
-                                  ungroupKeyframesHelper(api, memberKeys),
+                                  ungroupKeyframeGroupsHelper(api, [
+                                    g.groupId,
+                                  ]),
                               },
                             ],
                           })
                         }}
                         className={[
                           'relative h-6 border-t border-border/50',
-                          isActive ? 'bg-accent-soft/50' : 'bg-accent-soft/20',
+                          isActive
+                            ? 'bg-accent-soft/50'
+                            : layerRelated
+                              ? 'bg-accent-soft/35'
+                              : 'bg-accent-soft/20',
                         ].join(' ')}
                         style={{ width: totalWidth }}
                       >
@@ -2060,6 +2090,7 @@ export function Timeline() {
                           duration={duration}
                           api={api}
                           selectedKfs={selectedKfs}
+                          layerRelated={layerRelated}
                           replaceKfs={replaceKfs}
                         />
                       </div>
@@ -2079,6 +2110,9 @@ export function Timeline() {
                         totalWidth={totalWidth}
                         duration={duration}
                         api={api}
+                        layerRelated={tg.memberTracks.some((t) =>
+                          selectedNodeSet.has(t.nodeId),
+                        )}
                         onContextMenu={(e, g) => {
                           e.preventDefault()
                           e.stopPropagation()
@@ -2098,7 +2132,8 @@ export function Timeline() {
                           }
                           // Anything already in this group is a
                           // no-op — filter to genuinely new tracks.
-                          const memberSet = new Set(g.trackIds)
+                          const groupTrackIds = g.memberTracks.map((t) => t.id)
+                          const memberSet = new Set(groupTrackIds)
                           const toAdd = Array.from(inferred).filter(
                             (t) => !memberSet.has(t),
                           )
@@ -2126,7 +2161,7 @@ export function Timeline() {
                             label: 'Ungroup',
                             danger: true,
                             onClick: () =>
-                              ungroupTracksHelper(api, g.trackIds),
+                              ungroupTracksHelper(api, groupTrackIds),
                           })
                           openContextMenu({
                             x: e.clientX,
@@ -2925,6 +2960,12 @@ function SegmentRow({
   const first = kfs[0]
   const last = kfs[kfs.length - 1]
   const hasSpan = kfs.length >= 2 && first && last && last.time > first.time
+  const segmentClassName = nodeSelected
+    ? 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-accent ring-1 ring-accent/70 shadow-[0_0_0_2px_var(--color-accent-soft)] hover:brightness-110'
+    : 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover'
+  const beadClassName = nodeSelected
+    ? 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
+    : 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover'
 
   const onBarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!first || !last) return
@@ -3106,7 +3147,7 @@ function SegmentRow({
             onPointerDown={onBarPointerDown}
             onContextMenu={onBarContextMenu}
             title={`${first.time.toFixed(2)}s → ${last.time.toFixed(2)}s — drag to shift, right-click for options`}
-            className="absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover"
+            className={segmentClassName}
             style={{
               left: first.time * PX_PER_SECOND,
               width: (last.time - first.time) * PX_PER_SECOND,
@@ -3114,7 +3155,7 @@ function SegmentRow({
           />
         ) : (
           <div
-            className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover"
+            className={beadClassName}
             style={{ left: first.time * PX_PER_SECOND }}
           />
         )
@@ -3433,6 +3474,7 @@ type ResolvedTrackGroup = {
 function TrackGroupLeftRow({
   group,
   nodeKind,
+  layerRelated = false,
   onToggle,
   onSelectMembers,
   onUngroup,
@@ -3440,6 +3482,7 @@ function TrackGroupLeftRow({
 }: {
   group: ResolvedTrackGroup
   nodeKind?: string
+  layerRelated?: boolean
   onToggle: () => void
   onSelectMembers: () => void
   onUngroup: () => void
@@ -3477,7 +3520,10 @@ function TrackGroupLeftRow({
             ? 'Click to select members · double-click to expand · right-click for more'
             : 'Click to select members · double-click to collapse · right-click for more'
         }
-        className="flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 bg-accent-soft/50 px-3 pl-2 text-accent hover:bg-accent-soft/70"
+        className={[
+          'flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 px-3 pl-2 text-accent hover:bg-accent-soft/70',
+          layerRelated ? 'bg-accent-soft/65' : 'bg-accent-soft/50',
+        ].join(' ')}
       >
         <button
           type="button"
@@ -3572,12 +3618,14 @@ function TrackGroupRightRow({
   totalWidth,
   duration,
   api,
+  layerRelated = false,
   onContextMenu,
 }: {
   group: ResolvedTrackGroup
   totalWidth: number
   duration: number
   api: SceneAPI
+  layerRelated?: boolean
   /** Right-click on the span bar — parent builds the menu so it can
    *  reach the live track selection and the openContextMenu handle. */
   onContextMenu?: (e: React.MouseEvent, group: ResolvedTrackGroup) => void
@@ -3598,10 +3646,11 @@ function TrackGroupRightRow({
   const allSelected =
     group.memberTracks.length > 0 &&
     group.memberTracks.every((track) => selectedTrackIds.includes(track.id))
-  const fillClass = allSelected ? 'bg-[#0091ff]' : 'bg-[#224a71]'
-  const markerClass = allSelected
-    ? 'bg-white mix-blend-overlay'
-    : 'bg-[#00a1ff]'
+  const highlighted = allSelected || layerRelated
+  const fill = highlighted
+    ? 'var(--color-group-bar-active)'
+    : 'var(--color-group-bar)'
+  const markerFill = highlighted ? 'white' : 'var(--color-group-bar-marker)'
 
   // Flatten all member-track keyframes into a single list. Snapshot
   // taken at drag-start (inside the handlers) so concurrent scene
@@ -3693,7 +3742,10 @@ function TrackGroupRightRow({
   return (
     <>
       <div
-        className="relative h-6 border-t border-border/50 bg-accent-soft/30"
+        className={[
+          'relative h-6 border-t border-border/50',
+          layerRelated ? 'bg-accent-soft/45' : 'bg-accent-soft/30',
+        ].join(' ')}
         style={{ width: totalWidth }}
         onContextMenu={(e) => onContextMenu?.(e, group)}
       >
@@ -3703,11 +3755,14 @@ function TrackGroupRightRow({
             onPointerDown={onBodyPointerDown}
             onContextMenu={(e) => onContextMenu?.(e, group)}
             title={`${start.toFixed(2)}s – ${end.toFixed(2)}s · drag body to shift, edges to scale, right-click for options`}
-            className={[
-              'group absolute top-1/2 h-4 -translate-y-1/2 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110 active:cursor-grabbing',
-              fillClass,
-            ].join(' ')}
-            style={{ left, width: Math.max(2, width) }}
+            className="group absolute top-1/2 h-4 -translate-y-1/2 cursor-grab rounded-[4px] ring-1 hover:brightness-110 active:cursor-grabbing"
+            style={{
+              left,
+              width: Math.max(2, width),
+              background: fill,
+              boxShadow: '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+              '--tw-ring-color': 'var(--color-group-bar-ring)',
+            } as React.CSSProperties}
           >
             {/* Edge scale handles. 8px wide, slightly extending past
                 the bar so they're easy to grab. data-groupHandle on
@@ -3731,9 +3786,14 @@ function TrackGroupRightRow({
             <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
               <span
                 className={[
-                  'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
-                  markerClass,
+                  'block size-[8.5px] rotate-45 rounded-[2px]',
+                  highlighted ? 'mix-blend-overlay' : '',
                 ].join(' ')}
+                style={{
+                  background: markerFill,
+                  boxShadow:
+                    '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+                }}
               />
             </span>
           </div>
@@ -4105,6 +4165,7 @@ function GroupSpanBar({
   duration,
   api,
   selectedKfs,
+  layerRelated = false,
   replaceKfs,
 }: {
   group: {
@@ -4116,6 +4177,7 @@ function GroupSpanBar({
   duration: number
   api: SceneAPI
   selectedKfs: Set<string>
+  layerRelated?: boolean
   replaceKfs: (keys: string[]) => void
 }) {
   const span = group.end - group.start
@@ -4133,16 +4195,18 @@ function GroupSpanBar({
       Math.abs(m.time - group.end) < 0.001 &&
       selectedKfs.has(kfKey(m.trackId, m.kfId)),
   )
-  const fillClass = allSelected
-    ? 'bg-[#0091ff]'
+  const highlighted = allSelected || layerRelated
+  const fill = highlighted
+    ? 'var(--color-group-bar-active)'
     : leftSelected
-      ? 'bg-gradient-to-r from-[#0091ff] to-[#224a71]'
+      ? 'linear-gradient(to right, var(--color-group-bar-active), var(--color-group-bar))'
       : rightSelected
-        ? 'bg-gradient-to-r from-[#224a71] to-[#0091ff]'
-        : 'bg-[#224a71]'
-  const markerClass = allSelected || leftSelected || rightSelected
-    ? 'bg-white mix-blend-overlay'
-    : 'bg-[#00a1ff]'
+        ? 'linear-gradient(to right, var(--color-group-bar), var(--color-group-bar-active))'
+        : 'var(--color-group-bar)'
+  const markerFill =
+    highlighted || leftSelected || rightSelected
+      ? 'white'
+      : 'var(--color-group-bar-marker)'
 
   /**
    * Scale handler factory. `side` picks the dragged edge, the
@@ -4248,11 +4312,18 @@ function GroupSpanBar({
       data-timeline-selection-surface="1"
       onPointerDown={onBodyPointerDown}
       title={`Group of ${group.members.length} keyframes — drag to shift, drag edges to scale`}
-      className={[
-        'absolute z-20 h-4 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110',
-        fillClass,
-      ].join(' ')}
-      style={{ left, top: 4, width }}
+      className="absolute z-20 h-4 cursor-grab rounded-[4px] ring-1 hover:brightness-110"
+      style={
+        {
+          left,
+          top: 4,
+          width,
+          background: fill,
+          boxShadow:
+            '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+          '--tw-ring-color': 'var(--color-group-bar-ring)',
+        } as React.CSSProperties
+      }
     >
       <div
         data-group-handle="left"
@@ -4273,9 +4344,16 @@ function GroupSpanBar({
       <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
         <span
           className={[
-            'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
-            markerClass,
+            'block size-[8.5px] rotate-45 rounded-[2px]',
+            highlighted || leftSelected || rightSelected
+              ? 'mix-blend-overlay'
+              : '',
           ].join(' ')}
+          style={{
+            background: markerFill,
+            boxShadow:
+              '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+          }}
         />
       </span>
     </div>

@@ -149,6 +149,27 @@ export function ungroupKeyframes(api: SceneAPI, keys: string[]): void {
   })
 }
 
+/** Dissolve keyframe groups by id. Useful when the UI is rendering the
+ * group itself, rather than acting from a keyframe selection. */
+export function ungroupKeyframeGroups(
+  api: SceneAPI,
+  groupIds: string[],
+): void {
+  const ui = api.getUiState()
+  const ids = new Set(groupIds)
+  const nextGroups: typeof ui.kfGroups = {}
+  const nextCollapsed: typeof ui.kfGroupCollapsed = {}
+  for (const [gid, members] of Object.entries(ui.kfGroups)) {
+    if (ids.has(gid)) continue
+    nextGroups[gid] = members
+    if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
+  }
+  api.setUiState({
+    kfGroups: nextGroups,
+    kfGroupCollapsed: nextCollapsed,
+  })
+}
+
 /** Flip a keyframe group's collapsed flag. */
 export function toggleKfGroupCollapsed(
   api: SceneAPI,

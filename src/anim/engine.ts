@@ -354,7 +354,21 @@ function applyTextProgressTrack(
   if (kfs.length < 2) return
   const first = kfs[0]!
   const last = kfs[kfs.length - 1]!
-  if (t < first.time || t > last.time) return
+  const mode = track.textAnimation?.mode
+  if (t < first.time) {
+    if (mode === 'in' && typeof first.value === 'number') {
+      into.textProgress = first.value
+      into.textAnimation = track.textAnimation
+    }
+    return
+  }
+  if (t > last.time) {
+    if (mode === 'out' && typeof last.value === 'number') {
+      into.textProgress = last.value
+      into.textAnimation = track.textAnimation
+    }
+    return
+  }
 
   let a = first
   let b = last
