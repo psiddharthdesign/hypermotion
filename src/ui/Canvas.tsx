@@ -4156,7 +4156,7 @@ function textAnimationSegmentStyle(
     config.id === 'typewriter'
   ) {
     opacity = config.id === 'appear' || config.id === 'typewriter'
-      ? amount < 0.5 ? 0 : 1
+      ? amount > 0.5 ? 0 : 1
       : 1 - amount
   }
   if (config.id.startsWith('slide') || config.id === 'blur-slide') {
