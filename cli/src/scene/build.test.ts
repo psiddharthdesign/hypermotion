@@ -629,16 +629,17 @@ test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
 })
 
 test('validateScene rejects unsupported track property ids', () => {
-  const scene = sampleScene()
-  scene.tracks = {
-    invalid: {
-      id: 'invalid',
-      nodeId: 'title',
-      // @ts-expect-error Intentionally invalid to exercise runtime validation.
-      propertyId: 'appearance.missing',
-      keyframes: [],
+  const scene = {
+    ...sampleScene(),
+    tracks: {
+      invalid: {
+        id: 'invalid',
+        nodeId: 'title',
+        propertyId: 'appearance.missing',
+        keyframes: [],
+      },
     },
-  }
+  } as unknown as SceneJson
 
   const result = validateScene(buildSceneBytes(scene))
 
