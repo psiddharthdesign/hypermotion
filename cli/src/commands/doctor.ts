@@ -3,8 +3,7 @@
 import { Command } from 'commander'
 import os from 'node:os'
 import { locateDesktopApp } from '../electron/locator.js'
-
-const CLI_VERSION = '0.1.2'
+import { CLI_VERSION } from '../version.js'
 
 export async function getDoctorReport() {
   const appPath = await locateDesktopApp()
