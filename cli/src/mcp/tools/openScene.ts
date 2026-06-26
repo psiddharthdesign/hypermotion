@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pushSceneToRunningApp } from '../../electron/live.js'
@@ -22,7 +22,9 @@ export const openSceneTool: Tool = {
   },
 }
 
-export async function handleOpenScene(args: Record<string, unknown>) {
+export async function handleOpenScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = OpenInput.parse(args)
   const scenePath = path.resolve(parsed.scene)
   if (!fs.existsSync(scenePath)) {
