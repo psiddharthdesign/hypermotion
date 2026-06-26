@@ -19,7 +19,7 @@ export const listKeyframeablePropertiesTool: Tool = {
   inputSchema: { type: 'object', properties: {} },
 }
 
-export async function handleGetCapabilities() {
+export async function handleGetCapabilities(): Promise<McpTextResult> {
   return text({
     sceneExtension: '.hype',
     nodeKinds: ['frame', 'rect', 'ellipse', 'text', 'image', 'video', 'audio', 'component', 'instance', 'camera'],
@@ -48,7 +48,7 @@ export async function handleGetCapabilities() {
   })
 }
 
-export async function handleListKeyframeableProperties() {
+export async function handleListKeyframeableProperties(): Promise<McpTextResult> {
   return text({ keyframeableProperties: PROPERTY_IDS })
 }
 
