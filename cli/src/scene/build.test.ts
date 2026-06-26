@@ -435,6 +435,33 @@ test('applyScenePatch fills workspaceOnly default for created nodes', () => {
   assert.equal(nodes.badge.workspaceOnly, false)
 })
 
+test('applyScenePatch fills text defaults for created nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'caption',
+        kind: 'text',
+        parent: 'root',
+        text: 'Patched text',
+        size: { width: 320 },
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.caption.size, { width: 320, height: 'hug' })
+  assert.equal(nodes.caption.fontFamily, 'Inter')
+  assert.equal(nodes.caption.fontSize, 16)
+  assert.equal(nodes.caption.fontWeight, 400)
+  assert.equal(nodes.caption.lineHeight, 1.4)
+  assert.equal(nodes.caption.letterSpacing, 0)
+  assert.equal(nodes.caption.textAlign, 'start')
+  assert.equal(nodes.caption.color, '#0a0a0c')
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}
