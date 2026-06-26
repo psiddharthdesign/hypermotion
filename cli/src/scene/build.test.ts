@@ -505,6 +505,15 @@ test('applyScenePatch can clear the active camera', () => {
   assert.equal(readSceneSummary(patched).activeCameraId, null)
 })
 
+test('readSceneSummary reports deleted root and active camera ids as null', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const withoutRoot = applyScenePatch(bytes, [{ op: 'deleteNode', nodeId: 'root' }])
+  const withoutCamera = applyScenePatch(bytes, [{ op: 'deleteNode', nodeId: 'camera' }])
+
+  assert.equal(readSceneSummary(withoutRoot).root, null)
+  assert.equal(readSceneSummary(withoutCamera).activeCameraId, null)
+})
+
 test('applyScenePatch fills workspaceOnly default for created nodes', () => {
   const bytes = buildSceneBytes(sampleScene())
   const patched = applyScenePatch(bytes, [

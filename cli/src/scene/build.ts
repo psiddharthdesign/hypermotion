@@ -1139,13 +1139,17 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
 
   return {
     meta,
-    root: (scene.get('root') as string | undefined) ?? null,
-    activeCameraId: (scene.get('activeCameraId') as string | undefined) ?? null,
+    root: nonEmptySceneId(scene.get('root')),
+    activeCameraId: nonEmptySceneId(scene.get('activeCameraId')),
     layerCount: nodes?.size ?? 0,
     trackCount: tracks?.size ?? 0,
     sectionCount: sections?.size ?? 0,
     keyframeCount,
   }
+}
+
+function nonEmptySceneId(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
 }
 
 /**
