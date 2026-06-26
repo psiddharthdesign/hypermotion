@@ -4126,7 +4126,7 @@ function textAnimationSegmentStyle(
     : Math.max(0, Math.min(1, progress))
   const globalElapsed = timelineProgress === undefined
     ? playhead - config.startTime
-    : (config.mode === 'in' ? timelineProgress : 1 - timelineProgress) * totalSpan
+    : timelineProgress * totalSpan
   const raw = (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)
   const u = Math.max(0, Math.min(1, raw))
   const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
@@ -4285,7 +4285,7 @@ function displayTextForSegment(
     : Math.max(0, Math.min(1, progress))
   const globalElapsed = timelineProgress === undefined
     ? playhead - config.startTime
-    : (config.mode === 'in' ? timelineProgress : 1 - timelineProgress) * totalSpan
+    : timelineProgress * totalSpan
   const u = Math.max(0, Math.min(1, (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)))
   if ((config.mode === 'in' && u >= 0.85) || (config.mode === 'out' && u <= 0.15)) return text
   const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&'
