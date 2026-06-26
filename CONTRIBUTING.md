@@ -34,8 +34,8 @@ discuss the trade-off.
 1. Fork the repo and create a branch off `main`:
    `git checkout -b your-name/short-description`
 2. Make your changes. Keep PRs focused — one concern per PR.
-3. Run `pnpm build` to confirm `tsc -b` is clean. We don't have a unit
-   test suite yet (coming), so the type checker is the first gate.
+3. Run `pnpm build` to confirm `tsc -b` is clean. For CLI changes, also
+   run `cd cli && pnpm test` to cover the Node test suite.
 4. Run `pnpm lint` and fix any warnings you introduced. Pre-existing
    warnings are fine to leave; don't churn unrelated files.
 5. Commit with a clear message. Conventional Commits prefixes (`feat:`,
