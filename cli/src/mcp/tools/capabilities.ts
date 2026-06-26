@@ -3,6 +3,10 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { PROPERTY_IDS } from '../../scene/build.js'
 
+type McpTextResult = {
+  content: Array<{ type: 'text'; text: string }>
+}
+
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description: 'Return supported scene node kinds, patch operations, render formats, and keyframeable properties.',
@@ -48,7 +52,7 @@ export async function handleListKeyframeableProperties() {
   return text({ keyframeableProperties: PROPERTY_IDS })
 }
 
-function text(value: unknown) {
+function text(value: unknown): McpTextResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
   }
