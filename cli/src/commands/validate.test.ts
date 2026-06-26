@@ -134,3 +134,51 @@ test('validate command rejects a non-camera active camera id', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('validate command rejects a parent link missing from children', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Parent Link',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          title: {
+            id: 'title',
+            kind: 'text',
+            parent: 'root',
+            text: 'Detached child',
+            fontFamily: 'Inter',
+            fontSize: 24,
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: node title parent root does not list it as a child$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
