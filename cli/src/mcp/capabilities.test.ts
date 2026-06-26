@@ -14,6 +14,10 @@ test('capability tools list the full supported keyframe property set', async () 
 
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
+  assert.equal(
+    new Set(capabilities.keyframeableProperties).size,
+    PROPERTY_IDS.length,
+  )
 })
 
 function parseToolJson(result: {
