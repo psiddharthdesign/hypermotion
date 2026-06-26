@@ -965,6 +965,21 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
 
 function nodeToYMap(node: NodeJson): Y.Map<unknown> {
   const y = new Y.Map<unknown>()
+  const handledKeys = new Set([
+    'id',
+    'kind',
+    'name',
+    'parent',
+    'children',
+    'transform',
+    'appearance',
+    'visible',
+    'locked',
+    'position',
+    'isMask',
+    'componentSourceId',
+    'workspaceOnly',
+  ])
   y.set('id', node.id)
   y.set('kind', node.kind)
   y.set('name', node.name ?? defaultName(node.kind))
@@ -978,8 +993,33 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
   y.set('isMask', node.isMask ?? false)
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
+  if (node.kind === 'text') {
+    for (const key of [
+      'size',
+      'text',
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'lineHeight',
+      'letterSpacing',
+      'textAlign',
+      'color',
+    ]) {
+      handledKeys.add(key)
+    }
+    const defaultTextSize: SceneSize = { width: 'hug', height: 'hug' }
+    y.set('size', mergeWithDefaults(defaultTextSize, node.size))
+    y.set('text', node.text ?? 'Text')
+    y.set('fontFamily', node.fontFamily ?? 'Inter')
+    y.set('fontSize', node.fontSize ?? 16)
+    y.set('fontWeight', node.fontWeight ?? 400)
+    y.set('lineHeight', node.lineHeight ?? 1.4)
+    y.set('letterSpacing', node.letterSpacing ?? 0)
+    y.set('textAlign', node.textAlign ?? 'start')
+    y.set('color', node.color ?? '#0a0a0c')
+  }
   for (const [k, v] of Object.entries(node)) {
-    if (['id', 'kind', 'name', 'parent', 'children', 'transform', 'appearance', 'visible', 'locked', 'position', 'isMask', 'componentSourceId', 'workspaceOnly'].includes(k)) continue
+    if (handledKeys.has(k)) continue
     y.set(k, v)
   }
   return y
