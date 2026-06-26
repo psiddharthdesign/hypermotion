@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { PropertyIdJson } from '../../scene/build.js'
 
 const KEYFRAMEABLE_PROPERTIES = [
   'transform.x',
@@ -11,6 +12,11 @@ const KEYFRAMEABLE_PROPERTIES = [
   'transform.rotationY',
   'transform.scaleX',
   'transform.scaleY',
+  'transform.anchorX',
+  'transform.anchorY',
+  'transform.anchorZ',
+  'camera.focusX',
+  'camera.focusY',
   'camera.focusWorldX',
   'camera.focusWorldY',
   'camera.focusWorldZ',
@@ -25,10 +31,17 @@ const KEYFRAMEABLE_PROPERTIES = [
   'camera.nearClip',
   'camera.farClip',
   'camera.aperture',
+  'camera.iso',
   'camera.blurLevel',
   'camera.blurQuality',
   'appearance.opacity',
   'appearance.cornerRadius',
+  'appearance.cornerRadii',
+  'appearance.cornerRadii.tl',
+  'appearance.cornerRadii.tr',
+  'appearance.cornerRadii.br',
+  'appearance.cornerRadii.bl',
+  'appearance.fill',
   'layout.gap',
   'layout.padding.top',
   'layout.padding.right',
@@ -38,7 +51,7 @@ const KEYFRAMEABLE_PROPERTIES = [
   'size.height',
   'layout.direction',
   'variant',
-]
+] satisfies PropertyIdJson[]
 
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
