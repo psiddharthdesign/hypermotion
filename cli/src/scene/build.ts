@@ -827,6 +827,7 @@ export function validateScene(bytes: Uint8Array): {
 
   for (const [id, raw] of Object.entries(nodes)) {
     const node = asRecord(raw)
+    if (node.id !== id) errors.push(`node map key ${id} does not match node id: ${String(node.id)}`)
     const parent = typeof node.parent === 'string' ? node.parent : null
     if (parent && !nodes[parent]) errors.push(`node ${id} has missing parent: ${parent}`)
     const children = Array.isArray(node.children) ? node.children : []

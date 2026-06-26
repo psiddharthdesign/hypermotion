@@ -629,6 +629,21 @@ test('validateScene rejects non-frame root nodes', () => {
   assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
 })
 
+test('validateScene rejects node ids that do not match their map key', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('title')?.set('id', 'renamed-title')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'node map key title does not match node id: renamed-title',
+  ])
+})
+
 test('buildSceneBytes preserves variant selection keyframe values', () => {
   const scene = sampleScene()
   scene.tracks = {
