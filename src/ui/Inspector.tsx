@@ -176,7 +176,7 @@ export function Inspector() {
         className="absolute left-0 top-0 z-10 h-full w-1 -translate-x-1/2 cursor-col-resize hover:bg-accent/50"
       />
       <ModeTabs />
-      <div className="flex-1 overflow-auto p-5 text-[12px]">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 text-[12px]">
         {mode === 'animate' ? (
           <PresetsPanel />
         ) : showScene ? (

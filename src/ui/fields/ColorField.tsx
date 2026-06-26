@@ -101,18 +101,21 @@ export function ColorField({
 function EyedropperGlyph() {
   return (
     <svg
-      width={12}
-      height={12}
-      viewBox="0 0 14 14"
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.3}
+      strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
     >
-      <path d="M8.8 1.7a1.35 1.35 0 0 1 1.9 0l1.6 1.6a1.35 1.35 0 0 1 0 1.9l-1 1" />
-      <path d="M8.9 4.1 3.1 9.9 2 12l2.1-1.1 5.8-5.8" />
-      <path d="M7.8 3 11 6.2" />
+      <path d="m2 22 1-1h3l9-9" />
+      <path d="M3 21v-3l9-9" />
+      <path d="m15 6 3.4-3.4a2.1 2.1 0 0 1 3 3L18 9" />
+      <path d="m9 12 6 6" />
+      <path d="m12 9 6 6" />
     </svg>
   )
 }

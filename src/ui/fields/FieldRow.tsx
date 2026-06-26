@@ -19,8 +19,8 @@ import type { ReactNode } from 'react'
  *   3. children  — the actual field(s). Anything fits here — one input,
  *      a segmented control, a row of four padding cells.
  *
- * Voice (Framer-leaning): label is text-text-muted at 12px, sitting in a
- * 72px column. Field column is `flex-1` so multi-cell layouts (Width +
+ * Voice (Framer-leaning): label is text-text-muted at 12px, sitting in an
+ * 88px column. Field column is `flex-1` so multi-cell layouts (Width +
  * unit dropdown) get the full remaining width.
  */
 export function FieldRow({
@@ -37,7 +37,7 @@ export function FieldRow({
       <div className="flex w-4 shrink-0 items-center justify-center">
         {keyframe}
       </div>
-      <span className="w-[56px] shrink-0 text-[12px] text-text-muted">
+      <span className="w-[88px] shrink-0 whitespace-nowrap text-[12px] text-text-muted">
         {label}
       </span>
       <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
