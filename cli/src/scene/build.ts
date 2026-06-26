@@ -815,6 +815,9 @@ export function validateScene(bytes: Uint8Array): {
 
   if (!root) errors.push('scene.root is missing')
   else if (!nodes[root]) errors.push(`scene.root points to missing node: ${root}`)
+  else if (asRecord(nodes[root]).kind !== 'frame') {
+    errors.push(`scene.root is not a frame node: ${root}`)
+  }
 
   if (!activeCameraId) warnings.push('scene.activeCameraId is missing')
   else if (!nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
