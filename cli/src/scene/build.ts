@@ -240,54 +240,57 @@ export interface AppearanceJson {
   effects?: JsonValue[]
 }
 
-export type PropertyIdJson =
-  | 'transform.x'
-  | 'transform.y'
-  | 'transform.z'
-  | 'transform.rotation'
-  | 'transform.rotationX'
-  | 'transform.rotationY'
-  | 'transform.scaleX'
-  | 'transform.scaleY'
-  | 'transform.anchorX'
-  | 'transform.anchorY'
-  | 'transform.anchorZ'
-  | 'camera.focusDistance'
-  | 'camera.focusX'
-  | 'camera.focusY'
-  | 'camera.focusWorldX'
-  | 'camera.focusWorldY'
-  | 'camera.focusWorldZ'
-  | 'camera.focusRadius'
-  | 'camera.focusFalloff'
-  | 'camera.pointOfInterestX'
-  | 'camera.pointOfInterestY'
-  | 'camera.pointOfInterestZ'
-  | 'camera.focalLength'
-  | 'camera.fieldOfView'
-  | 'camera.nearClip'
-  | 'camera.farClip'
-  | 'camera.aperture'
-  | 'camera.iso'
-  | 'camera.blurLevel'
-  | 'camera.blurQuality'
-  | 'appearance.opacity'
-  | 'appearance.cornerRadius'
-  | 'appearance.cornerRadii'
-  | 'appearance.cornerRadii.tl'
-  | 'appearance.cornerRadii.tr'
-  | 'appearance.cornerRadii.br'
-  | 'appearance.cornerRadii.bl'
-  | 'appearance.fill'
-  | 'layout.gap'
-  | 'layout.padding.top'
-  | 'layout.padding.right'
-  | 'layout.padding.bottom'
-  | 'layout.padding.left'
-  | 'layout.direction'
-  | 'size.width'
-  | 'size.height'
-  | 'variant'
+export const PROPERTY_IDS = [
+  'transform.x',
+  'transform.y',
+  'transform.z',
+  'transform.rotation',
+  'transform.rotationX',
+  'transform.rotationY',
+  'transform.scaleX',
+  'transform.scaleY',
+  'transform.anchorX',
+  'transform.anchorY',
+  'transform.anchorZ',
+  'camera.focusDistance',
+  'camera.focusX',
+  'camera.focusY',
+  'camera.focusWorldX',
+  'camera.focusWorldY',
+  'camera.focusWorldZ',
+  'camera.focusRadius',
+  'camera.focusFalloff',
+  'camera.pointOfInterestX',
+  'camera.pointOfInterestY',
+  'camera.pointOfInterestZ',
+  'camera.focalLength',
+  'camera.fieldOfView',
+  'camera.nearClip',
+  'camera.farClip',
+  'camera.aperture',
+  'camera.iso',
+  'camera.blurLevel',
+  'camera.blurQuality',
+  'appearance.opacity',
+  'appearance.cornerRadius',
+  'appearance.cornerRadii',
+  'appearance.cornerRadii.tl',
+  'appearance.cornerRadii.tr',
+  'appearance.cornerRadii.br',
+  'appearance.cornerRadii.bl',
+  'appearance.fill',
+  'layout.gap',
+  'layout.padding.top',
+  'layout.padding.right',
+  'layout.padding.bottom',
+  'layout.padding.left',
+  'layout.direction',
+  'size.width',
+  'size.height',
+  'variant',
+] as const
+
+export type PropertyIdJson = (typeof PROPERTY_IDS)[number]
 
 export type EasingJson =
   | 'linear'
