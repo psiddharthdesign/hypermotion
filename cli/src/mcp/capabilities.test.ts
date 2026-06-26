@@ -6,37 +6,14 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
 } from './tools/capabilities.js'
+import { PROPERTY_IDS } from '../scene/build.js'
 
 test('capability tools list the full supported keyframe property set', async () => {
-  const expected = [
-    'transform.anchorX',
-    'transform.anchorY',
-    'transform.anchorZ',
-    'camera.focusX',
-    'camera.focusY',
-    'camera.iso',
-    'appearance.cornerRadii',
-    'appearance.cornerRadii.tl',
-    'appearance.cornerRadii.tr',
-    'appearance.cornerRadii.br',
-    'appearance.cornerRadii.bl',
-    'appearance.fill',
-    'text.progress',
-  ]
-
   const capabilities = parseToolJson(await handleGetCapabilities())
   const listed = parseToolJson(await handleListKeyframeableProperties())
 
-  for (const propertyId of expected) {
-    assert.ok(
-      capabilities.keyframeableProperties.includes(propertyId),
-      `get_capabilities omitted ${propertyId}`,
-    )
-    assert.ok(
-      listed.keyframeableProperties.includes(propertyId),
-      `list_keyframeable_properties omitted ${propertyId}`,
-    )
-  }
+  assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
+  assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
 })
 
 function parseToolJson(result: {
