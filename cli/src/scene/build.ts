@@ -34,7 +34,7 @@ export interface SceneJson {
     canvas?: Partial<SceneCanvas>
   }
   root?: string
-  activeCameraId?: string
+  activeCameraId?: string | null
   nodes?: Record<string, NodeJson>
   tracks?: Record<string, TrackJson>
   sections?: Record<string, SectionJson>
@@ -750,7 +750,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       }
     }
   }
-  if (json.activeCameraId) {
+  if (json.activeCameraId !== undefined) {
     scene.set('activeCameraId', json.activeCameraId)
   } else {
     // Infer: first camera node.
