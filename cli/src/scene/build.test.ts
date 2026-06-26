@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as Y from 'yjs'
 import {
+  applyScenePatch,
   buildSceneBytes,
   readSceneSummary,
   type SceneJson,
@@ -403,6 +404,15 @@ test('buildSceneBytes preserves an explicitly cleared active camera', () => {
   const summary = readSceneSummary(buildSceneBytes(scene))
 
   assert.equal(summary.activeCameraId, null)
+})
+
+test('applyScenePatch can clear the active camera', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    { op: 'setActiveCameraId', cameraId: null },
+  ])
+
+  assert.equal(readSceneSummary(patched).activeCameraId, null)
 })
 
 test('buildSceneBytes keys tracks by their declared ids', () => {
