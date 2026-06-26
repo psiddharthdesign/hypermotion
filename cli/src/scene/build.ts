@@ -462,16 +462,6 @@ type FlexDirection = 'row' | 'column'
 type FlexJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around'
 type FlexAlign = 'start' | 'center' | 'end' | 'stretch'
 
-export interface SceneSummary {
-  meta: Record<string, unknown>
-  root: string | null
-  activeCameraId: string | null
-  layerCount: number
-  trackCount: number
-  sectionCount: number
-  keyframeCount: number
-}
-
 type SceneTransform = NonNullable<NodeJson['transform']> & {
   anchorX: number
   anchorY: number
@@ -484,12 +474,27 @@ type SceneSize = Record<string, unknown> & {
   width: number | 'hug' | 'fill'
   height: number | 'hug' | 'fill'
 }
-interface SceneCanvas {
+export interface SceneCanvas {
   width: number
   height: number
 }
-type SceneMeta = Required<Omit<NonNullable<SceneJson['meta']>, 'canvas'>> & {
+export type SceneMeta = Required<Omit<NonNullable<SceneJson['meta']>, 'canvas'>> & {
   canvas: SceneCanvas
+}
+
+export type SceneSummaryMeta = Record<string, unknown> &
+  Partial<Omit<SceneMeta, 'canvas'>> & {
+    canvas?: Partial<SceneCanvas> & Record<string, unknown>
+  }
+
+export interface SceneSummary {
+  meta: SceneSummaryMeta
+  root: string | null
+  activeCameraId: string | null
+  layerCount: number
+  trackCount: number
+  sectionCount: number
+  keyframeCount: number
 }
 
 interface SceneAppearance {
@@ -1122,7 +1127,7 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   const scene = doc.getMap<unknown>('scene')
 
   const metaMap = scene.get('meta') as Y.Map<unknown> | undefined
-  const meta: Record<string, unknown> = {}
+  const meta: SceneSummaryMeta = {}
   if (metaMap) {
     for (const [k, v] of metaMap.entries()) meta[k] = v
   }

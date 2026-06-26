@@ -88,6 +88,7 @@ test('buildSceneBytes creates a readable .hype summary', () => {
 
   assert.equal(summary.meta.name, 'Smoke test')
   assert.deepEqual(summary.meta.canvas, { width: 1280, height: 720 })
+  assert.equal(summary.meta.canvas?.width, 1280)
   assert.equal(summary.root, 'root')
   assert.equal(summary.activeCameraId, 'camera')
   assert.equal(summary.layerCount, 3)
