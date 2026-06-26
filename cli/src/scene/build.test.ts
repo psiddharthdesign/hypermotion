@@ -658,6 +658,22 @@ test('validateScene rejects non-frame root nodes', () => {
   assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
 })
 
+test('validateScene rejects cameras nested under scene nodes', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  const camera = scene.nodes?.camera
+  if (!root || !camera) throw new Error('missing sample nodes')
+  root.children = ['title', 'camera']
+  camera.parent = 'root'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'camera node camera must be scene-level with parent: null',
+  ])
+})
+
 test('validateScene rejects node ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
