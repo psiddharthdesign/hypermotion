@@ -182,10 +182,8 @@ export function stampTextAnimationKeyframes(
   clearTextAnimationKeyframes(api, nodeId)
   const start = config.startTime
   const end = start + config.duration + Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
-  const from = config.mode === 'in' ? 0 : 1
-  const to = config.mode === 'in' ? 1 : 0
-  addKeyframe(api, nodeId, 'text.progress', start, from, easingForText(config), config.mode)
-  addKeyframe(api, nodeId, 'text.progress', end, to, undefined, config.mode)
+  addKeyframe(api, nodeId, 'text.progress', start, 0, easingForText(config), config.mode)
+  addKeyframe(api, nodeId, 'text.progress', end, 1, undefined, config.mode)
 }
 
 export function updateTextAnimationEasing(
