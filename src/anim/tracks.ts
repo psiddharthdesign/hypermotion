@@ -59,7 +59,10 @@ export function ensureTrack(
 export function removeTrack(api: SceneAPI, trackId: TrackId): void {
   const track = api.getTrack(trackId)
   api.deleteTrack(trackId)
-  if (track?.propertyId === 'text.progress') {
+  if (
+    track?.propertyId === 'text.progress' &&
+    api.getTracksForNode(track.nodeId).every((candidate) => candidate.propertyId !== 'text.progress')
+  ) {
     api.setNodeProperty(track.nodeId, 'textAnimation', null)
   }
 }
@@ -151,7 +154,10 @@ export function removeKeyframe(
     // Empty track is dead weight. Text animations need a start and end
     // progress keyframe; with fewer than two, the effect is inactive.
     api.deleteTrack(trackId)
-    if (track.propertyId === 'text.progress') {
+    if (
+      track.propertyId === 'text.progress' &&
+      api.getTracksForNode(track.nodeId).every((candidate) => candidate.propertyId !== 'text.progress')
+    ) {
       api.setNodeProperty(track.nodeId, 'textAnimation', null)
     }
   } else {

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Fill } from '@/scene/types'
-import { addKeyframe } from './tracks'
 import { findEasingPreset, type EasingPresetId } from './easingPresets'
 import type { SceneAPI } from '@/scene/doc'
-import type { EasingKind, NodeId } from '@/scene/types'
+import type { EasingKind, Keyframe, NodeId, Track, TrackId } from '@/scene/types'
 
 export type TextAnimationId =
   | 'appear'
@@ -143,6 +142,7 @@ export function applyTextAnimation(
   id: TextAnimationId,
   startTime: number,
   existing?: TextAnimationConfig | null,
+  options: { trackId?: TrackId; replaceAll?: boolean } = {},
 ): TextAnimationConfig {
   const defaults = textAnimationDefaults(id)
   const previous = existing ? normalizeTextAnimation(existing) : null
@@ -169,6 +169,7 @@ export function applyTextAnimation(
     nodeId,
     next,
     node?.kind === 'text' ? node.text : '',
+    options,
   )
   return next
 }
@@ -178,28 +179,43 @@ export function stampTextAnimationKeyframes(
   nodeId: NodeId,
   config: TextAnimationConfig,
   text: string,
-): void {
-  clearTextAnimationKeyframes(api, nodeId)
+  options: { trackId?: TrackId; replaceAll?: boolean } = {},
+): TrackId {
+  if (options.replaceAll) clearTextAnimationKeyframes(api, nodeId)
   const start = config.startTime
   const end = start + config.duration + Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
-  addKeyframe(api, nodeId, 'text.progress', start, 0, easingForText(config), config.mode)
-  addKeyframe(api, nodeId, 'text.progress', end, 1, undefined, config.mode)
+  const trackId = options.trackId ?? genId()
+  const track: Track = {
+    id: trackId,
+    nodeId,
+    propertyId: 'text.progress',
+    defaultEasing: easingForText(config),
+    textAnimation: config,
+    keyframes: [
+      textKeyframe(start, 0, easingForText(config), config.mode),
+      textKeyframe(end, 1, undefined, config.mode),
+    ],
+  }
+  api.setTrack(track)
+  return trackId
 }
 
 export function updateTextAnimationEasing(
   api: SceneAPI,
   nodeId: NodeId,
   config: TextAnimationConfig,
+  trackId?: TrackId,
 ): void {
   const easing = easingForText(config)
   for (const track of api.getTracksForNode(nodeId)) {
     if (track.propertyId !== 'text.progress') continue
+    if (trackId && track.id !== trackId) continue
     const keyframes = track.keyframes.map((keyframe, index) => {
       const isLast = index === track.keyframes.length - 1
       if (keyframe.presetOrigin !== config.mode || isLast) return keyframe
       return { ...keyframe, easingOut: easing }
     })
-    api.setTrack({ ...track, defaultEasing: easing, keyframes })
+    api.setTrack({ ...track, defaultEasing: easing, textAnimation: config, keyframes })
   }
 }
 
@@ -218,6 +234,28 @@ function textSegmentCount(text: string, applyTo: TextAnimationApplyTo): number {
   if (applyTo === 'lines') return Math.max(1, text.split('\n').filter(Boolean).length)
   if (applyTo === 'words') return Math.max(1, text.split(/\s+/).filter(Boolean).length)
   return Math.max(1, Array.from(text).filter((char) => char !== ' ' && char !== '\n').length)
+}
+
+function textKeyframe(
+  time: number,
+  value: number,
+  easingOut?: EasingKind,
+  presetOrigin?: TextAnimationMode,
+): Keyframe {
+  return {
+    id: genId(),
+    time,
+    value,
+    ...(easingOut ? { easingOut } : {}),
+    ...(presetOrigin ? { presetOrigin } : {}),
+  }
+}
+
+function genId(): string {
+  return (
+    Math.random().toString(36).slice(2, 10) +
+    Math.random().toString(36).slice(2, 10)
+  )
 }
 
 function easingForText(config: TextAnimationConfig): EasingKind {

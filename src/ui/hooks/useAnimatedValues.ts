@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import type { NodeId } from '@/scene'
 import { getAnimEngine } from '@/anim'
+import type { TextAnimationConfig } from '@/anim'
 
 /**
  * Per-node animated value bundle produced by the anim engine each tick.
@@ -35,6 +36,7 @@ export interface AnimatedValue {
   cornerRadius?: number
   fill?: string
   textProgress?: number
+  textAnimation?: TextAnimationConfig
   focusDistance?: number
   focusX?: number
   focusY?: number

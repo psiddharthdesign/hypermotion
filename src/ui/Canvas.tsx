@@ -3907,7 +3907,7 @@ function TextGlyphs({
   const playhead = useUI((s) => s.playhead)
   const api = useSceneAPI()
   const isEditing = editingTextId === node.id
-  const textAnimation = normalizeTextAnimation(node.textAnimation)
+  const textAnimation = anim?.textAnimation ?? normalizeTextAnimation(node.textAnimation)
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.

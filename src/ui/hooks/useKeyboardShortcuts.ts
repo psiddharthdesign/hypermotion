@@ -695,6 +695,7 @@ interface ClipboardNode {
     propertyId: string
     defaultEasing: unknown
     keyframes: unknown[]
+    textAnimation?: unknown
   }>
   /** When set, paste creates a linked instance instead of a detached clone. */
   componentId?: NodeId
@@ -726,6 +727,7 @@ function serializeSubtree(
     propertyId: t.propertyId,
     defaultEasing: t.defaultEasing,
     keyframes: t.keyframes,
+    ...(t.textAnimation ? { textAnimation: t.textAnimation } : {}),
   }))
   const children: ClipboardNode[] = []
   for (const child of api.getChildren(nodeId)) {
@@ -781,6 +783,7 @@ function pasteSubtree(
         ...(k as { id: string; time: number; value: unknown }),
         id: genTrackId(),
       })) as never,
+      ...(track.textAnimation ? { textAnimation: track.textAnimation as never } : {}),
     })
   }
   for (const child of item.children) {
