@@ -26,6 +26,15 @@ test('render_scene input schema exposes render preset enums', () => {
   assert.deepEqual(qualityProperty?.enum, ['comp', '720p', '2k', '4k'])
 })
 
+test('render_scene input schema exposes the optional scene path', () => {
+  const sceneProperty = renderSceneTool.inputSchema.properties?.scene as
+    | Record<string, unknown>
+    | undefined
+
+  assert.equal(sceneProperty?.type, 'string')
+  assert.match(String(sceneProperty?.description), /\.hype scene file/)
+})
+
 test('render_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleRenderScene({
     output: 'demo.mp4',
