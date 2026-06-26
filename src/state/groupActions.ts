@@ -112,6 +112,26 @@ export function toggleTrackGroupCollapsed(
   })
 }
 
+/** Rename a track group. Empty names clear the custom title. */
+export function renameTrackGroup(
+  api: SceneAPI,
+  groupId: string,
+  name: string,
+): void {
+  const ui = api.getUiState()
+  const g = ui.trackGroups[groupId]
+  if (!g) return
+  const trimmed = name.trim()
+  const { name: _name, ...rest } = g
+  void _name
+  api.setUiState({
+    trackGroups: {
+      ...ui.trackGroups,
+      [groupId]: trimmed ? { ...rest, name: trimmed } : rest,
+    },
+  })
+}
+
 /** Bundle the given keyframe keys into a new kf group. Auto-collapsed. */
 export function groupKeyframes(api: SceneAPI, keys: string[]): void {
   if (keys.length < 2) return

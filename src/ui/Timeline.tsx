@@ -15,6 +15,7 @@ import {
   ungroupTracks as ungroupTracksHelper,
   addTracksToGroup as addTracksToGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
+  renameTrackGroup as renameTrackGroupHelper,
 } from '@/state/groupActions'
 import { importAudioFile } from '@/ui/importMedia'
 
@@ -805,11 +806,12 @@ export function Timeline() {
       const isComposed = memberNodes.size === 1
       const hostNode =
         api.getNode(hostNodeId)?.name ?? memberTracks[0]?.nodeId ?? 'Group'
+      const customName = typeof g.name === 'string' ? g.name.trim() : ''
       out.push({
         groupId,
         kind: isComposed ? 'composed' : 'sequence',
         hostNodeId,
-        label: isComposed ? hostNode : 'Sequence',
+        label: customName || (isComposed ? hostNode : 'Sequence'),
         memberTracks,
         collapsed: g.collapsed,
       })
@@ -1789,6 +1791,9 @@ export function Timeline() {
                           tg.memberTracks.map((t) => t.id),
                         )
                       }
+                      onRename={(name) =>
+                        renameTrackGroupHelper(api, tg.groupId, name)
+                      }
                       openContextMenu={openContextMenu}
                     />
                   ))}
@@ -2156,6 +2161,18 @@ export function Timeline() {
                               : 'Collapse group',
                             onClick: () =>
                               toggleTrackGroupCollapsed(g.groupId),
+                          })
+                          items.push({
+                            label: 'Rename group',
+                            onClick: () => {
+                              const next = window.prompt(
+                                'Rename group',
+                                g.label,
+                              )
+                              if (next !== null) {
+                                renameTrackGroupHelper(api, g.groupId, next)
+                              }
+                            },
                           })
                           items.push({
                             label: 'Ungroup',
@@ -3478,6 +3495,7 @@ function TrackGroupLeftRow({
   onToggle,
   onSelectMembers,
   onUngroup,
+  onRename,
   openContextMenu,
 }: {
   group: ResolvedTrackGroup
@@ -3486,15 +3504,29 @@ function TrackGroupLeftRow({
   onToggle: () => void
   onSelectMembers: () => void
   onUngroup: () => void
+  onRename: (name: string) => void
   openContextMenu: (menu: import('@/state/ui').ContextMenuState) => void
 }) {
   const collapsed = group.collapsed
   const api = useSceneAPI()
+  const [editingName, setEditingName] = useState(false)
+  const [draftName, setDraftName] = useState(group.label)
+  useEffect(() => {
+    if (!editingName) setDraftName(group.label)
+  }, [editingName, group.label])
+  const commitRename = () => {
+    setEditingName(false)
+    onRename(draftName)
+  }
   return (
     <>
       <div
         onClick={onSelectMembers}
-        onDoubleClick={onToggle}
+        onDoubleClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setEditingName(true)
+        }}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -3509,6 +3541,10 @@ function TrackGroupLeftRow({
               {
                 label: 'Select member tracks',
                 onClick: onSelectMembers,
+              },
+              {
+                label: 'Rename group',
+                onClick: () => setEditingName(true),
               },
               { kind: 'separator' as const },
               { label: 'Ungroup (⌘⇧G)', danger: true, onClick: onUngroup },
@@ -3541,12 +3577,34 @@ function TrackGroupLeftRow({
         ) : (
           <SequenceGlyph />
         )}
-        <span className="truncate text-[11px] font-medium">
-          {group.label}
-          <span className="ml-1 text-text-dim">
-            · {group.kind === 'composed' ? 'Composed' : 'Sequence'}
+        {editingName ? (
+          <input
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') {
+                setDraftName(group.label)
+                setEditingName(false)
+              }
+            }}
+            className="min-w-0 flex-1 rounded border border-accent/40 bg-panel px-1 text-[11px] font-medium text-text outline-none"
+          />
+        ) : (
+          <span
+            className="truncate text-[11px] font-medium"
+            title="Double-click to rename"
+          >
+            {group.label}
+            <span className="ml-1 text-text-dim">
+              · {group.kind === 'composed' ? 'Composed' : 'Sequence'}
+            </span>
           </span>
-        </span>
+        )}
       </div>
       {/* Children render only when expanded — indented underneath
           so the bundling reads visually like a folder. */}

@@ -36,7 +36,10 @@ import { normalizeTextAnimation } from '@/anim/textAnimations'
  * data, splitting into per-group Y.Maps is the upgrade path.
  */
 export interface UiStateSlab {
-  trackGroups: Record<string, { trackIds: string[]; collapsed: boolean }>
+  trackGroups: Record<
+    string,
+    { trackIds: string[]; collapsed: boolean; name?: string }
+  >
   kfGroups: Record<string, string[]>
   kfGroupCollapsed: Record<string, boolean>
 }
