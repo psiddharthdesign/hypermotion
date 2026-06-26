@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { inspectScene } from '../../scene/build.js'
 
@@ -41,7 +41,9 @@ export const listCamerasTool: Tool = {
   inputSchema: { type: 'object', properties: { scene: { type: 'string' } }, required: ['scene'] },
 }
 
-export async function handleListLayers(args: Record<string, unknown>) {
+export async function handleListLayers(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = SceneInput.parse(args)
   const scene = read(parsed.scene)
   const nodes = record(scene.nodes)
@@ -61,14 +63,18 @@ export async function handleListLayers(args: Record<string, unknown>) {
   })
 }
 
-export async function handleGetLayer(args: Record<string, unknown>) {
+export async function handleGetLayer(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = LayerInput.parse(args)
   const node = record(record(read(parsed.scene).nodes)[parsed.nodeId])
   if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${parsed.nodeId}` }] }
   return text(node)
 }
 
-export async function handleListTracks(args: Record<string, unknown>) {
+export async function handleListTracks(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = TrackInput.parse(args)
   const tracks = Object.values(record(read(parsed.scene).tracks)).filter((raw) => {
     const t = record(raw)
@@ -77,7 +83,9 @@ export async function handleListTracks(args: Record<string, unknown>) {
   return text({ tracks })
 }
 
-export async function handleListCameras(args: Record<string, unknown>) {
+export async function handleListCameras(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = SceneInput.parse(args)
   const scene = read(parsed.scene)
   const cameras = Object.values(record(scene.nodes)).filter((raw) => record(raw).kind === 'camera')
@@ -94,6 +102,6 @@ function record(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function text(value: unknown) {
+function text(value: unknown): CallToolResult {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] }
 }
