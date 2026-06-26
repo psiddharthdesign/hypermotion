@@ -882,6 +882,7 @@ export type PropertyId =
   | 'camera.nearClip'
   | 'camera.farClip'
   | 'camera.aperture'
+  | 'camera.iso'
   | 'camera.blurLevel'
   | 'camera.blurQuality'
   // appearance group — post-layout, cheap

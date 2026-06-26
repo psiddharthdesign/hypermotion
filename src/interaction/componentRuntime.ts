@@ -356,6 +356,7 @@ function writeProperty(
     case 'camera.nearClip': into.nearClip = value; break
     case 'camera.farClip': into.farClip = value; break
     case 'camera.aperture': into.aperture = value; break
+    case 'camera.iso': into.iso = value; break
     case 'camera.blurLevel': into.blurLevel = value; break
     case 'camera.blurQuality': into.blurQuality = value; break
     default: break
