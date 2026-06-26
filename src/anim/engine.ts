@@ -88,6 +88,7 @@ export interface AnimatedValue {
   nearClip?: number
   farClip?: number
   aperture?: number
+  iso?: number
   blurLevel?: number
   blurQuality?: number
 }
@@ -445,6 +446,9 @@ function writeProperty(
       break
     case 'camera.aperture':
       into.aperture = value
+      break
+    case 'camera.iso':
+      into.iso = value
       break
     case 'camera.blurLevel':
       into.blurLevel = value

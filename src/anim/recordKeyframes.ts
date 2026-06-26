@@ -75,6 +75,7 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   nearClip: 'camera.nearClip',
   farClip: 'camera.farClip',
   aperture: 'camera.aperture',
+  iso: 'camera.iso',
   blurLevel: 'camera.blurLevel',
   blurQuality: 'camera.blurQuality',
 }

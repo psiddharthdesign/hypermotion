@@ -147,6 +147,10 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'camera.aperture', group: 'camera', label: 'Aperture',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'camera.iso': {
+    id: 'camera.iso', group: 'camera', label: 'ISO',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 100,
+  },
   'camera.blurLevel': {
     id: 'camera.blurLevel', group: 'camera', label: 'Blur Level',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
