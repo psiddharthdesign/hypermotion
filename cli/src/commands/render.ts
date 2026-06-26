@@ -9,9 +9,9 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * ships the bytes back. The CLI writes them to `<out>`.
  *
- * Current scope: renders the CURRENT scene. A future `--scene <path>`
- * flag will render arbitrary `.hype` files once file-based headless
- * rendering lands.
+ * Current scope: renders the CURRENT scene. `--scene <path>` is accepted
+ * for command compatibility, but file-based headless rendering is still
+ * pending and the current desktop scene is rendered instead.
  */
 
 import { Command } from 'commander'
