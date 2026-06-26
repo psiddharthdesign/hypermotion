@@ -834,6 +834,9 @@ export function validateScene(bytes: Uint8Array): {
     const node = asRecord(raw)
     if (node.id !== id) errors.push(`node map key ${id} does not match node id: ${String(node.id)}`)
     const parent = typeof node.parent === 'string' ? node.parent : null
+    if (node.kind === 'camera' && parent) {
+      errors.push(`camera node ${id} must be scene-level with parent: null`)
+    }
     if (parent && !nodes[parent]) errors.push(`node ${id} has missing parent: ${parent}`)
     else if (parent) {
       const parentChildren = asRecord(nodes[parent]).children
