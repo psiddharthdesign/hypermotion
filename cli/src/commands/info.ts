@@ -12,12 +12,16 @@ import { Command } from 'commander'
 import fs from 'node:fs'
 import { readSceneSummary } from '../scene/build.js'
 
+type InfoCommandOptions = {
+  json?: boolean
+}
+
 export function infoCommand(): Command {
   return new Command('info')
     .description('Read a .hype scene file and print a summary.')
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output the summary as JSON for scripting')
-    .action((scenePath: string, options: { json?: boolean }) => {
+    .action((scenePath: string, options: InfoCommandOptions) => {
       let bytes: Buffer
       try {
         bytes = fs.readFileSync(scenePath)
