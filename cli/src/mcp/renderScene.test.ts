@@ -9,7 +9,7 @@ test('render_scene input schema exposes fps bounds', () => {
     | Record<string, unknown>
     | undefined
 
-  assert.equal(fpsProperty?.type, 'number')
+  assert.equal(fpsProperty?.type, 'integer')
   assert.equal(fpsProperty?.minimum, 1)
   assert.equal(fpsProperty?.maximum, 120)
 })
