@@ -34,6 +34,8 @@ import {
   type ExportQualityId,
 } from '@/export'
 import { apiReady } from '@/scene'
+import { sceneDoc } from '@/scene/internals'
+import { loadSceneIntoDoc } from '@/scene/file'
 
 // Renderer-side ambient type. Mirrors the bridge surface in
 // `electron/preload.ts` — re-declared locally because preload's
@@ -66,6 +68,11 @@ interface HeadlessRequest {
 export async function bootHeadlessExport(): Promise<void> {
   const bridge = window.hypermotion
   if (!bridge) return // web build — never headless
+
+  bridge.on?.('scene:load-path', (scenePath) => {
+    if (typeof scenePath !== 'string') return
+    void loadScenePathIntoEditor(scenePath)
+  })
 
   // Subscribe FIRST so we don't miss a trigger that arrives between
   // app startup and our boot-time check.
@@ -128,6 +135,10 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
 
   try {
     const api = await apiReady
+    if (req.scenePath) {
+      await loadScenePathIntoEditor(req.scenePath)
+      await waitForFrames(2)
+    }
     const meta = api.getMeta()
 
     // eslint-disable-next-line no-console
@@ -174,6 +185,18 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   } finally {
     inFlight = false
   }
+}
+
+async function loadScenePathIntoEditor(scenePath: string): Promise<void> {
+  const bridge = window.hypermotion
+  if (!bridge) return
+  const bytes = (await bridge.invoke('file:read', scenePath)) as
+    | Uint8Array
+    | null
+  if (!bytes) {
+    throw new Error(`Failed to read scene file: ${scenePath}`)
+  }
+  loadSceneIntoDoc(sceneDoc, new Uint8Array(bytes))
 }
 
 function waitForFrames(n: number): Promise<void> {

@@ -28,6 +28,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildSceneBytes, readSceneSummary, type SceneJson } from '../../scene/build.js'
+import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const CreateInput = z.object({
   output: z
@@ -41,6 +42,10 @@ const CreateInput = z.object({
     .describe(
       'The scene to build. Either a JSON string OR an inline object matching the SceneJson schema.',
     ),
+  open: z
+    .boolean()
+    .optional()
+    .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 })
 
 export const createSceneTool: Tool = {
@@ -53,6 +58,14 @@ export const createSceneTool: Tool = {
     "SceneJson shape (top level): { meta?, root?, activeCameraId?, nodes, tracks?, sections? }\n" +
     "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, ...kind-specific }\n" +
+    "Design scenes with auto-layout by default from the first frame onward. Prefer layout.mode: 'flex' for rows/columns " +
+    "and layout.mode: 'grid' for grids; use fixed transforms or layout.mode: 'none' only when the user explicitly asks " +
+    "for manual positioning or when a specific visual effect cannot be expressed with auto-layout. Inside auto-layout frames, " +
+    "prefer height: 'hug' for content-driven groups and controls, width: 'fill' for rows/inputs/sections that should span " +
+    "their container, and fixed dimensions only for artboards, icons, media, stable controls, or cases where hug/fill cannot express the layout. " +
+    "For UI design work, use a 4-point or 8-point grid: spacing, padding, gaps, radii, and dimensions should generally be multiples of 4 or 8. " +
+    "When a design calls for UI icons, use Lucide or Phosphor icon library assets; do not approximate icons with plain " +
+    "text characters or ad hoc hand-drawn shapes unless the requested icon is unavailable and the fallback is called out. " +
     "Auto-layout frames take layout: { mode: 'flex', direction: 'row'|'column', justify, align, gap, padding }\n" +
     "Components can define variants, defaultSelection, variantOverrides, timelines, and interactions. " +
     "Instances point at componentId and carry selection, overrides, and instance-local interaction additions. " +
@@ -60,7 +73,9 @@ export const createSceneTool: Tool = {
     "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing? } — omitted keyframes default to [].\n" +
     "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
     "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
-    "blurQuality, and showFocusPlane.\n" +
+    "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
+    "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
+    "and default focalLength to 50 unless the user explicitly requests a different camera/lens feel.\n" +
     "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
     "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
     "transform.anchorX, transform.anchorY, transform.anchorZ, " +
@@ -74,7 +89,7 @@ export const createSceneTool: Tool = {
     "appearance.cornerRadii.bl, appearance.fill, layout.gap, layout.padding.top, " +
     "layout.padding.right, layout.padding.bottom, layout.padding.left, size.width, size.height, " +
     "layout.direction, variant.\n\n" +
-    "Include a 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
+    "Include exactly one 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
     "scene to render. The artboard size lives in meta.canvas.width / height.",
   inputSchema: {
     type: 'object',
@@ -86,6 +101,10 @@ export const createSceneTool: Tool = {
       scene: {
         description:
           'The scene to build. Either a JSON string or an inline object matching SceneJson.',
+      },
+      open: {
+        type: 'boolean',
+        description: 'Open the newly-created scene in the desktop app. Defaults to true.',
       },
     },
     required: ['output', 'scene'],
@@ -200,13 +219,24 @@ export async function handleCreateScene(
   const summary = readSceneSummary(bytes)
   const layers = summary.layerCount
   const tracks = summary.trackCount
+  const shouldOpen = parsed.data.open ?? true
+  let opened = false
+  let openNote = ''
+  if (shouldOpen) {
+    opened = await pushSceneToRunningApp(outputPath)
+    if (!opened) {
+      openNote = ' Desktop app was not found, so the scene was not opened.'
+    }
+  }
   return {
     content: [
       {
         type: 'text' as const,
         text:
           `Wrote ${outputPath} (${formatBytes(bytes.length)}, ${layers} layer${layers === 1 ? '' : 's'}, ${tracks} track${tracks === 1 ? '' : 's'}). ` +
-          `Open it in the desktop app for hand-editing or rendering to MP4 / WebM / GIF.`,
+          (opened
+            ? 'Opened it in the desktop app.'
+            : `Pass this path to render_scene to produce an MP4 / WebM / GIF, or open it in the desktop app for hand-editing.${openNote}`),
       },
     ],
   }

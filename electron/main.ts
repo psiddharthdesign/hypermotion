@@ -140,6 +140,16 @@ function inferFormat(outPath: string): 'mp4' | 'webm' | 'gif' {
 }
 
 let headlessRequest: HeadlessRequest | null = null
+let pendingOpenScenePath: string | null = null
+
+function parseOpenSceneArg(argv: string[]): string | null {
+  if (argv.some((a) => a === '--render' || a.startsWith('--render='))) return null
+  const candidate = argv.find((a) => {
+    if (a.startsWith('--')) return false
+    return path.extname(a).toLowerCase() === '.hype'
+  })
+  return candidate ? path.resolve(candidate) : null
+}
 
 /**
  * Mode flag — `true` when the binary was launched with `--render` at
@@ -631,6 +641,7 @@ function createMainWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow?.focus()
     if (lastUpdateInfo) notifyRendererAboutUpdate(lastUpdateInfo)
+    flushPendingOpenScene()
   })
 
   // External links (export docs, font CDN, etc.) open in the OS browser
@@ -645,6 +656,14 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+function flushPendingOpenScene(): void {
+  if (!mainWindow || !pendingOpenScenePath) return
+  const scenePath = pendingOpenScenePath
+  pendingOpenScenePath = null
+  mainWindow.webContents.send('scene:load-path', scenePath)
+  mainWindow.webContents.send('file:open-path', scenePath)
 }
 
 // IPC bridges. The renderer cannot read the OS clipboard reliably under
@@ -1184,6 +1203,14 @@ ipcMain.handle(
   },
 )
 
+ipcMain.handle('scene:load-path', (_e, scenePath: string): boolean => {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) return false
+  const resolved = path.resolve(scenePath)
+  mainWindow.webContents.send('scene:load-path', resolved)
+  mainWindow.webContents.send('file:open-path', resolved)
+  return true
+})
+
 /**
  * Headless render IPC handlers.
  *
@@ -1277,6 +1304,7 @@ app.whenReady().then(() => {
 
   loadRecentProjects()
   buildAppMenu()
+  pendingOpenScenePath = parseOpenSceneArg(process.argv)
   createMainWindow()
   startUpdateChecks()
 })
@@ -1310,6 +1338,11 @@ app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
+  }
+  const openPath = parseOpenSceneArg(argv)
+  if (openPath) {
+    pendingOpenScenePath = openPath
+    flushPendingOpenScene()
   }
 })
 

@@ -434,6 +434,25 @@ export interface LayoutGuideJson {
   position: number
 }
 
+export interface ScenePatch {
+  ops: PatchOperation[]
+}
+
+export type PatchOperation =
+  | { op: 'setMeta'; patch: Record<string, unknown> }
+  | { op: 'setRoot'; nodeId: string }
+  | { op: 'setActiveCameraId'; cameraId: string }
+  | { op: 'createNode'; node: NodeJson }
+  | { op: 'deleteNode'; nodeId: string }
+  | { op: 'setNode'; nodeId: string; patch: Record<string, unknown> }
+  | { op: 'setNodeProperty'; nodeId: string; key: string; value: unknown }
+  | { op: 'appendChild'; parentId: string; nodeId: string }
+  | { op: 'moveChild'; parentId: string; nodeId: string; toIndex: number }
+  | { op: 'setTrack'; track: TrackJson }
+  | { op: 'deleteTrack'; trackId: string }
+  | { op: 'setSection'; section: SectionJson }
+  | { op: 'deleteSection'; sectionId: string }
+
 type LayoutMode = 'none' | 'flex' | 'grid'
 type FlexDirection = 'row' | 'column'
 type FlexJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around'
@@ -768,6 +787,259 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('uiState', new Y.Map<unknown>())
 
   return Y.encodeStateAsUpdate(doc)
+}
+
+export function inspectScene(bytes: Uint8Array): Record<string, unknown> {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, bytes)
+  const scene = doc.getMap<unknown>('scene')
+  return yToPlain(scene) as Record<string, unknown>
+}
+
+export function validateScene(bytes: Uint8Array): {
+  ok: boolean
+  errors: string[]
+  warnings: string[]
+} {
+  const data = inspectScene(bytes)
+  const errors: string[] = []
+  const warnings: string[] = []
+  const nodes = asRecord(data.nodes)
+  const tracks = asRecord(data.tracks)
+  const root = typeof data.root === 'string' ? data.root : ''
+  const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
+
+  if (!root) errors.push('scene.root is missing')
+  else if (!nodes[root]) errors.push(`scene.root points to missing node: ${root}`)
+
+  if (!activeCameraId) warnings.push('scene.activeCameraId is missing')
+  else if (!nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
+  else if (asRecord(nodes[activeCameraId]).kind !== 'camera') {
+    errors.push(`scene.activeCameraId is not a camera node: ${activeCameraId}`)
+  }
+
+  for (const [id, raw] of Object.entries(nodes)) {
+    const node = asRecord(raw)
+    const parent = typeof node.parent === 'string' ? node.parent : null
+    if (parent && !nodes[parent]) errors.push(`node ${id} has missing parent: ${parent}`)
+    const children = Array.isArray(node.children) ? node.children : []
+    for (const child of children) {
+      if (typeof child !== 'string' || !nodes[child]) errors.push(`node ${id} has missing child: ${String(child)}`)
+      else if (asRecord(nodes[child]).parent !== id) {
+        errors.push(`node ${id} lists child ${child}, but child's parent is ${String(asRecord(nodes[child]).parent)}`)
+      }
+    }
+  }
+
+  for (const [id, raw] of Object.entries(tracks)) {
+    const track = asRecord(raw)
+    const nodeId = track.nodeId
+    if (typeof nodeId !== 'string' || !nodes[nodeId]) {
+      errors.push(`track ${id} points to missing node: ${String(nodeId)}`)
+    }
+    if (!Array.isArray(track.keyframes)) {
+      errors.push(`track ${id} keyframes must be an array`)
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings }
+}
+
+export function applyScenePatch(bytes: Uint8Array, patch: ScenePatch | PatchOperation[]): Uint8Array {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, bytes)
+  const scene = doc.getMap<unknown>('scene')
+  const ops = Array.isArray(patch) ? patch : patch.ops
+  if (!Array.isArray(ops)) {
+    throw new Error('patch must be an array of operations or { ops: [...] }')
+  }
+
+  doc.transact(() => {
+    for (const op of ops) applyPatchOperation(scene, op)
+  })
+
+  return Y.encodeStateAsUpdate(doc)
+}
+
+function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
+  switch (op.op) {
+    case 'setMeta': {
+      const meta = ensureMap(scene, 'meta')
+      for (const [k, v] of Object.entries(op.patch)) meta.set(k, v)
+      return
+    }
+    case 'setRoot':
+      scene.set('root', op.nodeId)
+      return
+    case 'setActiveCameraId':
+      scene.set('activeCameraId', op.cameraId)
+      return
+    case 'createNode': {
+      const nodes = ensureMap(scene, 'nodes') as Y.Map<Y.Map<unknown>>
+      if (nodes.has(op.node.id)) {
+        throw new Error(`node already exists: ${op.node.id}`)
+      }
+      const y = nodeToYMap(op.node)
+      nodes.set(op.node.id, y)
+      if (op.node.parent) {
+        const parent = nodes.get(op.node.parent)
+        if (!parent) throw new Error(`parent does not exist: ${op.node.parent}`)
+        const arr = ensureNodeChildren(parent)
+        if (!arr.toArray().includes(op.node.id)) arr.push([op.node.id])
+      }
+      return
+    }
+    case 'deleteNode':
+      deleteNode(scene, op.nodeId)
+      return
+    case 'setNode': {
+      const node = getNodeMap(scene, op.nodeId)
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
+        else node.set(k, v)
+      }
+      return
+    }
+    case 'setNodeProperty': {
+      const node = getNodeMap(scene, op.nodeId)
+      if (op.key === 'children' && Array.isArray(op.value)) node.set(op.key, arrayToY(op.value))
+      else node.set(op.key, op.value)
+      return
+    }
+    case 'appendChild': {
+      const nodes = getNodesMap(scene)
+      const parent = getNodeMap(scene, op.parentId)
+      const child = getNodeMap(scene, op.nodeId)
+      detachFromParent(nodes, op.nodeId, child.get('parent') as string | null)
+      child.set('parent', op.parentId)
+      const arr = ensureNodeChildren(parent)
+      if (!arr.toArray().includes(op.nodeId)) arr.push([op.nodeId])
+      return
+    }
+    case 'moveChild': {
+      const parent = getNodeMap(scene, op.parentId)
+      const arr = ensureNodeChildren(parent)
+      const list = arr.toArray()
+      const from = list.indexOf(op.nodeId)
+      if (from < 0) throw new Error(`node ${op.nodeId} is not a child of ${op.parentId}`)
+      arr.delete(from, 1)
+      arr.insert(Math.max(0, Math.min(op.toIndex, arr.length)), [op.nodeId])
+      return
+    }
+    case 'setTrack': {
+      const tracks = ensureMap(scene, 'tracks') as Y.Map<Y.Map<unknown>>
+      const y = new Y.Map<unknown>()
+      y.set('id', op.track.id)
+      y.set('nodeId', op.track.nodeId)
+      y.set('propertyId', op.track.propertyId)
+      y.set('defaultEasing', op.track.defaultEasing ?? 'ease-in-out')
+      y.set('keyframes', op.track.keyframes ?? [])
+      tracks.set(op.track.id, y)
+      return
+    }
+    case 'deleteTrack':
+      ensureMap(scene, 'tracks').delete(op.trackId)
+      return
+    case 'setSection':
+      ensureMap(scene, 'sections').set(op.section.id, op.section)
+      return
+    case 'deleteSection':
+      ensureMap(scene, 'sections').delete(op.sectionId)
+      return
+  }
+}
+
+function nodeToYMap(node: NodeJson): Y.Map<unknown> {
+  const y = new Y.Map<unknown>()
+  y.set('id', node.id)
+  y.set('kind', node.kind)
+  y.set('name', node.name ?? defaultName(node.kind))
+  y.set('parent', node.parent ?? null)
+  y.set('children', arrayToY(node.children ?? []))
+  y.set('transform', mergeWithDefaults(DEFAULT_TRANSFORM, node.transform as Partial<typeof DEFAULT_TRANSFORM>))
+  y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
+  y.set('visible', node.visible ?? true)
+  y.set('locked', node.locked ?? false)
+  y.set('position', node.position ?? 'flow')
+  y.set('isMask', node.isMask ?? false)
+  y.set('componentSourceId', node.componentSourceId ?? null)
+  for (const [k, v] of Object.entries(node)) {
+    if (['id', 'kind', 'name', 'parent', 'children', 'transform', 'appearance', 'visible', 'locked', 'position', 'isMask', 'componentSourceId'].includes(k)) continue
+    y.set(k, v)
+  }
+  return y
+}
+
+function deleteNode(scene: Y.Map<unknown>, nodeId: string): void {
+  const nodes = getNodesMap(scene)
+  const node = nodes.get(nodeId)
+  if (!node) return
+  const parent = node.get('parent') as string | null
+  detachFromParent(nodes, nodeId, parent)
+  const children = node.get('children')
+  const childIds = children instanceof Y.Array ? children.toArray() as string[] : []
+  for (const childId of childIds) deleteNode(scene, childId)
+  nodes.delete(nodeId)
+  if (scene.get('root') === nodeId) scene.set('root', '')
+  if (scene.get('activeCameraId') === nodeId) scene.set('activeCameraId', '')
+}
+
+function detachFromParent(nodes: Y.Map<Y.Map<unknown>>, nodeId: string, parentId: string | null): void {
+  if (!parentId) return
+  const parent = nodes.get(parentId)
+  if (!parent) return
+  const arr = parent.get('children')
+  if (!(arr instanceof Y.Array)) return
+  const idx = arr.toArray().indexOf(nodeId)
+  if (idx >= 0) arr.delete(idx, 1)
+}
+
+function getNodesMap(scene: Y.Map<unknown>): Y.Map<Y.Map<unknown>> {
+  return ensureMap(scene, 'nodes') as Y.Map<Y.Map<unknown>>
+}
+
+function getNodeMap(scene: Y.Map<unknown>, nodeId: string): Y.Map<unknown> {
+  const node = getNodesMap(scene).get(nodeId)
+  if (!node) throw new Error(`node does not exist: ${nodeId}`)
+  return node
+}
+
+function ensureMap(parent: Y.Map<unknown>, key: string): Y.Map<unknown> {
+  const existing = parent.get(key)
+  if (existing instanceof Y.Map) return existing
+  const next = new Y.Map<unknown>()
+  parent.set(key, next)
+  return next
+}
+
+function ensureNodeChildren(node: Y.Map<unknown>): Y.Array<string> {
+  const existing = node.get('children')
+  if (existing instanceof Y.Array) return existing as Y.Array<string>
+  const next = new Y.Array<string>()
+  node.set('children', next)
+  return next
+}
+
+function arrayToY(items: unknown[]): Y.Array<unknown> {
+  const arr = new Y.Array<unknown>()
+  if (items.length > 0) arr.push(items)
+  return arr
+}
+
+function yToPlain(value: unknown): unknown {
+  if (value instanceof Y.Map) {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of value.entries()) out[k] = yToPlain(v)
+    return out
+  }
+  if (value instanceof Y.Array) return value.toArray().map(yToPlain)
+  return value
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
 }
 
 /**

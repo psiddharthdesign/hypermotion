@@ -36,11 +36,47 @@ import {
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 import { handleInfoScene, infoSceneTool } from './tools/infoScene.js'
 import { handleCreateScene, createSceneTool } from './tools/createScene.js'
+import { doctorTool, handleDoctor } from './tools/doctor.js'
+import {
+  getCapabilitiesTool,
+  handleGetCapabilities,
+  handleListKeyframeableProperties,
+  listKeyframeablePropertiesTool,
+} from './tools/capabilities.js'
+import { handleInspectScene, inspectSceneTool } from './tools/inspectScene.js'
+import { handlePatchScene, patchSceneTool } from './tools/patchScene.js'
+import { handleOpenScene, openSceneTool } from './tools/openScene.js'
+import { handleValidateScene, validateSceneTool } from './tools/validateScene.js'
+import {
+  getLayerTool,
+  handleGetLayer,
+  handleListCameras,
+  handleListLayers,
+  handleListTracks,
+  listCamerasTool,
+  listLayersTool,
+  listTracksTool,
+} from './tools/queryScene.js'
 
 const SERVER_NAME = 'hypermotion'
 const SERVER_VERSION = '0.1.2'
 
-const TOOLS: Tool[] = [createSceneTool, renderSceneTool, infoSceneTool]
+const TOOLS: Tool[] = [
+  doctorTool,
+  getCapabilitiesTool,
+  createSceneTool,
+  infoSceneTool,
+  inspectSceneTool,
+  patchSceneTool,
+  validateSceneTool,
+  listLayersTool,
+  getLayerTool,
+  listTracksTool,
+  listCamerasTool,
+  openSceneTool,
+  renderSceneTool,
+  listKeyframeablePropertiesTool,
+]
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
@@ -54,12 +90,34 @@ export async function startMcpServer(): Promise<void> {
     const { name, arguments: args } = req.params
     try {
       switch (name) {
+        case 'doctor':
+          return await handleDoctor()
+        case 'get_capabilities':
+          return await handleGetCapabilities()
         case 'render_scene':
           return await handleRenderScene(args ?? {})
         case 'info_scene':
           return await handleInfoScene(args ?? {})
         case 'create_scene':
           return await handleCreateScene(args ?? {})
+        case 'inspect_scene':
+          return await handleInspectScene(args ?? {})
+        case 'patch_scene':
+          return await handlePatchScene(args ?? {})
+        case 'validate_scene':
+          return await handleValidateScene(args ?? {})
+        case 'list_layers':
+          return await handleListLayers(args ?? {})
+        case 'get_layer':
+          return await handleGetLayer(args ?? {})
+        case 'list_tracks':
+          return await handleListTracks(args ?? {})
+        case 'list_cameras':
+          return await handleListCameras(args ?? {})
+        case 'open_scene':
+          return await handleOpenScene(args ?? {})
+        case 'list_keyframeable_properties':
+          return await handleListKeyframeableProperties()
         default:
           return {
             isError: true,

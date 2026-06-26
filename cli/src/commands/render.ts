@@ -9,9 +9,8 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * ships the bytes back. The CLI writes them to `<out>`.
  *
- * Current scope: renders the CURRENT scene. `--scene <path>` is accepted
- * for command compatibility, but file-based headless rendering is still
- * pending and the current desktop scene is rendered instead.
+ * Current scope: renders either the current desktop scene or a specific
+ * `.hype` file when `--scene <path>` is supplied.
  */
 
 import { Command } from 'commander'
@@ -48,12 +47,7 @@ export function renderCommand(): Command {
       'comp',
     )
     .option('--fps <n>', 'Frame rate', '30')
-    .option(
-      '--scene <path>',
-      'Path to a .hype file. NOTE: file-based headless rendering is not ' +
-        'available yet; this flag is accepted but ignored and the current desktop ' +
-        'scene is rendered instead.',
-    )
+    .option('--scene <path>', 'Path to a .hype scene file to render')
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
@@ -91,14 +85,14 @@ export function renderCommand(): Command {
         fs.mkdirSync(outDir, { recursive: true })
       }
 
-      if (opts.scene) {
-        console.warn(
-          '[render] note: --scene is reserved for file-based headless rendering. ' +
-            'Ignoring; rendering the current desktop scene.',
-        )
+      const scenePath = opts.scene ? path.resolve(opts.scene) : undefined
+      if (scenePath && !fs.existsSync(scenePath)) {
+        console.error(`[render] scene file not found: ${scenePath}`)
+        process.exit(2)
       }
 
       console.log(`[render] output:  ${outputPath}`)
+      if (scenePath) console.log(`[render] scene:   ${scenePath}`)
       console.log(`[render] format:  ${format} @ ${quality} · ${fps}fps`)
       console.log(`[render] driver:  ${appPath}`)
       console.log(`[render] running… (the desktop app launches off-screen)`)
@@ -110,6 +104,7 @@ export function renderCommand(): Command {
           format,
           quality,
           fps,
+          scenePath,
         })
         console.log(`[render] ✓ wrote ${outputPath}`)
       } catch (err) {
