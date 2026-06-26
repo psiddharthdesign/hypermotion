@@ -74,12 +74,23 @@ export const renderSceneTool: Tool = {
 export async function handleRenderScene(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = RenderInput.parse(args)
+  const parsed = RenderInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `render_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
 
-  const outputPath = path.resolve(parsed.output)
-  const format = parsed.format ?? inferFormat(outputPath)
-  const quality = parsed.quality ?? 'comp'
-  const fps = parsed.fps ?? 30
+  const outputPath = path.resolve(parsed.data.output)
+  const format = parsed.data.format ?? inferFormat(outputPath)
+  const quality = parsed.data.quality ?? 'comp'
+  const fps = parsed.data.fps ?? 30
 
   const appPath = await locateDesktopApp()
   if (!appPath) {
@@ -107,7 +118,7 @@ export async function handleRenderScene(
     format,
     quality,
     fps,
-    scenePath: parsed.scene,
+    scenePath: parsed.data.scene,
   })
 
   return {
@@ -116,7 +127,7 @@ export async function handleRenderScene(
         type: 'text' as const,
         text:
           `Rendered current desktop scene → ${outputPath} (${format} · ${quality} · ${fps}fps)` +
-          (parsed.scene ? `\nNote: ignored scene path ${parsed.scene}` : ''),
+          (parsed.data.scene ? `\nNote: ignored scene path ${parsed.data.scene}` : ''),
       },
     ],
   }
