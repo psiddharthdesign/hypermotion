@@ -399,22 +399,27 @@ function TextAnimationPanel() {
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
+  const selectedTrackIds = useUI((s) => s.selectedTrackIds)
+  const selectedKeyframes = useUI((s) => s.selectedKeyframes)
   const playhead = useUI((s) => s.playhead)
   const [showPicker, setShowPicker] = useState(false)
   const [showEasing, setShowEasing] = useState(false)
   const [copiedEasing, setCopiedEasing] = useState(false)
   const [easingDraft, setEasingDraft] = useState({ source: '', value: '' })
+  const selectedTextTrackFilter = timelineTrackFilter(selectedTrackIds, selectedKeyframes)
   const selectedTextNodes = selection
     .map((id) => api.getNode(id))
     .filter((node): node is NonNullable<typeof node> & { kind: 'text' } => node?.kind === 'text')
   const primary = selectedTextNodes[0]
   const primaryTextAnimationTrack = primary
-    ? api
-        .getTracksForNode(primary.id)
-        .find((track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2)
+    ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter)
     : null
   const current = primaryTextAnimationTrack
-    ? normalizeTextAnimation(primary?.textAnimation)
+    ? withTextTrackTiming(
+        normalizeTextAnimation(primary?.textAnimation),
+        primaryTextAnimationTrack,
+        primary?.text ?? '',
+      )
     : null
   const currentEasingText = current ? easingToText(current) : ''
   const visibleEasingDraft =
@@ -428,11 +433,13 @@ function TextAnimationPanel() {
         ...base,
         ...next,
       }
-      api.setNodeProperty(node.id, 'textAnimation', config)
+      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter)
+      const timedConfig = withTextTrackTiming(config, textTrack, node.text, next) ?? config
+      api.setNodeProperty(node.id, 'textAnimation', timedConfig)
       if (isTextEasingOnlyPatch(next)) {
-        updateTextAnimationEasing(api, node.id, config)
+        updateTextAnimationEasing(api, node.id, timedConfig)
       } else {
-        stampTextAnimationKeyframes(api, node.id, config, node.text)
+        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text)
       }
     }
   }
@@ -1042,6 +1049,72 @@ function isTextEasingOnlyPatch(patch: Partial<TextAnimationConfig>): boolean {
       key === 'acceleration'
     )
   )
+}
+
+function timelineTrackFilter(
+  selectedTrackIds: string[],
+  selectedKeyframes: string[],
+): ReadonlySet<string> | undefined {
+  const ids = new Set<string>()
+  for (const key of selectedKeyframes) {
+    const colon = key.indexOf(':')
+    if (colon > 0) ids.add(key.slice(0, colon))
+  }
+  for (const id of selectedTrackIds) ids.add(id)
+  return ids.size > 0 ? ids : undefined
+}
+
+function findTextAnimationTrack(
+  api: SceneAPI,
+  nodeId: NodeId,
+  trackFilter?: ReadonlySet<string>,
+): ReturnType<typeof listTracksForNode>[number] | null {
+  const tracks = listTracksForNode(api, nodeId).filter(
+    (track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2,
+  )
+  if (trackFilter) {
+    const selected = tracks.find((track) => trackFilter.has(track.id))
+    if (selected) return selected
+  }
+  return tracks[0] ?? null
+}
+
+function withTextTrackTiming(
+  config: TextAnimationConfig | null,
+  track: ReturnType<typeof listTracksForNode>[number] | null,
+  text: string,
+  patch: Partial<TextAnimationConfig> = {},
+): TextAnimationConfig | null {
+  if (!config || !track || track.keyframes.length < 2) return config
+  const sorted = [...track.keyframes].sort((a, b) => a.time - b.time)
+  const start = sorted[0]!.time
+  const end = sorted[sorted.length - 1]!.time
+  const delaySpan =
+    Math.max(0, textTimingSegmentCount(text, config.applyTo) - 1) *
+    config.delay
+  const duration =
+    patch.duration !== undefined
+      ? Math.max(0.05, patch.duration)
+      : Math.max(0.05, end - start - delaySpan)
+  return {
+    ...config,
+    startTime: patch.startTime ?? start,
+    duration,
+  }
+}
+
+function textTimingSegmentCount(
+  text: string,
+  applyTo: TextAnimationApplyTo,
+): number {
+  if (applyTo === 'layer') return 1
+  if (applyTo === 'lines') {
+    return Math.max(1, text.split(/\n/).filter((line) => line.length > 0).length)
+  }
+  if (applyTo === 'words') {
+    return Math.max(1, text.trim().split(/\s+/).filter(Boolean).length)
+  }
+  return Math.max(1, Array.from(text).filter((char) => char !== '\n' && char !== ' ').length)
 }
 
 function parseEasingText(
