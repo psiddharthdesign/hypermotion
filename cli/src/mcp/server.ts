@@ -5,13 +5,9 @@
  * AI coding agents (Claude Code, Codex, anything that consumes MCP) can
  * drive hyper-motion programmatically.
  *
- * Registered tools:
- *
- *   - `create_scene` — build a `.hype` scene file from JSON.
- *   - `render_scene` — render a scene to MP4 / WebM / GIF.
- *                      Internally shells out to the installed desktop app.
- *   - `info_scene`   — read a scene file, return metadata (canvas size,
- *                      duration, layer count, track count).
+ * Registered tools are declared in `TOOLS` below. They cover scene
+ * authoring, inspection, patching, validation, querying, opening, rendering,
+ * and capability discovery.
  *
  * The server is launched via `hypermotion serve --mcp` or the
  * `hypermotion-mcp` shim binary.
