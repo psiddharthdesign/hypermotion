@@ -5,7 +5,50 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
 import { handleInfoScene } from './tools/infoScene.js'
+
+test('info_scene returns a structured scene summary', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-scene-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'MCP Info',
+          duration: 1.25,
+          frameRate: 24,
+          canvas: { width: 640, height: 360 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 640, height: 360 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleInfoScene({ scene: scenePath })
+
+    assert.equal(result.isError, undefined)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const summary = JSON.parse(text) as SceneSummary
+
+    assert.equal(summary.meta.name, 'MCP Info')
+    assert.deepEqual(summary.meta.canvas, { width: 640, height: 360 })
+    assert.equal(summary.layerCount, 1)
+    assert.equal(summary.root, 'root')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('info_scene reports missing files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-missing-'))
