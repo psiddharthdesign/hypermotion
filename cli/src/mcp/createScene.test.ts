@@ -59,6 +59,29 @@ test('create_scene description lists supported camera property ids', () => {
   }
 })
 
+test('create_scene description lists supported transform property ids', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+  for (const propertyId of [
+    'transform.x',
+    'transform.y',
+    'transform.z',
+    'transform.rotation',
+    'transform.rotationX',
+    'transform.rotationY',
+    'transform.scaleX',
+    'transform.scaleY',
+    'transform.anchorX',
+    'transform.anchorY',
+    'transform.anchorZ',
+  ]) {
+    const escapedPropertyId = propertyId.replaceAll('.', '\\.')
+    assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
+  }
+})
+
 test('create_scene description lists supported layout property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {
