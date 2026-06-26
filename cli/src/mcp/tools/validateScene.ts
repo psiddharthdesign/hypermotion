@@ -22,12 +22,41 @@ export const validateSceneTool: Tool = {
 }
 
 export async function handleValidateScene(args: Record<string, unknown>) {
-  const parsed = ValidateInput.parse(args)
+  const parsed = ValidateInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `validate_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
+
+  let bytes: Buffer
+  try {
+    bytes = fs.readFileSync(parsed.data.scene)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `validate_scene: failed to read ${parsed.data.scene}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+
   return {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify(validateScene(new Uint8Array(fs.readFileSync(parsed.scene))), null, 2),
+        text: JSON.stringify(validateScene(new Uint8Array(bytes)), null, 2),
       },
     ],
   }
