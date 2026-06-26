@@ -59,7 +59,7 @@ export const renderSceneTool: Tool = {
         description: 'Resolution preset. `comp` matches scene canvas size. Default: comp.',
       },
       fps: {
-        type: 'number',
+        type: 'integer',
         minimum: 1,
         maximum: 120,
         description: 'Frame rate (1–120). Default: 30.',
