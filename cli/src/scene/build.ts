@@ -222,6 +222,7 @@ export interface TrackJson {
   nodeId: string
   propertyId: PropertyIdJson
   defaultEasing?: EasingJson
+  textAnimation?: JsonObject | null
   keyframes?: KeyframeJson[]
 }
 
@@ -752,6 +753,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('nodeId', track.nodeId)
     y.set('propertyId', track.propertyId)
     y.set('defaultEasing', track.defaultEasing ?? 'ease-in-out')
+    if (track.textAnimation !== undefined) y.set('textAnimation', track.textAnimation)
     y.set('keyframes', track.keyframes ?? [])
     tracks.set(track.id, y)
   }
@@ -968,6 +970,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       y.set('nodeId', op.track.nodeId)
       y.set('propertyId', op.track.propertyId)
       y.set('defaultEasing', op.track.defaultEasing ?? 'ease-in-out')
+      if (op.track.textAnimation !== undefined) y.set('textAnimation', op.track.textAnimation)
       y.set('keyframes', op.track.keyframes ?? [])
       tracks.set(op.track.id, y)
       return
