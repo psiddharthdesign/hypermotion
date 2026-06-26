@@ -3650,7 +3650,6 @@ function TrackGroupRightRow({
   const fill = highlighted
     ? 'var(--color-group-bar-active)'
     : 'var(--color-group-bar)'
-  const markerFill = highlighted ? 'white' : 'var(--color-group-bar-marker)'
 
   // Flatten all member-track keyframes into a single list. Snapshot
   // taken at drag-start (inside the handlers) so concurrent scene
@@ -3783,19 +3782,6 @@ function TrackGroupRightRow({
             >
               <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
             </div>
-            <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
-              <span
-                className={[
-                  'block size-[8.5px] rotate-45 rounded-[2px]',
-                  highlighted ? 'mix-blend-overlay' : '',
-                ].join(' ')}
-                style={{
-                  background: markerFill,
-                  boxShadow:
-                    '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
-                }}
-              />
-            </span>
           </div>
         )}
       </div>
@@ -4203,10 +4189,6 @@ function GroupSpanBar({
       : rightSelected
         ? 'linear-gradient(to right, var(--color-group-bar), var(--color-group-bar-active))'
         : 'var(--color-group-bar)'
-  const markerFill =
-    highlighted || leftSelected || rightSelected
-      ? 'white'
-      : 'var(--color-group-bar-marker)'
 
   /**
    * Scale handler factory. `side` picks the dragged edge, the
@@ -4341,21 +4323,6 @@ function GroupSpanBar({
       >
         <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
       </div>
-      <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
-        <span
-          className={[
-            'block size-[8.5px] rotate-45 rounded-[2px]',
-            highlighted || leftSelected || rightSelected
-              ? 'mix-blend-overlay'
-              : '',
-          ].join(' ')}
-          style={{
-            background: markerFill,
-            boxShadow:
-              '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
-          }}
-        />
-      </span>
     </div>
   )
 }
