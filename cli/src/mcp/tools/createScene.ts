@@ -86,7 +86,7 @@ export const createSceneTool: Tool = {
     "camera.aperture, camera.iso, camera.blurLevel, camera.blurQuality, " +
     "appearance.opacity, appearance.cornerRadius, appearance.cornerRadii, " +
     "appearance.cornerRadii.tl, appearance.cornerRadii.tr, appearance.cornerRadii.br, " +
-    "appearance.cornerRadii.bl, appearance.fill, layout.gap, layout.padding.top, " +
+    "appearance.cornerRadii.bl, appearance.fill, text.progress, layout.gap, layout.padding.top, " +
     "layout.padding.right, layout.padding.bottom, layout.padding.left, size.width, size.height, " +
     "layout.direction, variant.\n\n" +
     "Include exactly one 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +

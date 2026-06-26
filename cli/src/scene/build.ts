@@ -279,6 +279,7 @@ export const PROPERTY_IDS = [
   'appearance.cornerRadii.br',
   'appearance.cornerRadii.bl',
   'appearance.fill',
+  'text.progress',
   'layout.gap',
   'layout.padding.top',
   'layout.padding.right',

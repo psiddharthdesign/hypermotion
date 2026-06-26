@@ -22,6 +22,7 @@ test('create_scene description lists supported appearance property ids', () => {
     'appearance.cornerRadii.br',
     'appearance.cornerRadii.bl',
     'appearance.fill',
+    'text.progress',
   ]) {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))

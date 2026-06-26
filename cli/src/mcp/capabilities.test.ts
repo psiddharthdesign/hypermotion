@@ -21,6 +21,7 @@ test('capability tools list the full supported keyframe property set', async () 
     'appearance.cornerRadii.br',
     'appearance.cornerRadii.bl',
     'appearance.fill',
+    'text.progress',
   ]
 
   const capabilities = parseToolJson(await handleGetCapabilities())
