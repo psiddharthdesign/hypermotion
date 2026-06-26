@@ -18,7 +18,7 @@
  *
  * To wire into Claude Code, the user runs:
  *
- *   claude mcp add hypermotion -- hypermotion-mcp
+ *   claude mcp add -s user hypermotion -- hypermotion-mcp
  *
  * To wire into Codex CLI, they add to ~/.codex/config.toml:
  *
