@@ -110,12 +110,14 @@ export function PresetsPanel() {
     return set.size > 0 ? set : undefined
   })()
 
-  const selectedNodes = selection
-    .map((id) => api.getNode(id))
-    .filter(Boolean)
-  const selectedTextNodes = selectedNodes.filter((node) => node?.kind === 'text')
+  const selectedTextNodes = textNodesFromSelectionOrTimeline(
+    api,
+    selection,
+    trackFilter,
+  )
   const hasTextSelection = selectedTextNodes.length > 0
-  const selectionKey = selection.join('|')
+  const timelineSelectionKey = trackFilter ? [...trackFilter].sort().join('|') : ''
+  const selectionKey = `${selection.join('|')}::${timelineSelectionKey}`
   const defaultOpenSections = {
     layer: !hasTextSelection,
     text: hasTextSelection,
@@ -141,12 +143,12 @@ export function PresetsPanel() {
     })
   }
 
-  if (selection.length === 0) {
+  if (selection.length === 0 && selectedTextNodes.length === 0) {
     return (
       <div className="rounded border border-border bg-panel-raised p-3 text-text-muted">
         <div className="text-[12px]">Nothing selected</div>
         <div className="mt-1 text-[11px] text-text-dim">
-          Select one or more layers to add animation presets.
+          Select one or more layers or keyframe sets to add animation presets.
         </div>
       </div>
     )
@@ -411,9 +413,11 @@ function TextAnimationPanel() {
   const [copiedEasing, setCopiedEasing] = useState(false)
   const [easingDraft, setEasingDraft] = useState({ source: '', value: '' })
   const selectedTextTrackFilter = timelineTrackFilter(selectedTrackIds, selectedKeyframes)
-  const selectedTextNodes = selection
-    .map((id) => api.getNode(id))
-    .filter((node): node is NonNullable<typeof node> & { kind: 'text' } => node?.kind === 'text')
+  const selectedTextNodes = textNodesFromSelectionOrTimeline(
+    api,
+    selection,
+    selectedTextTrackFilter,
+  )
   const primary = selectedTextNodes[0]
   const primaryTextAnimationTrack = primary
     ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter, playhead)
@@ -1148,6 +1152,28 @@ function timelineTrackFilter(
   }
   for (const id of selectedTrackIds) ids.add(id)
   return ids.size > 0 ? ids : undefined
+}
+
+function textNodesFromSelectionOrTimeline(
+  api: SceneAPI,
+  selection: NodeId[],
+  trackFilter?: ReadonlySet<string>,
+): Array<NonNullable<ReturnType<SceneAPI['getNode']>> & { kind: 'text' }> {
+  const byId = new Map<NodeId, NonNullable<ReturnType<SceneAPI['getNode']>> & { kind: 'text' }>()
+  for (const id of selection) {
+    const node = api.getNode(id)
+    if (node?.kind === 'text') byId.set(node.id, node)
+  }
+  if (byId.size > 0 || !trackFilter) return [...byId.values()]
+  for (const id of api.getAllNodeIds()) {
+    const node = api.getNode(id)
+    if (node?.kind !== 'text') continue
+    const hasSelectedTextTrack = listTracksForNode(api, id).some(
+      (track) => track.propertyId === 'text.progress' && trackFilter.has(track.id),
+    )
+    if (hasSelectedTextTrack) byId.set(node.id, node)
+  }
+  return [...byId.values()]
 }
 
 function findTextAnimationTrack(
