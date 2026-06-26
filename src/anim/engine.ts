@@ -72,6 +72,8 @@ export interface AnimatedValue {
   cornerRadius?: number
   /** Override for the node's `appearance.fill` solid color. */
   fill?: string
+  /** 0→1 progress for text-specific animation effects. */
+  textProgress?: number
   focusDistance?: number
   focusX?: number
   focusY?: number
@@ -398,6 +400,9 @@ function writeProperty(
       break
     case 'appearance.cornerRadius':
       into.cornerRadius = value
+      break
+    case 'text.progress':
+      into.textProgress = value
       break
     case 'camera.focusDistance':
       into.focusDistance = value

@@ -42,7 +42,9 @@ import {
 import {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
+  normalizeTextAnimation,
 } from '@/anim'
+import type { TextAnimationConfig } from '@/anim'
 
 /**
  * Per-node values accumulated from every ancestor in the scene tree.
@@ -3676,6 +3678,7 @@ function NodeView({
         <TextGlyphs
           node={node}
           effectiveFill={effectiveFill}
+          anim={anim}
         />
       ) : null}
       {shouldRenderStrokeOverlay ? (
@@ -3890,17 +3893,21 @@ function clamp01Local(n: number): number {
 function TextGlyphs({
   node,
   effectiveFill,
+  anim,
 }: {
   node: Extract<SceneNode, { kind: 'text' }>
   // Match the type computed in NodeView — either node.appearance.fill
   // (whatever Fill union the scene model uses) or the synth solid the
   // animation engine emits.
   effectiveFill: Extract<SceneNode, { kind: 'text' }>['appearance']['fill']
+  anim: AnimatedValue | undefined
 }) {
   const editingTextId = useUI((s) => s.editingTextId)
   const setEditingTextId = useUI((s) => s.setEditingTextId)
+  const playhead = useUI((s) => s.playhead)
   const api = useSceneAPI()
   const isEditing = editingTextId === node.id
+  const textAnimation = normalizeTextAnimation(node.textAnimation)
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.
@@ -4023,9 +4030,272 @@ function TextGlyphs({
         userSelect: 'none',
       }}
     >
-      {node.text}
+      {textAnimation
+        ? renderTextAnimationSegments(
+            node.text,
+            textAnimation,
+            playhead,
+            sharedStyle,
+            anim?.textProgress,
+          )
+        : node.text}
     </span>
   )
+}
+
+function renderTextAnimationSegments(
+  text: string,
+  config: TextAnimationConfig,
+  playhead: number,
+  sharedStyle: CSSProperties,
+  progress?: number,
+) {
+  const segments = splitTextAnimationSegments(text, config.applyTo)
+  const orderedCount = Math.max(1, segments.filter((s) => s.animate).length)
+  let animateIndex = 0
+  return segments.map((segment, index) => {
+    if (!segment.animate) return segment.text
+    const orderIndex =
+      config.order === 'backward'
+        ? orderedCount - animateIndex - 1
+        : animateIndex
+    animateIndex++
+    const style = textAnimationSegmentStyle(
+      config,
+      playhead,
+      progress,
+      orderIndex,
+      orderedCount,
+      sharedStyle,
+      segment.kind,
+    )
+    return (
+      <span key={`${index}-${segment.text}`} style={style}>
+        {displayTextForSegment(
+          segment.text,
+          config,
+          playhead,
+          progress,
+          orderIndex,
+          orderedCount,
+        )}
+      </span>
+    )
+  })
+}
+
+function splitTextAnimationSegments(
+  text: string,
+  applyTo: TextAnimationConfig['applyTo'],
+): Array<{ text: string; animate: boolean; kind: 'inline' | 'line' }> {
+  if (applyTo === 'layer') return [{ text, animate: true, kind: 'inline' }]
+  if (applyTo === 'lines') {
+    const lines = text.split(/(\n)/)
+    return lines.map((part) => ({
+      text: part,
+      animate: part !== '\n' && part.length > 0,
+      kind: part === '\n' ? 'inline' : 'line',
+    }))
+  }
+  if (applyTo === 'words') {
+    return text.split(/(\s+)/).map((part) => ({
+      text: part,
+      animate: !/^\s+$/.test(part) && part.length > 0,
+      kind: 'inline',
+    }))
+  }
+  return Array.from(text).map((char) => ({
+    text: char,
+    animate: char !== '\n' && char !== ' ',
+    kind: 'inline',
+  }))
+}
+
+function textAnimationSegmentStyle(
+  config: TextAnimationConfig,
+  playhead: number,
+  progress: number | undefined,
+  orderIndex: number,
+  count: number,
+  sharedStyle: CSSProperties,
+  kind: 'inline' | 'line',
+): CSSProperties {
+  const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
+  const timelineProgress = progress === undefined
+    ? undefined
+    : Math.max(0, Math.min(1, progress))
+  const globalElapsed = timelineProgress === undefined
+    ? playhead - config.startTime
+    : (config.mode === 'in' ? timelineProgress : 1 - timelineProgress) * totalSpan
+  const raw = (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)
+  const u = Math.max(0, Math.min(1, raw))
+  const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
+  const exit = config.mode === 'out'
+  const amount = exit ? eased : 1 - eased
+  const lineHeight =
+    typeof sharedStyle.fontSize === 'number' && typeof sharedStyle.lineHeight === 'number'
+      ? sharedStyle.fontSize * sharedStyle.lineHeight
+      : 32
+  const travel = Math.max(1, lineHeight * config.travelDistance)
+  const [dx, dy] = directionOffset(config.direction, travel * amount)
+  const transforms: string[] = []
+  let opacity = 1
+  let filter: string | undefined
+  let clipPath: string | undefined
+  let color: string | undefined
+
+  if (
+    config.id === 'fade' ||
+    config.id === 'slide-up' ||
+    config.id === 'slide-down' ||
+    config.id === 'slide-left' ||
+    config.id === 'slide-right' ||
+    config.id === 'blur-slide' ||
+    config.id === 'blur' ||
+    config.id === 'appear' ||
+    config.id === 'typewriter'
+  ) {
+    opacity = config.id === 'appear' || config.id === 'typewriter'
+      ? amount < 0.5 ? 0 : 1
+      : 1 - amount
+  }
+  if (config.id.startsWith('slide') || config.id === 'blur-slide') {
+    transforms.push(`translate(${dx}px, ${dy}px)`)
+  }
+  if (config.id === 'grow') {
+    transforms.push(`scale(${1 - amount * 0.35})`)
+    opacity = 1 - amount
+  }
+  if (config.id === 'shrink') {
+    transforms.push(`scale(${1 + amount * 0.35})`)
+    opacity = 1 - amount
+  }
+  if (config.id === 'blur' || config.id === 'blur-slide') {
+    filter = `blur(${config.blurRadius * amount}px)`
+  }
+  if (config.id === 'mask-up' || config.id === 'mask-down' || config.id === 'gradient-reveal') {
+    const pct = Math.round(amount * 100)
+    clipPath =
+      config.direction === 'down'
+        ? `inset(${pct}% 0 0 0)`
+        : `inset(0 0 ${pct}% 0)`
+    opacity = 1
+  }
+  if (config.id === 'gradient-reveal') {
+    const gradient = config.mode === 'in'
+      ? config.endGradient ?? config.startGradient
+      : config.startGradient ?? config.endGradient
+    const background = fillToCss(gradient ?? null)
+    if (background) {
+      return {
+        display: kind === 'line' ? 'block' : 'inline-block',
+        whiteSpace: kind === 'line' ? 'pre-wrap' : 'pre',
+        opacity,
+        filter,
+        clipPath,
+        background,
+        WebkitBackgroundClip: 'text',
+        backgroundClip: 'text',
+        WebkitTextFillColor: 'transparent',
+        color: 'transparent',
+        transform: transforms.length > 0 ? transforms.join(' ') : undefined,
+        transformOrigin: '50% 50%',
+        willChange: 'transform, opacity, filter, clip-path',
+      }
+    }
+  }
+  if (config.id === 'flip') {
+    transforms.push(`rotateX(${amount * -90}deg)`)
+    opacity = 1 - amount
+  }
+  if (config.id === 'character-wave') {
+    const phase = count <= 1 ? 0 : orderIndex / (count - 1)
+    transforms.push(`translateY(${Math.sin((phase + u) * Math.PI * 2) * 8 * amount}px)`)
+    opacity = 1 - amount * 0.35
+  }
+  if (config.id === 'tracking') {
+    transforms.push(`translateX(${amount * 10}px)`)
+    opacity = 1 - amount
+  }
+  if (config.id === 'skew') {
+    transforms.push(`translate(${dx}px, ${dy}px) skewX(${amount * -14}deg)`)
+    opacity = 1 - amount
+  }
+  if (config.id === 'color-fade') {
+    color = config.mode === 'in'
+      ? `color-mix(in oklab, currentColor ${Math.round(eased * 100)}%, transparent)`
+      : `color-mix(in oklab, currentColor ${Math.round((1 - eased) * 100)}%, transparent)`
+  }
+
+  return {
+    display: kind === 'line' ? 'block' : 'inline-block',
+    whiteSpace: kind === 'line' ? 'pre-wrap' : 'pre',
+    opacity,
+    filter,
+    clipPath,
+    color,
+    transform: transforms.length > 0 ? transforms.join(' ') : undefined,
+    transformOrigin: '50% 50%',
+    willChange: 'transform, opacity, filter, clip-path',
+  }
+}
+
+function easeTextAnimation(
+  u: number,
+  acceleration: TextAnimationConfig['acceleration'],
+): number {
+  if (acceleration === 'linear') return u
+  if (acceleration === 'speed-up') return u * u
+  if (acceleration === 'spring') {
+    return Math.min(1, 1 - Math.cos(u * Math.PI * 2.4) * Math.exp(-5 * u))
+  }
+  if (acceleration === 'smooth') return u * u * (3 - 2 * u)
+  return 1 - Math.pow(1 - u, 3)
+}
+
+function directionOffset(
+  direction: TextAnimationConfig['direction'],
+  distance: number,
+): [number, number] {
+  switch (direction) {
+    case 'down':
+      return [0, -distance]
+    case 'left':
+      return [distance, 0]
+    case 'right':
+      return [-distance, 0]
+    case 'up':
+    default:
+      return [0, distance]
+  }
+}
+
+function displayTextForSegment(
+  text: string,
+  config: TextAnimationConfig,
+  playhead: number,
+  progress: number | undefined,
+  orderIndex: number,
+  count: number,
+): string {
+  if (config.id !== 'scramble') return text
+  const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
+  const timelineProgress = progress === undefined
+    ? undefined
+    : Math.max(0, Math.min(1, progress))
+  const globalElapsed = timelineProgress === undefined
+    ? playhead - config.startTime
+    : (config.mode === 'in' ? timelineProgress : 1 - timelineProgress) * totalSpan
+  const u = Math.max(0, Math.min(1, (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)))
+  if ((config.mode === 'in' && u >= 0.85) || (config.mode === 'out' && u <= 0.15)) return text
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&'
+  return Array.from(text)
+    .map((char, index) => {
+      if (/\s/.test(char)) return char
+      const n = Math.abs(Math.sin((orderIndex + 1) * 17.17 + index * 9.91 + playhead * 24))
+      return glyphs[Math.floor(n * glyphs.length) % glyphs.length]!
+    })
+    .join('')
 }
 
 function MediaVideo({

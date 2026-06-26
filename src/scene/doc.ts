@@ -22,6 +22,7 @@ import type {
   TrackId,
   Transform,
 } from '@/scene/types'
+import { normalizeTextAnimation } from '@/anim/textAnimations'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -175,6 +176,7 @@ export interface NodeBaseMutable {
   locked: boolean
   position: import('@/scene/types').Position
   text: string
+  textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
   // image-kind fields — settable via Inspector on ImageNode. The scene
   // API doesn't (yet) enforce that these keys only land on an image
   // node, so callers should only pass them through when they know
@@ -501,6 +503,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           letterSpacing: (y.get('letterSpacing') as number) ?? 0,
           textAlign: (y.get('textAlign') as 'start' | 'center' | 'end') ?? 'start',
           color: (y.get('color') as string) ?? '#0a0a0c',
+          textAnimation: normalizeTextAnimation(y.get('textAnimation')),
         } as Node
       case 'component':
         return {
@@ -818,6 +821,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('letterSpacing', tp?.letterSpacing ?? 0)
           y.set('textAlign', tp?.textAlign ?? 'start')
           y.set('color', tp?.color ?? '#0a0a0c')
+          y.set('textAnimation', normalizeTextAnimation(tp?.textAnimation) ?? null)
         }
         if (kind === 'camera') {
           // Cameras carry no size / layout / fill. They exist at the

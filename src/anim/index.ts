@@ -44,3 +44,21 @@ export {
   type EasingPresetId,
   type EasingPresetDef,
 } from './easingPresets'
+export {
+  DEFAULT_TEXT_ANIMATION,
+  TEXT_ANIMATION_PRESETS,
+  applyTextAnimation,
+  normalizeTextAnimation,
+  stampTextAnimationKeyframes,
+  textAnimationDefaults,
+  updateTextAnimationEasing,
+  type TextAnimationAcceleration,
+  type TextAnimationApplyTo,
+  type TextAnimationConfig,
+  type TextAnimationDirection,
+  type TextAnimationId,
+  type TextAnimationMode,
+  type TextAnimationOrder,
+  type TextAnimationPreset,
+  type TextAnimationSmoothing,
+} from './textAnimations'

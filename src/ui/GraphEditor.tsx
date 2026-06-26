@@ -506,6 +506,7 @@ function humanProperty(id: string): string {
     'appearance.opacity': 'Opacity',
     'appearance.cornerRadius': 'Corner',
     'appearance.fill': 'Fill',
+    'text.progress': 'Text Animation',
   }
   return map[id] ?? id
 }
