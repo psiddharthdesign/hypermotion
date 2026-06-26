@@ -578,6 +578,20 @@ test('buildSceneBytes accepts camera ISO keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes preserves explicit camera viewport fields', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  camera.enabled = false
+  camera.background = { kind: 'solid', color: '#111827' }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.equal(nodes.camera.enabled, false)
+  assert.deepEqual(nodes.camera.background, { kind: 'solid', color: '#111827' })
+})
+
 test('buildSceneBytes accepts layout direction keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
