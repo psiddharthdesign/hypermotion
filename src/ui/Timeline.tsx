@@ -13,6 +13,7 @@ import {
   toggleKfGroupCollapsed as toggleKfGroupCollapsedHelper,
   groupTracks as groupTracksHelper,
   ungroupTracks as ungroupTracksHelper,
+  removeTracksFromGroups as removeTracksFromGroupsHelper,
   addTracksToGroup as addTracksToGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
   renameTrackGroup as renameTrackGroupHelper,
@@ -298,6 +299,35 @@ export function Timeline() {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
 
+  const getTrackIdsForNodes = useCallback(
+    (nodeIds: string[]) => {
+      const out: string[] = []
+      for (const nodeId of nodeIds) {
+        for (const track of api.getTracksForNode(nodeId)) {
+          out.push(track.id)
+        }
+      }
+      return out
+    },
+    [api],
+  )
+
+  const selectedAnimatedLayerTrackIds = useCallback(
+    () => getTrackIdsForNodes(useUI.getState().selection),
+    [getTrackIdsForNodes],
+  )
+
+  const tracksInsideAnyGroup = useCallback(
+    (trackIds: string[]) => {
+      const ids = new Set(trackIds)
+      for (const group of Object.values(trackGroupsDict)) {
+        if (group.trackIds.some((trackId) => ids.has(trackId))) return true
+      }
+      return false
+    },
+    [trackGroupsDict],
+  )
+
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null
@@ -463,6 +493,17 @@ export function Timeline() {
           }
           return
         }
+        const selectedLayerTracks = selectedAnimatedLayerTrackIds()
+        if (selectedLayerTracks.length > 0 && e.shiftKey) {
+          removeTracksFromGroupsHelper(api, selectedLayerTracks)
+          return
+        }
+        if (selectedLayerTracks.length >= 2) {
+          if (!tryMergeIntoExisting(selectedLayerTracks)) {
+            groupTracksHelper(api, selectedLayerTracks)
+          }
+          return
+        }
         if (selectedKfs.size === 0) return
         const keys = Array.from(selectedKfs)
         // Ungroup should dissolve the actual selected keyframe groups,
@@ -497,7 +538,7 @@ export function Timeline() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [selectedKfs])
+  }, [api, selectedAnimatedLayerTrackIds, selectedKfs])
 
   // Group lookup map: keyframe key → group id. Rebuilt when the
   // groups dict changes. Used by KeyframeDiamond to (a) decide
@@ -587,9 +628,27 @@ export function Timeline() {
   ) => {
     e.preventDefault()
     e.stopPropagation()
+    const nodeTrackIds =
+      target.kind === 'node' ? getTrackIdsForNodes([target.nodeId]) : []
+    const trackIsGrouped =
+      target.kind === 'track' || target.kind === 'keyframe'
+        ? tracksInsideAnyGroup([target.track.id])
+        : false
+    const nodeHasGroupedTracks =
+      target.kind === 'node' ? tracksInsideAnyGroup(nodeTrackIds) : false
     const items =
       target.kind === 'keyframe'
         ? [
+            ...(trackIsGrouped
+              ? [
+                  {
+                    label: 'Remove track from group',
+                    onClick: () =>
+                      removeTracksFromGroupsHelper(api, [target.track.id]),
+                  },
+                  { kind: 'separator' as const },
+                ]
+              : []),
             {
               label: `Delete keyframe @ ${target.time.toFixed(2)}s`,
               danger: true,
@@ -605,6 +664,16 @@ export function Timeline() {
           ]
         : target.kind === 'track'
           ? [
+              ...(trackIsGrouped
+                ? [
+                    {
+                      label: 'Remove track from group',
+                      onClick: () =>
+                        removeTracksFromGroupsHelper(api, [target.track.id]),
+                    },
+                    { kind: 'separator' as const },
+                  ]
+                : []),
               {
                 label: `Delete track (${humanProperty(target.track.propertyId)})`,
                 danger: true,
@@ -612,6 +681,16 @@ export function Timeline() {
               },
             ]
           : [
+              ...(nodeHasGroupedTracks
+                ? [
+                    {
+                      label: `Remove "${target.nodeName}" from group`,
+                      onClick: () =>
+                        removeTracksFromGroupsHelper(api, nodeTrackIds),
+                    },
+                    { kind: 'separator' as const },
+                  ]
+                : []),
               {
                 label: `Delete all animation on "${target.nodeName}"`,
                 danger: true,
@@ -1773,29 +1852,55 @@ export function Timeline() {
                       ungroup. When expanded, the constituent tracks
                       render indented underneath. */}
                   {hostedTrackGroups.map((tg) => (
-                    <TrackGroupLeftRow
-                      key={tg.groupId}
-                      group={tg}
-                      nodeKind={group.nodeKind}
-                      layerRelated={tg.memberTracks.some((t) =>
-                        selectedNodeSet.has(t.nodeId),
-                      )}
-                      onToggle={() => toggleTrackGroupCollapsed(tg.groupId)}
-                      onSelectMembers={() =>
-                        setSelectedTrackIds(
-                          tg.memberTracks.map((t) => t.id),
+                    (() => {
+                      const memberSet = new Set(
+                        tg.memberTracks.map((t) => t.id),
+                      )
+                      const selectedLayerTracksToAdd =
+                        selectedAnimatedLayerTrackIds().filter(
+                          (trackId) => !memberSet.has(trackId),
                         )
-                      }
-                      onUngroup={() =>
-                        ungroupTracksAction(
-                          tg.memberTracks.map((t) => t.id),
-                        )
-                      }
-                      onRename={(name) =>
-                        renameTrackGroupHelper(api, tg.groupId, name)
-                      }
-                      openContextMenu={openContextMenu}
-                    />
+                      return (
+                        <TrackGroupLeftRow
+                          key={tg.groupId}
+                          group={tg}
+                          nodeKind={group.nodeKind}
+                          layerRelated={tg.memberTracks.some((t) =>
+                            selectedNodeSet.has(t.nodeId),
+                          )}
+                          onToggle={() =>
+                            toggleTrackGroupCollapsed(tg.groupId)
+                          }
+                          onSelectMembers={() =>
+                            setSelectedTrackIds(
+                              tg.memberTracks.map((t) => t.id),
+                            )
+                          }
+                          onUngroup={() =>
+                            ungroupTracksAction(
+                              tg.memberTracks.map((t) => t.id),
+                            )
+                          }
+                          onRename={(name) =>
+                            renameTrackGroupHelper(api, tg.groupId, name)
+                          }
+                          selectedLayerTracksToAdd={
+                            selectedLayerTracksToAdd.length
+                          }
+                          onAddSelectedLayers={() =>
+                            addTracksToGroupHelper(
+                              api,
+                              tg.groupId,
+                              selectedLayerTracksToAdd,
+                            )
+                          }
+                          onRemoveTracksFromGroup={(trackIds) =>
+                            removeTracksFromGroupsHelper(api, trackIds)
+                          }
+                          openContextMenu={openContextMenu}
+                        />
+                      )
+                    })()
                   ))}
                   {visibleTracks.map((t) => (
                     <TrackLabel
@@ -2142,8 +2247,27 @@ export function Timeline() {
                           const toAdd = Array.from(inferred).filter(
                             (t) => !memberSet.has(t),
                           )
+                          const selectedLayerTracksToAdd =
+                            selectedAnimatedLayerTrackIds().filter(
+                              (trackId) => !memberSet.has(trackId),
+                            )
                           const items: import('@/state/ui').ContextMenuItem[] =
                             []
+                          if (selectedLayerTracksToAdd.length > 0) {
+                            items.push({
+                              label:
+                                selectedLayerTracksToAdd.length === 1
+                                  ? 'Add selected animated layer to this group'
+                                  : `Add ${selectedLayerTracksToAdd.length} selected animated layer tracks to this group`,
+                              onClick: () =>
+                                addTracksToGroupHelper(
+                                  api,
+                                  g.groupId,
+                                  selectedLayerTracksToAdd,
+                                ),
+                            })
+                            items.push({ kind: 'separator' })
+                          }
                           if (toAdd.length > 0) {
                             items.push({
                               label:
@@ -3496,6 +3620,9 @@ function TrackGroupLeftRow({
   onSelectMembers,
   onUngroup,
   onRename,
+  selectedLayerTracksToAdd,
+  onAddSelectedLayers,
+  onRemoveTracksFromGroup,
   openContextMenu,
 }: {
   group: ResolvedTrackGroup
@@ -3505,6 +3632,9 @@ function TrackGroupLeftRow({
   onSelectMembers: () => void
   onUngroup: () => void
   onRename: (name: string) => void
+  selectedLayerTracksToAdd: number
+  onAddSelectedLayers: () => void
+  onRemoveTracksFromGroup: (trackIds: string[]) => void
   openContextMenu: (menu: import('@/state/ui').ContextMenuState) => void
 }) {
   const collapsed = group.collapsed
@@ -3546,6 +3676,17 @@ function TrackGroupLeftRow({
                 label: 'Rename group',
                 onClick: () => setEditingName(true),
               },
+              ...(selectedLayerTracksToAdd > 0
+                ? [
+                    {
+                      label:
+                        selectedLayerTracksToAdd === 1
+                          ? 'Add selected animated layer to group'
+                          : `Add ${selectedLayerTracksToAdd} selected animated layer tracks to group`,
+                      onClick: onAddSelectedLayers,
+                    },
+                  ]
+                : []),
               { kind: 'separator' as const },
               { label: 'Ungroup (⌘⇧G)', danger: true, onClick: onUngroup },
             ],
@@ -3635,6 +3776,11 @@ function TrackGroupLeftRow({
                 x: e.clientX,
                 y: e.clientY,
                 items: [
+                  {
+                    label: 'Remove track from group',
+                    onClick: () => onRemoveTracksFromGroup([t.id]),
+                  },
+                  { kind: 'separator' as const },
                   {
                     label: 'Ungroup (⌘⇧G)',
                     danger: true,

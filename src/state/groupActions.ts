@@ -96,6 +96,22 @@ export function ungroupTracks(api: SceneAPI, trackIds: string[]): void {
   api.setUiState({ trackGroups: next })
 }
 
+/** Remove only these tracks from any track group they belong to. */
+export function removeTracksFromGroups(
+  api: SceneAPI,
+  trackIds: string[],
+): void {
+  if (trackIds.length === 0) return
+  const ui = api.getUiState()
+  const ids = new Set(trackIds)
+  const next: typeof ui.trackGroups = {}
+  for (const [gid, g] of Object.entries(ui.trackGroups)) {
+    const filtered = g.trackIds.filter((trackId) => !ids.has(trackId))
+    if (filtered.length >= 2) next[gid] = { ...g, trackIds: filtered }
+  }
+  api.setUiState({ trackGroups: next })
+}
+
 /** Flip a track group's collapsed flag. */
 export function toggleTrackGroupCollapsed(
   api: SceneAPI,
