@@ -58,7 +58,12 @@ export const renderSceneTool: Tool = {
         enum: ['comp', '720p', '2k', '4k'],
         description: 'Resolution preset. `comp` matches scene canvas size. Default: comp.',
       },
-      fps: { type: 'number', description: 'Frame rate (1–120). Default: 30.' },
+      fps: {
+        type: 'number',
+        minimum: 1,
+        maximum: 120,
+        description: 'Frame rate (1–120). Default: 30.',
+      },
       scene: {
         type: 'string',
         description:

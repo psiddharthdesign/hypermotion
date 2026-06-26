@@ -2,7 +2,17 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { handleRenderScene } from './tools/renderScene.js'
+import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
+
+test('render_scene input schema exposes fps bounds', () => {
+  const fpsProperty = renderSceneTool.inputSchema.properties?.fps as
+    | Record<string, unknown>
+    | undefined
+
+  assert.equal(fpsProperty?.type, 'number')
+  assert.equal(fpsProperty?.minimum, 1)
+  assert.equal(fpsProperty?.maximum, 120)
+})
 
 test('render_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleRenderScene({
