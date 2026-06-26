@@ -75,7 +75,7 @@ export const createSceneTool: Tool = {
     "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
     "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
-    "and default focalLength to 50 unless the user explicitly requests a different camera/lens feel.\n" +
+    "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
     "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
     "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
     "transform.anchorX, transform.anchorY, transform.anchorZ, " +
