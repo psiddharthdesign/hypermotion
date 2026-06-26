@@ -9,10 +9,9 @@
  * given kind. Both Canvas (renderer) and Inspector (preview swatch +
  * initial value for new gradients) import from here.
  *
- * The Pixi renderer, when it lands, will translate these same shapes
- * into PIXI.Texture / PIXI.FillGradient — the CSS path is the DOM-era
- * fast track. Keeping the Fill model aligned with the CSS gradient
- * grammar means neither translation has to do anything clever.
+ * The DOM canvas and Pixi export renderer translate these same shapes
+ * into their own paint primitives. Keeping the Fill model aligned with
+ * the CSS gradient grammar means neither path has to do anything clever.
  */
 
 import type * as React from 'react'
