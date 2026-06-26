@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Component, type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 /**
  * Top-level error boundary. Without this, any thrown error during
@@ -21,10 +21,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return { error }
   }
 
-  componentDidCatch(error: Error, info: unknown): void {
+  componentDidCatch(error: Error, info: ErrorInfo): void {
     // Surface in the console too — easier to copy out of devtools
     // than the on-screen pre.
-    // eslint-disable-next-line no-console
     console.error('App error boundary caught:', error, info)
   }
 
