@@ -34,6 +34,17 @@ test('create_scene description lists supported camera property ids', () => {
     throw new Error('create_scene description is missing')
   }
   for (const propertyId of [
+    'camera.focusX',
+    'camera.focusY',
+    'camera.focusWorldX',
+    'camera.focusWorldY',
+    'camera.focusWorldZ',
+    'camera.focusDistance',
+    'camera.focusRadius',
+    'camera.focusFalloff',
+    'camera.pointOfInterestX',
+    'camera.pointOfInterestY',
+    'camera.pointOfInterestZ',
     'camera.focalLength',
     'camera.fieldOfView',
     'camera.nearClip',
