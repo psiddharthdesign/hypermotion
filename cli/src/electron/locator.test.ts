@@ -30,7 +30,8 @@ test('locator returns an existing HYPERMOTION_APP_PATH override', async () => {
 test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
   const previousOverride = process.env.HYPERMOTION_APP_PATH
   const previousConsoleError = console.error
-  const missingPath = path.join(os.tmpdir(), `hypermotion-missing-${process.pid}`)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-missing-'))
+  const missingPath = path.join(dir, 'hyper-motion')
   const messages: unknown[] = []
 
   try {
@@ -51,5 +52,6 @@ test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
     } else {
       process.env.HYPERMOTION_APP_PATH = previousOverride
     }
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 })
