@@ -175,6 +175,7 @@ export interface NodeBaseMutable {
   visible: boolean
   locked: boolean
   position: import('@/scene/types').Position
+  isMask: boolean
   text: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
   // image-kind fields — settable via Inspector on ImageNode. The scene

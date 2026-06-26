@@ -842,15 +842,18 @@ function pasteKeyframesAtPlayhead(api: ReturnType<typeof useSceneAPI>): boolean 
   if (keyframeClipboard.length === 0) return false
 
   const playhead = useUI.getState().playhead
+  const selection = useUI.getState().selection
+  const targetMap = resolveKeyframePasteTargets(api, keyframeClipboard, selection)
   const pastedKeys: string[] = []
 
   api.doc.transact(() => {
     for (const item of keyframeClipboard) {
-      const node = api.getNode(item.nodeId)
-      if (!node) continue
+      const targetNodeId = targetMap.get(item.nodeId) ?? item.nodeId
+      const node = api.getNode(targetNodeId)
+      if (!node || !canPastePropertyToNode(item.propertyId, node)) continue
       const kf = addKeyframe(
         api,
-        item.nodeId,
+        targetNodeId,
         item.propertyId,
         Math.max(0, playhead + item.offset),
         item.value,
@@ -858,7 +861,7 @@ function pasteKeyframesAtPlayhead(api: ReturnType<typeof useSceneAPI>): boolean 
         item.presetOrigin,
       )
       const track = api
-        .getTracksForNode(item.nodeId)
+        .getTracksForNode(targetNodeId)
         .find((candidate) => candidate.propertyId === item.propertyId)
       if (track) pastedKeys.push(`${track.id}:${kf.id}`)
     }
@@ -869,6 +872,38 @@ function pasteKeyframesAtPlayhead(api: ReturnType<typeof useSceneAPI>): boolean 
     useUI.getState().setSelectedTrackId(null)
   }
   return pastedKeys.length > 0
+}
+
+function resolveKeyframePasteTargets(
+  api: ReturnType<typeof useSceneAPI>,
+  items: ClipboardKeyframe[],
+  selection: NodeId[],
+): Map<NodeId, NodeId> {
+  const validTargets = selection.filter((id) => api.getNode(id))
+  const sourceOrder: NodeId[] = []
+  for (const item of items) {
+    if (!sourceOrder.includes(item.nodeId)) sourceOrder.push(item.nodeId)
+  }
+
+  const map = new Map<NodeId, NodeId>()
+  if (validTargets.length === 0) return map
+
+  if (validTargets.length === 1) {
+    for (const sourceId of sourceOrder) map.set(sourceId, validTargets[0]!)
+    return map
+  }
+
+  for (let i = 0; i < sourceOrder.length; i++) {
+    const targetId = validTargets[i]
+    if (targetId) map.set(sourceOrder[i]!, targetId)
+  }
+  return map
+}
+
+function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolean {
+  if (propertyId.startsWith('camera.')) return node.kind === 'camera'
+  if (propertyId === 'text.progress') return node.kind === 'text'
+  return true
 }
 
 function stripLinks<T extends object>(n: T): Partial<T> {
