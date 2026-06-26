@@ -56,6 +56,7 @@ const TRACK_HEADER_WIDTH = 180
 // every render — child components re-render in lockstep with the
 // store, so closures see fresh values.
 let PX_PER_SECOND = 80
+let smoothSeekAnimationId: number | null = null
 const ROW_HEIGHT = 24
 type TimelineMode = 'animated' | 'sound'
 type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
@@ -157,6 +158,49 @@ export function Timeline() {
   const normalizedWorkArea = workAreaRange
     ? normalizeTimelineWorkArea(workAreaRange, duration, minWorkArea)
     : null
+  const cancelSmoothSeek = useCallback(() => {
+    if (smoothSeekAnimationId === null) return
+    window.cancelAnimationFrame(smoothSeekAnimationId)
+    smoothSeekAnimationId = null
+  }, [])
+  const setPlayheadImmediate = useCallback(
+    (time: number) => {
+      cancelSmoothSeek()
+      setPlayhead(time)
+    },
+    [cancelSmoothSeek, setPlayhead],
+  )
+  const smoothSeekPlayhead = useCallback(
+    (target: number) => {
+      cancelSmoothSeek()
+      const from = useUI.getState().playhead
+      const to = clamp(target, 0, api.getMeta().duration)
+      if (Math.abs(to - from) < 0.001) {
+        setPlayhead(to)
+        return
+      }
+      const startedAt = performance.now()
+      const durationMs = Math.min(260, Math.max(120, Math.abs(to - from) * 90))
+      const step = (now: number) => {
+        const t = clamp((now - startedAt) / durationMs, 0, 1)
+        const eased = 1 - Math.pow(1 - t, 3)
+        setPlayhead(from + (to - from) * eased)
+        if (t < 1) {
+          smoothSeekAnimationId = window.requestAnimationFrame(step)
+        } else {
+          smoothSeekAnimationId = null
+          setPlayhead(to)
+        }
+      }
+      smoothSeekAnimationId = window.requestAnimationFrame(step)
+    },
+    [api, cancelSmoothSeek, setPlayhead],
+  )
+
+  useEffect(() => cancelSmoothSeek, [cancelSmoothSeek])
+  useEffect(() => {
+    if (playing) cancelSmoothSeek()
+  }, [cancelSmoothSeek, playing])
 
   // Pinch-zoom + Cmd/Ctrl-scroll over the timeline scales horizontally
   // (time-axis zoom). Browser pinch on macOS fires `wheel` with
@@ -251,6 +295,18 @@ export function Timeline() {
   const clearKfs = useCallback(() => {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (target.closest('[data-timeline-selection-surface]')) return
+      clearKfs()
+      useUI.getState().setSelectedTrackIds([])
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [clearKfs])
 
   // Delete handler for the keyframe-set selection. Lives here (not in
   // the global keyboard hook) because the selection itself is local
@@ -982,19 +1038,19 @@ export function Timeline() {
       if (mode === 'start') {
         const nextStart = clamp(t, 0, base.end - minWorkArea)
         setWorkAreaRange({ start: nextStart, end: base.end })
-        setPlayhead(nextStart)
+        setPlayheadImmediate(nextStart)
         return
       }
       if (mode === 'end') {
         const nextEnd = clamp(t, base.start + minWorkArea, duration)
         setWorkAreaRange({ start: base.start, end: nextEnd })
-        setPlayhead(Math.min(playhead, nextEnd))
+        setPlayheadImmediate(Math.min(playhead, nextEnd))
         return
       }
       const delta = t - anchor
       const nextStart = clamp(base.start + delta, 0, duration - span)
       setWorkAreaRange({ start: nextStart, end: nextStart + span })
-      setPlayhead(clamp(playhead + delta, nextStart, nextStart + span))
+      setPlayheadImmediate(clamp(playhead + delta, nextStart, nextStart + span))
     }
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
@@ -1049,9 +1105,11 @@ export function Timeline() {
     // Capture snap targets once at drag start — keyframes don't move
     // during a scrub, so walking the scene per pointer-move is wasted.
     const snapTimes = collectSnapTimes()
-    setPlayhead(snapTime(timeFromClientX(e.clientX), e.altKey, snapTimes))
+    smoothSeekPlayhead(snapTime(timeFromClientX(e.clientX), e.altKey, snapTimes))
     const onMove = (ev: PointerEvent) =>
-      setPlayhead(snapTime(timeFromClientX(ev.clientX), ev.altKey, snapTimes))
+      setPlayheadImmediate(
+        snapTime(timeFromClientX(ev.clientX), ev.altKey, snapTimes),
+      )
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
@@ -1262,7 +1320,7 @@ export function Timeline() {
               setPlaying(false)
               // Honor chapter isolation — "Go to start" snaps to the
               // chapter's start, not 0. Same for the end button below.
-              setPlayhead(isolatedRange ? isolatedRange.start : 0)
+              setPlayheadImmediate(isolatedRange ? isolatedRange.start : 0)
             }}
             title="Go to start"
             className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-panel hover:text-text"
@@ -1279,7 +1337,7 @@ export function Timeline() {
           <button
             onClick={() => {
               setPlaying(false)
-              setPlayhead(isolatedRange ? isolatedRange.end : duration)
+              setPlayheadImmediate(isolatedRange ? isolatedRange.end : duration)
             }}
             title="Go to end"
             className="flex h-7 w-7 items-center justify-center rounded text-text-muted hover:bg-panel hover:text-text"
@@ -1900,7 +1958,7 @@ export function Timeline() {
                     }}
                     onScrub={(time) => {
                       setPlaying(false)
-                      setPlayhead(time)
+                      smoothSeekPlayhead(time)
                     }}
                     onContextMenu={(e) => openMediaMenu(e, clip)}
                   />
@@ -1988,7 +2046,7 @@ export function Timeline() {
                           group={g}
                           duration={duration}
                           api={api}
-                          collapsed={collapsed}
+                          selectedKfs={selectedKfs}
                         />
                       </div>
                     )
@@ -2081,7 +2139,7 @@ export function Timeline() {
                             hiddenByGroupCollapse={hiddenByGroupCollapse}
                             onScrub={(time) => {
                               setPlaying(false)
-                              setPlayhead(time)
+                              smoothSeekPlayhead(time)
                             }}
                             onFocus={() => focusTrackForEditing(group.nodeId)}
                             onBarContextMenu={(e) =>
@@ -2116,7 +2174,7 @@ export function Timeline() {
                       hiddenByGroupCollapse={hiddenByGroupCollapse}
                       onScrub={(time) => {
                         setPlaying(false)
-                        setPlayhead(time)
+                        smoothSeekPlayhead(time)
                       }}
                       onFocus={() => focusTrackForEditing(group.nodeId)}
                       onBarContextMenu={(e) =>
@@ -2139,9 +2197,13 @@ export function Timeline() {
 
             {/* Playhead line */}
             <div
-              className="pointer-events-none absolute top-0 bottom-0 w-px bg-playhead"
+              className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-playhead"
               style={{ left: playhead * PX_PER_SECOND }}
-            />
+            >
+              <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded-full bg-playhead px-2.5 py-1 font-mono text-[10px] leading-none whitespace-nowrap text-white">
+                {playhead.toFixed(1)} s
+              </div>
+            </div>
 
             {/* Isolation dim overlays — when the user has isolated a
                 section, paint translucent panels over the bands
@@ -2383,6 +2445,7 @@ function TrackLabel({
   const toggleTrackInSelection = useUI((s) => s.toggleTrackInSelection)
   const isFocused = selectedTrackId === track.id
   const inMulti = selectedTrackIds.includes(track.id)
+  const isTextAnimationTrack = track.propertyId === 'text.progress'
   return (
     <div
       onClick={(e) => {
@@ -2414,6 +2477,11 @@ function TrackLabel({
             <span className="text-text-dim">{layerName}</span>
             <span className="mx-1 text-text-dim/60">·</span>
           </>
+        ) : null}
+        {isTextAnimationTrack ? (
+          <span className="mr-1 rounded bg-accent/14 px-1 font-mono text-[9px] text-accent">
+            Aa
+          </span>
         ) : null}
         {humanProperty(track.propertyId, nodeKind)}
       </span>
@@ -3001,73 +3069,6 @@ function SegmentRow({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Drag an edge of the segment bar. Keeps the *opposite* endpoint
-  // pinned and scales every interior keyframe so the whole animation
-  // stretches or compresses evenly — the same feel as trimming a clip
-  // in a video NLE or resizing a group in Jitter.
-  //
-  // Right-edge drags can push past the comp duration. In that case we
-  // grow the duration to match the new end time: extending a bar "just
-  // works" without needing to first nudge the global duration field.
-  //
-  // `MIN_SPAN_SECONDS` keeps the bar from collapsing to zero width, which
-  // would make it ungrabbable and collapse all keyframes onto a single
-  // point (destroying spacing info irrecoverably).
-  const MIN_SPAN_SECONDS = 0.02
-  const onEdgePointerDown =
-    (side: 'left' | 'right') =>
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!first || !last || !hasSpan) return
-      e.stopPropagation()
-      const pointerId = e.pointerId
-      const startX = e.clientX
-      const startTimes = kfs.map((k) => k.time)
-      const t0 = startTimes[0]!
-      const tn = startTimes[startTimes.length - 1]!
-      const origSpan = tn - t0
-      ;(e.currentTarget as HTMLElement).setPointerCapture(pointerId)
-
-      const onMove = (ev: PointerEvent) => {
-        const dxSeconds = (ev.clientX - startX) / PX_PER_SECOND
-        if (side === 'left') {
-          // New left endpoint; right endpoint stays at tn. Map every
-          // ti in [t0, tn] linearly onto [newT0, tn] so interior KFs
-          // keep their relative spacing.
-          const minLeft = 0
-          const maxLeft = tn - MIN_SPAN_SECONDS
-          const newT0 = clamp(t0 + dxSeconds, minLeft, maxLeft)
-          const mapped = kfs.map((k, i) => {
-            const ti = startTimes[i]!
-            const u = origSpan === 0 ? 0 : (ti - t0) / origSpan
-            return { ...k, time: newT0 + u * (tn - newT0) }
-          })
-          api.setTrack({ ...track, keyframes: mapped })
-        } else {
-          // New right endpoint; left endpoint stays at t0. Allow growing
-          // past the current comp duration — we'll bump meta.duration to
-          // match so the ruler follows the bar.
-          const minRight = t0 + MIN_SPAN_SECONDS
-          const MAX_DURATION = 600 // 10 min hard cap; designers never need more
-          const newTn = clamp(tn + dxSeconds, minRight, MAX_DURATION)
-          const mapped = kfs.map((k, i) => {
-            const ti = startTimes[i]!
-            const u = origSpan === 0 ? 0 : (ti - t0) / origSpan
-            return { ...k, time: t0 + u * (newTn - t0) }
-          })
-          api.setTrack({ ...track, keyframes: mapped })
-          if (newTn > api.getMeta().duration) {
-            api.setMeta({ duration: newTn })
-          }
-        }
-      }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    }
-
   return (
     <div
       ref={rowRef}
@@ -3081,41 +3082,22 @@ function SegmentRow({
       style={{ height: ROW_HEIGHT }}
     >
       {/* Segment bar — spans first → last keyframe. Clickable body for
-          move-all-keyframes drag; left/right edge zones for trim/stretch.
-          The bar is layered below the diamonds so individual keyframe
-          drags still win the pointer event. */}
+          move-all-keyframes drag. The bar is only a quiet connector;
+          grouped "keyframe set" handles render on group rows instead. */}
       {first && last ? (
         hasSpan ? (
           <div
             data-segment-bar="1"
+            data-timeline-selection-surface="1"
             onPointerDown={onBarPointerDown}
             onContextMenu={onBarContextMenu}
-            title={`${first.time.toFixed(2)}s → ${last.time.toFixed(2)}s — drag to shift, edges to stretch, right-click for options`}
-            className="group absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar ring-1 ring-segment-bar-ring hover:bg-segment-bar-hover"
+            title={`${first.time.toFixed(2)}s → ${last.time.toFixed(2)}s — drag to shift, right-click for options`}
+            className="absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover"
             style={{
               left: first.time * PX_PER_SECOND,
               width: (last.time - first.time) * PX_PER_SECOND,
             }}
-          >
-            {/* Edge trim handles. Narrow, cursor-ew-resize. Stop
-                propagation so they don't also trigger the bar-body
-                shift-drag. A thin accent stripe inside shows up on
-                hover to make the hit zone discoverable — the zone
-                itself is transparent so the bar's rounded ends still
-                look unified. */}
-            <div
-              data-segment-edge="left"
-              onPointerDown={onEdgePointerDown('left')}
-              title="Drag to retime the animation start"
-              className="absolute top-0 bottom-0 left-0 w-1.5 cursor-ew-resize rounded-l-full hover:bg-keyframe"
-            />
-            <div
-              data-segment-edge="right"
-              onPointerDown={onEdgePointerDown('right')}
-              title="Drag to retime the animation end (extends comp duration)"
-              className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize rounded-r-full hover:bg-keyframe"
-            />
-          </div>
+          />
         ) : (
           <div
             className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover"
@@ -3125,8 +3107,8 @@ function SegmentRow({
       ) : null}
 
       {/* Keyframe diamonds on top of the bar. Still individually
-          draggable — useful for non-linear interior keyframes and for
-          trimming one end of the span. */}
+          draggable for non-linear keyframes. Visually these are dots,
+          not the grouped keyframe-set component. */}
       {kfs.map((kf) => {
         // Skip rendering when this kf belongs to a collapsed group.
         // The group's span bar is the only visible representation in
@@ -3145,7 +3127,6 @@ function SegmentRow({
             selectedKfs={selectedKfs}
             toggleKf={toggleKf}
             replaceKfs={replaceKfs}
-            clearKfs={clearKfs}
             kfGroupOf={kfGroupOf}
             kfGroupKeys={kfGroupKeys}
             onDelete={() => removeKeyframe(api, track.id, kf.id)}
@@ -3169,7 +3150,6 @@ function KeyframeDiamond({
   selectedKfs,
   toggleKf,
   replaceKfs,
-  clearKfs,
   kfGroupOf,
   kfGroupKeys,
   onDelete,
@@ -3186,7 +3166,6 @@ function KeyframeDiamond({
   selectedKfs: Set<string>
   toggleKf: (trackId: string, kfId: string) => void
   replaceKfs: (keys: string[]) => void
-  clearKfs: () => void
   kfGroupOf: Map<string, string>
   kfGroupKeys: Map<string, Set<string>>
   onDelete: () => void
@@ -3322,15 +3301,12 @@ function KeyframeDiamond({
       return
     }
 
-    // Single-kf drag. Replace the selection with this one keyframe —
-    // a plain click is "select this." Without this, a click on a
-    // diamond would clear-but-not-add, and pressing Delete right
-    // after would either no-op (no keyframe selection) or fall
-    // through to the global "delete the layer" handler. After this,
-    // click → Delete reliably removes only the clicked keyframe.
-    if (!isSelected) {
-      replaceKfs([myKey])
-    }
+    // Single-kf drag/click. Always replace the selection with this
+    // one keyframe, even if it was already selected as part of a
+    // segment/bar selection. Endpoint handles must be individually
+    // selectable; clicking one end should not leave the opposite end
+    // selected.
+    replaceKfs([myKey])
     const startTime = time
     const excludeSelf = new Set([myKey])
     const onMove = (ev: PointerEvent) => {
@@ -3354,6 +3330,7 @@ function KeyframeDiamond({
         onContextMenu={onContextMenu}
         data-kf-id={kfId}
         data-track-id={trackId}
+        data-timeline-selection-surface="1"
         title={
           inGroup
             ? `${time.toFixed(2)}s — grouped (${groupMembers!.size}). Click selects group, alt-click deletes one, Cmd+Shift+G ungroups.`
@@ -3361,18 +3338,18 @@ function KeyframeDiamond({
         }
         // Selection feedback is load-bearing here: the user has reported
         // that the old subtle color shift felt like nothing was happening.
-        // So selected diamonds are bigger (h-3 vs h-2.5), near-white with a
-        // thick accent ring, and carry a 3px halo. That reads as "selected"
-        // at a glance even with a dozen diamonds on the row.
+        // So selected dots are bigger, near-white with a thick accent
+        // ring, and carry a small halo. That reads as "selected" at a
+        // glance even with a dozen keyframes on the row.
         className={
-          'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45 cursor-ew-resize transition-[width,height,box-shadow] ' +
+          'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full transition-[width,height,box-shadow] ' +
           (isSelected
-            ? 'h-3.5 w-3.5 bg-white ring-2 ring-accent shadow-[0_0_0_3px_var(--color-accent-soft)] z-[1]'
+            ? 'z-[2] h-3 w-3 bg-white ring-2 ring-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
             : inGroup
               ? // Grouped + not selected: keep the keyframe color but
                 // swap the ring to accent so groups read at a glance.
-                'h-3 w-3 ring-1 bg-keyframe ring-accent hover:brightness-125'
-              : 'h-3 w-3 ring-1 bg-keyframe ring-keyframe-ring hover:brightness-125')
+                'z-[1] h-2.5 w-2.5 bg-keyframe ring-1 ring-accent hover:brightness-125'
+              : 'z-[1] h-2.5 w-2.5 bg-keyframe ring-1 ring-keyframe-ring hover:brightness-125')
         }
         style={{ left: time * PX_PER_SECOND }}
       />
@@ -3591,6 +3568,7 @@ function TrackGroupRightRow({
    *  reach the live track selection and the openContextMenu handle. */
   onContextMenu?: (e: React.MouseEvent, group: ResolvedTrackGroup) => void
 }) {
+  const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   // Compute the time span across all member keyframes.
   let start = Infinity
   let end = -Infinity
@@ -3603,6 +3581,13 @@ function TrackGroupRightRow({
   const hasSpan = start !== Infinity && end !== -Infinity && end > start
   const left = hasSpan ? start * PX_PER_SECOND : 0
   const width = hasSpan ? (end - start) * PX_PER_SECOND : 0
+  const allSelected =
+    group.memberTracks.length > 0 &&
+    group.memberTracks.every((track) => selectedTrackIds.includes(track.id))
+  const fillClass = allSelected ? 'bg-[#0091ff]' : 'bg-[#224a71]'
+  const markerClass = allSelected
+    ? 'bg-white mix-blend-overlay'
+    : 'bg-[#00a1ff]'
 
   // Flatten all member-track keyframes into a single list. Snapshot
   // taken at drag-start (inside the handlers) so concurrent scene
@@ -3700,10 +3685,14 @@ function TrackGroupRightRow({
       >
         {hasSpan && (
           <div
+            data-timeline-selection-surface="1"
             onPointerDown={onBodyPointerDown}
             onContextMenu={(e) => onContextMenu?.(e, group)}
             title={`${start.toFixed(2)}s – ${end.toFixed(2)}s · drag body to shift, edges to scale, right-click for options`}
-            className="group absolute top-1/2 h-2 -translate-y-1/2 cursor-grab rounded-full bg-accent ring-1 ring-accent active:cursor-grabbing"
+            className={[
+              'group absolute top-1/2 h-4 -translate-y-1/2 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110 active:cursor-grabbing',
+              fillClass,
+            ].join(' ')}
             style={{ left, width: Math.max(2, width) }}
           >
             {/* Edge scale handles. 8px wide, slightly extending past
@@ -3713,14 +3702,26 @@ function TrackGroupRightRow({
               data-group-handle="left"
               onPointerDown={onScalePointerDown('left')}
               title="Drag to scale group from the left"
-              className="absolute top-1/2 left-0 h-3 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-l-sm bg-accent opacity-0 ring-1 ring-white/40 group-hover:opacity-100"
-            />
+              className="absolute top-0 bottom-0 left-0 w-4 cursor-ew-resize rounded-l hover:bg-white/10"
+            >
+              <span className="absolute top-1/2 left-[5px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
+            </div>
             <div
               data-group-handle="right"
               onPointerDown={onScalePointerDown('right')}
               title="Drag to scale group from the right"
-              className="absolute top-1/2 right-0 h-3 w-2 translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-r-sm bg-accent opacity-0 ring-1 ring-white/40 group-hover:opacity-100"
-            />
+              className="absolute top-0 right-0 bottom-0 w-4 cursor-ew-resize rounded-r hover:bg-white/10"
+            >
+              <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
+            </div>
+            <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
+              <span
+                className={[
+                  'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
+                  markerClass,
+                ].join(' ')}
+              />
+            </span>
           </div>
         )}
       </div>
@@ -4089,7 +4090,7 @@ function GroupSpanBar({
   group,
   duration,
   api,
-  collapsed,
+  selectedKfs,
 }: {
   group: {
     groupId: string
@@ -4099,12 +4100,33 @@ function GroupSpanBar({
   }
   duration: number
   api: SceneAPI
-  /** When true, the group's diamonds are hidden across all tracks. */
-  collapsed: boolean
+  selectedKfs: Set<string>
 }) {
   const span = group.end - group.start
   const left = group.start * PX_PER_SECOND
   const width = Math.max(2, span * PX_PER_SECOND)
+  const memberKeys = group.members.map((m) => kfKey(m.trackId, m.kfId))
+  const allSelected = memberKeys.every((key) => selectedKfs.has(key))
+  const leftSelected = group.members.some(
+    (m) =>
+      Math.abs(m.time - group.start) < 0.001 &&
+      selectedKfs.has(kfKey(m.trackId, m.kfId)),
+  )
+  const rightSelected = group.members.some(
+    (m) =>
+      Math.abs(m.time - group.end) < 0.001 &&
+      selectedKfs.has(kfKey(m.trackId, m.kfId)),
+  )
+  const fillClass = allSelected
+    ? 'bg-[#0091ff]'
+    : leftSelected
+      ? 'bg-gradient-to-r from-[#0091ff] to-[#224a71]'
+      : rightSelected
+        ? 'bg-gradient-to-r from-[#224a71] to-[#0091ff]'
+        : 'bg-[#224a71]'
+  const markerClass = allSelected || leftSelected || rightSelected
+    ? 'bg-white mix-blend-overlay'
+    : 'bg-[#00a1ff]'
 
   /**
    * Scale handler factory. `side` picks the dragged edge, the
@@ -4195,37 +4217,39 @@ function GroupSpanBar({
 
   return (
     <div
+      data-timeline-selection-surface="1"
       onPointerDown={onBodyPointerDown}
       title={`Group of ${group.members.length} keyframes — drag to shift, drag edges to scale`}
-      // Slightly taller (h-3) when collapsed so the bar reads as the
-      // *only* representation of the group; thinner (h-2) when
-      // expanded since the diamonds are doing most of the visual work.
       className={[
-        'absolute z-20 cursor-grab rounded-sm ring-1 ring-accent',
-        collapsed ? 'h-3 bg-accent/70' : 'h-2 bg-accent/40',
+        'absolute z-20 h-4 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110',
+        fillClass,
       ].join(' ')}
-      // Vertically center inside the h-6 (24px) parent row. Half the
-      // bar height plus a 1px sit-on-baseline nudge.
-      style={{ left, top: collapsed ? 6 : 8, width }}
+      style={{ left, top: 4, width }}
     >
       <div
         data-group-handle="left"
         onPointerDown={onScalePointerDown('left')}
-        className={[
-          'absolute -left-1 top-0 bottom-0 cursor-ew-resize rounded-sm bg-accent',
-          collapsed ? 'w-2.5' : 'w-2',
-        ].join(' ')}
+        className="absolute top-0 bottom-0 left-0 w-4 cursor-ew-resize rounded-l hover:bg-white/10"
         title="Drag to scale group's start"
-      />
+      >
+        <span className="absolute top-1/2 left-[5px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
+      </div>
       <div
         data-group-handle="right"
         onPointerDown={onScalePointerDown('right')}
-        className={[
-          'absolute -right-1 top-0 bottom-0 cursor-ew-resize rounded-sm bg-accent',
-          collapsed ? 'w-2.5' : 'w-2',
-        ].join(' ')}
+        className="absolute top-0 right-0 bottom-0 w-4 cursor-ew-resize rounded-r hover:bg-white/10"
         title="Drag to scale group's end"
-      />
+      >
+        <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
+      </div>
+      <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
+        <span
+          className={[
+            'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
+            markerClass,
+          ].join(' ')}
+        />
+      </span>
     </div>
   )
 }
