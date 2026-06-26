@@ -58,9 +58,17 @@ claude mcp add hypermotion -- hypermotion-mcp
 
 Then in Claude Code, the agent has access to:
 
-- **`render_scene`** — render the current desktop scene to MP4 / WebM / GIF.
+- **`doctor`** — check desktop app and CLI environment health.
+- **`get_capabilities`** — list supported formats, quality presets, and scene features.
 - **`create_scene`** — build a `.hype` scene file from a JSON description.
 - **`info_scene`** — read `.hype` scene metadata.
+- **`inspect_scene`** — inspect a saved scene's structural contents.
+- **`patch_scene`** — create a patched copy of an existing scene.
+- **`validate_scene`** — validate scene JSON before creating a `.hype` file.
+- **`list_layers`**, **`get_layer`**, **`list_tracks`**, and **`list_cameras`** — query saved scene contents.
+- **`open_scene`** — open a saved scene in the desktop app.
+- **`render_scene`** — render the current desktop scene to MP4 / WebM / GIF.
+- **`list_keyframeable_properties`** — list animatable property identifiers.
 
 ### Codex CLI
 
@@ -84,7 +92,8 @@ What works today:
 - `hypermotion create out.hype --from scene.json` — builds a scene file.
 - `hypermotion info out.hype` — prints scene metadata.
 - `hypermotion-mcp` — registers + responds to MCP clients.
-- `create_scene`, `render_scene`, and `info_scene` MCP tools.
+- MCP tools for scene authoring, inspection, patching, validation,
+  querying, opening, rendering, diagnostics, and capability discovery.
 
 What's longer-term:
 
