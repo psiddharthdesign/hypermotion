@@ -814,6 +814,58 @@ test('buildSceneBytes preserves authored component timelines and interactions', 
   ])
 })
 
+test('buildSceneBytes preserves authored component and instance overrides', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    component: {
+      id: 'component',
+      kind: 'component',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      layout: { mode: 'none' },
+      variantOverrides: [
+        {
+          match: { state: 'pressed' },
+          overrides: {
+            label: { text: 'Pressed' },
+            icon: { visible: false },
+          },
+        },
+      ],
+    },
+    instance: {
+      id: 'instance',
+      kind: 'instance',
+      parent: null,
+      children: [],
+      size: { width: 320, height: 180 },
+      componentId: 'component',
+      overrides: {
+        label: { text: 'Launch' },
+        icon: { color: '#2563eb' },
+      },
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.component.variantOverrides, [
+    {
+      match: { state: 'pressed' },
+      overrides: {
+        label: { text: 'Pressed' },
+        icon: { visible: false },
+      },
+    },
+  ])
+  assert.deepEqual(nodes.instance.overrides, {
+    label: { text: 'Launch' },
+    icon: { color: '#2563eb' },
+  })
+})
+
 test('buildSceneBytes writes explicit instance metadata defaults', () => {
   const scene = sampleScene()
   scene.nodes = {

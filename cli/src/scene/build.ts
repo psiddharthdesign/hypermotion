@@ -167,7 +167,7 @@ export interface NodeJson {
   interactions?: InteractionJson[]
   componentId?: string
   selection?: Record<string, string>
-  overrides?: Record<string, Record<string, unknown>>
+  overrides?: Record<string, JsonObject>
   clipsContent?: boolean
   layoutGuides?: LayoutGuideJson[]
   // kind-specific
@@ -313,7 +313,7 @@ export type VariantSelectionJson = Record<string, string>
 
 export interface VariantOverrideJson {
   match: VariantSelectionJson
-  overrides: Record<string, Record<string, unknown>>
+  overrides: Record<string, JsonObject>
 }
 
 export type ComponentPropertyTypeJson =
