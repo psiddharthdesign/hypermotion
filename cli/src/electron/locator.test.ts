@@ -51,3 +51,27 @@ test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('locator treats an empty HYPERMOTION_APP_PATH as unset', async () => {
+  const previousOverride = process.env.HYPERMOTION_APP_PATH
+
+  try {
+    process.env.HYPERMOTION_APP_PATH = ''
+    let locatedPath: string | null = null
+
+    const stderr = await captureStderr(async () => {
+      locatedPath = await locateDesktopApp()
+    })
+
+    assert.equal(stderr, '')
+    if (locatedPath !== null) {
+      assert.equal(fs.existsSync(locatedPath), true)
+    }
+  } finally {
+    if (previousOverride === undefined) {
+      delete process.env.HYPERMOTION_APP_PATH
+    } else {
+      process.env.HYPERMOTION_APP_PATH = previousOverride
+    }
+  }
+})
