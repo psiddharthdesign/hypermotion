@@ -4,12 +4,16 @@ import { Command } from 'commander'
 import fs from 'node:fs'
 import { validateScene } from '../scene/build.js'
 
+type ValidateCommandOptions = {
+  json?: boolean
+}
+
 export function validateCommand(): Command {
   return new Command('validate')
     .description('Validate a .hype scene file for agent-editable structural consistency.')
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output validation result as JSON')
-    .action((scenePath: string, options: { json?: boolean }) => {
+    .action((scenePath: string, options: ValidateCommandOptions) => {
       let result: ReturnType<typeof validateScene>
       try {
         result = validateScene(new Uint8Array(fs.readFileSync(scenePath)))
