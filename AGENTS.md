@@ -382,8 +382,9 @@ camera.aperture, camera.iso, camera.blurLevel, camera.blurQuality,
 appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
-layout.gap, layout.padding.top, layout.padding.right, layout.padding.bottom,
-layout.padding.left, layout.direction, size.width, size.height, variant
+text.progress, layout.gap, layout.padding.top, layout.padding.right,
+layout.padding.bottom, layout.padding.left, layout.direction,
+size.width, size.height, variant
 ```
 
 EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
