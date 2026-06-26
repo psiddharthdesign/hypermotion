@@ -14,6 +14,18 @@ test('render_scene input schema exposes fps bounds', () => {
   assert.equal(fpsProperty?.maximum, 120)
 })
 
+test('render_scene input schema exposes render preset enums', () => {
+  const formatProperty = renderSceneTool.inputSchema.properties?.format as
+    | Record<string, unknown>
+    | undefined
+  const qualityProperty = renderSceneTool.inputSchema.properties?.quality as
+    | Record<string, unknown>
+    | undefined
+
+  assert.deepEqual(formatProperty?.enum, ['mp4', 'webm', 'gif'])
+  assert.deepEqual(qualityProperty?.enum, ['comp', '720p', '2k', '4k'])
+})
+
 test('render_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleRenderScene({
     output: 'demo.mp4',
