@@ -96,6 +96,18 @@ export async function handleRenderScene(
   const quality = parsed.data.quality ?? 'comp'
   const fps = parsed.data.fps ?? 30
 
+  if (scenePath && !fs.existsSync(scenePath)) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `Scene file not found: ${scenePath}`,
+        },
+      ],
+    }
+  }
+
   const appPath = await locateDesktopApp()
   if (!appPath) {
     return {
