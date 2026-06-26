@@ -967,8 +967,9 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
   y.set('position', node.position ?? 'flow')
   y.set('isMask', node.isMask ?? false)
   y.set('componentSourceId', node.componentSourceId ?? null)
+  y.set('workspaceOnly', node.workspaceOnly ?? false)
   for (const [k, v] of Object.entries(node)) {
-    if (['id', 'kind', 'name', 'parent', 'children', 'transform', 'appearance', 'visible', 'locked', 'position', 'isMask', 'componentSourceId'].includes(k)) continue
+    if (['id', 'kind', 'name', 'parent', 'children', 'transform', 'appearance', 'visible', 'locked', 'position', 'isMask', 'componentSourceId', 'workspaceOnly'].includes(k)) continue
     y.set(k, v)
   }
   return y

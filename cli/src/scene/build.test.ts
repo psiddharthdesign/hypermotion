@@ -415,6 +415,25 @@ test('applyScenePatch can clear the active camera', () => {
   assert.equal(readSceneSummary(patched).activeCameraId, null)
 })
 
+test('applyScenePatch fills workspaceOnly default for created nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'badge',
+        kind: 'rect',
+        parent: 'root',
+        size: { width: 24, height: 24 },
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.equal(nodes.badge.workspaceOnly, false)
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}
