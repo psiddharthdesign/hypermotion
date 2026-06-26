@@ -444,7 +444,7 @@ export interface ScenePatch {
 export type PatchOperation =
   | { op: 'setMeta'; patch: Record<string, unknown> }
   | { op: 'setRoot'; nodeId: string }
-  | { op: 'setActiveCameraId'; cameraId: string }
+  | { op: 'setActiveCameraId'; cameraId: string | null }
   | { op: 'createNode'; node: NodeJson }
   | { op: 'deleteNode'; nodeId: string }
   | { op: 'setNode'; nodeId: string; patch: Record<string, unknown> }
