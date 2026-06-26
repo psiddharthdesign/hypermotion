@@ -41,8 +41,9 @@ test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
 
     assert.equal(await locateDesktopApp(), null)
     assert.equal(messages.length, 1)
-    assert.match(String(messages[0]), /HYPERMOTION_APP_PATH is set/)
-    assert.match(String(messages[0]), new RegExp(missingPath.replaceAll('\\', '\\\\')))
+    const message = String(messages[0])
+    assert.match(message, /HYPERMOTION_APP_PATH is set/)
+    assert.equal(message.includes(missingPath), true)
   } finally {
     console.error = previousConsoleError
     if (previousOverride === undefined) {
