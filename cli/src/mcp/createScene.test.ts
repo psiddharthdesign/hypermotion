@@ -80,6 +80,17 @@ test('create_scene description lists supported layout property ids', () => {
   }
 })
 
+test('create_scene reports invalid arguments as MCP errors', async () => {
+  const result = await handleCreateScene({
+    output: 42,
+    scene: {},
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^create_scene: invalid arguments/)
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
