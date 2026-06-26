@@ -9,6 +9,7 @@ import type {
   NodeId,
   Node as SceneNode,
   PropertyId,
+  Track,
 } from '@/scene'
 import { useUI, type Tool } from '@/state/ui'
 import {
@@ -16,7 +17,7 @@ import {
   instantiateComponent,
   wrapInAutoLayout,
 } from '@/ui/actions'
-import { addKeyframe, removeTrack } from '@/anim'
+import { addKeyframe, removeTrack, type TextAnimationConfig } from '@/anim'
 
 /**
  * Global keyboard shortcuts.
@@ -193,6 +194,10 @@ export function useKeyboardShortcuts() {
       // input still works for ordinary text copy (events from text
       // inputs are already filtered out earlier in the handler).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c') {
+        if (copySelectedTextAnimations(api)) {
+          e.preventDefault()
+          return
+        }
         if (copySelectedKeyframes(api)) {
           e.preventDefault()
           return
@@ -203,6 +208,8 @@ export function useKeyboardShortcuts() {
         clipboard = sel
           .map((id) => serializeSubtree(api, id))
           .filter((x): x is ClipboardNode => x !== null)
+        keyframeClipboard = []
+        textAnimationClipboard = []
         return
       }
 
@@ -210,6 +217,10 @@ export function useKeyboardShortcuts() {
       // because the underlying nodes are gone; Cmd+V restores them
       // (under root by default, see paste below).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
+        if (cutSelectedTextAnimations(api)) {
+          e.preventDefault()
+          return
+        }
         if (copySelectedKeyframes(api)) {
           e.preventDefault()
           return
@@ -220,6 +231,8 @@ export function useKeyboardShortcuts() {
         clipboard = sel
           .map((id) => serializeSubtree(api, id))
           .filter((x): x is ClipboardNode => x !== null)
+        keyframeClipboard = []
+        textAnimationClipboard = []
         for (const id of sel) {
           // Skip root + camera — deleting the artboard or active
           // camera mid-cut leaves the scene in a bad state.
@@ -239,6 +252,10 @@ export function useKeyboardShortcuts() {
       //     you have a frame selected and hit Cmd+V).
       //   - Otherwise the scene root (paste at the top level).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        if (pasteTextAnimationsAtPlayhead(api)) {
+          e.preventDefault()
+          return
+        }
         if (pasteKeyframesAtPlayhead(api)) {
           e.preventDefault()
           return
@@ -714,6 +731,22 @@ interface ClipboardKeyframe {
 
 let keyframeClipboard: ClipboardKeyframe[] = []
 
+interface ClipboardTextAnimation {
+  sourceTrackId: string
+  nodeId: NodeId
+  start: number
+  defaultEasing: EasingKind
+  textAnimation: TextAnimationConfig
+  keyframes: Array<{
+    time: number
+    value: KeyframeValue
+    easingOut?: EasingKind
+    presetOrigin?: 'in' | 'out'
+  }>
+}
+
+let textAnimationClipboard: ClipboardTextAnimation[] = []
+
 function serializeSubtree(
   api: ReturnType<typeof useSceneAPI>,
   nodeId: NodeId,
@@ -792,6 +825,160 @@ function pasteSubtree(
   return newId
 }
 
+function copySelectedTextAnimations(
+  api: ReturnType<typeof useSceneAPI>,
+): boolean {
+  const tracks = collectSelectedTextAnimationTracks(api)
+  if (tracks.length === 0) return false
+
+  textAnimationClipboard = tracks.map((track) => {
+    const start = Math.min(...track.keyframes.map((keyframe) => keyframe.time))
+    return {
+      sourceTrackId: track.id,
+      nodeId: track.nodeId,
+      start,
+      defaultEasing: track.defaultEasing,
+      textAnimation: cloneTextAnimation(track.textAnimation!),
+      keyframes: track.keyframes.map((keyframe) => ({
+        time: keyframe.time,
+        value: keyframe.value,
+        ...(keyframe.easingOut ? { easingOut: keyframe.easingOut } : {}),
+        ...(keyframe.presetOrigin
+          ? { presetOrigin: keyframe.presetOrigin }
+          : {}),
+      })),
+    }
+  })
+  keyframeClipboard = []
+  clipboard = []
+  return textAnimationClipboard.length > 0
+}
+
+function cutSelectedTextAnimations(api: ReturnType<typeof useSceneAPI>): boolean {
+  if (!copySelectedTextAnimations(api)) return false
+  const sourceTrackIds = textAnimationClipboard.map((item) => item.sourceTrackId)
+  api.doc.transact(() => {
+    for (const trackId of sourceTrackIds) removeTrack(api, trackId)
+  })
+  useUI.getState().setSelectedKeyframes([])
+  useUI.getState().setSelectedTrackIds([])
+  useUI.getState().setSelectedTrackId(null)
+  return true
+}
+
+function pasteTextAnimationsAtPlayhead(
+  api: ReturnType<typeof useSceneAPI>,
+): boolean {
+  if (textAnimationClipboard.length === 0) return false
+
+  const selection = useUI.getState().selection
+  const targets = selection.filter((nodeId) => api.getNode(nodeId)?.kind === 'text')
+  if (targets.length === 0) return false
+
+  const earliest = Math.min(...textAnimationClipboard.map((item) => item.start))
+  const playhead = useUI.getState().playhead
+  const pastedKeys: string[] = []
+  const pastedTrackIds: string[] = []
+
+  api.doc.transact(() => {
+    for (const targetNodeId of targets) {
+      for (const item of textAnimationClipboard) {
+        const nextStart = Math.max(0, playhead + item.start - earliest)
+        const shift = nextStart - item.start
+        const config: TextAnimationConfig = {
+          ...cloneTextAnimation(item.textAnimation),
+          startTime: Math.max(0, item.textAnimation.startTime + shift),
+        }
+        const trackId =
+          findTextAnimationTrackAtStart(api, targetNodeId, nextStart) ??
+          genTrackId()
+        const keyframes = item.keyframes
+          .map((keyframe) => ({
+            id: genTrackId(),
+            time: Math.max(0, keyframe.time + shift),
+            value: keyframe.value,
+            ...(keyframe.easingOut
+              ? { easingOut: keyframe.easingOut }
+              : {}),
+            ...(keyframe.presetOrigin
+              ? { presetOrigin: keyframe.presetOrigin }
+              : {}),
+          }))
+          .sort((a, b) => a.time - b.time)
+
+        api.setNodeProperty(targetNodeId, 'textAnimation', config)
+        api.setTrack({
+          id: trackId,
+          nodeId: targetNodeId,
+          propertyId: 'text.progress',
+          defaultEasing: item.defaultEasing,
+          textAnimation: config,
+          keyframes,
+        })
+        pastedTrackIds.push(trackId)
+        for (const keyframe of keyframes) {
+          pastedKeys.push(`${trackId}:${keyframe.id}`)
+        }
+      }
+    }
+  })
+
+  if (pastedKeys.length === 0) return false
+  useUI.getState().setSelectedKeyframes(pastedKeys)
+  useUI.getState().setSelectedTrackIds([...new Set(pastedTrackIds)])
+  useUI.getState().setSelectedTrackId(null)
+  return true
+}
+
+function collectSelectedTextAnimationTracks(
+  api: ReturnType<typeof useSceneAPI>,
+): Track[] {
+  const ui = useUI.getState()
+  const trackIds = new Set<string>(ui.selectedTrackIds)
+  for (const key of ui.selectedKeyframes) {
+    const sep = key.indexOf(':')
+    if (sep > 0) trackIds.add(key.slice(0, sep))
+  }
+
+  const tracks: Track[] = []
+  for (const trackId of trackIds) {
+    const track = api.getTrack(trackId)
+    if (
+      !track ||
+      track.propertyId !== 'text.progress' ||
+      !track.textAnimation ||
+      track.keyframes.length < 2
+    ) {
+      continue
+    }
+    tracks.push(track)
+  }
+
+  return tracks.sort((a, b) => {
+    const aStart = Math.min(...a.keyframes.map((keyframe) => keyframe.time))
+    const bStart = Math.min(...b.keyframes.map((keyframe) => keyframe.time))
+    return aStart - bStart
+  })
+}
+
+function findTextAnimationTrackAtStart(
+  api: ReturnType<typeof useSceneAPI>,
+  nodeId: NodeId,
+  startTime: number,
+): string | null {
+  for (const track of api.getTracksForNode(nodeId)) {
+    if (track.propertyId !== 'text.progress') continue
+    if (track.keyframes.length < 2) continue
+    const start = Math.min(...track.keyframes.map((keyframe) => keyframe.time))
+    if (Math.abs(start - startTime) <= 0.01) return track.id
+  }
+  return null
+}
+
+function cloneTextAnimation(config: TextAnimationConfig): TextAnimationConfig {
+  return JSON.parse(JSON.stringify(config)) as TextAnimationConfig
+}
+
 function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
   const keys = useUI.getState().selectedKeyframes
   if (keys.length === 0) return false
@@ -838,6 +1025,7 @@ function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
       ...(entry.easingOut ? { easingOut: entry.easingOut } : {}),
       ...(entry.presetOrigin ? { presetOrigin: entry.presetOrigin } : {}),
     }))
+  textAnimationClipboard = []
   return true
 }
 

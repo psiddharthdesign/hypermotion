@@ -41,6 +41,10 @@
   --color-segment-bar: oklch(0.40 0.08 250);
   --color-segment-bar-ring: oklch(0.30 0.10 250);
   --color-segment-bar-hover: oklch(0.48 0.10 250);
+  --color-group-bar: #224a71;
+  --color-group-bar-active: #0091ff;
+  --color-group-bar-ring: #1b4165;
+  --color-group-bar-marker: #00a1ff;
   --color-playhead: oklch(0.70 0.20 250);
 
   --font-sans: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
@@ -82,6 +86,10 @@
   --color-segment-bar: oklch(0.40 0.08 250);
   --color-segment-bar-ring: oklch(0.30 0.10 250);
   --color-segment-bar-hover: oklch(0.48 0.10 250);
+  --color-group-bar: #224a71;
+  --color-group-bar-active: #0091ff;
+  --color-group-bar-ring: #1b4165;
+  --color-group-bar-marker: #00a1ff;
   --color-playhead: oklch(0.70 0.20 250);
   --color-checker: rgba(255, 255, 255, 0.05);
   /* Floating-dock shadow. Two layers: a tight near-shadow that
@@ -114,6 +122,10 @@
   --color-segment-bar: oklch(0.86 0.08 250);
   --color-segment-bar-ring: oklch(0.72 0.12 250);
   --color-segment-bar-hover: oklch(0.80 0.10 250);
+  --color-group-bar: oklch(0.84 0.075 250);
+  --color-group-bar-active: oklch(0.62 0.21 250);
+  --color-group-bar-ring: oklch(0.76 0.10 250);
+  --color-group-bar-marker: oklch(0.58 0.22 250);
   --color-playhead: oklch(0.55 0.22 250);
   --color-checker: rgba(0, 0, 0, 0.04);
   /* Light theme: three softer layers instead of two heavy ones.
@@ -145,6 +157,10 @@
     --color-segment-bar: oklch(0.86 0.08 250);
     --color-segment-bar-ring: oklch(0.72 0.12 250);
     --color-segment-bar-hover: oklch(0.80 0.10 250);
+    --color-group-bar: oklch(0.84 0.075 250);
+    --color-group-bar-active: oklch(0.62 0.21 250);
+    --color-group-bar-ring: oklch(0.76 0.10 250);
+    --color-group-bar-marker: oklch(0.58 0.22 250);
     --color-playhead: oklch(0.55 0.22 250);
     --color-checker: rgba(0, 0, 0, 0.04);
     --shadow-dock:

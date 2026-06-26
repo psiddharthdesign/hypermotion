@@ -8,12 +8,16 @@ import type { SceneNode, Section, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   groupKeyframes as groupKeyframesHelper,
+  ungroupKeyframeGroups as ungroupKeyframeGroupsHelper,
   ungroupKeyframes as ungroupKeyframesHelper,
   toggleKfGroupCollapsed as toggleKfGroupCollapsedHelper,
   groupTracks as groupTracksHelper,
   ungroupTracks as ungroupTracksHelper,
+  removeTracksFromGroups as removeTracksFromGroupsHelper,
   addTracksToGroup as addTracksToGroupHelper,
+  insertTracksIntoGroup as insertTracksIntoGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
+  renameTrackGroup as renameTrackGroupHelper,
 } from '@/state/groupActions'
 import { importAudioFile } from '@/ui/importMedia'
 
@@ -25,6 +29,35 @@ import { importAudioFile } from '@/ui/importMedia'
  * one-line helper because it's used from half a dozen call sites.
  */
 const kfKey = (trackId: string, kfId: string) => `${trackId}:${kfId}`
+const TRACK_IDS_DRAG_TYPE = 'application/x-hypermotion-track-ids'
+
+function setDraggedTrackIds(e: React.DragEvent, trackIds: string[]): void {
+  const ids = [...new Set(trackIds)].filter(Boolean)
+  if (ids.length === 0) return
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData(TRACK_IDS_DRAG_TYPE, JSON.stringify(ids))
+  e.dataTransfer.setData('text/plain', ids.join(','))
+}
+
+function getDraggedTrackIds(e: React.DragEvent): string[] {
+  const raw = e.dataTransfer.getData(TRACK_IDS_DRAG_TYPE)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function dragTrackIdsFor(trackId: string): string[] {
+  const selected = useUI.getState().selectedTrackIds
+  return selected.includes(trackId) && selected.length > 0
+    ? selected
+    : [trackId]
+}
 
 /**
  * Timeline.
@@ -296,6 +329,56 @@ export function Timeline() {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
 
+  const getTrackIdsForNodes = useCallback(
+    (nodeIds: string[]) => {
+      const out: string[] = []
+      for (const nodeId of nodeIds) {
+        for (const track of api.getTracksForNode(nodeId)) {
+          out.push(track.id)
+        }
+      }
+      return out
+    },
+    [api],
+  )
+
+  const selectedAnimatedLayerTrackIds = useCallback(
+    () => getTrackIdsForNodes(useUI.getState().selection),
+    [getTrackIdsForNodes],
+  )
+
+  const tracksInsideAnyGroup = useCallback(
+    (trackIds: string[]) => {
+      const ids = new Set(trackIds)
+      for (const group of Object.values(trackGroupsDict)) {
+        if (group.trackIds.some((trackId) => ids.has(trackId))) return true
+      }
+      return false
+    },
+    [trackGroupsDict],
+  )
+  const addDroppedTracksToGroup = useCallback(
+    (groupId: string, trackIds: string[], index?: number) => {
+      const group = api.getUiState().trackGroups[groupId]
+      if (!group) return
+      const memberSet = new Set(group.trackIds)
+      const toAdd = [...new Set(trackIds)].filter(
+        (trackId) =>
+          (typeof index === 'number' || !memberSet.has(trackId)) &&
+          api.getTrack(trackId),
+      )
+      if (toAdd.length === 0) return
+      insertTracksIntoGroupHelper(api, groupId, toAdd, index)
+      const next = api.getUiState().trackGroups[groupId]?.trackIds ?? [
+        ...group.trackIds,
+        ...toAdd,
+      ]
+      setSelectedTrackIds(next)
+      clearKfs()
+    },
+    [api, clearKfs, setSelectedTrackIds],
+  )
+
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null
@@ -461,8 +544,27 @@ export function Timeline() {
           }
           return
         }
+        const selectedLayerTracks = selectedAnimatedLayerTrackIds()
+        if (selectedLayerTracks.length > 0 && e.shiftKey) {
+          removeTracksFromGroupsHelper(api, selectedLayerTracks)
+          return
+        }
+        if (selectedLayerTracks.length >= 2) {
+          if (!tryMergeIntoExisting(selectedLayerTracks)) {
+            groupTracksHelper(api, selectedLayerTracks)
+          }
+          return
+        }
         if (selectedKfs.size === 0) return
         const keys = Array.from(selectedKfs)
+        // Ungroup should dissolve the actual selected keyframe groups,
+        // even when that group spans multiple tracks. The grouping path
+        // can still infer track intent from multi-track keyframe picks.
+        if (e.shiftKey) {
+          ungroupKeyframesHelper(api, keys)
+          return
+        }
+
         // Pull unique track ids from the selected kf keys
         // (`trackId:kfId` shape). One track → keyframe grouping.
         // Multiple tracks → infer the track-group intent and route
@@ -475,23 +577,19 @@ export function Timeline() {
         }
         if (tracksFromKfs.size >= 2) {
           const ids = Array.from(tracksFromKfs)
-          if (e.shiftKey) {
-            ungroupTracksHelper(api, ids)
-          } else if (!tryMergeIntoExisting(ids)) {
+          if (!tryMergeIntoExisting(ids)) {
             groupTracksHelper(api, ids)
           }
           return
         }
-        if (e.shiftKey) {
-          ungroupKeyframesHelper(api, keys)
-        } else if (selectedKfs.size >= 2) {
+        if (selectedKfs.size >= 2) {
           groupKeyframesHelper(api, keys)
         }
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [selectedKfs])
+  }, [api, selectedAnimatedLayerTrackIds, selectedKfs])
 
   // Group lookup map: keyframe key → group id. Rebuilt when the
   // groups dict changes. Used by KeyframeDiamond to (a) decide
@@ -581,9 +679,27 @@ export function Timeline() {
   ) => {
     e.preventDefault()
     e.stopPropagation()
+    const nodeTrackIds =
+      target.kind === 'node' ? getTrackIdsForNodes([target.nodeId]) : []
+    const trackIsGrouped =
+      target.kind === 'track' || target.kind === 'keyframe'
+        ? tracksInsideAnyGroup([target.track.id])
+        : false
+    const nodeHasGroupedTracks =
+      target.kind === 'node' ? tracksInsideAnyGroup(nodeTrackIds) : false
     const items =
       target.kind === 'keyframe'
         ? [
+            ...(trackIsGrouped
+              ? [
+                  {
+                    label: 'Remove track from group',
+                    onClick: () =>
+                      removeTracksFromGroupsHelper(api, [target.track.id]),
+                  },
+                  { kind: 'separator' as const },
+                ]
+              : []),
             {
               label: `Delete keyframe @ ${target.time.toFixed(2)}s`,
               danger: true,
@@ -599,6 +715,16 @@ export function Timeline() {
           ]
         : target.kind === 'track'
           ? [
+              ...(trackIsGrouped
+                ? [
+                    {
+                      label: 'Remove track from group',
+                      onClick: () =>
+                        removeTracksFromGroupsHelper(api, [target.track.id]),
+                    },
+                    { kind: 'separator' as const },
+                  ]
+                : []),
               {
                 label: `Delete track (${humanProperty(target.track.propertyId)})`,
                 danger: true,
@@ -606,6 +732,16 @@ export function Timeline() {
               },
             ]
           : [
+              ...(nodeHasGroupedTracks
+                ? [
+                    {
+                      label: `Remove "${target.nodeName}" from group`,
+                      onClick: () =>
+                        removeTracksFromGroupsHelper(api, nodeTrackIds),
+                    },
+                    { kind: 'separator' as const },
+                  ]
+                : []),
               {
                 label: `Delete all animation on "${target.nodeName}"`,
                 danger: true,
@@ -744,6 +880,12 @@ export function Timeline() {
     () => tracksByNode.flatMap((g) => g.tracks),
     [tracksByNode],
   )
+  const selectedNodeSet = useMemo(() => new Set(selection), [selection])
+  const trackNodeById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const track of flatTracks) m.set(track.id, track.nodeId)
+    return m
+  }, [flatTracks])
 
   /**
    * Resolve every persistent track-group into a render shape.
@@ -756,8 +898,7 @@ export function Timeline() {
    *     node in tracksByNode order that contributes a member
    *   - label — for composed: the host node's name; for sequence:
    *     "Sequence"
-   *   - memberTracks — Track[] in render order (same order they
-   *     appear in tracksByNode)
+   *   - memberTracks — Track[] in the group's stored order
    *   - collapsed
    *
    * Only groups whose members still resolve to live tracks render —
@@ -776,29 +917,41 @@ export function Timeline() {
       collapsed: boolean
     }
     const out: Resolved[] = []
+    const trackById = new Map<string, Track>()
+    const nodeOrder = new Map<string, number>()
+    for (let i = 0; i < tracksByNode.length; i++) {
+      const ng = tracksByNode[i]!
+      nodeOrder.set(ng.nodeId, i)
+      for (const track of ng.tracks) trackById.set(track.id, track)
+    }
     for (const [groupId, g] of Object.entries(trackGroupsDict)) {
-      const memberSet = new Set(g.trackIds)
       const memberTracks: Track[] = []
-      let hostNodeId: string | null = null
       const memberNodes = new Set<string>()
-      for (const ng of tracksByNode) {
-        for (const t of ng.tracks) {
-          if (memberSet.has(t.id)) {
-            if (hostNodeId === null) hostNodeId = ng.nodeId
-            memberTracks.push(t)
-            memberNodes.add(ng.nodeId)
-          }
+      for (const trackId of g.trackIds) {
+        const track = trackById.get(trackId)
+        if (!track) continue
+        memberTracks.push(track)
+        memberNodes.add(track.nodeId)
+      }
+      let hostNodeId: string | null = null
+      let bestOrder = Infinity
+      for (const nodeId of memberNodes) {
+        const order = nodeOrder.get(nodeId) ?? Infinity
+        if (order < bestOrder) {
+          bestOrder = order
+          hostNodeId = nodeId
         }
       }
       if (memberTracks.length < 2 || !hostNodeId) continue
       const isComposed = memberNodes.size === 1
       const hostNode =
         api.getNode(hostNodeId)?.name ?? memberTracks[0]?.nodeId ?? 'Group'
+      const customName = typeof g.name === 'string' ? g.name.trim() : ''
       out.push({
         groupId,
         kind: isComposed ? 'composed' : 'sequence',
         hostNodeId,
-        label: isComposed ? hostNode : 'Sequence',
+        label: customName || (isComposed ? hostNode : 'Sequence'),
         memberTracks,
         collapsed: g.collapsed,
       })
@@ -1633,6 +1786,13 @@ export function Timeline() {
                         })
                       }
                       aria-selected={isSelected}
+                      draggable
+                      onDragStart={(e) => {
+                        const ids = isSelected
+                          ? selectedAnimatedLayerTrackIds()
+                          : group.tracks.map((track) => track.id)
+                        setDraggedTrackIds(e, ids)
+                      }}
                       className={
                         'flex h-6 cursor-pointer items-center border-t border-border/50 px-3 ' +
                         (isSelected
@@ -1654,6 +1814,9 @@ export function Timeline() {
                   )}
                   {hostedGroups.map((g) => {
                     const isActive = activeGroupId === g.groupId
+                    const layerRelated = g.members.some((m) =>
+                      selectedNodeSet.has(trackNodeById.get(m.trackId) ?? ''),
+                    )
                     const collapsed = !!kfGroupCollapsedDict[g.groupId]
                     const memberKeys = g.members.map((m) =>
                       kfKey(m.trackId, m.kfId),
@@ -1708,7 +1871,9 @@ export function Timeline() {
                                 label: 'Ungroup (⌘⇧G)',
                                 danger: true,
                                 onClick: () =>
-                                  ungroupKeyframesHelper(api, memberKeys),
+                                  ungroupKeyframeGroupsHelper(api, [
+                                    g.groupId,
+                                  ]),
                               },
                             ],
                           })
@@ -1717,6 +1882,8 @@ export function Timeline() {
                           'flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 px-3 pl-3 text-accent',
                           isActive
                             ? 'bg-accent-soft/60 hover:bg-accent-soft/80'
+                            : layerRelated
+                              ? 'bg-accent-soft/45 hover:bg-accent-soft/65'
                             : 'bg-accent-soft/30 hover:bg-accent-soft/50',
                         ].join(' ')}
                         title={
@@ -1753,23 +1920,65 @@ export function Timeline() {
                       ungroup. When expanded, the constituent tracks
                       render indented underneath. */}
                   {hostedTrackGroups.map((tg) => (
-                    <TrackGroupLeftRow
-                      key={tg.groupId}
-                      group={tg}
-                      nodeKind={group.nodeKind}
-                      onToggle={() => toggleTrackGroupCollapsed(tg.groupId)}
-                      onSelectMembers={() =>
-                        setSelectedTrackIds(
-                          tg.memberTracks.map((t) => t.id),
+                    (() => {
+                      const memberSet = new Set(
+                        tg.memberTracks.map((t) => t.id),
+                      )
+                      const selectedLayerTracksToAdd =
+                        selectedAnimatedLayerTrackIds().filter(
+                          (trackId) => !memberSet.has(trackId),
                         )
+                      return (
+                        <TrackGroupLeftRow
+                          key={tg.groupId}
+                          group={tg}
+                          nodeKind={group.nodeKind}
+                          layerRelated={tg.memberTracks.some((t) =>
+                            selectedNodeSet.has(t.nodeId),
+                          )}
+                          onToggle={() =>
+                            toggleTrackGroupCollapsed(tg.groupId)
+                          }
+                          onSelectMembers={() =>
+                            setSelectedTrackIds(
+                              tg.memberTracks.map((t) => t.id),
+                            )
+                          }
+                          onUngroup={() =>
+                            ungroupTracksAction(
+                              tg.memberTracks.map((t) => t.id),
+                            )
+                          }
+                      onRename={(name) =>
+                        renameTrackGroupHelper(api, tg.groupId, name)
                       }
-                      onUngroup={() =>
-                        ungroupTracksAction(
-                          tg.memberTracks.map((t) => t.id),
-                        )
+                          selectedLayerTracksToAdd={
+                            selectedLayerTracksToAdd.length
+                          }
+                          onAddSelectedLayers={() =>
+                            addTracksToGroupHelper(
+                              api,
+                              tg.groupId,
+                              selectedLayerTracksToAdd,
+                            )
+                          }
+                      onRemoveTracksFromGroup={(trackIds) =>
+                        removeTracksFromGroupsHelper(api, trackIds)
                       }
-                      openContextMenu={openContextMenu}
-                    />
+                          onDropTracks={(trackIds) =>
+                            addDroppedTracksToGroup(tg.groupId, trackIds)
+                          }
+                          onDropTracksAtIndex={(trackIds, index) =>
+                            addDroppedTracksToGroup(
+                              tg.groupId,
+                              trackIds,
+                              index,
+                            )
+                          }
+                          openContextMenu={openContextMenu}
+                        />
+                      )
+                    })()
                   ))}
                   {visibleTracks.map((t) => (
                     <TrackLabel
@@ -2011,6 +2220,9 @@ export function Timeline() {
                   )}
                   {hostedGroups.map((g) => {
                     const isActive = activeGroupId === g.groupId
+                    const layerRelated = g.members.some((m) =>
+                      selectedNodeSet.has(trackNodeById.get(m.trackId) ?? ''),
+                    )
                     const memberKeys = g.members.map((m) =>
                       kfKey(m.trackId, m.kfId),
                     )
@@ -2044,14 +2256,20 @@ export function Timeline() {
                                 label: 'Ungroup (⌘⇧G)',
                                 danger: true,
                                 onClick: () =>
-                                  ungroupKeyframesHelper(api, memberKeys),
+                                  ungroupKeyframeGroupsHelper(api, [
+                                    g.groupId,
+                                  ]),
                               },
                             ],
                           })
                         }}
                         className={[
                           'relative h-6 border-t border-border/50',
-                          isActive ? 'bg-accent-soft/50' : 'bg-accent-soft/20',
+                          isActive
+                            ? 'bg-accent-soft/50'
+                            : layerRelated
+                              ? 'bg-accent-soft/35'
+                              : 'bg-accent-soft/20',
                         ].join(' ')}
                         style={{ width: totalWidth }}
                       >
@@ -2060,6 +2278,7 @@ export function Timeline() {
                           duration={duration}
                           api={api}
                           selectedKfs={selectedKfs}
+                          layerRelated={layerRelated}
                           replaceKfs={replaceKfs}
                         />
                       </div>
@@ -2079,6 +2298,12 @@ export function Timeline() {
                         totalWidth={totalWidth}
                         duration={duration}
                         api={api}
+                        layerRelated={tg.memberTracks.some((t) =>
+                          selectedNodeSet.has(t.nodeId),
+                        )}
+                        onDropTracks={(trackIds) =>
+                          addDroppedTracksToGroup(tg.groupId, trackIds)
+                        }
                         onContextMenu={(e, g) => {
                           e.preventDefault()
                           e.stopPropagation()
@@ -2098,12 +2323,32 @@ export function Timeline() {
                           }
                           // Anything already in this group is a
                           // no-op — filter to genuinely new tracks.
-                          const memberSet = new Set(g.trackIds)
+                          const groupTrackIds = g.memberTracks.map((t) => t.id)
+                          const memberSet = new Set(groupTrackIds)
                           const toAdd = Array.from(inferred).filter(
                             (t) => !memberSet.has(t),
                           )
+                          const selectedLayerTracksToAdd =
+                            selectedAnimatedLayerTrackIds().filter(
+                              (trackId) => !memberSet.has(trackId),
+                            )
                           const items: import('@/state/ui').ContextMenuItem[] =
                             []
+                          if (selectedLayerTracksToAdd.length > 0) {
+                            items.push({
+                              label:
+                                selectedLayerTracksToAdd.length === 1
+                                  ? 'Add selected animated layer to this group'
+                                  : `Add ${selectedLayerTracksToAdd.length} selected animated layer tracks to this group`,
+                              onClick: () =>
+                                addTracksToGroupHelper(
+                                  api,
+                                  g.groupId,
+                                  selectedLayerTracksToAdd,
+                                ),
+                            })
+                            items.push({ kind: 'separator' })
+                          }
                           if (toAdd.length > 0) {
                             items.push({
                               label:
@@ -2123,10 +2368,22 @@ export function Timeline() {
                               toggleTrackGroupCollapsed(g.groupId),
                           })
                           items.push({
+                            label: 'Rename group',
+                            onClick: () => {
+                              const next = window.prompt(
+                                'Rename group',
+                                g.label,
+                              )
+                              if (next !== null) {
+                                renameTrackGroupHelper(api, g.groupId, next)
+                              }
+                            },
+                          })
+                          items.push({
                             label: 'Ungroup',
                             danger: true,
                             onClick: () =>
-                              ungroupTracksHelper(api, g.trackIds),
+                              ungroupTracksHelper(api, groupTrackIds),
                           })
                           openContextMenu({
                             x: e.clientX,
@@ -2136,7 +2393,7 @@ export function Timeline() {
                         }}
                       />
                       {!tg.collapsed &&
-                        tg.memberTracks.map((t) => (
+                        tg.memberTracks.map((t, index) => (
                           <SegmentRow
                             key={t.id}
                             track={t}
@@ -2156,6 +2413,13 @@ export function Timeline() {
                               smoothSeekPlayhead(time)
                             }}
                             onFocus={() => focusTrackForEditing(group.nodeId)}
+                            onDropTrackIds={(trackIds, placement) =>
+                              addDroppedTracksToGroup(
+                                tg.groupId,
+                                trackIds,
+                                index + (placement === 'after' ? 1 : 0),
+                              )
+                            }
                             onBarContextMenu={(e) =>
                               openTimelineMenu(e, { kind: 'track', track: t })
                             }
@@ -2434,6 +2698,7 @@ function TrackLabel({
   layerName,
   onFocus,
   onContextMenu,
+  onDropTrackIds,
 }: {
   track: Track
   /** Used to disambiguate property labels (e.g. cameras read scaleX as "Scale"). */
@@ -2450,6 +2715,7 @@ function TrackLabel({
   layerName?: string
   onFocus: () => void
   onContextMenu: (e: React.MouseEvent) => void
+  onDropTrackIds?: (trackIds: string[], placement: 'before' | 'after') => void
 }) {
   const api = useSceneAPI()
   const selectedTrackId = useUI((s) => s.selectedTrackId)
@@ -2462,6 +2728,26 @@ function TrackLabel({
   const isTextAnimationTrack = track.propertyId === 'text.progress'
   return (
     <div
+      draggable
+      onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
+      onDragOver={(e) => {
+        if (!onDropTrackIds) return
+        if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(e) => {
+        if (!onDropTrackIds) return
+        const ids = getDraggedTrackIds(e)
+        if (ids.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const rect = e.currentTarget.getBoundingClientRect()
+        onDropTrackIds(
+          ids,
+          e.clientY > rect.top + rect.height / 2 ? 'after' : 'before',
+        )
+      }}
       onClick={(e) => {
         // Shift / Cmd / Ctrl click maintains a MULTI-track selection
         // for Cmd+G grouping. Plain click sets the single-track focus
@@ -2871,6 +3157,7 @@ function SegmentRow({
   onFocus,
   onBarContextMenu,
   onKeyframeContextMenu,
+  onDropTrackIds,
 }: {
   track: Track
   duration: number
@@ -2898,6 +3185,7 @@ function SegmentRow({
     e: React.MouseEvent,
     kf: Track['keyframes'][number],
   ) => void
+  onDropTrackIds?: (trackIds: string[], placement: 'before' | 'after') => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
 
@@ -2925,6 +3213,12 @@ function SegmentRow({
   const first = kfs[0]
   const last = kfs[kfs.length - 1]
   const hasSpan = kfs.length >= 2 && first && last && last.time > first.time
+  const segmentClassName = nodeSelected
+    ? 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-accent ring-1 ring-accent/70 shadow-[0_0_0_2px_var(--color-accent-soft)] hover:brightness-110'
+    : 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover'
+  const beadClassName = nodeSelected
+    ? 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
+    : 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover'
 
   const onBarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!first || !last) return
@@ -3087,6 +3381,24 @@ function SegmentRow({
     <div
       ref={rowRef}
       onPointerDown={onRowPointerDown}
+      onDragOver={(e) => {
+        if (!onDropTrackIds) return
+        if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(e) => {
+        if (!onDropTrackIds) return
+        const ids = getDraggedTrackIds(e)
+        if (ids.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const rect = e.currentTarget.getBoundingClientRect()
+        onDropTrackIds(
+          ids,
+          e.clientY > rect.top + rect.height / 2 ? 'after' : 'before',
+        )
+      }}
       className={
         'relative h-6 border-t border-border/30 ' +
         (nodeSelected
@@ -3103,10 +3415,12 @@ function SegmentRow({
           <div
             data-segment-bar="1"
             data-timeline-selection-surface="1"
+            draggable
+            onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
             onPointerDown={onBarPointerDown}
             onContextMenu={onBarContextMenu}
             title={`${first.time.toFixed(2)}s → ${last.time.toFixed(2)}s — drag to shift, right-click for options`}
-            className="absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover"
+            className={segmentClassName}
             style={{
               left: first.time * PX_PER_SECOND,
               width: (last.time - first.time) * PX_PER_SECOND,
@@ -3114,7 +3428,9 @@ function SegmentRow({
           />
         ) : (
           <div
-            className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover"
+            draggable
+            onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
+            className={beadClassName}
             style={{ left: first.time * PX_PER_SECOND }}
           />
         )
@@ -3433,25 +3749,52 @@ type ResolvedTrackGroup = {
 function TrackGroupLeftRow({
   group,
   nodeKind,
+  layerRelated = false,
   onToggle,
   onSelectMembers,
   onUngroup,
+  onRename,
+  selectedLayerTracksToAdd,
+  onAddSelectedLayers,
+  onRemoveTracksFromGroup,
+  onDropTracks,
+  onDropTracksAtIndex,
   openContextMenu,
 }: {
   group: ResolvedTrackGroup
   nodeKind?: string
+  layerRelated?: boolean
   onToggle: () => void
   onSelectMembers: () => void
   onUngroup: () => void
+  onRename: (name: string) => void
+  selectedLayerTracksToAdd: number
+  onAddSelectedLayers: () => void
+  onRemoveTracksFromGroup: (trackIds: string[]) => void
+  onDropTracks: (trackIds: string[]) => void
+  onDropTracksAtIndex: (trackIds: string[], index: number) => void
   openContextMenu: (menu: import('@/state/ui').ContextMenuState) => void
 }) {
   const collapsed = group.collapsed
   const api = useSceneAPI()
+  const [editingName, setEditingName] = useState(false)
+  const [draftName, setDraftName] = useState(group.label)
+  useEffect(() => {
+    if (!editingName) setDraftName(group.label)
+  }, [editingName, group.label])
+  const commitRename = () => {
+    setEditingName(false)
+    onRename(draftName)
+  }
   return (
     <>
       <div
         onClick={onSelectMembers}
-        onDoubleClick={onToggle}
+        onDoubleClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setEditingName(true)
+        }}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -3467,17 +3810,47 @@ function TrackGroupLeftRow({
                 label: 'Select member tracks',
                 onClick: onSelectMembers,
               },
+              {
+                label: 'Rename group',
+                onClick: () => setEditingName(true),
+              },
+              ...(selectedLayerTracksToAdd > 0
+                ? [
+                    {
+                      label:
+                        selectedLayerTracksToAdd === 1
+                          ? 'Add selected animated layer to group'
+                          : `Add ${selectedLayerTracksToAdd} selected animated layer tracks to group`,
+                      onClick: onAddSelectedLayers,
+                    },
+                  ]
+                : []),
               { kind: 'separator' as const },
               { label: 'Ungroup (⌘⇧G)', danger: true, onClick: onUngroup },
             ],
           })
+        }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+        }}
+        onDrop={(e) => {
+          const ids = getDraggedTrackIds(e)
+          if (ids.length === 0) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDropTracks(ids)
         }}
         title={
           collapsed
             ? 'Click to select members · double-click to expand · right-click for more'
             : 'Click to select members · double-click to collapse · right-click for more'
         }
-        className="flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 bg-accent-soft/50 px-3 pl-2 text-accent hover:bg-accent-soft/70"
+        className={[
+          'flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 px-3 pl-2 text-accent hover:bg-accent-soft/70',
+          layerRelated ? 'bg-accent-soft/65' : 'bg-accent-soft/50',
+        ].join(' ')}
       >
         <button
           type="button"
@@ -3495,17 +3868,39 @@ function TrackGroupLeftRow({
         ) : (
           <SequenceGlyph />
         )}
-        <span className="truncate text-[11px] font-medium">
-          {group.label}
-          <span className="ml-1 text-text-dim">
-            · {group.kind === 'composed' ? 'Composed' : 'Sequence'}
+        {editingName ? (
+          <input
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') {
+                setDraftName(group.label)
+                setEditingName(false)
+              }
+            }}
+            className="min-w-0 flex-1 rounded border border-accent/40 bg-panel px-1 text-[11px] font-medium text-text outline-none"
+          />
+        ) : (
+          <span
+            className="truncate text-[11px] font-medium"
+            title="Double-click to rename"
+          >
+            {group.label}
+            <span className="ml-1 text-text-dim">
+              · {group.kind === 'composed' ? 'Composed' : 'Sequence'}
+            </span>
           </span>
-        </span>
+        )}
       </div>
       {/* Children render only when expanded — indented underneath
           so the bundling reads visually like a folder. */}
       {!collapsed &&
-        group.memberTracks.map((t) => (
+        group.memberTracks.map((t, index) => (
           <TrackLabel
             key={t.id}
             track={t}
@@ -3524,6 +3919,12 @@ function TrackGroupLeftRow({
             onFocus={() => {
               /* selection of the layer happens via the parent shell */
             }}
+            onDropTrackIds={(trackIds, placement) =>
+              onDropTracksAtIndex(
+                trackIds,
+                index + (placement === 'after' ? 1 : 0),
+              )
+            }
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -3531,6 +3932,11 @@ function TrackGroupLeftRow({
                 x: e.clientX,
                 y: e.clientY,
                 items: [
+                  {
+                    label: 'Remove track from group',
+                    onClick: () => onRemoveTracksFromGroup([t.id]),
+                  },
+                  { kind: 'separator' as const },
                   {
                     label: 'Ungroup (⌘⇧G)',
                     danger: true,
@@ -3572,12 +3978,16 @@ function TrackGroupRightRow({
   totalWidth,
   duration,
   api,
+  layerRelated = false,
+  onDropTracks,
   onContextMenu,
 }: {
   group: ResolvedTrackGroup
   totalWidth: number
   duration: number
   api: SceneAPI
+  layerRelated?: boolean
+  onDropTracks: (trackIds: string[]) => void
   /** Right-click on the span bar — parent builds the menu so it can
    *  reach the live track selection and the openContextMenu handle. */
   onContextMenu?: (e: React.MouseEvent, group: ResolvedTrackGroup) => void
@@ -3598,10 +4008,10 @@ function TrackGroupRightRow({
   const allSelected =
     group.memberTracks.length > 0 &&
     group.memberTracks.every((track) => selectedTrackIds.includes(track.id))
-  const fillClass = allSelected ? 'bg-[#0091ff]' : 'bg-[#224a71]'
-  const markerClass = allSelected
-    ? 'bg-white mix-blend-overlay'
-    : 'bg-[#00a1ff]'
+  const highlighted = allSelected || layerRelated
+  const fill = highlighted
+    ? 'var(--color-group-bar-active)'
+    : 'var(--color-group-bar)'
 
   // Flatten all member-track keyframes into a single list. Snapshot
   // taken at drag-start (inside the handlers) so concurrent scene
@@ -3693,8 +4103,23 @@ function TrackGroupRightRow({
   return (
     <>
       <div
-        className="relative h-6 border-t border-border/50 bg-accent-soft/30"
+        className={[
+          'relative h-6 border-t border-border/50',
+          layerRelated ? 'bg-accent-soft/45' : 'bg-accent-soft/30',
+        ].join(' ')}
         style={{ width: totalWidth }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+        }}
+        onDrop={(e) => {
+          const ids = getDraggedTrackIds(e)
+          if (ids.length === 0) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDropTracks(ids)
+        }}
         onContextMenu={(e) => onContextMenu?.(e, group)}
       >
         {hasSpan && (
@@ -3703,11 +4128,14 @@ function TrackGroupRightRow({
             onPointerDown={onBodyPointerDown}
             onContextMenu={(e) => onContextMenu?.(e, group)}
             title={`${start.toFixed(2)}s – ${end.toFixed(2)}s · drag body to shift, edges to scale, right-click for options`}
-            className={[
-              'group absolute top-1/2 h-4 -translate-y-1/2 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110 active:cursor-grabbing',
-              fillClass,
-            ].join(' ')}
-            style={{ left, width: Math.max(2, width) }}
+            className="group absolute top-1/2 h-4 -translate-y-1/2 cursor-grab rounded-[4px] ring-1 hover:brightness-110 active:cursor-grabbing"
+            style={{
+              left,
+              width: Math.max(2, width),
+              background: fill,
+              boxShadow: '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+              '--tw-ring-color': 'var(--color-group-bar-ring)',
+            } as React.CSSProperties}
           >
             {/* Edge scale handles. 8px wide, slightly extending past
                 the bar so they're easy to grab. data-groupHandle on
@@ -3728,14 +4156,6 @@ function TrackGroupRightRow({
             >
               <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
             </div>
-            <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
-              <span
-                className={[
-                  'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
-                  markerClass,
-                ].join(' ')}
-              />
-            </span>
           </div>
         )}
       </div>
@@ -4105,6 +4525,7 @@ function GroupSpanBar({
   duration,
   api,
   selectedKfs,
+  layerRelated = false,
   replaceKfs,
 }: {
   group: {
@@ -4116,6 +4537,7 @@ function GroupSpanBar({
   duration: number
   api: SceneAPI
   selectedKfs: Set<string>
+  layerRelated?: boolean
   replaceKfs: (keys: string[]) => void
 }) {
   const span = group.end - group.start
@@ -4133,16 +4555,14 @@ function GroupSpanBar({
       Math.abs(m.time - group.end) < 0.001 &&
       selectedKfs.has(kfKey(m.trackId, m.kfId)),
   )
-  const fillClass = allSelected
-    ? 'bg-[#0091ff]'
+  const highlighted = allSelected || layerRelated
+  const fill = highlighted
+    ? 'var(--color-group-bar-active)'
     : leftSelected
-      ? 'bg-gradient-to-r from-[#0091ff] to-[#224a71]'
+      ? 'linear-gradient(to right, var(--color-group-bar-active), var(--color-group-bar))'
       : rightSelected
-        ? 'bg-gradient-to-r from-[#224a71] to-[#0091ff]'
-        : 'bg-[#224a71]'
-  const markerClass = allSelected || leftSelected || rightSelected
-    ? 'bg-white mix-blend-overlay'
-    : 'bg-[#00a1ff]'
+        ? 'linear-gradient(to right, var(--color-group-bar), var(--color-group-bar-active))'
+        : 'var(--color-group-bar)'
 
   /**
    * Scale handler factory. `side` picks the dragged edge, the
@@ -4248,11 +4668,18 @@ function GroupSpanBar({
       data-timeline-selection-surface="1"
       onPointerDown={onBodyPointerDown}
       title={`Group of ${group.members.length} keyframes — drag to shift, drag edges to scale`}
-      className={[
-        'absolute z-20 h-4 cursor-grab rounded-[4px] shadow-[0_0_0_0_#002e5d] ring-1 ring-[#1b4165] hover:brightness-110',
-        fillClass,
-      ].join(' ')}
-      style={{ left, top: 4, width }}
+      className="absolute z-20 h-4 cursor-grab rounded-[4px] ring-1 hover:brightness-110"
+      style={
+        {
+          left,
+          top: 4,
+          width,
+          background: fill,
+          boxShadow:
+            '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
+          '--tw-ring-color': 'var(--color-group-bar-ring)',
+        } as React.CSSProperties
+      }
     >
       <div
         data-group-handle="left"
@@ -4270,14 +4697,6 @@ function GroupSpanBar({
       >
         <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
       </div>
-      <span className="pointer-events-none absolute top-[2px] left-1/2 grid size-3 -translate-x-1/2 place-items-center">
-        <span
-          className={[
-            'block size-[8.5px] rotate-45 rounded-[2px] shadow-[0_0_0_0_#002e5d]',
-            markerClass,
-          ].join(' ')}
-        />
-      </span>
     </div>
   )
 }

@@ -42,6 +42,7 @@ import {
 import {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
+  listTracksForNode,
   normalizeTextAnimation,
 } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
@@ -3907,7 +3908,13 @@ function TextGlyphs({
   const playhead = useUI((s) => s.playhead)
   const api = useSceneAPI()
   const isEditing = editingTextId === node.id
-  const textAnimation = anim?.textAnimation ?? normalizeTextAnimation(node.textAnimation)
+  const hasTextAnimationTracks = listTracksForNode(api, node.id).some(
+    (track) =>
+      track.propertyId === 'text.progress' && track.keyframes.length >= 2,
+  )
+  const textAnimation =
+    anim?.textAnimation ??
+    (hasTextAnimationTracks ? null : normalizeTextAnimation(node.textAnimation))
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.
@@ -4050,6 +4057,13 @@ function renderTextAnimationSegments(
   sharedStyle: CSSProperties,
   progress?: number,
 ) {
+  if (config.id === 'tracking') {
+    return (
+      <span style={trackingTextStyle(config, playhead, progress, sharedStyle)}>
+        {text}
+      </span>
+    )
+  }
   const segments = splitTextAnimationSegments(text, config.applyTo)
   const orderedCount = Math.max(1, segments.filter((s) => s.animate).length)
   let animateIndex = 0
@@ -4082,6 +4096,36 @@ function renderTextAnimationSegments(
       </span>
     )
   })
+}
+
+function trackingTextStyle(
+  config: TextAnimationConfig,
+  playhead: number,
+  progress: number | undefined,
+  sharedStyle: CSSProperties,
+): CSSProperties {
+  const timelineProgress =
+    progress === undefined ? undefined : Math.max(0, Math.min(1, progress))
+  const globalElapsed =
+    timelineProgress === undefined
+      ? playhead - config.startTime
+      : timelineProgress * config.duration
+  const raw = globalElapsed / Math.max(0.05, config.duration)
+  const u = Math.max(0, Math.min(1, raw))
+  const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
+  const exit = config.mode === 'out'
+  const amount = exit ? eased : 1 - eased
+  const extraTrackingPx = amount * 10
+  const authoredTracking =
+    typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
+
+  return {
+    display: 'inline',
+    whiteSpace: 'inherit',
+    letterSpacing: authoredTracking + extraTrackingPx,
+    opacity: 1 - amount,
+    willChange: 'letter-spacing, opacity',
+  }
 }
 
 function splitTextAnimationSegments(

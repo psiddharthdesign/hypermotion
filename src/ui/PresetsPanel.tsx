@@ -16,6 +16,7 @@ import {
   applyTextAnimation,
   normalizeTextAnimation,
   stampTextAnimationKeyframes,
+  textAnimationDefaults,
   updateTextAnimationEasing,
 } from '@/anim'
 import type {
@@ -204,13 +205,10 @@ export function PresetsPanel() {
   const visibleLayerPresets = layerPresetTab === 'in' ? ins : outs
   const primaryTextNode = selectedTextNodes[0]
   const primaryTextTrack = primaryTextNode
-    ? api
-        .getTracksForNode(primaryTextNode.id)
-        .find((track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2)
+    ? findTextAnimationTrack(api, primaryTextNode.id, trackFilter, playhead)
     : null
-  const primaryTextConfig = primaryTextTrack
-    ? normalizeTextAnimation(primaryTextNode?.textAnimation)
-    : null
+  const primaryTextConfig =
+    normalizeTextAnimation(primaryTextTrack?.textAnimation ?? primaryTextNode?.textAnimation)
   const primaryTextPreset = primaryTextConfig
     ? textPresetForConfig(primaryTextConfig)
     : null
@@ -422,13 +420,26 @@ function TextAnimationPanel() {
   const primaryTextAnimationTrack = primary
     ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter, playhead)
     : null
-  const current = primaryTextAnimationTrack
+  const primarySelectedTimelineTrack = primary
+    ? findSelectedTimelineTrack(api, primary.id, selectedTextTrackFilter)
+    : null
+  const primaryResolvedTextTrack =
+    primaryTextAnimationTrack ??
+    (primary && primarySelectedTimelineTrack
+      ? findTextAnimationTrackMatchingRange(api, primary.id, primarySelectedTimelineTrack)
+      : null)
+  const primaryTextAnimationConfig = normalizeTextAnimation(primary?.textAnimation)
+  const current = primaryResolvedTextTrack
     ? withTextTrackTiming(
-        normalizeTextAnimation(primaryTextAnimationTrack.textAnimation ?? primary?.textAnimation),
-        primaryTextAnimationTrack,
+        normalizeTextAnimation(primaryResolvedTextTrack.textAnimation ?? primary?.textAnimation),
+        primaryResolvedTextTrack,
         primary?.text ?? '',
       )
-    : null
+    : withTextTrackTiming(
+        primaryTextAnimationConfig,
+        primarySelectedTimelineTrack,
+        primary?.text ?? '',
+      )
   const currentEasingText = current ? easingToText(current) : ''
   const visibleEasingDraft =
     easingDraft.source === currentEasingText ? easingDraft.value : currentEasingText
@@ -436,13 +447,19 @@ function TextAnimationPanel() {
   const patch = (next: Partial<TextAnimationConfig>) => {
     if (!current) return
     for (const node of selectedTextNodes) {
-      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead)
+      const selectedTimelineTrack = findSelectedTimelineTrack(api, node.id, selectedTextTrackFilter)
+      const textTrack =
+        findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead) ??
+        (selectedTimelineTrack
+          ? findTextAnimationTrackMatchingRange(api, node.id, selectedTimelineTrack)
+          : null)
       const base = normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation) ?? current
       const config = {
         ...base,
         ...next,
       }
-      const timedConfig = withTextTrackTiming(config, textTrack, node.text, next) ?? config
+      const timingTrack = textTrack ?? selectedTimelineTrack
+      const timedConfig = withTextTrackTiming(config, timingTrack, node.text, next) ?? config
       api.setNodeProperty(node.id, 'textAnimation', timedConfig)
       if (isTextEasingOnlyPatch(next)) {
         updateTextAnimationEasing(api, node.id, timedConfig, textTrack?.id)
@@ -470,20 +487,57 @@ function TextAnimationPanel() {
   }
 
   const pickPreset = (id: TextAnimationId) => {
+    const applied = new Set<NodeId>()
     for (let i = 0; i < selectedTextNodes.length; i++) {
       const node = selectedTextNodes[i]!
-      const textTrack = findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead)
-      const startTime = textTrack
-        ? trackStartTime(textTrack)
+      if (applied.has(node.id)) continue
+      applied.add(node.id)
+      const selectedTimelineTrack = findSelectedTimelineTrack(api, node.id, selectedTextTrackFilter)
+      const textTrack =
+        findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead) ??
+        (selectedTimelineTrack
+          ? findTextAnimationTrackMatchingRange(api, node.id, selectedTimelineTrack)
+          : null)
+      const timingTrack = textTrack ?? selectedTimelineTrack
+      const startTime = timingTrack
+        ? trackStartTime(timingTrack)
         : playhead + (staggerOn && selectedTextNodes.length > 1 ? i * staggerDelay : 0)
-      applyTextAnimation(
-        api,
-        node.id,
-        id,
-        startTime,
-        normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation),
-        { trackId: textTrack?.id },
-      )
+      if (!textTrack && selectedTimelineTrack) {
+        const previous = normalizeTextAnimation(node.textAnimation)
+        const defaults = textAnimationDefaults(id)
+        const next: TextAnimationConfig = {
+          ...defaults,
+          ...(previous
+            ? {
+                mode: previous.mode,
+                applyTo: previous.applyTo,
+                order: previous.order,
+                delay: previous.delay,
+                smoothing: previous.smoothing,
+                easingPresetId: previous.easingPresetId,
+                easingStrength: previous.easingStrength,
+                customEasing: previous.customEasing,
+              }
+            : {}),
+          startTime,
+        }
+        const timedConfig = withTextTrackTiming(
+          next,
+          selectedTimelineTrack,
+          node.text,
+        ) ?? next
+        api.setNodeProperty(node.id, 'textAnimation', timedConfig)
+        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text)
+      } else {
+        applyTextAnimation(
+          api,
+          node.id,
+          id,
+          startTime,
+          normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation),
+          { trackId: textTrack?.id },
+        )
+      }
     }
     setShowPicker(false)
   }
@@ -1195,20 +1249,62 @@ function findTextAnimationTrack(
   return tracks[0] ?? null
 }
 
+function findSelectedTimelineTrack(
+  api: SceneAPI,
+  nodeId: NodeId,
+  trackFilter?: ReadonlySet<string>,
+): ReturnType<typeof listTracksForNode>[number] | null {
+  if (!trackFilter) return null
+  return (
+    listTracksForNode(api, nodeId).find((track) => trackFilter.has(track.id)) ??
+    null
+  )
+}
+
+function findTextAnimationTrackMatchingRange(
+  api: SceneAPI,
+  nodeId: NodeId,
+  reference: ReturnType<typeof listTracksForNode>[number],
+): ReturnType<typeof listTracksForNode>[number] | null {
+  const referenceRange = trackRange(reference)
+  if (!referenceRange) return null
+  return (
+    listTracksForNode(api, nodeId)
+      .filter((track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2)
+      .find((track) => {
+        const range = trackRange(track)
+        return (
+          !!range &&
+          Math.abs(range.start - referenceRange.start) <= 0.02 &&
+          Math.abs(range.end - referenceRange.end) <= 0.02
+        )
+      }) ?? null
+  )
+}
+
 function trackContainsTime(
   track: ReturnType<typeof listTracksForNode>[number],
   time: number,
 ): boolean {
-  if (track.keyframes.length < 2) return false
-  const sorted = [...track.keyframes].sort((a, b) => a.time - b.time)
-  const start = sorted[0]!.time
-  const end = sorted[sorted.length - 1]!.time
+  const range = trackRange(track)
+  if (!range) return false
+  const { start, end } = range
   return time >= start - 0.01 && time <= end + 0.01
 }
 
 function trackStartTime(track: ReturnType<typeof listTracksForNode>[number]): number {
-  if (track.keyframes.length === 0) return 0
-  return Math.min(...track.keyframes.map((keyframe) => keyframe.time))
+  return trackRange(track)?.start ?? 0
+}
+
+function trackRange(
+  track: ReturnType<typeof listTracksForNode>[number],
+): { start: number; end: number } | null {
+  if (track.keyframes.length === 0) return null
+  const times = track.keyframes.map((keyframe) => keyframe.time)
+  return {
+    start: Math.min(...times),
+    end: Math.max(...times),
+  }
 }
 
 function withTextTrackTiming(

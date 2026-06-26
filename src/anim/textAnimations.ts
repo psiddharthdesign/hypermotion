@@ -184,7 +184,10 @@ export function stampTextAnimationKeyframes(
   if (options.replaceAll) clearTextAnimationKeyframes(api, nodeId)
   const start = config.startTime
   const end = start + config.duration + Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
-  const trackId = options.trackId ?? genId()
+  const trackId =
+    options.trackId ??
+    findTextAnimationTrackAtStart(api, nodeId, start) ??
+    genId()
   const track: Track = {
     id: trackId,
     nodeId,
@@ -198,6 +201,20 @@ export function stampTextAnimationKeyframes(
   }
   api.setTrack(track)
   return trackId
+}
+
+function findTextAnimationTrackAtStart(
+  api: SceneAPI,
+  nodeId: NodeId,
+  startTime: number,
+): TrackId | null {
+  for (const track of api.getTracksForNode(nodeId)) {
+    if (track.propertyId !== 'text.progress') continue
+    if (track.keyframes.length < 2) continue
+    const start = Math.min(...track.keyframes.map((keyframe) => keyframe.time))
+    if (Math.abs(start - startTime) <= 0.01) return track.id
+  }
+  return null
 }
 
 export function updateTextAnimationEasing(

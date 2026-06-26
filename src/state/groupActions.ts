@@ -58,10 +58,20 @@ export function addTracksToGroup(
   groupId: string,
   trackIds: string[],
 ): void {
+  insertTracksIntoGroup(api, groupId, trackIds)
+}
+
+export function insertTracksIntoGroup(
+  api: SceneAPI,
+  groupId: string,
+  trackIds: string[],
+  index?: number,
+): void {
   const ui = api.getUiState()
   const target = ui.trackGroups[groupId]
   if (!target) return
-  const incoming = new Set(trackIds)
+  const incomingIds = [...new Set(trackIds)]
+  const incoming = new Set(incomingIds)
   // Pull each incoming track out of any prior group so it lands in
   // exactly one place. Drop any group that ends up below 2 members.
   const next: typeof ui.trackGroups = {}
@@ -70,16 +80,26 @@ export function addTracksToGroup(
     const filtered = g.trackIds.filter((t) => !incoming.has(t))
     if (filtered.length >= 2) next[gid] = { ...g, trackIds: filtered }
   }
-  // Build the target's new track list: keep existing members,
-  // append new ones in caller-provided order, dedupe.
-  const seen = new Set(target.trackIds)
-  const merged = [...target.trackIds]
-  for (const tid of trackIds) {
-    if (!seen.has(tid)) {
-      merged.push(tid)
-      seen.add(tid)
-    }
-  }
+  // Build the target's new track list: remove any incoming tracks
+  // first, then insert them at the requested position. This supports
+  // both "move into this group here" and "reorder inside the group".
+  const rawInsertionIndex =
+    typeof index === 'number'
+      ? Math.max(0, Math.min(target.trackIds.length, index))
+      : target.trackIds.length
+  const removedBeforeInsertion = target.trackIds
+    .slice(0, rawInsertionIndex)
+    .filter((trackId) => incoming.has(trackId)).length
+  const base = target.trackIds.filter((trackId) => !incoming.has(trackId))
+  const insertionIndex = Math.max(
+    0,
+    Math.min(base.length, rawInsertionIndex - removedBeforeInsertion),
+  )
+  const merged = [
+    ...base.slice(0, insertionIndex),
+    ...incomingIds,
+    ...base.slice(insertionIndex),
+  ]
   next[groupId] = { ...target, trackIds: merged }
   api.setUiState({ trackGroups: next })
 }
@@ -96,6 +116,22 @@ export function ungroupTracks(api: SceneAPI, trackIds: string[]): void {
   api.setUiState({ trackGroups: next })
 }
 
+/** Remove only these tracks from any track group they belong to. */
+export function removeTracksFromGroups(
+  api: SceneAPI,
+  trackIds: string[],
+): void {
+  if (trackIds.length === 0) return
+  const ui = api.getUiState()
+  const ids = new Set(trackIds)
+  const next: typeof ui.trackGroups = {}
+  for (const [gid, g] of Object.entries(ui.trackGroups)) {
+    const filtered = g.trackIds.filter((trackId) => !ids.has(trackId))
+    if (filtered.length >= 2) next[gid] = { ...g, trackIds: filtered }
+  }
+  api.setUiState({ trackGroups: next })
+}
+
 /** Flip a track group's collapsed flag. */
 export function toggleTrackGroupCollapsed(
   api: SceneAPI,
@@ -108,6 +144,26 @@ export function toggleTrackGroupCollapsed(
     trackGroups: {
       ...ui.trackGroups,
       [groupId]: { ...g, collapsed: !g.collapsed },
+    },
+  })
+}
+
+/** Rename a track group. Empty names clear the custom title. */
+export function renameTrackGroup(
+  api: SceneAPI,
+  groupId: string,
+  name: string,
+): void {
+  const ui = api.getUiState()
+  const g = ui.trackGroups[groupId]
+  if (!g) return
+  const trimmed = name.trim()
+  const { name: _name, ...rest } = g
+  void _name
+  api.setUiState({
+    trackGroups: {
+      ...ui.trackGroups,
+      [groupId]: trimmed ? { ...rest, name: trimmed } : rest,
     },
   })
 }
@@ -142,6 +198,27 @@ export function ungroupKeyframes(api: SceneAPI, keys: string[]): void {
       nextGroups[gid] = members
       if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
     }
+  }
+  api.setUiState({
+    kfGroups: nextGroups,
+    kfGroupCollapsed: nextCollapsed,
+  })
+}
+
+/** Dissolve keyframe groups by id. Useful when the UI is rendering the
+ * group itself, rather than acting from a keyframe selection. */
+export function ungroupKeyframeGroups(
+  api: SceneAPI,
+  groupIds: string[],
+): void {
+  const ui = api.getUiState()
+  const ids = new Set(groupIds)
+  const nextGroups: typeof ui.kfGroups = {}
+  const nextCollapsed: typeof ui.kfGroupCollapsed = {}
+  for (const [gid, members] of Object.entries(ui.kfGroups)) {
+    if (ids.has(gid)) continue
+    nextGroups[gid] = members
+    if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
   }
   api.setUiState({
     kfGroups: nextGroups,
