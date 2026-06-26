@@ -83,11 +83,18 @@ export function insertTracksIntoGroup(
   // Build the target's new track list: remove any incoming tracks
   // first, then insert them at the requested position. This supports
   // both "move into this group here" and "reorder inside the group".
-  const base = target.trackIds.filter((trackId) => !incoming.has(trackId))
-  const insertionIndex =
+  const rawInsertionIndex =
     typeof index === 'number'
-      ? Math.max(0, Math.min(base.length, index))
-      : base.length
+      ? Math.max(0, Math.min(target.trackIds.length, index))
+      : target.trackIds.length
+  const removedBeforeInsertion = target.trackIds
+    .slice(0, rawInsertionIndex)
+    .filter((trackId) => incoming.has(trackId)).length
+  const base = target.trackIds.filter((trackId) => !incoming.has(trackId))
+  const insertionIndex = Math.max(
+    0,
+    Math.min(base.length, rawInsertionIndex - removedBeforeInsertion),
+  )
   const merged = [
     ...base.slice(0, insertionIndex),
     ...incomingIds,

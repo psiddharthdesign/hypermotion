@@ -2393,7 +2393,7 @@ export function Timeline() {
                         }}
                       />
                       {!tg.collapsed &&
-                        tg.memberTracks.map((t) => (
+                        tg.memberTracks.map((t, index) => (
                           <SegmentRow
                             key={t.id}
                             track={t}
@@ -2413,6 +2413,13 @@ export function Timeline() {
                               smoothSeekPlayhead(time)
                             }}
                             onFocus={() => focusTrackForEditing(group.nodeId)}
+                            onDropTrackIds={(trackIds, placement) =>
+                              addDroppedTracksToGroup(
+                                tg.groupId,
+                                trackIds,
+                                index + (placement === 'after' ? 1 : 0),
+                              )
+                            }
                             onBarContextMenu={(e) =>
                               openTimelineMenu(e, { kind: 'track', track: t })
                             }
@@ -3150,6 +3157,7 @@ function SegmentRow({
   onFocus,
   onBarContextMenu,
   onKeyframeContextMenu,
+  onDropTrackIds,
 }: {
   track: Track
   duration: number
@@ -3177,6 +3185,7 @@ function SegmentRow({
     e: React.MouseEvent,
     kf: Track['keyframes'][number],
   ) => void
+  onDropTrackIds?: (trackIds: string[], placement: 'before' | 'after') => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
 
@@ -3372,6 +3381,24 @@ function SegmentRow({
     <div
       ref={rowRef}
       onPointerDown={onRowPointerDown}
+      onDragOver={(e) => {
+        if (!onDropTrackIds) return
+        if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(e) => {
+        if (!onDropTrackIds) return
+        const ids = getDraggedTrackIds(e)
+        if (ids.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const rect = e.currentTarget.getBoundingClientRect()
+        onDropTrackIds(
+          ids,
+          e.clientY > rect.top + rect.height / 2 ? 'after' : 'before',
+        )
+      }}
       className={
         'relative h-6 border-t border-border/30 ' +
         (nodeSelected
