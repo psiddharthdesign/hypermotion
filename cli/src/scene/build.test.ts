@@ -560,6 +560,24 @@ test('applyScenePatch fills text defaults for created nodes', () => {
   assert.equal(nodes.caption.color, '#0a0a0c')
 })
 
+test('applyScenePatch fills size defaults for created shape nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'badge',
+        kind: 'rect',
+        parent: 'root',
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.badge.size, { width: 100, height: 100 })
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}
