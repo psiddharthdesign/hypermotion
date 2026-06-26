@@ -15,6 +15,7 @@ import {
   ungroupTracks as ungroupTracksHelper,
   removeTracksFromGroups as removeTracksFromGroupsHelper,
   addTracksToGroup as addTracksToGroupHelper,
+  insertTracksIntoGroup as insertTracksIntoGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
   renameTrackGroup as renameTrackGroupHelper,
 } from '@/state/groupActions'
@@ -357,16 +358,22 @@ export function Timeline() {
     [trackGroupsDict],
   )
   const addDroppedTracksToGroup = useCallback(
-    (groupId: string, trackIds: string[]) => {
+    (groupId: string, trackIds: string[], index?: number) => {
       const group = api.getUiState().trackGroups[groupId]
       if (!group) return
       const memberSet = new Set(group.trackIds)
       const toAdd = [...new Set(trackIds)].filter(
-        (trackId) => !memberSet.has(trackId) && api.getTrack(trackId),
+        (trackId) =>
+          (typeof index === 'number' || !memberSet.has(trackId)) &&
+          api.getTrack(trackId),
       )
       if (toAdd.length === 0) return
-      addTracksToGroupHelper(api, groupId, toAdd)
-      setSelectedTrackIds([...group.trackIds, ...toAdd])
+      insertTracksIntoGroupHelper(api, groupId, toAdd, index)
+      const next = api.getUiState().trackGroups[groupId]?.trackIds ?? [
+        ...group.trackIds,
+        ...toAdd,
+      ]
+      setSelectedTrackIds(next)
       clearKfs()
     },
     [api, clearKfs, setSelectedTrackIds],
@@ -891,8 +898,7 @@ export function Timeline() {
    *     node in tracksByNode order that contributes a member
    *   - label — for composed: the host node's name; for sequence:
    *     "Sequence"
-   *   - memberTracks — Track[] in render order (same order they
-   *     appear in tracksByNode)
+   *   - memberTracks — Track[] in the group's stored order
    *   - collapsed
    *
    * Only groups whose members still resolve to live tracks render —
@@ -911,18 +917,29 @@ export function Timeline() {
       collapsed: boolean
     }
     const out: Resolved[] = []
+    const trackById = new Map<string, Track>()
+    const nodeOrder = new Map<string, number>()
+    for (let i = 0; i < tracksByNode.length; i++) {
+      const ng = tracksByNode[i]!
+      nodeOrder.set(ng.nodeId, i)
+      for (const track of ng.tracks) trackById.set(track.id, track)
+    }
     for (const [groupId, g] of Object.entries(trackGroupsDict)) {
-      const memberSet = new Set(g.trackIds)
       const memberTracks: Track[] = []
-      let hostNodeId: string | null = null
       const memberNodes = new Set<string>()
-      for (const ng of tracksByNode) {
-        for (const t of ng.tracks) {
-          if (memberSet.has(t.id)) {
-            if (hostNodeId === null) hostNodeId = ng.nodeId
-            memberTracks.push(t)
-            memberNodes.add(ng.nodeId)
-          }
+      for (const trackId of g.trackIds) {
+        const track = trackById.get(trackId)
+        if (!track) continue
+        memberTracks.push(track)
+        memberNodes.add(track.nodeId)
+      }
+      let hostNodeId: string | null = null
+      let bestOrder = Infinity
+      for (const nodeId of memberNodes) {
+        const order = nodeOrder.get(nodeId) ?? Infinity
+        if (order < bestOrder) {
+          bestOrder = order
+          hostNodeId = nodeId
         }
       }
       if (memberTracks.length < 2 || !hostNodeId) continue
@@ -1948,11 +1965,18 @@ export function Timeline() {
                       onRemoveTracksFromGroup={(trackIds) =>
                         removeTracksFromGroupsHelper(api, trackIds)
                       }
-                      onDropTracks={(trackIds) =>
-                        addDroppedTracksToGroup(tg.groupId, trackIds)
-                      }
-                      openContextMenu={openContextMenu}
-                    />
+                          onDropTracks={(trackIds) =>
+                            addDroppedTracksToGroup(tg.groupId, trackIds)
+                          }
+                          onDropTracksAtIndex={(trackIds, index) =>
+                            addDroppedTracksToGroup(
+                              tg.groupId,
+                              trackIds,
+                              index,
+                            )
+                          }
+                          openContextMenu={openContextMenu}
+                        />
                       )
                     })()
                   ))}
@@ -2667,6 +2691,7 @@ function TrackLabel({
   layerName,
   onFocus,
   onContextMenu,
+  onDropTrackIds,
 }: {
   track: Track
   /** Used to disambiguate property labels (e.g. cameras read scaleX as "Scale"). */
@@ -2683,6 +2708,7 @@ function TrackLabel({
   layerName?: string
   onFocus: () => void
   onContextMenu: (e: React.MouseEvent) => void
+  onDropTrackIds?: (trackIds: string[], placement: 'before' | 'after') => void
 }) {
   const api = useSceneAPI()
   const selectedTrackId = useUI((s) => s.selectedTrackId)
@@ -2697,6 +2723,24 @@ function TrackLabel({
     <div
       draggable
       onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
+      onDragOver={(e) => {
+        if (!onDropTrackIds) return
+        if (!e.dataTransfer.types.includes(TRACK_IDS_DRAG_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(e) => {
+        if (!onDropTrackIds) return
+        const ids = getDraggedTrackIds(e)
+        if (ids.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const rect = e.currentTarget.getBoundingClientRect()
+        onDropTrackIds(
+          ids,
+          e.clientY > rect.top + rect.height / 2 ? 'after' : 'before',
+        )
+      }}
       onClick={(e) => {
         // Shift / Cmd / Ctrl click maintains a MULTI-track selection
         // for Cmd+G grouping. Plain click sets the single-track focus
@@ -3687,6 +3731,7 @@ function TrackGroupLeftRow({
   onAddSelectedLayers,
   onRemoveTracksFromGroup,
   onDropTracks,
+  onDropTracksAtIndex,
   openContextMenu,
 }: {
   group: ResolvedTrackGroup
@@ -3700,6 +3745,7 @@ function TrackGroupLeftRow({
   onAddSelectedLayers: () => void
   onRemoveTracksFromGroup: (trackIds: string[]) => void
   onDropTracks: (trackIds: string[]) => void
+  onDropTracksAtIndex: (trackIds: string[], index: number) => void
   openContextMenu: (menu: import('@/state/ui').ContextMenuState) => void
 }) {
   const collapsed = group.collapsed
@@ -3827,7 +3873,7 @@ function TrackGroupLeftRow({
       {/* Children render only when expanded — indented underneath
           so the bundling reads visually like a folder. */}
       {!collapsed &&
-        group.memberTracks.map((t) => (
+        group.memberTracks.map((t, index) => (
           <TrackLabel
             key={t.id}
             track={t}
@@ -3846,6 +3892,12 @@ function TrackGroupLeftRow({
             onFocus={() => {
               /* selection of the layer happens via the parent shell */
             }}
+            onDropTrackIds={(trackIds, placement) =>
+              onDropTracksAtIndex(
+                trackIds,
+                index + (placement === 'after' ? 1 : 0),
+              )
+            }
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()

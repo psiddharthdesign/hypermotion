@@ -58,10 +58,20 @@ export function addTracksToGroup(
   groupId: string,
   trackIds: string[],
 ): void {
+  insertTracksIntoGroup(api, groupId, trackIds)
+}
+
+export function insertTracksIntoGroup(
+  api: SceneAPI,
+  groupId: string,
+  trackIds: string[],
+  index?: number,
+): void {
   const ui = api.getUiState()
   const target = ui.trackGroups[groupId]
   if (!target) return
-  const incoming = new Set(trackIds)
+  const incomingIds = [...new Set(trackIds)]
+  const incoming = new Set(incomingIds)
   // Pull each incoming track out of any prior group so it lands in
   // exactly one place. Drop any group that ends up below 2 members.
   const next: typeof ui.trackGroups = {}
@@ -70,16 +80,19 @@ export function addTracksToGroup(
     const filtered = g.trackIds.filter((t) => !incoming.has(t))
     if (filtered.length >= 2) next[gid] = { ...g, trackIds: filtered }
   }
-  // Build the target's new track list: keep existing members,
-  // append new ones in caller-provided order, dedupe.
-  const seen = new Set(target.trackIds)
-  const merged = [...target.trackIds]
-  for (const tid of trackIds) {
-    if (!seen.has(tid)) {
-      merged.push(tid)
-      seen.add(tid)
-    }
-  }
+  // Build the target's new track list: remove any incoming tracks
+  // first, then insert them at the requested position. This supports
+  // both "move into this group here" and "reorder inside the group".
+  const base = target.trackIds.filter((trackId) => !incoming.has(trackId))
+  const insertionIndex =
+    typeof index === 'number'
+      ? Math.max(0, Math.min(base.length, index))
+      : base.length
+  const merged = [
+    ...base.slice(0, insertionIndex),
+    ...incomingIds,
+    ...base.slice(insertionIndex),
+  ]
   next[groupId] = { ...target, trackIds: merged }
   api.setUiState({ trackGroups: next })
 }
