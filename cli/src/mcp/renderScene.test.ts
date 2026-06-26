@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 
@@ -44,4 +47,22 @@ test('render_scene reports invalid arguments as MCP errors', async () => {
   assert.equal(result.isError, true)
   const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
   assert.match(text, /^render_scene: invalid arguments/)
+})
+
+test('render_scene reports missing scene files as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-missing-'))
+  const missingScene = path.join(dir, 'scene.hype')
+
+  try {
+    const result = await handleRenderScene({
+      output: path.join(dir, 'out.mp4'),
+      scene: missingScene,
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `Scene file not found: ${missingScene}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
