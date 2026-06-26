@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { applyScenePatch, type PatchOperation, type ScenePatch } from '../../scene/build.js'
@@ -33,7 +33,9 @@ export const patchSceneTool: Tool = {
   },
 }
 
-export async function handlePatchScene(args: Record<string, unknown>) {
+export async function handlePatchScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   const parsed = PatchInput.parse(args)
   const output = path.resolve(parsed.output ?? parsed.scene)
   const patch =
