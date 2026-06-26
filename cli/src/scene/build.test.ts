@@ -606,10 +606,11 @@ test('validateScene rejects unsupported track property ids', () => {
     invalid: {
       id: 'invalid',
       nodeId: 'title',
+      // @ts-expect-error Intentionally invalid to exercise runtime validation.
       propertyId: 'appearance.missing',
       keyframes: [],
     },
-  } as unknown as SceneJson['tracks']
+  }
 
   const result = validateScene(buildSceneBytes(scene))
 
