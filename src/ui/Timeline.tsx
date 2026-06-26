@@ -1661,7 +1661,7 @@ export function Timeline() {
                     return (
                       <div
                         key={g.groupId}
-                        onClick={() => {
+                        onClick={(e) => {
                           // Single-click selects every member keyframe.
                           // Without this, the user has no way to "have"
                           // the group selected for Cmd+Shift+G ungroup
@@ -1670,7 +1670,20 @@ export function Timeline() {
                           // makes the GraphEditor / EasingPicker react
                           // to the group's keyframes if they share a
                           // single track.
-                          replaceKfs(memberKeys)
+                          if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                            const allIn = memberKeys.every((key) =>
+                              selectedKfs.has(key),
+                            )
+                            const next = new Set(selectedKfs)
+                            if (allIn) {
+                              for (const key of memberKeys) next.delete(key)
+                            } else {
+                              for (const key of memberKeys) next.add(key)
+                            }
+                            replaceKfs([...next])
+                          } else {
+                            replaceKfs(memberKeys)
+                          }
                         }}
                         onDoubleClick={() => toggleGroupCollapsed(g.groupId)}
                         onContextMenu={(e) => {
@@ -2047,6 +2060,7 @@ export function Timeline() {
                           duration={duration}
                           api={api}
                           selectedKfs={selectedKfs}
+                          replaceKfs={replaceKfs}
                         />
                       </div>
                     )
@@ -4091,6 +4105,7 @@ function GroupSpanBar({
   duration,
   api,
   selectedKfs,
+  replaceKfs,
 }: {
   group: {
     groupId: string
@@ -4101,6 +4116,7 @@ function GroupSpanBar({
   duration: number
   api: SceneAPI
   selectedKfs: Set<string>
+  replaceKfs: (keys: string[]) => void
 }) {
   const span = group.end - group.start
   const left = group.start * PX_PER_SECOND
@@ -4195,6 +4211,18 @@ function GroupSpanBar({
     if ((e.target as HTMLElement).dataset.groupHandle) return
     e.stopPropagation()
     e.preventDefault()
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      const allIn = memberKeys.every((key) => selectedKfs.has(key))
+      const next = new Set(selectedKfs)
+      if (allIn) {
+        for (const key of memberKeys) next.delete(key)
+      } else {
+        for (const key of memberKeys) next.add(key)
+      }
+      replaceKfs([...next])
+      return
+    }
+    if (!allSelected) replaceKfs(memberKeys)
     const startX = e.clientX
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     const snap = group.members.map((m) => ({ ...m }))
