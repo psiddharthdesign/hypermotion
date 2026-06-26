@@ -1,57 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
-import type { PropertyIdJson } from '../../scene/build.js'
-
-const KEYFRAMEABLE_PROPERTIES = [
-  'transform.x',
-  'transform.y',
-  'transform.z',
-  'transform.rotation',
-  'transform.rotationX',
-  'transform.rotationY',
-  'transform.scaleX',
-  'transform.scaleY',
-  'transform.anchorX',
-  'transform.anchorY',
-  'transform.anchorZ',
-  'camera.focusX',
-  'camera.focusY',
-  'camera.focusWorldX',
-  'camera.focusWorldY',
-  'camera.focusWorldZ',
-  'camera.focusDistance',
-  'camera.focusRadius',
-  'camera.focusFalloff',
-  'camera.pointOfInterestX',
-  'camera.pointOfInterestY',
-  'camera.pointOfInterestZ',
-  'camera.focalLength',
-  'camera.fieldOfView',
-  'camera.nearClip',
-  'camera.farClip',
-  'camera.aperture',
-  'camera.iso',
-  'camera.blurLevel',
-  'camera.blurQuality',
-  'appearance.opacity',
-  'appearance.cornerRadius',
-  'appearance.cornerRadii',
-  'appearance.cornerRadii.tl',
-  'appearance.cornerRadii.tr',
-  'appearance.cornerRadii.br',
-  'appearance.cornerRadii.bl',
-  'appearance.fill',
-  'layout.gap',
-  'layout.padding.top',
-  'layout.padding.right',
-  'layout.padding.bottom',
-  'layout.padding.left',
-  'size.width',
-  'size.height',
-  'layout.direction',
-  'variant',
-] satisfies PropertyIdJson[]
+import { PROPERTY_IDS } from '../../scene/build.js'
 
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
@@ -90,12 +40,12 @@ export async function handleGetCapabilities() {
     queryTools: ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'],
     renderFormats: ['mp4', 'webm', 'gif'],
     renderQualities: ['comp', '720p', '2k', '4k'],
-    keyframeableProperties: KEYFRAMEABLE_PROPERTIES,
+    keyframeableProperties: PROPERTY_IDS,
   })
 }
 
 export async function handleListKeyframeableProperties() {
-  return text({ keyframeableProperties: KEYFRAMEABLE_PROPERTIES })
+  return text({ keyframeableProperties: PROPERTY_IDS })
 }
 
 function text(value: unknown) {
