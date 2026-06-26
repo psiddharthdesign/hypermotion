@@ -259,6 +259,63 @@ test('buildSceneBytes preserves image fills in appearance', () => {
   assert.equal(appearance.cornerRadius, 0)
 })
 
+test('buildSceneBytes preserves gradient fills in appearance', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  const title = scene.nodes?.title
+  if (!root || !title) throw new Error('missing sample nodes')
+  root.appearance = {
+    fill: {
+      kind: 'radial',
+      stops: [
+        { at: 0, color: '#ffffff' },
+        { at: 1, color: '#0f172a' },
+      ],
+      cx: 0.5,
+      cy: 0.5,
+      shape: 'circle',
+    },
+  }
+  title.appearance = {
+    fill: {
+      kind: 'conic',
+      stops: [
+        { at: 0, color: '#f97316' },
+        { at: 1, color: '#2563eb' },
+      ],
+      angle: 45,
+      cx: 0.5,
+      cy: 0.5,
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const rootAppearance = nodes.root.appearance as Record<string, unknown>
+  const titleAppearance = nodes.title.appearance as Record<string, unknown>
+
+  assert.deepEqual(rootAppearance.fill, {
+    kind: 'radial',
+    stops: [
+      { at: 0, color: '#ffffff' },
+      { at: 1, color: '#0f172a' },
+    ],
+    cx: 0.5,
+    cy: 0.5,
+    shape: 'circle',
+  })
+  assert.deepEqual(titleAppearance.fill, {
+    kind: 'conic',
+    stops: [
+      { at: 0, color: '#f97316' },
+      { at: 1, color: '#2563eb' },
+    ],
+    angle: 45,
+    cx: 0.5,
+    cy: 0.5,
+  })
+})
+
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
