@@ -120,6 +120,14 @@ test('buildSceneBytes fills default metadata for minimal scenes', () => {
   assert.equal(summary.activeCameraId, null)
 })
 
+test('buildSceneBytes leaves root and active camera empty without nodes', () => {
+  const summary = readSceneSummary(buildSceneBytes({}))
+
+  assert.equal(summary.root, null)
+  assert.equal(summary.activeCameraId, null)
+  assert.equal(summary.layerCount, 0)
+})
+
 test('buildSceneBytes deep-merges partial metadata defaults', () => {
   const bytes = buildSceneBytes({
     meta: {
