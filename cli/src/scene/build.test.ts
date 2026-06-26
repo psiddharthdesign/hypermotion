@@ -388,6 +388,15 @@ test('buildSceneBytes infers root and active camera when omitted', () => {
   assert.equal(summary.activeCameraId, 'camera')
 })
 
+test('buildSceneBytes preserves an explicitly cleared active camera', () => {
+  const scene = sampleScene()
+  scene.activeCameraId = null
+
+  const summary = readSceneSummary(buildSceneBytes(scene))
+
+  assert.equal(summary.activeCameraId, null)
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}
