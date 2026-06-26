@@ -316,6 +316,38 @@ test('buildSceneBytes preserves gradient fills in appearance', () => {
   })
 })
 
+test('buildSceneBytes preserves per-side stroke widths in appearance', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.appearance = {
+    stroke: {
+      color: '#0f172a',
+      width: 2,
+      align: 'inside',
+      style: 'solid',
+      dashLength: 0,
+      dashGap: 0,
+      widths: { top: 1, right: 2, bottom: 3, left: 4 },
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const appearance = nodes.root.appearance as Record<string, unknown>
+
+  assert.deepEqual(appearance.stroke, {
+    color: '#0f172a',
+    width: 2,
+    align: 'inside',
+    style: 'solid',
+    dashLength: 0,
+    dashGap: 0,
+    widths: { top: 1, right: 2, bottom: 3, left: 4 },
+  })
+  assert.equal(appearance.opacity, 1)
+})
+
 test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
