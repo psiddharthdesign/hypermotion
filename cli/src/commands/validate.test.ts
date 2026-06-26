@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { buildSceneBytes } from '../scene/build.js'
+import { captureStdout } from '../testUtils/stdout.js'
+import { validateCommand } from './validate.js'
+
+test('validate command prints JSON validation results', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate JSON',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand()
+        .exitOverride()
+        .parseAsync([scenePath, '--json'], { from: 'user' })
+    })
+
+    assert.deepEqual(JSON.parse(stdout), {
+      ok: true,
+      errors: [],
+      warnings: ['scene.activeCameraId is missing'],
+    })
+    assert.equal(process.exitCode, previousExitCode)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
