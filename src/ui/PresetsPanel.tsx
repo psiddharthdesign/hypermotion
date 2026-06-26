@@ -1169,7 +1169,7 @@ function textNodesFromSelectionOrTimeline(
     const node = api.getNode(id)
     if (node?.kind !== 'text') continue
     const hasSelectedTextTrack = listTracksForNode(api, id).some(
-      (track) => track.propertyId === 'text.progress' && trackFilter.has(track.id),
+      (track) => trackFilter.has(track.id),
     )
     if (hasSelectedTextTrack) byId.set(node.id, node)
   }
