@@ -7,6 +7,7 @@ import {
   applyScenePatch,
   buildSceneBytes,
   readSceneSummary,
+  validateScene,
   type SceneJson,
 } from './build.js'
 
@@ -481,6 +482,25 @@ test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
   const tracks = data.tracks as Record<string, Record<string, unknown>>
 
   assert.equal(tracks['fade-title'].defaultEasing, 'ease-in-out')
+})
+
+test('validateScene rejects unsupported track property ids', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    invalid: {
+      id: 'invalid',
+      nodeId: 'title',
+      propertyId: 'appearance.missing',
+      keyframes: [],
+    },
+  } as unknown as SceneJson['tracks']
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track invalid has unsupported propertyId: appearance.missing',
+  ])
 })
 
 test('buildSceneBytes preserves variant selection keyframe values', () => {

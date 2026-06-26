@@ -844,9 +844,16 @@ export function validateScene(bytes: Uint8Array): {
     if (!Array.isArray(track.keyframes)) {
       errors.push(`track ${id} keyframes must be an array`)
     }
+    if (typeof track.propertyId !== 'string' || !isPropertyId(track.propertyId)) {
+      errors.push(`track ${id} has unsupported propertyId: ${String(track.propertyId)}`)
+    }
   }
 
   return { ok: errors.length === 0, errors, warnings }
+}
+
+function isPropertyId(value: string): value is PropertyIdJson {
+  return (PROPERTY_IDS as readonly string[]).includes(value)
 }
 
 export function applyScenePatch(bytes: Uint8Array, patch: ScenePatch | PatchOperation[]): Uint8Array {
