@@ -9,9 +9,9 @@
  *             then `~/Applications/...`. Future: query `mdfind`.
  *   Windows — Check `%ProgramFiles%\hyper-motion\hyper-motion.exe` and
  *             `%LOCALAPPDATA%\Programs\hyper-motion\hyper-motion.exe`.
- *   Linux   — Walk `~/.local/share/applications` for `.desktop` entries
- *             and check `/opt/hyper-motion` and AppImage in
- *             `~/Applications` / `~/.local/bin`.
+ *   Linux   — Check common binary/AppImage install locations:
+ *             `/opt/hyper-motion`, `/usr/bin`, `~/Applications`, and
+ *             `~/.local/bin`.
  *
  * Override path with `HYPERMOTION_APP_PATH` env var if installed somewhere
  * non-standard.
