@@ -8,6 +8,9 @@ import { inspectScene } from '../../scene/build.js'
 const SceneInput = z.object({ scene: z.string() })
 const LayerInput = z.object({ scene: z.string(), nodeId: z.string() })
 const TrackInput = z.object({ scene: z.string(), nodeId: z.string().optional() })
+type ReadSceneResult =
+  | { ok: true; scene: Record<string, unknown> }
+  | { ok: false; result: CallToolResult }
 
 export const listLayersTool: Tool = {
   name: 'list_layers',
@@ -47,11 +50,13 @@ export async function handleListLayers(
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
 
-  const scene = read(parsed.data.scene)
-  const nodes = record(scene.nodes)
+  const loaded = read('list_layers', parsed.data.scene)
+  if (!loaded.ok) return loaded.result
+
+  const nodes = record(loaded.scene.nodes)
   return text({
-    root: scene.root ?? null,
-    activeCameraId: scene.activeCameraId ?? null,
+    root: loaded.scene.root ?? null,
+    activeCameraId: loaded.scene.activeCameraId ?? null,
     layers: Object.values(nodes).map((raw) => {
       const n = record(raw)
       return {
@@ -71,7 +76,10 @@ export async function handleGetLayer(
   const parsed = LayerInput.safeParse(args)
   if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
 
-  const node = record(record(read(parsed.data.scene).nodes)[parsed.data.nodeId])
+  const loaded = read('get_layer', parsed.data.scene)
+  if (!loaded.ok) return loaded.result
+
+  const node = record(record(loaded.scene.nodes)[parsed.data.nodeId])
   if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${parsed.data.nodeId}` }] }
   return text(node)
 }
@@ -82,7 +90,10 @@ export async function handleListTracks(
   const parsed = TrackInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
 
-  const tracks = Object.values(record(read(parsed.data.scene).tracks)).filter((raw) => {
+  const loaded = read('list_tracks', parsed.data.scene)
+  if (!loaded.ok) return loaded.result
+
+  const tracks = Object.values(record(loaded.scene.tracks)).filter((raw) => {
     const t = record(raw)
     return parsed.data.nodeId ? t.nodeId === parsed.data.nodeId : true
   })
@@ -95,13 +106,32 @@ export async function handleListCameras(
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
 
-  const scene = read(parsed.data.scene)
-  const cameras = Object.values(record(scene.nodes)).filter((raw) => record(raw).kind === 'camera')
-  return text({ activeCameraId: scene.activeCameraId ?? null, cameras })
+  const loaded = read('list_cameras', parsed.data.scene)
+  if (!loaded.ok) return loaded.result
+
+  const cameras = Object.values(record(loaded.scene.nodes)).filter((raw) => record(raw).kind === 'camera')
+  return text({ activeCameraId: loaded.scene.activeCameraId ?? null, cameras })
 }
 
-function read(scenePath: string): Record<string, unknown> {
-  return inspectScene(new Uint8Array(fs.readFileSync(scenePath)))
+function read(toolName: string, scenePath: string): ReadSceneResult {
+  try {
+    return { ok: true, scene: inspectScene(new Uint8Array(fs.readFileSync(scenePath))) }
+  } catch (err) {
+    return {
+      ok: false,
+      result: {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `${toolName}: failed to read ${scenePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      },
+    }
+  }
 }
 
 function record(value: unknown): Record<string, unknown> {
