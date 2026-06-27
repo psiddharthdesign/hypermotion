@@ -44,9 +44,8 @@ Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 
 Render targets whichever scene is currently loaded in your desktop app.
 To script a scene from JSON, build a `.hype` file with
-`hypermotion create` and inspect it with `hypermotion info`. File-based
-headless rendering is still longer-term work; the current render command
-always uses the desktop app's current scene.
+`hypermotion create`, inspect it with `hypermotion info`, and pass it to
+compatible desktop builds with `hypermotion render --scene <path>`.
 
 ## MCP server — AI agent integration
 
@@ -67,7 +66,7 @@ Then in Claude Code, the agent has access to:
 - **`validate_scene`** — validate scene JSON before creating a `.hype` file.
 - **`list_layers`**, **`get_layer`**, **`list_tracks`**, and **`list_cameras`** — query saved scene contents.
 - **`open_scene`** — open a saved scene in the desktop app.
-- **`render_scene`** — render the current desktop scene to MP4 / WebM / GIF.
+- **`render_scene`** — render to MP4 / WebM / GIF, optionally from a `.hype` scene path.
 - **`list_keyframeable_properties`** — list animatable property identifiers.
 
 ### Codex CLI
