@@ -125,6 +125,9 @@ Any MCP-compatible agent can register it and call its tools.
 | `create_scene` | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.    |
 | `render_scene` | ✅ v0.1.0 | Renders the current desktop scene to MP4 / WebM / GIF at the chosen quality. |
 | `info_scene`   | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
+| `patch_scene`  | ✅ v0.1.2 | Create a patched copy of an existing `.hype` scene.                          |
+| `validate_scene` | ✅ v0.1.2 | Validate a `.hype` scene for structural consistency after agent edits.       |
+| `open_scene`   | ✅ v0.1.2 | Open a saved `.hype` scene in the desktop app.                               |
 
 ### Claude Code
 
@@ -417,7 +420,8 @@ or pop (`transform.scaleX` + `transform.scaleY`).
 
 ```
 1. create_scene({ output: '/tmp/calendar.hype', scene: { ... } })
-2. info_scene({ scene: '/tmp/calendar.hype' })
+2. validate_scene({ scene: '/tmp/calendar.hype' })
+3. info_scene({ scene: '/tmp/calendar.hype' })
 ```
 
 Or from the terminal:
