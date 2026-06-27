@@ -120,11 +120,20 @@ Any MCP-compatible agent can register it and call its tools.
 
 ### Tools registered
 
-| Tool           | Status   | What it does                                                                  |
-|----------------|----------|-------------------------------------------------------------------------------|
-| `create_scene` | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.    |
-| `render_scene` | ✅ v0.1.0 | Renders the current desktop scene to MP4 / WebM / GIF at the chosen quality. |
-| `info_scene`   | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
+| Tool                             | Status   | What it does                                                                  |
+|----------------------------------|----------|-------------------------------------------------------------------------------|
+| `doctor`                         | ✅ v0.1.2 | Check desktop app discovery and CLI environment health.                       |
+| `get_capabilities`               | ✅ v0.1.2 | List supported scene features, render options, and patch operations.          |
+| `create_scene`                   | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.     |
+| `info_scene`                     | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts.  |
+| `inspect_scene`                  | ✅ v0.1.2 | Inspect saved scene structure for nodes, tracks, sections, and cameras.       |
+| `patch_scene`                    | ✅ v0.1.2 | Create a patched copy of an existing `.hype` scene file.                      |
+| `validate_scene`                 | ✅ v0.1.2 | Validate scene JSON before writing a `.hype` file.                            |
+| `list_layers` / `get_layer`      | ✅ v0.1.2 | Query saved scene layers and individual layer details.                        |
+| `list_tracks` / `list_cameras`   | ✅ v0.1.2 | Query saved scene animation tracks and camera nodes.                          |
+| `open_scene`                     | ✅ v0.1.2 | Open a saved `.hype` scene in the desktop app.                                |
+| `render_scene`                   | ✅ v0.1.0 | Render the current desktop scene to MP4 / WebM / GIF at the chosen quality.   |
+| `list_keyframeable_properties`   | ✅ v0.1.2 | List property identifiers accepted by animation tracks.                       |
 
 ### Claude Code
 
