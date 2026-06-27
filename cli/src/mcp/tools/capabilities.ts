@@ -14,6 +14,7 @@ type CapabilitiesPayload = {
   queryTools: string[]
   renderFormats: string[]
   renderQualities: string[]
+  renderFileSceneInput: boolean
   keyframeableProperties: typeof PROPERTY_IDS
 }
 
@@ -45,6 +46,7 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
     queryTools: ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'],
     renderFormats: ['mp4', 'webm', 'gif'],
     renderQualities: ['comp', '720p', '2k', '4k'],
+    renderFileSceneInput: true,
     keyframeableProperties: PROPERTY_IDS,
   }
 
