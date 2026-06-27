@@ -847,6 +847,7 @@ export function validateScene(bytes: Uint8Array): {
   const warnings: string[] = []
   const nodes = asRecord(data.nodes)
   const tracks = asRecord(data.tracks)
+  const sections = asRecord(data.sections)
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
 
@@ -906,6 +907,11 @@ export function validateScene(bytes: Uint8Array): {
     if (typeof track.propertyId !== 'string' || !isPropertyId(track.propertyId)) {
       errors.push(`track ${id} has unsupported propertyId: ${String(track.propertyId)}`)
     }
+  }
+
+  for (const [id, raw] of Object.entries(sections)) {
+    const section = asRecord(raw)
+    if (section.id !== id) errors.push(`section map key ${id} does not match section id: ${String(section.id)}`)
   }
 
   return { ok: errors.length === 0, errors, warnings }
