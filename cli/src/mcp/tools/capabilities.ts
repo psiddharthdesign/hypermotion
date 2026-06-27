@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PROPERTY_IDS } from '../../scene/build.js'
-
-type McpTextResult = {
-  content: Array<{ type: 'text'; text: string }>
-}
 
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
@@ -19,7 +15,7 @@ export const listKeyframeablePropertiesTool: Tool = {
   inputSchema: { type: 'object', properties: {} },
 }
 
-export async function handleGetCapabilities(): Promise<McpTextResult> {
+export async function handleGetCapabilities(): Promise<CallToolResult> {
   return text({
     sceneExtension: '.hype',
     nodeKinds: NODE_KINDS,
@@ -48,11 +44,11 @@ export async function handleGetCapabilities(): Promise<McpTextResult> {
   })
 }
 
-export async function handleListKeyframeableProperties(): Promise<McpTextResult> {
+export async function handleListKeyframeableProperties(): Promise<CallToolResult> {
   return text({ keyframeableProperties: PROPERTY_IDS })
 }
 
-function text(value: unknown): McpTextResult {
+function text(value: unknown): CallToolResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
   }
