@@ -5,7 +5,28 @@ import os from 'node:os'
 import { locateDesktopApp } from '../electron/locator.js'
 import { CLI_VERSION } from '../version.js'
 
-export async function getDoctorReport() {
+export interface DoctorReport {
+  ok: boolean
+  cliVersion: string
+  platform: NodeJS.Platform
+  desktopApp: {
+    found: boolean
+    path: string | null
+  }
+  sceneFormat: {
+    extension: string
+    encoding: string
+  }
+  commands: string[]
+  mcpTools: string[]
+  render: {
+    formats: string[]
+    qualities: string[]
+    fileSceneInput: boolean
+  }
+}
+
+export async function getDoctorReport(): Promise<DoctorReport> {
   const appPath = await locateDesktopApp()
   return {
     ok: Boolean(appPath),
