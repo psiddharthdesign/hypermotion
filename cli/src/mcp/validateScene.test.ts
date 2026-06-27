@@ -27,11 +27,18 @@ test('validate_scene reports invalid arguments as MCP errors', async () => {
 })
 
 test('validate_scene reports missing files as MCP errors', async () => {
-  const result = await handleValidateScene({ scene: '/tmp/hypermotion-missing-scene.hype' })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-missing-'))
+  const missingScene = path.join(dir, 'scene.hype')
 
-  assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^validate_scene: failed to read /)
+  try {
+    const result = await handleValidateScene({ scene: missingScene })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, /^validate_scene: failed to read /)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('validate_scene returns validation JSON for readable scenes', async () => {
