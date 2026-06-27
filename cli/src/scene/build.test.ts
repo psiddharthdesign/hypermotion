@@ -683,6 +683,40 @@ test('applyScenePatch fills size defaults for created shape nodes', () => {
   assert.deepEqual(nodes.badge.size, { width: 100, height: 100 })
 })
 
+test('applyScenePatch fills layout defaults for created frame nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'panel',
+        kind: 'frame',
+        parent: 'root',
+        size: { width: 320 },
+        layout: { mode: 'flex', padding: { left: 12 } },
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.panel.size, { width: 320, height: 100 })
+  assert.deepEqual(nodes.panel.layout, {
+    mode: 'flex',
+    direction: 'column',
+    justify: 'start',
+    align: 'start',
+    gap: 0,
+    padding: { top: 0, right: 0, bottom: 0, left: 12 },
+    wrap: false,
+    columns: 1,
+    rowGap: 0,
+    columnGap: 0,
+  })
+  assert.equal(nodes.panel.clipsContent, true)
+  assert.deepEqual(nodes.panel.layoutGuides, [])
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}

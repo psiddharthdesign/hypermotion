@@ -1083,6 +1083,62 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
     handledKeys.add('size')
     y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
   }
+  if (node.kind === 'frame' || node.kind === 'component') {
+    for (const key of [
+      'size',
+      'layout',
+      'clipsContent',
+      'layoutGuides',
+      'variants',
+      'defaultSelection',
+      'variantOverrides',
+      'variantPositions',
+      'componentProperties',
+      'variantTransition',
+      'timelines',
+      'interactions',
+    ]) {
+      handledKeys.add(key)
+    }
+    y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    y.set('layout', mergeLayoutWithDefaults(DEFAULT_LAYOUT, node.layout))
+    if (node.kind === 'frame') {
+      y.set('clipsContent', node.clipsContent ?? true)
+      y.set('layoutGuides', node.layoutGuides ?? [])
+    } else {
+      y.set('variants', node.variants ?? [])
+      y.set('defaultSelection', node.defaultSelection ?? {})
+      y.set('variantOverrides', node.variantOverrides ?? [])
+      y.set('variantPositions', node.variantPositions ?? {})
+      y.set('componentProperties', node.componentProperties ?? [])
+      y.set('variantTransition', node.variantTransition ?? {
+        duration: 0.3,
+        easing: 'ease-in-out',
+        presetId: 'smooth',
+        strength: 50,
+      })
+      y.set('timelines', node.timelines ?? {})
+      y.set('interactions', node.interactions ?? [])
+    }
+  }
+  if (node.kind === 'instance') {
+    for (const key of [
+      'size',
+      'layout',
+      'componentId',
+      'selection',
+      'overrides',
+      'interactions',
+    ]) {
+      handledKeys.add(key)
+    }
+    y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    y.set('layout', mergeLayoutWithDefaults(DEFAULT_LAYOUT, node.layout))
+    y.set('componentId', node.componentId ?? '')
+    y.set('selection', node.selection ?? {})
+    y.set('overrides', node.overrides ?? {})
+    y.set('interactions', node.interactions ?? [])
+  }
   for (const [k, v] of Object.entries(node)) {
     if (handledKeys.has(k)) continue
     y.set(k, v)
