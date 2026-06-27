@@ -32,6 +32,26 @@ test('query scene MCP handlers report invalid arguments as MCP errors', async ()
   }
 })
 
+test('query scene MCP handlers report missing scene files as MCP errors', async () => {
+  const missingScene = path.join(os.tmpdir(), `hypermotion-missing-query-${Date.now()}.hype`)
+  const cases: Array<{
+    name: string
+    run: () => Promise<Awaited<ReturnType<typeof handleListLayers>>>
+  }> = [
+    { name: 'list_layers', run: () => handleListLayers({ scene: missingScene }) },
+    { name: 'get_layer', run: () => handleGetLayer({ scene: missingScene, nodeId: 'title' }) },
+    { name: 'list_tracks', run: () => handleListTracks({ scene: missingScene }) },
+    { name: 'list_cameras', run: () => handleListCameras({ scene: missingScene }) },
+  ]
+
+  for (const entry of cases) {
+    const result = await entry.run()
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, new RegExp(`^${entry.name}: failed to read ${missingScene}:`))
+  }
+})
+
 test('query scene MCP handlers return layers, tracks, and cameras', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
