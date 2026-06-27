@@ -12,6 +12,9 @@ import {
   type TextAnimationJson,
 } from './build.js'
 
+type PlainRecord = Record<string, unknown>
+type PlainSceneMap = Record<string, PlainRecord>
+
 function sampleScene(): SceneJson {
   return {
     meta: {
@@ -121,7 +124,7 @@ test('buildSceneBytes preserves text animation track config', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.deepEqual(tracks['fade-title']?.textAnimation, track.textAnimation)
 })
@@ -185,7 +188,7 @@ test('buildSceneBytes deep-merges partial metadata defaults', () => {
 
 test('buildSceneBytes fills nested defaults expected by the desktop app', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const root = nodes.root
 
   assert.deepEqual(root.layout, {
@@ -239,9 +242,9 @@ test('buildSceneBytes gives each node independent nested defaults', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const firstLayout = nodes.first.layout as Record<string, unknown>
-  const secondLayout = nodes.second.layout as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const firstLayout = nodes.first.layout as PlainRecord
+  const secondLayout = nodes.second.layout as PlainRecord
 
   assert.deepEqual(firstLayout.padding, { top: 8, right: 0, bottom: 0, left: 0 })
   assert.deepEqual(secondLayout.padding, { top: 0, right: 0, bottom: 0, left: 0 })
@@ -257,8 +260,8 @@ test('buildSceneBytes preserves per-corner radii in appearance', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const appearance = nodes.root.appearance as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const appearance = nodes.root.appearance as PlainRecord
 
   assert.equal(appearance.cornerRadius, 8)
   assert.deepEqual(appearance.cornerRadii, { tl: 4, tr: 8, br: 12, bl: 16 })
@@ -277,8 +280,8 @@ test('buildSceneBytes preserves image fills in appearance', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const appearance = nodes.root.appearance as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const appearance = nodes.root.appearance as PlainRecord
 
   assert.deepEqual(appearance.fill, {
     kind: 'image',
@@ -320,9 +323,9 @@ test('buildSceneBytes preserves gradient fills in appearance', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const rootAppearance = nodes.root.appearance as Record<string, unknown>
-  const titleAppearance = nodes.title.appearance as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const rootAppearance = nodes.root.appearance as PlainRecord
+  const titleAppearance = nodes.title.appearance as PlainRecord
 
   assert.deepEqual(rootAppearance.fill, {
     kind: 'radial',
@@ -363,8 +366,8 @@ test('buildSceneBytes preserves per-side stroke widths in appearance', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const appearance = nodes.root.appearance as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const appearance = nodes.root.appearance as PlainRecord
 
   assert.deepEqual(appearance.stroke, {
     color: '#0f172a',
@@ -399,8 +402,8 @@ test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', (
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
-  const transform = nodes.root.transform as Record<string, unknown>
+  const nodes = data.nodes as PlainSceneMap
+  const transform = nodes.root.transform as PlainRecord
 
   assert.equal(transform.anchorX, 0)
   assert.equal(transform.anchorY, 1)
@@ -411,7 +414,7 @@ test('buildSceneBytes preserves explicit transform anchor and 3D mode fields', (
 
 test('buildSceneBytes preserves children as editor-reorderable arrays', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.root.children, ['title'])
   assert.equal(nodes.title.parent, 'root')
@@ -433,7 +436,7 @@ test('buildSceneBytes preserves image import warnings', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.equal(nodes.image.fit, 'contain')
   assert.equal(
@@ -454,7 +457,7 @@ test('buildSceneBytes writes text defaults expected by the desktop app', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const text = nodes.title
 
   assert.deepEqual(text.size, { width: 'hug', height: 'hug' })
@@ -480,7 +483,7 @@ test('buildSceneBytes fills omitted text size axes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.title.size, { width: 320, height: 'hug' })
 })
@@ -495,7 +498,7 @@ test('buildSceneBytes keys nodes by their declared ids', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(Object.keys(nodes).sort(), ['camera', 'root', 'title'])
   assert.equal(nodes.root.id, 'root')
@@ -569,7 +572,7 @@ test('applyScenePatch preserves text animation config on new tracks', () => {
     },
   ])
   const data = inspectScene(patched)
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.deepEqual(tracks['text-progress']?.textAnimation, textAnimation)
 })
@@ -604,7 +607,7 @@ test('applyScenePatch defaults omitted text animation keyframes to empty', () =>
     },
   ])
   const data = inspectScene(patched)
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.deepEqual(tracks['text-progress']?.keyframes, [])
   assert.deepEqual(tracks['text-progress']?.textAnimation, textAnimation)
@@ -633,7 +636,7 @@ test('applyScenePatch fills workspaceOnly default for created nodes', () => {
     },
   ])
   const data = inspectScene(patched)
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.equal(nodes.badge.workspaceOnly, false)
 })
@@ -653,7 +656,7 @@ test('applyScenePatch fills text defaults for created nodes', () => {
     },
   ])
   const data = inspectScene(patched)
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.caption.size, { width: 320, height: 'hug' })
   assert.equal(nodes.caption.fontFamily, 'Inter')
@@ -678,7 +681,7 @@ test('applyScenePatch fills size defaults for created shape nodes', () => {
     },
   ])
   const data = inspectScene(patched)
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.badge.size, { width: 100, height: 100 })
 })
@@ -698,7 +701,7 @@ test('applyScenePatch fills layout defaults for created frame nodes', () => {
     },
   ])
   const data = inspectScene(patched)
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.panel.size, { width: 320, height: 100 })
   assert.deepEqual(nodes.panel.layout, {
@@ -725,7 +728,7 @@ test('buildSceneBytes keys tracks by their declared ids', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.deepEqual(Object.keys(tracks), ['fade-title'])
   assert.equal(tracks['fade-title'].id, 'fade-title')
@@ -742,7 +745,7 @@ test('buildSceneBytes defaults omitted track keyframes to empty', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
   const summary = readSceneSummary(buildSceneBytes(scene))
 
   assert.deepEqual(tracks['fade-title'].keyframes, [])
@@ -761,7 +764,7 @@ test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks['fade-title'].defaultEasing, 'ease-in-out')
 })
@@ -918,9 +921,9 @@ test('buildSceneBytes preserves variant selection keyframe values', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
   const variantTrack = tracks.variant
-  const keyframes = variantTrack.keyframes as Array<Record<string, unknown>>
+  const keyframes = variantTrack.keyframes as Array<PlainRecord>
 
   assert.deepEqual(keyframes[0].value, { size: 'compact', tone: 'muted' })
 })
@@ -939,8 +942,8 @@ test('buildSceneBytes accepts null keyframe values', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
-  const keyframes = tracks.clearFill.keyframes as Array<Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
+  const keyframes = tracks.clearFill.keyframes as Array<PlainRecord>
 
   assert.equal(keyframes[0].value, null)
 })
@@ -959,8 +962,8 @@ test('buildSceneBytes accepts non-string variant keyframe fields', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
-  const keyframes = tracks.variant.keyframes as Array<Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
+  const keyframes = tracks.variant.keyframes as Array<PlainRecord>
 
   assert.deepEqual(keyframes[0].value, { enabled: true, columns: 3 })
 })
@@ -980,7 +983,7 @@ test('buildSceneBytes accepts transform anchor keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks.anchor.propertyId, 'transform.anchorX')
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
@@ -1001,7 +1004,7 @@ test('buildSceneBytes accepts camera point-of-interest keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks.poi.propertyId, 'camera.pointOfInterestZ')
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
@@ -1022,7 +1025,7 @@ test('buildSceneBytes accepts camera focus keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks.focus.propertyId, 'camera.focusWorldZ')
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
@@ -1043,7 +1046,7 @@ test('buildSceneBytes accepts camera ISO keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks.iso.propertyId, 'camera.iso')
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
@@ -1057,7 +1060,7 @@ test('buildSceneBytes preserves explicit camera viewport fields', () => {
   camera.background = { kind: 'solid', color: '#111827' }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.equal(nodes.camera.enabled, false)
   assert.deepEqual(nodes.camera.background, { kind: 'solid', color: '#111827' })
@@ -1069,7 +1072,7 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
   if (!camera) throw new Error('missing sample camera')
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.camera, {
     id: 'camera',
@@ -1149,8 +1152,8 @@ test('buildSceneBytes accepts layout direction keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
-  const keyframes = tracks.direction.keyframes as Array<Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
+  const keyframes = tracks.direction.keyframes as Array<PlainRecord>
 
   assert.equal(tracks.direction.propertyId, 'layout.direction')
   assert.equal(keyframes[1].value, 'row')
@@ -1172,7 +1175,7 @@ test('buildSceneBytes accepts per-corner radius keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
 
   assert.equal(tracks.topLeft.propertyId, 'appearance.cornerRadii.tl')
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
@@ -1193,8 +1196,8 @@ test('buildSceneBytes accepts aggregate corner radii keyframes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const tracks = data.tracks as Record<string, Record<string, unknown>>
-  const keyframes = tracks.corners.keyframes as Array<Record<string, unknown>>
+  const tracks = data.tracks as PlainSceneMap
+  const keyframes = tracks.corners.keyframes as Array<PlainRecord>
 
   assert.equal(tracks.corners.propertyId, 'appearance.cornerRadii')
   assert.deepEqual(keyframes[1].value, { tl: 4, tr: 8, br: 12, bl: 16 })
@@ -1209,7 +1212,7 @@ test('buildSceneBytes keys sections by their declared ids', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const sections = data.sections as Record<string, Record<string, unknown>>
+  const sections = data.sections as PlainSceneMap
 
   assert.deepEqual(Object.keys(sections), ['intro'])
   assert.equal(sections.intro.id, 'intro')
@@ -1231,7 +1234,7 @@ test('buildSceneBytes preserves frame editor metadata', () => {
   ]
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const rootNode = nodes.root
 
   assert.equal(rootNode.clipsContent, false)
@@ -1254,7 +1257,7 @@ test('buildSceneBytes writes explicit component metadata defaults', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const component = nodes.component
 
   assert.equal(component.workspaceOnly, false)
@@ -1319,7 +1322,7 @@ test('buildSceneBytes preserves authored component timelines and interactions', 
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const component = nodes.component
 
   assert.deepEqual(component.timelines, {
@@ -1391,7 +1394,7 @@ test('buildSceneBytes preserves authored component and instance overrides', () =
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.component.variantOverrides, [
     {
@@ -1422,7 +1425,7 @@ test('buildSceneBytes writes explicit instance metadata defaults', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const instance = nodes.instance
 
   assert.equal(instance.componentId, 'component')
@@ -1470,7 +1473,7 @@ test('buildSceneBytes preserves authored instance interactions', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.instance.interactions, [
     {
@@ -1518,7 +1521,7 @@ test('buildSceneBytes preserves delayed interaction actions', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.component.interactions, [
     {
@@ -1560,7 +1563,7 @@ test('buildSceneBytes writes media timing defaults', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.narration.size, { width: 120, height: 40 })
   assert.equal(nodes.narration.duration, 0)
@@ -1587,7 +1590,7 @@ test('buildSceneBytes fills omitted media size axes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.clip.size, { width: 640, height: 100 })
 })
@@ -1606,7 +1609,7 @@ test('buildSceneBytes preserves explicit media size axes', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.deepEqual(nodes.clip.size, { width: 640, height: 360 })
 })
@@ -1632,7 +1635,7 @@ test('buildSceneBytes preserves explicit media timing fields', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const clip = nodes.clip
 
   assert.equal(clip.duration, 5)
@@ -1665,7 +1668,7 @@ test('buildSceneBytes preserves explicit audio timing fields', () => {
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const narration = nodes.narration
 
   assert.equal(narration.duration, 8)
@@ -1679,7 +1682,7 @@ test('buildSceneBytes preserves explicit audio timing fields', () => {
 
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const camera = nodes.camera
 
   assert.equal(camera.projection, '2d')
@@ -1694,7 +1697,7 @@ test('buildSceneBytes centers camera focus defaults on the canvas', () => {
 
 test('buildSceneBytes writes camera lens and depth defaults', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const camera = nodes.camera
 
   assert.equal(camera.focalLength, 1000)
@@ -1729,7 +1732,7 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   camera.blurQuality = 12
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const cameraNode = nodes.camera
 
   assert.equal(cameraNode.focalLength, 640)
@@ -1757,7 +1760,7 @@ test('buildSceneBytes derives camera point of interest x/y from transform', () =
   }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const cameraNode = nodes.camera
 
   assert.equal(cameraNode.pointOfInterestX, 480)
@@ -1779,7 +1782,7 @@ test('buildSceneBytes preserves explicit camera focus targets', () => {
   camera.focusWorldZ = 288
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const cameraNode = nodes.camera
 
   assert.equal(cameraNode.pointOfInterestX, 128)
@@ -1804,7 +1807,7 @@ test('buildSceneBytes preserves explicit camera focus plane fields', () => {
   camera.showFocusPlane = true
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
   const cameraNode = nodes.camera
 
   assert.equal(cameraNode.focusX, 320)
@@ -1823,7 +1826,7 @@ test('buildSceneBytes preserves perspective camera projection', () => {
   camera.background = { kind: 'solid', color: '#111827' }
 
   const data = inspectScene(buildSceneBytes(scene))
-  const nodes = data.nodes as Record<string, Record<string, unknown>>
+  const nodes = data.nodes as PlainSceneMap
 
   assert.equal(nodes.camera.projection, 'perspective')
   assert.deepEqual(nodes.camera.background, { kind: 'solid', color: '#111827' })
@@ -1923,15 +1926,15 @@ test('readSceneSummary treats missing sections as empty', () => {
   assert.equal(summary.sectionCount, 0)
 })
 
-function inspectScene(bytes: Uint8Array): Record<string, unknown> {
+function inspectScene(bytes: Uint8Array): PlainRecord {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
-  return yToPlain(doc.getMap<unknown>('scene')) as Record<string, unknown>
+  return yToPlain(doc.getMap<unknown>('scene')) as PlainRecord
 }
 
 function yToPlain(value: unknown): unknown {
   if (value instanceof Y.Map) {
-    const out: Record<string, unknown> = {}
+    const out: PlainRecord = {}
     for (const [key, child] of value.entries()) out[key] = yToPlain(child)
     return out
   }
