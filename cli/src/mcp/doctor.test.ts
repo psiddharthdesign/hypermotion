@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import type { DoctorReport } from '../commands/doctor.js'
 import { captureStderr } from '../testUtils/stdout.js'
@@ -15,7 +18,8 @@ test('doctor input schema accepts no arguments', () => {
 
 test('doctor returns the report as MCP JSON content', async () => {
   const previousAppPath = process.env.HYPERMOTION_APP_PATH
-  process.env.HYPERMOTION_APP_PATH = '/tmp/hypermotion-mcp-doctor-missing-app'
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-doctor-missing-'))
+  process.env.HYPERMOTION_APP_PATH = path.join(dir, 'hyper-motion')
 
   try {
     const state: { result?: Awaited<ReturnType<typeof handleDoctor>> } = {}
@@ -41,5 +45,6 @@ test('doctor returns the report as MCP JSON content', async () => {
     } else {
       process.env.HYPERMOTION_APP_PATH = previousAppPath
     }
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 })
