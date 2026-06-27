@@ -5,7 +5,25 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { handleOpenScene } from './tools/openScene.js'
+import { handleOpenScene, openSceneTool } from './tools/openScene.js'
+
+test('open_scene input schema exposes required scene path', () => {
+  assert.deepEqual(openSceneTool.inputSchema, {
+    type: 'object',
+    properties: {
+      scene: { type: 'string', description: 'Path to a .hype scene file.' },
+    },
+    required: ['scene'],
+  })
+})
+
+test('open_scene reports invalid arguments as MCP errors', async () => {
+  const result = await handleOpenScene({ scene: 42 })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^open_scene: invalid arguments/)
+})
 
 test('open_scene reports missing files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-missing-'))

@@ -25,8 +25,20 @@ export const openSceneTool: Tool = {
 export async function handleOpenScene(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = OpenInput.parse(args)
-  const scenePath = path.resolve(parsed.scene)
+  const parsed = OpenInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `open_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
+
+  const scenePath = path.resolve(parsed.data.scene)
   if (!fs.existsSync(scenePath)) {
     return {
       isError: true,
