@@ -44,7 +44,7 @@ const CreateInput = z.object({
     ),
   open: z
     .boolean()
-    .optional()
+    .default(true)
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 })
 
@@ -220,7 +220,7 @@ export async function handleCreateScene(
   const summary = readSceneSummary(bytes)
   const layers = summary.layerCount
   const tracks = summary.trackCount
-  const shouldOpen = parsed.data.open ?? true
+  const shouldOpen = parsed.data.open
   let opened = false
   let openNote = ''
   if (shouldOpen) {
