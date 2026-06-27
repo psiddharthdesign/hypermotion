@@ -401,8 +401,8 @@ function applyTextProgressTrack(
 /**
  * Write one resolved track value into the per-node AnimatedValue.
  *
- * Only the transform + appearance.opacity properties are live in MVP.
- * Layout-property tracks are accepted (see PropertyId in scene/types)
+ * Post-layout numeric and color properties are applied directly here.
+ * Layout and semantic tracks are accepted (see PropertyId in scene/types)
  * but the engine skips them until the FLIP pass arrives. Rather than
  * throw for those values, silently no-op — a stray layout track from
  * a saved doc shouldn't crash the renderer.
