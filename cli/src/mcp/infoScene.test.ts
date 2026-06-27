@@ -6,7 +6,25 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
-import { handleInfoScene } from './tools/infoScene.js'
+import { handleInfoScene, infoSceneTool } from './tools/infoScene.js'
+
+test('info_scene input schema exposes required scene path', () => {
+  assert.deepEqual(infoSceneTool.inputSchema, {
+    type: 'object',
+    properties: {
+      scene: { type: 'string', description: 'Path to a .hype scene file' },
+    },
+    required: ['scene'],
+  })
+})
+
+test('info_scene reports invalid arguments as MCP errors', async () => {
+  const result = await handleInfoScene({ scene: 42 })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^info_scene: invalid arguments/)
+})
 
 test('info_scene returns a structured scene summary', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-scene-'))
