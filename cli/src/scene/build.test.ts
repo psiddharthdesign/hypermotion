@@ -726,6 +726,19 @@ test('validateScene rejects non-frame root nodes', () => {
   assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
 })
 
+test('validateScene rejects unsupported node kinds', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('title')?.set('kind', 'shape')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['node title has unsupported kind: shape'])
+})
+
 test('validateScene rejects root nodes with parents', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))

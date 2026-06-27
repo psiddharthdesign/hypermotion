@@ -54,6 +54,19 @@ export type NodeKindJson =
   | 'instance'
   | 'camera'
 
+export const NODE_KINDS = [
+  'frame',
+  'rect',
+  'ellipse',
+  'text',
+  'image',
+  'video',
+  'audio',
+  'component',
+  'instance',
+  'camera',
+] as const
+
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
   height?: number | 'hug' | 'fill'
@@ -837,6 +850,9 @@ export function validateScene(bytes: Uint8Array): {
   for (const [id, raw] of Object.entries(nodes)) {
     const node = asRecord(raw)
     if (node.id !== id) errors.push(`node map key ${id} does not match node id: ${String(node.id)}`)
+    if (typeof node.kind !== 'string' || !isNodeKind(node.kind)) {
+      errors.push(`node ${id} has unsupported kind: ${String(node.kind)}`)
+    }
     const parent = typeof node.parent === 'string' ? node.parent : null
     if (node.kind === 'camera' && parent) {
       errors.push(`camera node ${id} must be scene-level with parent: null`)
@@ -876,6 +892,10 @@ export function validateScene(bytes: Uint8Array): {
   }
 
   return { ok: errors.length === 0, errors, warnings }
+}
+
+function isNodeKind(value: string): value is NodeKindJson {
+  return (NODE_KINDS as readonly string[]).includes(value)
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
