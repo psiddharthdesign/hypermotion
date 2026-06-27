@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { readSceneSummary } from '../scene/build.js'
+import { PROPERTY_IDS, readSceneSummary } from '../scene/build.js'
 import { createSceneTool, handleCreateScene } from './tools/createScene.js'
 
 test('create_scene description lists supported appearance property ids', () => {
@@ -100,6 +100,17 @@ test('create_scene description lists supported layout property ids', () => {
     'size.height',
     'variant',
   ]) {
+    const escapedPropertyId = propertyId.replaceAll('.', '\\.')
+    assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
+  }
+})
+
+test('create_scene description stays in sync with supported property ids', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+  for (const propertyId of PROPERTY_IDS) {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
   }
