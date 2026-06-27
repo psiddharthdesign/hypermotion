@@ -10,6 +10,7 @@ type CapabilitiesPayload = {
   validation: {
     structuralSceneValidation: boolean
   }
+  validationTools: string[]
   queryTools: string[]
   renderFormats: string[]
   renderQualities: string[]
@@ -54,6 +55,7 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
     validation: {
       structuralSceneValidation: true,
     },
+    validationTools: ['validate_scene'],
     queryTools: ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'],
     renderFormats: ['mp4', 'webm', 'gif'],
     renderQualities: ['comp', '720p', '2k', '4k'],
