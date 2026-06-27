@@ -53,7 +53,7 @@ always uses the desktop app's current scene.
 ### Claude Code
 
 ```sh
-claude mcp add hypermotion -- hypermotion-mcp
+claude mcp add -s user hypermotion -- hypermotion-mcp
 ```
 
 Then in Claude Code, the agent has access to:
