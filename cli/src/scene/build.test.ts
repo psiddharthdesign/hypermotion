@@ -97,6 +97,34 @@ test('buildSceneBytes creates a readable .hype summary', () => {
   assert.equal(summary.keyframeCount, 2)
 })
 
+test('buildSceneBytes preserves text animation track config', () => {
+  const scene = sampleScene()
+  const track = scene.tracks?.['fade-title']
+  if (!track) throw new Error('missing sample track')
+  track.propertyId = 'text.progress'
+  track.textAnimation = {
+    id: 'blur-slide',
+    mode: 'in',
+    applyTo: 'letters',
+    order: 'forward',
+    delay: 0.08,
+    smoothing: 'none',
+    duration: 0.6,
+    startTime: 0,
+    acceleration: 'slow-down',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0.5,
+    blurRadius: 20,
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(tracks['fade-title']?.textAnimation, track.textAnimation)
+})
+
 test('buildSceneBytes fills default metadata for minimal scenes', () => {
   const bytes = buildSceneBytes({
     nodes: {
@@ -504,6 +532,45 @@ test('applyScenePatch can clear the active camera', () => {
   ])
 
   assert.equal(readSceneSummary(patched).activeCameraId, null)
+})
+
+test('applyScenePatch preserves text animation config on new tracks', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const textAnimation = {
+    id: 'blur-slide',
+    mode: 'in',
+    applyTo: 'words',
+    order: 'forward',
+    delay: 0.1,
+    smoothing: 'smooth',
+    duration: 0.7,
+    startTime: 0,
+    acceleration: 'slow-down',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0.5,
+    blurRadius: 20,
+  }
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'setTrack',
+      track: {
+        id: 'text-progress',
+        nodeId: 'title',
+        propertyId: 'text.progress',
+        textAnimation,
+        keyframes: [
+          { id: 'k1', time: 0, value: 0 },
+          { id: 'k2', time: 1, value: 1 },
+        ],
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(tracks['text-progress']?.textAnimation, textAnimation)
 })
 
 test('readSceneSummary reports deleted root and active camera ids as null', () => {
