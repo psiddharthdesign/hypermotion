@@ -37,10 +37,12 @@ function parseToolJson(result: CallToolResult): {
   assert.ok(Array.isArray(properties))
   assert.ok(properties.every((propertyId) => typeof propertyId === 'string'))
 
-  const nodeKinds = (parsed as { nodeKinds?: unknown }).nodeKinds
-  if (nodeKinds !== undefined) {
-    assert.ok(Array.isArray(nodeKinds))
-    assert.ok(nodeKinds.every((kind) => typeof kind === 'string'))
+  const rawNodeKinds = (parsed as { nodeKinds?: unknown }).nodeKinds
+  let nodeKinds: string[] | undefined
+  if (rawNodeKinds !== undefined) {
+    assert.ok(Array.isArray(rawNodeKinds))
+    assert.ok(rawNodeKinds.every((kind) => typeof kind === 'string'))
+    nodeKinds = rawNodeKinds
   }
 
   return { keyframeableProperties: properties, nodeKinds }
