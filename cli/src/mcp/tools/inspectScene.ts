@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod'
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { inspectScene } from '../../scene/build.js'
 
@@ -21,9 +21,39 @@ export const inspectSceneTool: Tool = {
   },
 }
 
-export async function handleInspectScene(args: Record<string, unknown>) {
-  const parsed = InspectInput.parse(args)
-  const bytes = fs.readFileSync(parsed.scene)
+export async function handleInspectScene(
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
+  const parsed = InspectInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `inspect_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
+
+  let bytes: Buffer
+  try {
+    bytes = fs.readFileSync(parsed.data.scene)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `inspect_scene: failed to read ${parsed.data.scene}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+
   return {
     content: [
       {
