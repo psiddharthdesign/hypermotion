@@ -574,6 +574,42 @@ test('applyScenePatch preserves text animation config on new tracks', () => {
   assert.deepEqual(tracks['text-progress']?.textAnimation, textAnimation)
 })
 
+test('applyScenePatch defaults omitted text animation keyframes to empty', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const textAnimation: TextAnimationJson = {
+    id: 'fade-words',
+    mode: 'in',
+    applyTo: 'words',
+    order: 'forward',
+    delay: 0.08,
+    smoothing: 'smooth',
+    duration: 0.5,
+    startTime: 0,
+    acceleration: 'linear',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0.4,
+    blurRadius: 12,
+  }
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'setTrack',
+      track: {
+        id: 'text-progress',
+        nodeId: 'title',
+        propertyId: 'text.progress',
+        textAnimation,
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const tracks = data.tracks as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(tracks['text-progress']?.keyframes, [])
+  assert.deepEqual(tracks['text-progress']?.textAnimation, textAnimation)
+})
+
 test('readSceneSummary reports deleted root and active camera ids as null', () => {
   const bytes = buildSceneBytes(sampleScene())
   const withoutRoot = applyScenePatch(bytes, [{ op: 'deleteNode', nodeId: 'root' }])
