@@ -64,14 +64,12 @@ function parseToolJson(result: CallToolResult): {
   const parsedObject = parsed as Record<string, unknown>
 
   const properties = parsedObject.keyframeableProperties
-  assert.ok(Array.isArray(properties))
-  assert.ok(properties.every((propertyId) => typeof propertyId === 'string'))
+  assertStringArray(properties)
 
   const rawNodeKinds = parsedObject.nodeKinds
   let nodeKinds: string[] | undefined
   if (rawNodeKinds !== undefined) {
-    assert.ok(Array.isArray(rawNodeKinds))
-    assert.ok(rawNodeKinds.every((kind) => typeof kind === 'string'))
+    assertStringArray(rawNodeKinds)
     nodeKinds = rawNodeKinds
   }
 
@@ -90,7 +88,11 @@ function optionalStringArray(parsed: Record<string, unknown>, key: string): stri
   const value = parsed[key]
   if (value === undefined) return undefined
 
+  assertStringArray(value)
+  return value
+}
+
+function assertStringArray(value: unknown): asserts value is string[] {
   assert.ok(Array.isArray(value))
   assert.ok(value.every((item) => typeof item === 'string'))
-  return value
 }
