@@ -81,11 +81,16 @@ function printableCanvas(canvas: unknown): PrintableCanvas {
     const height = 'height' in canvas ? canvas.height : '?'
 
     return {
-      width: typeof width === 'number' || typeof width === 'string' ? width : '?',
-      height:
-        typeof height === 'number' || typeof height === 'string' ? height : '?',
+      width: printableCanvasValue(width),
+      height: printableCanvasValue(height),
     }
   }
 
   return { width: '?', height: '?' }
+}
+
+function printableCanvasValue(value: unknown): number | string {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') return value
+  return '?'
 }

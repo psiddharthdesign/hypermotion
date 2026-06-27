@@ -182,3 +182,39 @@ test('info command omits camera line when no active camera exists', async () => 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('info command replaces non-finite canvas numbers with placeholders', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Invalid Canvas',
+          canvas: { width: Number.NaN, height: Number.POSITIVE_INFINITY },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 400, height: 300 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await infoCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^ {2}Canvas: {4}\? × \?$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
