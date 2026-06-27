@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { buildSceneBytes } from '../scene/build.js'
+import {
+  handleGetLayer,
+  handleListCameras,
+  handleListLayers,
+  handleListTracks,
+} from './tools/queryScene.js'
+
+test('query scene MCP handlers return layers, tracks, and cameras', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Query MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            name: 'Root frame',
+            kind: 'frame',
+            parent: null,
+            children: ['title'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          title: {
+            id: 'title',
+            name: 'Title',
+            kind: 'text',
+            parent: 'root',
+            text: 'Queryable',
+            fontFamily: 'Inter',
+            fontSize: 24,
+          },
+          camera: {
+            id: 'camera',
+            name: 'Camera',
+            kind: 'camera',
+            parent: null,
+            transform: { x: 160, y: 90, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+          },
+        },
+        activeCameraId: 'camera',
+        tracks: {
+          fadeTitle: {
+            id: 'fade-title',
+            nodeId: 'title',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'fade-start', time: 0, value: 0 },
+              { id: 'fade-end', time: 0.3, value: 1 },
+            ],
+          },
+        },
+      }),
+    )
+
+    const layersResult = await handleListLayers({ scene: scenePath })
+    const layersText = layersResult.content[0]?.type === 'text' ? layersResult.content[0].text : ''
+    const layersPayload = JSON.parse(layersText) as {
+      root: string
+      activeCameraId: string
+      layers: Array<{ id: string; name?: string; kind: string; children: string[] }>
+    }
+
+    assert.equal(layersPayload.root, 'root')
+    assert.equal(layersPayload.activeCameraId, 'camera')
+    assert.deepEqual(
+      layersPayload.layers.map((layer) => layer.id).sort(),
+      ['camera', 'root', 'title'],
+    )
+    assert.deepEqual(
+      layersPayload.layers.find((layer) => layer.id === 'root')?.children,
+      ['title'],
+    )
+
+    const layerResult = await handleGetLayer({ scene: scenePath, nodeId: 'title' })
+    const layerText = layerResult.content[0]?.type === 'text' ? layerResult.content[0].text : ''
+    const layerPayload = JSON.parse(layerText) as { id: string; text: string }
+    assert.equal(layerPayload.id, 'title')
+    assert.equal(layerPayload.text, 'Queryable')
+
+    const tracksResult = await handleListTracks({ scene: scenePath, nodeId: 'title' })
+    const tracksText = tracksResult.content[0]?.type === 'text' ? tracksResult.content[0].text : ''
+    const tracksPayload = JSON.parse(tracksText) as {
+      tracks: Array<{ id: string; nodeId: string; propertyId: string }>
+    }
+    assert.equal(tracksPayload.tracks.length, 1)
+    assert.equal(tracksPayload.tracks[0]?.id, 'fade-title')
+    assert.equal(tracksPayload.tracks[0]?.nodeId, 'title')
+    assert.equal(tracksPayload.tracks[0]?.propertyId, 'appearance.opacity')
+
+    const camerasResult = await handleListCameras({ scene: scenePath })
+    const camerasText = camerasResult.content[0]?.type === 'text' ? camerasResult.content[0].text : ''
+    const camerasPayload = JSON.parse(camerasText) as {
+      activeCameraId: string
+      cameras: Array<{ id: string; kind: string }>
+    }
+    assert.equal(camerasPayload.activeCameraId, 'camera')
+    assert.equal(camerasPayload.cameras.length, 1)
+    assert.equal(camerasPayload.cameras[0]?.id, 'camera')
+    assert.equal(camerasPayload.cameras[0]?.kind, 'camera')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
