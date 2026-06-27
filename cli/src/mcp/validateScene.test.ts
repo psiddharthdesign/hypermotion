@@ -6,7 +6,17 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
-import { handleValidateScene } from './tools/validateScene.js'
+import { handleValidateScene, validateSceneTool } from './tools/validateScene.js'
+
+test('validate_scene input schema exposes required scene path', () => {
+  assert.deepEqual(validateSceneTool.inputSchema, {
+    type: 'object',
+    properties: {
+      scene: { type: 'string', description: 'Path to a .hype scene file.' },
+    },
+    required: ['scene'],
+  })
+})
 
 test('validate_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleValidateScene({ scene: 42 })
