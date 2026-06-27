@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
-import { NODE_KINDS, PROPERTY_IDS } from '../../scene/build.js'
+import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
 
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
   nodeKinds: typeof NODE_KINDS
-  patchOperations: string[]
+  patchOperations: typeof PATCH_OPERATION_TYPES
   validation: {
     structuralSceneValidation: boolean
   }
@@ -37,21 +37,7 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
   const payload: CapabilitiesPayload = {
     sceneExtension: '.hype',
     nodeKinds: NODE_KINDS,
-    patchOperations: [
-      'setMeta',
-      'setRoot',
-      'setActiveCameraId',
-      'createNode',
-      'deleteNode',
-      'setNode',
-      'setNodeProperty',
-      'appendChild',
-      'moveChild',
-      'setTrack',
-      'deleteTrack',
-      'setSection',
-      'deleteSection',
-    ],
+    patchOperations: PATCH_OPERATION_TYPES,
     validation: {
       structuralSceneValidation: true,
     },

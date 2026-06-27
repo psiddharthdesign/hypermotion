@@ -473,6 +473,22 @@ export interface ScenePatch {
   ops: PatchOperation[]
 }
 
+export const PATCH_OPERATION_TYPES = [
+  'setMeta',
+  'setRoot',
+  'setActiveCameraId',
+  'createNode',
+  'deleteNode',
+  'setNode',
+  'setNodeProperty',
+  'appendChild',
+  'moveChild',
+  'setTrack',
+  'deleteTrack',
+  'setSection',
+  'deleteSection',
+] as const satisfies readonly PatchOperation['op'][]
+
 export type PatchOperation =
   | { op: 'setMeta'; patch: Record<string, unknown> }
   | { op: 'setRoot'; nodeId: string }
