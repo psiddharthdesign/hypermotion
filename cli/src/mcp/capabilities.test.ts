@@ -14,6 +14,29 @@ test('capability tools list the full supported keyframe property set', async () 
   const listed = parseToolJson(await handleListKeyframeableProperties())
 
   assert.deepEqual(capabilities.nodeKinds, NODE_KINDS)
+  assert.deepEqual(capabilities.patchOperations, [
+    'setMeta',
+    'setRoot',
+    'setActiveCameraId',
+    'createNode',
+    'deleteNode',
+    'setNode',
+    'setNodeProperty',
+    'appendChild',
+    'moveChild',
+    'setTrack',
+    'deleteTrack',
+    'setSection',
+    'deleteSection',
+  ])
+  assert.deepEqual(capabilities.queryTools, [
+    'list_layers',
+    'get_layer',
+    'list_tracks',
+    'list_cameras',
+  ])
+  assert.deepEqual(capabilities.renderFormats, ['mp4', 'webm', 'gif'])
+  assert.deepEqual(capabilities.renderQualities, ['comp', '720p', '2k', '4k'])
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
   assert.equal(
@@ -25,6 +48,10 @@ test('capability tools list the full supported keyframe property set', async () 
 function parseToolJson(result: CallToolResult): {
   keyframeableProperties: string[]
   nodeKinds?: string[]
+  patchOperations?: string[]
+  queryTools?: string[]
+  renderFormats?: string[]
+  renderQualities?: string[]
 } {
   const item = result.content[0]
   assert.equal(item?.type, 'text')
@@ -32,12 +59,13 @@ function parseToolJson(result: CallToolResult): {
   const parsed: unknown = JSON.parse(item.text)
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
+  const parsedObject = parsed as Record<string, unknown>
 
-  const properties = (parsed as { keyframeableProperties?: unknown }).keyframeableProperties
+  const properties = parsedObject.keyframeableProperties
   assert.ok(Array.isArray(properties))
   assert.ok(properties.every((propertyId) => typeof propertyId === 'string'))
 
-  const rawNodeKinds = (parsed as { nodeKinds?: unknown }).nodeKinds
+  const rawNodeKinds = parsedObject.nodeKinds
   let nodeKinds: string[] | undefined
   if (rawNodeKinds !== undefined) {
     assert.ok(Array.isArray(rawNodeKinds))
@@ -45,5 +73,21 @@ function parseToolJson(result: CallToolResult): {
     nodeKinds = rawNodeKinds
   }
 
-  return { keyframeableProperties: properties, nodeKinds }
+  return {
+    keyframeableProperties: properties,
+    nodeKinds,
+    patchOperations: optionalStringArray(parsedObject, 'patchOperations'),
+    queryTools: optionalStringArray(parsedObject, 'queryTools'),
+    renderFormats: optionalStringArray(parsedObject, 'renderFormats'),
+    renderQualities: optionalStringArray(parsedObject, 'renderQualities'),
+  }
+}
+
+function optionalStringArray(parsed: Record<string, unknown>, key: string): string[] | undefined {
+  const value = parsed[key]
+  if (value === undefined) return undefined
+
+  assert.ok(Array.isArray(value))
+  assert.ok(value.every((item) => typeof item === 'string'))
+  return value
 }
