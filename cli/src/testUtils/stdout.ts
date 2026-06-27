@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 type WritableStream = typeof process.stdout | typeof process.stderr
+type CaptureCallback = () => Promise<void> | void
 
 async function captureStream(
   stream: WritableStream,
-  run: () => Promise<void>,
+  run: CaptureCallback,
 ): Promise<string> {
   let output = ''
   const write = stream.write
@@ -27,10 +28,10 @@ async function captureStream(
   return output
 }
 
-export async function captureStdout(run: () => Promise<void>): Promise<string> {
+export async function captureStdout(run: CaptureCallback): Promise<string> {
   return captureStream(process.stdout, run)
 }
 
-export async function captureStderr(run: () => Promise<void>): Promise<string> {
+export async function captureStderr(run: CaptureCallback): Promise<string> {
   return captureStream(process.stderr, run)
 }
