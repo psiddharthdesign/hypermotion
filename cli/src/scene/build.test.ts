@@ -695,6 +695,14 @@ test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
   assert.equal(tracks['fade-title'].defaultEasing, 'ease-in-out')
 })
 
+test('validateScene accepts a valid authored scene', () => {
+  const result = validateScene(buildSceneBytes(sampleScene()))
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
 test('validateScene rejects unsupported track property ids', () => {
   const scene = {
     ...sampleScene(),
