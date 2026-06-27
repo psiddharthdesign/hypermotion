@@ -122,12 +122,20 @@ Any MCP-compatible agent can register it and call its tools.
 
 | Tool           | Status   | What it does                                                                  |
 |----------------|----------|-------------------------------------------------------------------------------|
+| `doctor`       | ✅ v0.1.2 | Check desktop app and CLI environment health.                                |
+| `get_capabilities` | ✅ v0.1.2 | List supported formats, quality presets, patch ops, and scene features.   |
 | `create_scene` | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.    |
 | `render_scene` | ✅ v0.1.0 | Renders the current desktop scene to MP4 / WebM / GIF at the chosen quality. |
 | `info_scene`   | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
+| `inspect_scene` | ✅ v0.1.2 | Inspect a saved scene's structural contents.                                |
 | `patch_scene`  | ✅ v0.1.2 | Create a patched copy of an existing `.hype` scene.                          |
 | `validate_scene` | ✅ v0.1.2 | Validate a `.hype` scene for structural consistency after agent edits.       |
+| `list_layers`  | ✅ v0.1.2 | List layer nodes in a saved `.hype` scene.                                   |
+| `get_layer`    | ✅ v0.1.2 | Return details for one layer in a saved `.hype` scene.                       |
+| `list_tracks`  | ✅ v0.1.2 | List animation tracks in a saved `.hype` scene.                              |
+| `list_cameras` | ✅ v0.1.2 | List cameras in a saved `.hype` scene.                                       |
 | `open_scene`   | ✅ v0.1.2 | Open a saved `.hype` scene in the desktop app.                               |
+| `list_keyframeable_properties` | ✅ v0.1.2 | List property ids that can be animated with tracks/keyframes. |
 
 ### Claude Code
 
