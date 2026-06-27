@@ -214,7 +214,8 @@ Patch a saved scene (v0.1.2):
 
 Still on the roadmap:
 
-- "Modify the existing `<path>.hype` in place and re-render it." ❌ — agents can create patched copies, validate, open, and render the current desktop scene, but not atomically edit and render the same file path yet.
+- "Modify the existing `<path>.hype` in place." ✅ (`patch_scene` without `output` overwrites the input scene)
+- "Modify the existing `<path>.hype` and render it headlessly in one call." ❌ — agents can patch, open, and render the current desktop scene, but file-based render still is not wired through as one atomic operation.
 - "Render only chapters 1 and 3." ❌ — CLI doesn't accept range/chapter flags yet.
 
 ---
@@ -564,7 +565,7 @@ it without env hints.
 
 ## Roadmap
 
-### Later — in-place editing, chapter / range rendering, batch rendering, headless watch mode
+### Later — file-based render, chapter / range rendering, batch rendering, headless watch mode
 
 Likely v0.2.x. Track or propose in
 [GitHub Discussions](https://github.com/psiddharthdesign/hypermotion/discussions).
