@@ -125,6 +125,14 @@ test('create_scene input schema exposes the open default', () => {
   assert.equal(openProperty?.default, true)
 })
 
+test('create_scene input schema exposes string and object scene inputs', () => {
+  const sceneProperty = createSceneTool.inputSchema.properties?.scene as
+    | Record<string, unknown>
+    | undefined
+
+  assert.deepEqual(sceneProperty?.anyOf, [{ type: 'string' }, { type: 'object' }])
+})
+
 test('create_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleCreateScene({
     output: 42,

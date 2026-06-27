@@ -99,6 +99,7 @@ export const createSceneTool: Tool = {
         description: 'Absolute path to write the .hype file to.',
       },
       scene: {
+        anyOf: [{ type: 'string' }, { type: 'object' }],
         description:
           'The scene to build. Either a JSON string or an inline object matching SceneJson.',
       },
