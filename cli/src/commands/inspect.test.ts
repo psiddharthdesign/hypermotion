@@ -85,3 +85,29 @@ test('inspect command reports missing scene files', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('inspect command reports malformed scene files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
+  const scenePath = path.join(dir, 'broken.hype')
+  const previousExit = process.exit
+  try {
+    fs.writeFileSync(scenePath, 'not a yjs update')
+    process.exit = ((code?: number) => {
+      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
+    }) as typeof process.exit
+
+    const stderr = await captureStderr(async () => {
+      assert.throws(
+        () => {
+          inspectCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[inspect\] failed to inspect .*broken\.hype:/)
+  } finally {
+    process.exit = previousExit
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
