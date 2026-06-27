@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { captureStderr } from '../testUtils/stdout.js'
 import { getDoctorReport } from './doctor.js'
 
 test('doctor report lists supported commands and MCP tools once', async () => {
   const previousAppPath = process.env.HYPERMOTION_APP_PATH
-  process.env.HYPERMOTION_APP_PATH = '/tmp/hypermotion-doctor-missing-app'
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-doctor-missing-'))
+  process.env.HYPERMOTION_APP_PATH = path.join(dir, 'hyper-motion')
 
   try {
     const state: { report?: Awaited<ReturnType<typeof getDoctorReport>> } = {}
@@ -33,5 +37,6 @@ test('doctor report lists supported commands and MCP tools once', async () => {
     } else {
       process.env.HYPERMOTION_APP_PATH = previousAppPath
     }
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 })
