@@ -735,6 +735,18 @@ test('validateScene rejects non-frame root nodes', () => {
   assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
 })
 
+test('validateScene rejects non-camera active camera ids', () => {
+  const scene = sampleScene()
+  scene.activeCameraId = 'title'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.activeCameraId is not a camera node: title',
+  ])
+})
+
 test('validateScene rejects unsupported node kinds', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
