@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { getDoctorReport } from '../../commands/doctor.js'
 
 export const doctorTool: Tool = {
@@ -9,7 +9,7 @@ export const doctorTool: Tool = {
   inputSchema: { type: 'object', properties: {} },
 }
 
-export async function handleDoctor() {
+export async function handleDoctor(): Promise<CallToolResult> {
   return {
     content: [
       {
