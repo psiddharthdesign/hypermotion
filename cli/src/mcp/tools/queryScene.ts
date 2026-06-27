@@ -44,8 +44,10 @@ export const listCamerasTool: Tool = {
 export async function handleListLayers(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = SceneInput.parse(args)
-  const scene = read(parsed.scene)
+  const parsed = SceneInput.safeParse(args)
+  if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
+
+  const scene = read(parsed.data.scene)
   const nodes = record(scene.nodes)
   return text({
     root: scene.root ?? null,
@@ -66,19 +68,23 @@ export async function handleListLayers(
 export async function handleGetLayer(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = LayerInput.parse(args)
-  const node = record(record(read(parsed.scene).nodes)[parsed.nodeId])
-  if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${parsed.nodeId}` }] }
+  const parsed = LayerInput.safeParse(args)
+  if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
+
+  const node = record(record(read(parsed.data.scene).nodes)[parsed.data.nodeId])
+  if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${parsed.data.nodeId}` }] }
   return text(node)
 }
 
 export async function handleListTracks(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = TrackInput.parse(args)
-  const tracks = Object.values(record(read(parsed.scene).tracks)).filter((raw) => {
+  const parsed = TrackInput.safeParse(args)
+  if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
+
+  const tracks = Object.values(record(read(parsed.data.scene).tracks)).filter((raw) => {
     const t = record(raw)
-    return parsed.nodeId ? t.nodeId === parsed.nodeId : true
+    return parsed.data.nodeId ? t.nodeId === parsed.data.nodeId : true
   })
   return text({ tracks })
 }
@@ -86,8 +92,10 @@ export async function handleListTracks(
 export async function handleListCameras(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = SceneInput.parse(args)
-  const scene = read(parsed.scene)
+  const parsed = SceneInput.safeParse(args)
+  if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
+
+  const scene = read(parsed.data.scene)
   const cameras = Object.values(record(scene.nodes)).filter((raw) => record(raw).kind === 'camera')
   return text({ activeCameraId: scene.activeCameraId ?? null, cameras })
 }
@@ -104,4 +112,16 @@ function record(value: unknown): Record<string, unknown> {
 
 function text(value: unknown): CallToolResult {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] }
+}
+
+function invalidArgs(toolName: string, message: string): CallToolResult {
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text' as const,
+        text: `${toolName}: invalid arguments — ${message}`,
+      },
+    ],
+  }
 }
