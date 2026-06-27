@@ -27,7 +27,12 @@ import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildSceneBytes, readSceneSummary, type SceneJson } from '../../scene/build.js'
+import {
+  PROPERTY_IDS,
+  buildSceneBytes,
+  readSceneSummary,
+  type SceneJson,
+} from '../../scene/build.js'
 import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const CreateInput = z.object({
@@ -47,6 +52,8 @@ const CreateInput = z.object({
     .default(true)
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 })
+
+const KEYFRAMEABLE_PROPERTY_DESCRIPTION = PROPERTY_IDS.join(', ')
 
 export const createSceneTool: Tool = {
   name: 'create_scene',
@@ -76,19 +83,7 @@ export const createSceneTool: Tool = {
     "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
     "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
-    "Property IDs you can keyframe: transform.x, transform.y, transform.z, transform.rotation, " +
-    "transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY, " +
-    "transform.anchorX, transform.anchorY, transform.anchorZ, " +
-    "camera.focusX, camera.focusY, camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ, " +
-    "camera.focusDistance, camera.focusRadius, camera.focusFalloff, " +
-    "camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ, " +
-    "camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip, " +
-    "camera.aperture, camera.iso, camera.blurLevel, camera.blurQuality, " +
-    "appearance.opacity, appearance.cornerRadius, appearance.cornerRadii, " +
-    "appearance.cornerRadii.tl, appearance.cornerRadii.tr, appearance.cornerRadii.br, " +
-    "appearance.cornerRadii.bl, appearance.fill, text.progress, layout.gap, layout.padding.top, " +
-    "layout.padding.right, layout.padding.bottom, layout.padding.left, size.width, size.height, " +
-    "layout.direction, variant.\n\n" +
+    `Property IDs you can keyframe: ${KEYFRAMEABLE_PROPERTY_DESCRIPTION}.\n\n` +
     "Include exactly one 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
     "scene to render. The artboard size lives in meta.canvas.width / height.",
   inputSchema: {
