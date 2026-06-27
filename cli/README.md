@@ -63,7 +63,7 @@ Then in Claude Code, the agent has access to:
 - **`info_scene`** — read `.hype` scene metadata.
 - **`inspect_scene`** — inspect a saved scene's structural contents.
 - **`patch_scene`** — create a patched copy of an existing scene.
-- **`validate_scene`** — validate scene JSON before creating a `.hype` file.
+- **`validate_scene`** — validate a saved `.hype` scene's structure.
 - **`list_layers`**, **`get_layer`**, **`list_tracks`**, and **`list_cameras`** — query saved scene contents.
 - **`open_scene`** — open a saved scene in the desktop app.
 - **`render_scene`** — render to MP4 / WebM / GIF, optionally from a `.hype` scene path.
