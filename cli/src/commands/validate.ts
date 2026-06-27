@@ -10,11 +10,18 @@ export function validateCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output validation result as JSON')
     .action((scenePath: string, options: { json?: boolean }) => {
+      let bytes: Buffer
       let result: ReturnType<typeof validateScene>
       try {
-        result = validateScene(new Uint8Array(fs.readFileSync(scenePath)))
+        bytes = fs.readFileSync(scenePath)
       } catch (err) {
         console.error(`[validate] failed to read ${scenePath}: ${err instanceof Error ? err.message : err}`)
+        process.exit(2)
+      }
+      try {
+        result = validateScene(new Uint8Array(bytes))
+      } catch (err) {
+        console.error(`[validate] ${scenePath} doesn't look like a valid .hype file: ${err instanceof Error ? err.message : err}`)
         process.exit(2)
       }
       if (options.json) {
