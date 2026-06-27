@@ -35,6 +35,7 @@ test('capability tools list the full supported keyframe property set', async () 
     'list_tracks',
     'list_cameras',
   ])
+  assert.deepEqual(capabilities.validationTools, ['validate_scene'])
   assert.deepEqual(capabilities.renderFormats, ['mp4', 'webm', 'gif'])
   assert.deepEqual(capabilities.renderQualities, ['comp', '720p', '2k', '4k'])
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
@@ -50,6 +51,7 @@ function parseToolJson(result: CallToolResult): {
   nodeKinds?: string[]
   patchOperations?: string[]
   queryTools?: string[]
+  validationTools?: string[]
   renderFormats?: string[]
   renderQualities?: string[]
 } {
@@ -78,6 +80,7 @@ function parseToolJson(result: CallToolResult): {
     nodeKinds,
     patchOperations: optionalStringArray(parsedObject, 'patchOperations'),
     queryTools: optionalStringArray(parsedObject, 'queryTools'),
+    validationTools: optionalStringArray(parsedObject, 'validationTools'),
     renderFormats: optionalStringArray(parsedObject, 'renderFormats'),
     renderQualities: optionalStringArray(parsedObject, 'renderQualities'),
   }
