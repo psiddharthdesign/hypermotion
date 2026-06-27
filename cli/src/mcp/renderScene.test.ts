@@ -7,10 +7,16 @@ import path from 'node:path'
 import test from 'node:test'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 
+type JsonSchemaProperty = {
+  type?: string
+  enum?: string[]
+  minimum?: number
+  maximum?: number
+  description?: string
+}
+
 test('render_scene input schema exposes fps bounds', () => {
-  const fpsProperty = renderSceneTool.inputSchema.properties?.fps as
-    | Record<string, unknown>
-    | undefined
+  const fpsProperty = schemaProperty('fps')
 
   assert.equal(fpsProperty?.type, 'integer')
   assert.equal(fpsProperty?.minimum, 1)
@@ -18,21 +24,15 @@ test('render_scene input schema exposes fps bounds', () => {
 })
 
 test('render_scene input schema exposes render preset enums', () => {
-  const formatProperty = renderSceneTool.inputSchema.properties?.format as
-    | Record<string, unknown>
-    | undefined
-  const qualityProperty = renderSceneTool.inputSchema.properties?.quality as
-    | Record<string, unknown>
-    | undefined
+  const formatProperty = schemaProperty('format')
+  const qualityProperty = schemaProperty('quality')
 
   assert.deepEqual(formatProperty?.enum, ['mp4', 'webm', 'gif'])
   assert.deepEqual(qualityProperty?.enum, ['comp', '720p', '2k', '4k'])
 })
 
 test('render_scene input schema exposes the optional scene path', () => {
-  const sceneProperty = renderSceneTool.inputSchema.properties?.scene as
-    | Record<string, unknown>
-    | undefined
+  const sceneProperty = schemaProperty('scene')
 
   assert.equal(sceneProperty?.type, 'string')
   assert.match(String(sceneProperty?.description), /\.hype scene file/)
@@ -66,3 +66,9 @@ test('render_scene reports missing scene files as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function schemaProperty(name: string): JsonSchemaProperty | undefined {
+  return renderSceneTool.inputSchema.properties?.[name] as
+    | JsonSchemaProperty
+    | undefined
+}
