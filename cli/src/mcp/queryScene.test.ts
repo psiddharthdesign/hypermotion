@@ -13,6 +13,25 @@ import {
   handleListTracks,
 } from './tools/queryScene.js'
 
+test('query scene MCP handlers report invalid arguments as MCP errors', async () => {
+  const cases: Array<{
+    name: string
+    run: () => Promise<Awaited<ReturnType<typeof handleListLayers>>>
+  }> = [
+    { name: 'list_layers', run: () => handleListLayers({ scene: 42 }) },
+    { name: 'get_layer', run: () => handleGetLayer({ scene: '/tmp/scene.hype' }) },
+    { name: 'list_tracks', run: () => handleListTracks({ scene: 42 }) },
+    { name: 'list_cameras', run: () => handleListCameras({ scene: 42 }) },
+  ]
+
+  for (const entry of cases) {
+    const result = await entry.run()
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, new RegExp(`^${entry.name}: invalid arguments`))
+  }
+})
+
 test('query scene MCP handlers return layers, tracks, and cameras', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
