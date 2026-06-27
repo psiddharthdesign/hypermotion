@@ -53,7 +53,7 @@ program.addCommand(serveCommand())
 // Surface unknown commands cleanly instead of a stack trace.
 program.showHelpAfterError('(use --help for available commands)')
 
-program.parseAsync().catch((err) => {
+program.parseAsync().catch((err: unknown) => {
   console.error('\n[hypermotion] fatal:', err instanceof Error ? err.message : err)
   process.exit(1)
 })
