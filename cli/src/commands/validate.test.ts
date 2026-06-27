@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
-import { captureStdout } from '../testUtils/stdout.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { validateCommand } from './validate.js'
 
 test('validate command prints JSON validation results', async () => {
@@ -179,6 +179,31 @@ test('validate command rejects a parent link missing from children', async () =>
     assert.equal(process.exitCode, 1)
   } finally {
     process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('validate command reports missing scene files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'missing.hype')
+  const previousExit = process.exit
+  try {
+    process.exit = ((code?: number) => {
+      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
+    }) as typeof process.exit
+
+    const stderr = await captureStderr(async () => {
+      assert.throws(
+        () => {
+          validateCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[validate\] failed to read .*missing\.hype:/)
+  } finally {
+    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
