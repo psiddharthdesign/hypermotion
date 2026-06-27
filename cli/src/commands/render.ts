@@ -9,8 +9,9 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * ships the bytes back. The CLI writes them to `<out>`.
  *
- * Current scope: renders either the current desktop scene or a specific
- * `.hype` file when `--scene <path>` is supplied.
+ * Current scope: renders the current desktop scene. `--scene <path>` is
+ * accepted for forward compatibility and forwarded to desktop builds
+ * that know how to handle file-based rendering.
  */
 
 import { Command } from 'commander'
@@ -47,7 +48,10 @@ export function renderCommand(): Command {
       'comp',
     )
     .option('--fps <n>', 'Frame rate', '30')
-    .option('--scene <path>', 'Path to a .hype scene file to render')
+    .option(
+      '--scene <path>',
+      'Path to a .hype scene file; accepted for forward compatibility',
+    )
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
