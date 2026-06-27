@@ -980,6 +980,77 @@ test('buildSceneBytes preserves explicit camera viewport fields', () => {
   assert.deepEqual(nodes.camera.background, { kind: 'solid', color: '#111827' })
 })
 
+test('buildSceneBytes writes camera defaults expected by the desktop app', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as Record<string, Record<string, unknown>>
+
+  assert.deepEqual(nodes.camera, {
+    id: 'camera',
+    kind: 'camera',
+    name: 'Camera',
+    parent: null,
+    children: [],
+    transform: {
+      x: 640,
+      y: 360,
+      z: 0,
+      rotation: 0,
+      rotationX: 0,
+      rotationY: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      anchorZ: 0,
+      space: 'local',
+      renderMode: 'flat',
+    },
+    appearance: {
+      opacity: 1,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      effects: [],
+    },
+    visible: true,
+    locked: false,
+    position: 'flow',
+    isMask: false,
+    componentSourceId: null,
+    workspaceOnly: false,
+    projection: '2d',
+    enabled: true,
+    background: null,
+    focalLength: 1000,
+    fieldOfView: 35,
+    pointOfInterestX: 640,
+    pointOfInterestY: 360,
+    pointOfInterestZ: 0,
+    nearClip: 1,
+    farClip: 100000,
+    depthOfField: false,
+    focusMode: 'screen',
+    focusX: 640,
+    focusY: 360,
+    focusWorldX: 640,
+    focusWorldY: 360,
+    focusWorldZ: 0,
+    focusTargetNodeId: null,
+    focusDistance: 0,
+    focusRadius: 160,
+    focusFalloff: 180,
+    aperture: 0,
+    iso: 100,
+    blurLevel: 1,
+    blurQuality: 8,
+    showFocusPlane: false,
+  })
+})
+
 test('buildSceneBytes accepts layout direction keyframes', () => {
   const scene = sampleScene()
   scene.tracks = {
