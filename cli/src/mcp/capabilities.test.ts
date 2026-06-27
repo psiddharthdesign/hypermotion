@@ -13,6 +13,7 @@ test('capability tools list the full supported keyframe property set', async () 
   const capabilities = parseToolJson(await handleGetCapabilities())
   const listed = parseToolJson(await handleListKeyframeableProperties())
 
+  assert.equal(capabilities.sceneExtension, '.hype')
   assert.deepEqual(capabilities.nodeKinds, NODE_KINDS)
   assert.deepEqual(capabilities.patchOperations, [
     'setMeta',
@@ -35,6 +36,9 @@ test('capability tools list the full supported keyframe property set', async () 
     'list_tracks',
     'list_cameras',
   ])
+  assert.deepEqual(capabilities.validation, {
+    structuralSceneValidation: true,
+  })
   assert.deepEqual(capabilities.validationTools, ['validate_scene'])
   assert.deepEqual(capabilities.renderFormats, ['mp4', 'webm', 'gif'])
   assert.deepEqual(capabilities.renderQualities, ['comp', '720p', '2k', '4k'])
@@ -48,6 +52,10 @@ test('capability tools list the full supported keyframe property set', async () 
 
 function parseToolJson(result: CallToolResult): {
   keyframeableProperties: string[]
+  sceneExtension?: string
+  validation?: {
+    structuralSceneValidation: boolean
+  }
   nodeKinds?: string[]
   patchOperations?: string[]
   queryTools?: string[]
@@ -63,6 +71,30 @@ function parseToolJson(result: CallToolResult): {
   assert.notEqual(parsed, null)
   const parsedObject = parsed as Record<string, unknown>
 
+  const rawSceneExtension = parsedObject.sceneExtension
+  let sceneExtension: string | undefined
+  if (rawSceneExtension !== undefined) {
+    assert.ok(typeof rawSceneExtension === 'string')
+    sceneExtension = rawSceneExtension
+  }
+
+  const rawValidation = parsedObject.validation
+  let validation:
+    | {
+        structuralSceneValidation: boolean
+      }
+    | undefined
+  if (rawValidation !== undefined) {
+    assert.equal(typeof rawValidation, 'object')
+    assert.notEqual(rawValidation, null)
+    const validationObject = rawValidation as Record<string, unknown>
+    const structuralSceneValidation = validationObject.structuralSceneValidation
+    assert.ok(typeof structuralSceneValidation === 'boolean')
+    validation = {
+      structuralSceneValidation,
+    }
+  }
+
   const properties = parsedObject.keyframeableProperties
   assertStringArray(properties)
 
@@ -75,6 +107,8 @@ function parseToolJson(result: CallToolResult): {
 
   return {
     keyframeableProperties: properties,
+    sceneExtension,
+    validation,
     nodeKinds,
     patchOperations: optionalStringArray(parsedObject, 'patchOperations'),
     queryTools: optionalStringArray(parsedObject, 'queryTools'),
