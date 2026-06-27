@@ -907,6 +907,27 @@ test('validateScene rejects track ids that do not match their map key', () => {
   ])
 })
 
+test('validateScene rejects section ids that do not match their map key', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const sections = scene.get('sections') as Y.Map<Record<string, unknown>>
+  sections.set('alias', {
+    id: 'intro',
+    name: 'Intro',
+    color: '#2563eb',
+    start: 0,
+    end: 2.5,
+  })
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'section map key alias does not match section id: intro',
+  ])
+})
+
 test('buildSceneBytes preserves variant selection keyframe values', () => {
   const scene = sampleScene()
   scene.tracks = {
