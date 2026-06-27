@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { captureStderr } from '../testUtils/stdout.js'
 import { getDoctorReport } from './doctor.js'
 
 test('doctor report lists supported commands and MCP tools once', async () => {
@@ -9,8 +10,15 @@ test('doctor report lists supported commands and MCP tools once', async () => {
   process.env.HYPERMOTION_APP_PATH = '/tmp/hypermotion-doctor-missing-app'
 
   try {
-    const report = await getDoctorReport()
+    const state: { report?: Awaited<ReturnType<typeof getDoctorReport>> } = {}
+    const stderr = await captureStderr(async () => {
+      state.report = await getDoctorReport()
+    })
 
+    assert.match(stderr, /HYPERMOTION_APP_PATH is set/)
+    const { report } = state
+    if (report === undefined) throw new Error('doctor report was not produced')
+    assert.equal(report.ok, false)
     assert.equal(new Set(report.commands).size, report.commands.length)
     assert.equal(new Set(report.mcpTools).size, report.mcpTools.length)
     assert.ok(report.commands.includes('doctor'))
