@@ -1,45 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
-export async function captureStdout(run: () => Promise<void>): Promise<string> {
-  let stdout = ''
-  const write = process.stdout.write
-  process.stdout.write = ((
-    chunk: Parameters<typeof process.stdout.write>[0],
-    encodingOrCallback?: Parameters<typeof process.stdout.write>[1],
-    callback?: Parameters<typeof process.stdout.write>[2],
+type WritableStream = typeof process.stdout | typeof process.stderr
+
+async function captureStream(
+  stream: WritableStream,
+  run: () => Promise<void>,
+): Promise<string> {
+  let output = ''
+  const write = stream.write
+  stream.write = ((
+    chunk: Parameters<typeof stream.write>[0],
+    encodingOrCallback?: Parameters<typeof stream.write>[1],
+    callback?: Parameters<typeof stream.write>[2],
   ) => {
-    stdout += chunk.toString()
+    output += chunk.toString()
     const done =
       typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
     done?.()
     return true
-  }) as typeof process.stdout.write
+  }) as typeof stream.write
   try {
     await run()
   } finally {
-    process.stdout.write = write
+    stream.write = write
   }
-  return stdout
+  return output
+}
+
+export async function captureStdout(run: () => Promise<void>): Promise<string> {
+  return captureStream(process.stdout, run)
 }
 
 export async function captureStderr(run: () => Promise<void>): Promise<string> {
-  let stderr = ''
-  const write = process.stderr.write
-  process.stderr.write = ((
-    chunk: Parameters<typeof process.stderr.write>[0],
-    encodingOrCallback?: Parameters<typeof process.stderr.write>[1],
-    callback?: Parameters<typeof process.stderr.write>[2],
-  ) => {
-    stderr += chunk.toString()
-    const done =
-      typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
-    done?.()
-    return true
-  }) as typeof process.stderr.write
-  try {
-    await run()
-  } finally {
-    process.stderr.write = write
-  }
-  return stderr
+  return captureStream(process.stderr, run)
 }
