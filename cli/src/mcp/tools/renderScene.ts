@@ -4,9 +4,8 @@
  * `render_scene` MCP tool.
  *
  * Renders the user's current desktop scene to MP4 / WebM / GIF by
- * driving the installed desktop app. A .hype scene path is accepted for
- * forward compatibility, but file-based headless rendering is not wired
- * through yet.
+ * driving the installed desktop app. A .hype scene path is accepted and
+ * forwarded to desktop builds that support file-based rendering.
  *
  * Returns the absolute output path on success, or a descriptive error
  * if the app isn't installed or the render fails.
@@ -34,7 +33,7 @@ const RenderInput = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a .hype scene file. Accepted for forward compatibility; currently renders the desktop scene.',
+      'Path to a .hype scene file. Forwarded to compatible desktop builds for file-based rendering.',
     ),
 })
 
@@ -42,8 +41,8 @@ export const renderSceneTool: Tool = {
   name: 'render_scene',
   description:
     'Render the current scene loaded in the desktop app to MP4, WebM, or GIF. ' +
-    'A `scene` path is accepted for forward compatibility, but file-based ' +
-    'headless rendering is not active yet. Drives the installed desktop app under the hood.',
+    'A `scene` path is forwarded to compatible desktop builds for file-based ' +
+    'rendering. Drives the installed desktop app under the hood.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -67,7 +66,7 @@ export const renderSceneTool: Tool = {
       scene: {
         type: 'string',
         description:
-          'Path to a .hype scene file. Accepted for forward compatibility; currently renders the desktop scene.',
+          'Path to a .hype scene file. Forwarded to compatible desktop builds for file-based rendering.',
       },
     },
     required: ['output'],
