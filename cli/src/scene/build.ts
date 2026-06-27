@@ -908,6 +908,12 @@ export function validateScene(bytes: Uint8Array): {
     }
   }
 
+  const sections = asRecord(data.sections)
+  for (const [id, raw] of Object.entries(sections)) {
+    const section = asRecord(raw)
+    if (section.id !== id) errors.push(`section map key ${id} does not match section id: ${String(section.id)}`)
+  }
+
   return { ok: errors.length === 0, errors, warnings }
 }
 
