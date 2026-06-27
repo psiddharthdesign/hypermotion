@@ -199,9 +199,14 @@ Inspect a scene (v0.1.2):
 - "What's in `~/Desktop/intro.hype`?" ✅ (`info_scene`)
 - "How long is `~/Desktop/intro.hype`?" ✅
 
+Patch a saved scene (v0.1.2):
+
+- "Create a patched copy of `~/Desktop/intro.hype` with the title opacity set to 0.5." ✅ (`patch_scene`)
+- "Validate the patched scene, then open it in Hyper Motion." ✅
+
 Still on the roadmap:
 
-- "Modify the existing `<path>.hype` and re-render." ❌ — agents can `info` + `create` + `render`, but not in-place edit yet.
+- "Modify the existing `<path>.hype` in place and re-render it." ❌ — agents can create patched copies, validate, open, and render the current desktop scene, but not atomically edit and render the same file path yet.
 - "Render only chapters 1 and 3." ❌ — CLI doesn't accept range/chapter flags yet.
 
 ---
