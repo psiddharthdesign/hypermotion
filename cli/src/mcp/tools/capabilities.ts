@@ -3,6 +3,23 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PROPERTY_IDS } from '../../scene/build.js'
 
+type CapabilitiesPayload = {
+  sceneExtension: '.hype'
+  nodeKinds: typeof NODE_KINDS
+  patchOperations: string[]
+  validation: {
+    structuralSceneValidation: boolean
+  }
+  queryTools: string[]
+  renderFormats: string[]
+  renderQualities: string[]
+  keyframeableProperties: typeof PROPERTY_IDS
+}
+
+type KeyframeablePropertiesPayload = {
+  keyframeableProperties: typeof PROPERTY_IDS
+}
+
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description: 'Return supported scene node kinds, patch operations, render formats, and keyframeable properties.',
@@ -16,7 +33,7 @@ export const listKeyframeablePropertiesTool: Tool = {
 }
 
 export async function handleGetCapabilities(): Promise<CallToolResult> {
-  return text({
+  const payload: CapabilitiesPayload = {
     sceneExtension: '.hype',
     nodeKinds: NODE_KINDS,
     patchOperations: [
@@ -41,11 +58,17 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
     renderFormats: ['mp4', 'webm', 'gif'],
     renderQualities: ['comp', '720p', '2k', '4k'],
     keyframeableProperties: PROPERTY_IDS,
-  })
+  }
+
+  return text(payload)
 }
 
 export async function handleListKeyframeableProperties(): Promise<CallToolResult> {
-  return text({ keyframeableProperties: PROPERTY_IDS })
+  const payload: KeyframeablePropertiesPayload = {
+    keyframeableProperties: PROPERTY_IDS,
+  }
+
+  return text(payload)
 }
 
 function text(value: unknown): CallToolResult {
