@@ -7,7 +7,7 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
 } from './tools/capabilities.js'
-import { NODE_KINDS, PROPERTY_IDS } from '../scene/build.js'
+import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../scene/build.js'
 
 test('capability tools list the full supported keyframe property set', async () => {
   const capabilities = parseToolJson(await handleGetCapabilities())
@@ -15,21 +15,7 @@ test('capability tools list the full supported keyframe property set', async () 
 
   assert.equal(capabilities.sceneExtension, '.hype')
   assert.deepEqual(capabilities.nodeKinds, NODE_KINDS)
-  assert.deepEqual(capabilities.patchOperations, [
-    'setMeta',
-    'setRoot',
-    'setActiveCameraId',
-    'createNode',
-    'deleteNode',
-    'setNode',
-    'setNodeProperty',
-    'appendChild',
-    'moveChild',
-    'setTrack',
-    'deleteTrack',
-    'setSection',
-    'deleteSection',
-  ])
+  assert.deepEqual(capabilities.patchOperations, PATCH_OPERATION_TYPES)
   assert.deepEqual(capabilities.queryTools, [
     'list_layers',
     'get_layer',
