@@ -9,6 +9,7 @@ import {
   readSceneSummary,
   validateScene,
   type SceneJson,
+  type TextAnimationJson,
 } from './build.js'
 
 function sampleScene(): SceneJson {
@@ -536,7 +537,7 @@ test('applyScenePatch can clear the active camera', () => {
 
 test('applyScenePatch preserves text animation config on new tracks', () => {
   const bytes = buildSceneBytes(sampleScene())
-  const textAnimation = {
+  const textAnimation: TextAnimationJson = {
     id: 'blur-slide',
     mode: 'in',
     applyTo: 'words',

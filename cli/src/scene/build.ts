@@ -235,8 +235,25 @@ export interface TrackJson {
   nodeId: string
   propertyId: PropertyIdJson
   defaultEasing?: EasingJson
-  textAnimation?: JsonObject | null
+  textAnimation?: TextAnimationJson | null
   keyframes?: KeyframeJson[]
+}
+
+export interface TextAnimationJson {
+  id: string
+  mode: 'in' | 'out'
+  applyTo: 'letters' | 'words' | 'lines'
+  order: 'forward' | 'reverse' | 'random'
+  delay: number
+  smoothing: 'none' | 'smooth'
+  duration: number
+  startTime: number
+  acceleration: 'linear' | 'speed-up' | 'slow-down'
+  easingPresetId: string
+  easingStrength: number
+  direction: 'up' | 'down' | 'left' | 'right'
+  travelDistance: number
+  blurRadius: number
 }
 
 export interface AppearanceJson {
