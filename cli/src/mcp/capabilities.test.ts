@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
@@ -21,10 +22,14 @@ test('capability tools list the full supported keyframe property set', async () 
   )
 })
 
-function parseToolJson(result: {
-  content: Array<{ type: 'text'; text: string }>
-}): { keyframeableProperties: string[]; nodeKinds?: string[] } {
-  const parsed: unknown = JSON.parse(result.content[0]?.text ?? '{}')
+function parseToolJson(result: CallToolResult): {
+  keyframeableProperties: string[]
+  nodeKinds?: string[]
+} {
+  const item = result.content[0]
+  assert.equal(item?.type, 'text')
+
+  const parsed: unknown = JSON.parse(item.text)
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
 
