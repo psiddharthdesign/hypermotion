@@ -6,12 +6,13 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
 } from './tools/capabilities.js'
-import { PROPERTY_IDS } from '../scene/build.js'
+import { NODE_KINDS, PROPERTY_IDS } from '../scene/build.js'
 
 test('capability tools list the full supported keyframe property set', async () => {
   const capabilities = parseToolJson(await handleGetCapabilities())
   const listed = parseToolJson(await handleListKeyframeableProperties())
 
+  assert.deepEqual(capabilities.nodeKinds, NODE_KINDS)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
   assert.equal(
@@ -22,7 +23,7 @@ test('capability tools list the full supported keyframe property set', async () 
 
 function parseToolJson(result: {
   content: Array<{ type: 'text'; text: string }>
-}): { keyframeableProperties: string[] } {
+}): { keyframeableProperties: string[]; nodeKinds?: string[] } {
   const parsed: unknown = JSON.parse(result.content[0]?.text ?? '{}')
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
@@ -31,5 +32,11 @@ function parseToolJson(result: {
   assert.ok(Array.isArray(properties))
   assert.ok(properties.every((propertyId) => typeof propertyId === 'string'))
 
-  return { keyframeableProperties: properties }
+  const nodeKinds = (parsed as { nodeKinds?: unknown }).nodeKinds
+  if (nodeKinds !== undefined) {
+    assert.ok(Array.isArray(nodeKinds))
+    assert.ok(nodeKinds.every((kind) => typeof kind === 'string'))
+  }
+
+  return { keyframeableProperties: properties, nodeKinds }
 }

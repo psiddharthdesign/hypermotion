@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
-import { PROPERTY_IDS } from '../../scene/build.js'
+import { NODE_KINDS, PROPERTY_IDS } from '../../scene/build.js'
 
 type McpTextResult = {
   content: Array<{ type: 'text'; text: string }>
@@ -22,7 +22,7 @@ export const listKeyframeablePropertiesTool: Tool = {
 export async function handleGetCapabilities(): Promise<McpTextResult> {
   return text({
     sceneExtension: '.hype',
-    nodeKinds: ['frame', 'rect', 'ellipse', 'text', 'image', 'video', 'audio', 'component', 'instance', 'camera'],
+    nodeKinds: NODE_KINDS,
     patchOperations: [
       'setMeta',
       'setRoot',
