@@ -102,7 +102,7 @@ export async function handleRenderScene(
       content: [
         {
           type: 'text' as const,
-          text: `Scene file not found: ${scenePath}`,
+          text: `render_scene: scene file not found: ${scenePath}`,
         },
       ],
     }

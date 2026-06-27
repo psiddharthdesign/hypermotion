@@ -61,7 +61,7 @@ test('render_scene reports missing scene files as MCP errors', async () => {
 
     assert.equal(result.isError, true)
     const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `Scene file not found: ${missingScene}`)
+    assert.equal(text, `render_scene: scene file not found: ${missingScene}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
