@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
-import { captureStdout } from '../testUtils/stdout.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { inspectCommand } from './inspect.js'
 
 test('inspect command prints the editable scene graph as JSON', async () => {
@@ -57,6 +57,31 @@ test('inspect command prints the editable scene graph as JSON', async () => {
     assert.equal(scene.nodes.title.kind, 'text')
     assert.equal(scene.nodes.title.text, 'Inspectable')
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('inspect command reports missing scene files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
+  const scenePath = path.join(dir, 'missing.hype')
+  const previousExit = process.exit
+  try {
+    process.exit = ((code?: number) => {
+      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
+    }) as typeof process.exit
+
+    const stderr = await captureStderr(async () => {
+      assert.throws(
+        () => {
+          inspectCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[inspect\] failed to read .*missing\.hype:/)
+  } finally {
+    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
