@@ -7,6 +7,23 @@ type McpTextResult = {
   content: Array<{ type: 'text'; text: string }>
 }
 
+type CapabilitiesPayload = {
+  sceneExtension: '.hype'
+  nodeKinds: string[]
+  patchOperations: string[]
+  validation: {
+    structuralSceneValidation: boolean
+  }
+  queryTools: string[]
+  renderFormats: Array<'mp4' | 'webm' | 'gif'>
+  renderQualities: Array<'comp' | '720p' | '2k' | '4k'>
+  keyframeableProperties: readonly string[]
+}
+
+type KeyframeablePropertiesPayload = {
+  keyframeableProperties: readonly string[]
+}
+
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description: 'Return supported scene node kinds, patch operations, render formats, and keyframeable properties.',
@@ -20,7 +37,7 @@ export const listKeyframeablePropertiesTool: Tool = {
 }
 
 export async function handleGetCapabilities(): Promise<McpTextResult> {
-  return text({
+  const payload: CapabilitiesPayload = {
     sceneExtension: '.hype',
     nodeKinds: ['frame', 'rect', 'ellipse', 'text', 'image', 'video', 'audio', 'component', 'instance', 'camera'],
     patchOperations: [
@@ -45,11 +62,14 @@ export async function handleGetCapabilities(): Promise<McpTextResult> {
     renderFormats: ['mp4', 'webm', 'gif'],
     renderQualities: ['comp', '720p', '2k', '4k'],
     keyframeableProperties: PROPERTY_IDS,
-  })
+  }
+
+  return text(payload)
 }
 
 export async function handleListKeyframeableProperties(): Promise<McpTextResult> {
-  return text({ keyframeableProperties: PROPERTY_IDS })
+  const payload: KeyframeablePropertiesPayload = { keyframeableProperties: PROPERTY_IDS }
+  return text(payload)
 }
 
 function text(value: unknown): McpTextResult {
