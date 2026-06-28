@@ -18,3 +18,14 @@ test('withEnvVar restores values after sync callbacks', async () => {
     delete process.env[name]
   }
 })
+
+test('withEnvVar removes variables that were originally unset', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_UNSET'
+  delete process.env[name]
+
+  await withEnvVar(name, 'during', () => {
+    assert.equal(process.env[name], 'during')
+  })
+
+  assert.equal(process.env[name], undefined)
+})
