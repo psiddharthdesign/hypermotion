@@ -83,3 +83,20 @@ test('info_scene reports missing files as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('info_scene reports malformed scene files as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-malformed-'))
+  const scenePath = path.join(dir, 'malformed.hype')
+
+  try {
+    fs.writeFileSync(scenePath, 'not a yjs update')
+
+    const result = await handleInfoScene({ scene: scenePath })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, /^info_scene: .*malformed\.hype is not a valid \.hype file:/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
