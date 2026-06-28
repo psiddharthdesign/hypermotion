@@ -7,6 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { createCommand } from './create.js'
 import { readSceneSummary } from '../scene/build.js'
+import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
 test('create command makes nested output directories', async () => {
@@ -117,22 +118,17 @@ test('create command rejects top-level JSON arrays', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-'))
   const sourcePath = path.join(dir, 'scene.json')
   const scenePath = path.join(dir, 'scene.hype')
-  const previousExit = process.exit
   try {
-    process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), {
-        exitCode: code,
-      })
-    }) as typeof process.exit
-
     fs.writeFileSync(sourcePath, '[]')
 
-    const stderr = await captureStderr(async () => {
-      await assert.rejects(
-        createCommand()
-          .parseAsync([scenePath, '--from', sourcePath], { from: 'user' }),
-        { exitCode: 2 },
-      )
+    const stderr = await withProcessExitThrow(async () => {
+      return captureStderr(async () => {
+        await assert.rejects(
+          createCommand()
+            .parseAsync([scenePath, '--from', sourcePath], { from: 'user' }),
+          { exitCode: 2 },
+        )
+      })
     })
 
     assert.match(
@@ -141,7 +137,6 @@ test('create command rejects top-level JSON arrays', async () => {
     )
     assert.equal(fs.existsSync(scenePath), false)
   } finally {
-    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
