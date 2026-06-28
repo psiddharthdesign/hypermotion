@@ -50,6 +50,26 @@ test('info_scene returns a structured scene summary', async () => {
             layout: { mode: 'none' },
           },
         },
+        tracks: {
+          fade: {
+            id: 'fade',
+            nodeId: 'root',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'fade-start', time: 0, value: 0 },
+              { id: 'fade-end', time: 1, value: 1 },
+            ],
+          },
+        },
+        sections: {
+          intro: {
+            id: 'intro',
+            name: 'Intro',
+            start: 0,
+            end: 1.25,
+            color: '#60a5fa',
+          },
+        },
       }),
     )
 
@@ -62,6 +82,9 @@ test('info_scene returns a structured scene summary', async () => {
     assert.equal(summary.meta.name, 'MCP Info')
     assert.deepEqual(summary.meta.canvas, { width: 640, height: 360 })
     assert.equal(summary.layerCount, 1)
+    assert.equal(summary.trackCount, 1)
+    assert.equal(summary.sectionCount, 1)
+    assert.equal(summary.keyframeCount, 2)
     assert.equal(summary.root, 'root')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
