@@ -7,7 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { infoCommand } from './info.js'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
-import { captureStdout } from '../testUtils/stdout.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
 test('info command prints JSON scene summaries', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
@@ -287,6 +287,31 @@ test('info command replaces string canvas dimensions with placeholders', async (
 
     assert.match(stdout, /^ {2}Canvas: {4}\? × \?$/m)
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('info command reports missing scene files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  const scenePath = path.join(dir, 'missing.hype')
+  const previousExit = process.exit
+  try {
+    process.exit = ((code?: number) => {
+      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
+    }) as typeof process.exit
+
+    const stderr = await captureStderr(async () => {
+      assert.throws(
+        () => {
+          infoCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[info\] failed to read .*missing\.hype:/)
+  } finally {
+    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
