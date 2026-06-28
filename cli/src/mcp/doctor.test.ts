@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { DoctorReport } from '../commands/doctor.js'
+import { withEnvVar } from '../testUtils/env.js'
 import { captureStderr } from '../testUtils/stdout.js'
 import { doctorTool, handleDoctor } from './tools/doctor.js'
 
@@ -17,15 +18,14 @@ test('doctor input schema accepts no arguments', () => {
 })
 
 test('doctor returns the report as MCP JSON content', async () => {
-  const previousAppPath = process.env.HYPERMOTION_APP_PATH
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-doctor-missing-'))
-  process.env.HYPERMOTION_APP_PATH = path.join(dir, 'hyper-motion')
-
   try {
     const state: { result?: Awaited<ReturnType<typeof handleDoctor>> } = {}
-    const stderr = await captureStderr(async () => {
-      state.result = await handleDoctor()
-    })
+    const stderr = await captureStderr(() =>
+      withEnvVar('HYPERMOTION_APP_PATH', path.join(dir, 'hyper-motion'), async () => {
+        state.result = await handleDoctor()
+      }),
+    )
 
     assert.match(stderr, /HYPERMOTION_APP_PATH is set/)
     const { result } = state
@@ -40,11 +40,6 @@ test('doctor returns the report as MCP JSON content', async () => {
     assert.ok(report.mcpTools.includes('doctor'))
     assert.ok(report.commands.includes('doctor'))
   } finally {
-    if (previousAppPath === undefined) {
-      delete process.env.HYPERMOTION_APP_PATH
-    } else {
-      process.env.HYPERMOTION_APP_PATH = previousAppPath
-    }
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
