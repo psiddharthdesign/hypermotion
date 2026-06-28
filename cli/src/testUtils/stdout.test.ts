@@ -28,6 +28,19 @@ test('captureStdout honors string chunk encodings', async () => {
   assert.equal(output, 'render complete')
 })
 
+test('captureStdout invokes write callbacks', async () => {
+  let callbackCalled = false
+
+  const output = await captureStdout(() => {
+    process.stdout.write('render complete', () => {
+      callbackCalled = true
+    })
+  })
+
+  assert.equal(output, 'render complete')
+  assert.equal(callbackCalled, true)
+})
+
 test('captureStdout restores the writer when the callback throws', async () => {
   const originalWrite = process.stdout.write
 
