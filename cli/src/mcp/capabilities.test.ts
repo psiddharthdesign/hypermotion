@@ -81,6 +81,24 @@ test('capability tools list the full supported keyframe property set', async () 
   )
 })
 
+test('capability tool schemas accept no arguments', () => {
+  const getCapabilities = TOOLS.find((tool) => tool.name === 'get_capabilities')
+  const listKeyframeableProperties = TOOLS.find(
+    (tool) => tool.name === 'list_keyframeable_properties',
+  )
+
+  assert.deepEqual(getCapabilities?.inputSchema, {
+    type: 'object',
+    properties: {},
+    required: [],
+  })
+  assert.deepEqual(listKeyframeableProperties?.inputSchema, {
+    type: 'object',
+    properties: {},
+    required: [],
+  })
+})
+
 function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   const item = result.content[0]
   assert.equal(item?.type, 'text')

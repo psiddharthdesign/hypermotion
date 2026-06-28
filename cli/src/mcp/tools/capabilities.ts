@@ -47,13 +47,13 @@ type KeyframeablePropertiesPayload = {
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description: 'Return supported scene node kinds, patch operations, render formats, and keyframeable properties.',
-  inputSchema: { type: 'object', properties: {} },
+  inputSchema: { type: 'object', properties: {}, required: [] },
 }
 
 export const listKeyframeablePropertiesTool: Tool = {
   name: 'list_keyframeable_properties',
   description: 'Return property ids that can be animated with tracks/keyframes.',
-  inputSchema: { type: 'object', properties: {} },
+  inputSchema: { type: 'object', properties: {}, required: [] },
 }
 
 export async function handleGetCapabilities(): Promise<CallToolResult> {
