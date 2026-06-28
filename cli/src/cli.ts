@@ -5,8 +5,9 @@
  *
  * Two ways this binary is invoked:
  *
- *   `hypermotion <subcommand>` — interactive CLI for humans (render, info,
- *                                  create, serve).
+ *   `hypermotion <subcommand>` — interactive CLI for humans (render, create,
+ *                                  info, inspect, patch, validate, open,
+ *                                  doctor, serve).
  *   `hypermotion-mcp`          — dedicated MCP server binary used by AI
  *                                  coding agents (Claude Code, Codex) over
  *                                  stdio.
