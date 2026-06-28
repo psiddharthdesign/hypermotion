@@ -52,7 +52,7 @@ Requires Node 20+.
 
 ```sh
 hypermotion --version
-# 0.1.2
+# prints the installed CLI version
 
 hypermotion render --help
 ```
