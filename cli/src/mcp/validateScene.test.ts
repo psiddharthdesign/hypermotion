@@ -95,3 +95,41 @@ test('validate_scene returns validation JSON for readable scenes', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('validate_scene marks structurally invalid scenes as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-invalid-'))
+  const scenePath = path.join(dir, 'invalid.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Invalid MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['missing-child'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleValidateScene({ scene: scenePath })
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+
+    assert.equal(result.isError, true)
+    assert.deepEqual(JSON.parse(text), {
+      ok: false,
+      errors: ['node root has missing child: missing-child'],
+      warnings: ['scene.activeCameraId is missing'],
+    })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

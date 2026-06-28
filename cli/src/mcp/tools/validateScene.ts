@@ -55,11 +55,13 @@ export async function handleValidateScene(
   }
 
   try {
+    const result = validateScene(new Uint8Array(bytes))
     return {
+      isError: result.ok ? undefined : true,
       content: [
         {
           type: 'text' as const,
-          text: JSON.stringify(validateScene(new Uint8Array(bytes)), null, 2),
+          text: JSON.stringify(result, null, 2),
         },
       ],
     }
