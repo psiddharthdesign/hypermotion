@@ -5,19 +5,19 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { withEnvVar } from '../testUtils/env.js'
 import { captureStderr } from '../testUtils/stdout.js'
 import { getDoctorReport } from './doctor.js'
 
 test('doctor report lists supported commands and MCP tools once', async () => {
-  const previousAppPath = process.env.HYPERMOTION_APP_PATH
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-doctor-missing-'))
-  process.env.HYPERMOTION_APP_PATH = path.join(dir, 'hyper-motion')
-
   try {
     const state: { report?: Awaited<ReturnType<typeof getDoctorReport>> } = {}
-    const stderr = await captureStderr(async () => {
-      state.report = await getDoctorReport()
-    })
+    const stderr = await captureStderr(() =>
+      withEnvVar('HYPERMOTION_APP_PATH', path.join(dir, 'hyper-motion'), async () => {
+        state.report = await getDoctorReport()
+      }),
+    )
 
     assert.match(stderr, /HYPERMOTION_APP_PATH is set/)
     const { report } = state
@@ -32,11 +32,6 @@ test('doctor report lists supported commands and MCP tools once', async () => {
     assert.ok(report.mcpTools.includes('render_scene'))
     assert.equal(report.render.fileSceneInput, true)
   } finally {
-    if (previousAppPath === undefined) {
-      delete process.env.HYPERMOTION_APP_PATH
-    } else {
-      process.env.HYPERMOTION_APP_PATH = previousAppPath
-    }
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
