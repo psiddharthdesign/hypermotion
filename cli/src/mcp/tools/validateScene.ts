@@ -54,12 +54,26 @@ export async function handleValidateScene(
     }
   }
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(validateScene(new Uint8Array(bytes)), null, 2),
-      },
-    ],
+  try {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(validateScene(new Uint8Array(bytes)), null, 2),
+        },
+      ],
+    }
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `validate_scene: ${parsed.data.scene} doesn't look like a valid .hype file: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
   }
 }
