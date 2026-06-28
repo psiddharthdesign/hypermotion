@@ -29,3 +29,22 @@ test('withEnvVar removes variables that were originally unset', async () => {
 
   assert.equal(process.env[name], undefined)
 })
+
+test('withEnvVar restores values after async callback failures', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_ASYNC_THROW'
+  process.env[name] = 'before'
+
+  try {
+    await assert.rejects(
+      withEnvVar(name, 'during', async () => {
+        assert.equal(process.env[name], 'during')
+        throw new Error('callback failed')
+      }),
+      /callback failed/,
+    )
+
+    assert.equal(process.env[name], 'before')
+  } finally {
+    delete process.env[name]
+  }
+})
