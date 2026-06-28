@@ -58,7 +58,7 @@ export function infoCommand(): Command {
 
       const { meta } = summary
       const canvas = printableCanvas(meta.canvas)
-      const name = meta.name ?? '(unnamed)'
+      const name = printableSceneName(meta.name)
       const duration = meta.duration ?? 0
       const frameRate = meta.frameRate ?? 60
 
@@ -92,4 +92,9 @@ function printableCanvas(canvas: unknown): PrintableCanvas {
 function printableCanvasValue(value: unknown): number | '?' {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return '?'
+}
+
+function printableSceneName(value: unknown): string {
+  if (typeof value === 'string' && value.trim().length > 0) return value
+  return '(unnamed)'
 }
