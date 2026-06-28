@@ -73,15 +73,6 @@ export function renderCommand(): Command {
         process.exit(1)
       }
 
-      const appPath = await locateDesktopApp()
-      if (!appPath) {
-        console.error(
-          '[render] hyper-motion desktop app not found.\n' +
-            '         Install from https://hypermotion.app, then retry.',
-        )
-        process.exit(1)
-      }
-
       // Make sure the output directory exists so the desktop app's
       // post-render write doesn't fail on a missing parent.
       const outDir = path.dirname(outputPath)
@@ -93,6 +84,19 @@ export function renderCommand(): Command {
       if (scenePath && !fs.existsSync(scenePath)) {
         console.error(`[render] scene file not found: ${scenePath}`)
         process.exit(2)
+      }
+      if (scenePath && !fs.statSync(scenePath).isFile()) {
+        console.error(`[render] scene path is not a file: ${scenePath}`)
+        process.exit(2)
+      }
+
+      const appPath = await locateDesktopApp()
+      if (!appPath) {
+        console.error(
+          '[render] hyper-motion desktop app not found.\n' +
+            '         Install from https://hypermotion.app, then retry.',
+        )
+        process.exit(1)
       }
 
       console.log(`[render] output:  ${outputPath}`)
