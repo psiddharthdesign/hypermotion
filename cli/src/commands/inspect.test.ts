@@ -61,6 +61,46 @@ test('inspect command prints the editable scene graph as JSON', async () => {
   }
 })
 
+test('inspect command defaults to JSON output', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Inspect Default JSON',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await inspectCommand().exitOverride().parseAsync([scenePath], { from: 'user' })
+    })
+
+    const scene = JSON.parse(stdout) as {
+      meta: { name?: string }
+      nodes: Record<string, { kind?: string }>
+    }
+
+    assert.equal(scene.meta.name, 'Inspect Default JSON')
+    assert.equal(scene.nodes.root.kind, 'frame')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'missing.hype')
