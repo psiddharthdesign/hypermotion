@@ -54,13 +54,6 @@
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-builder",
-      "esbuild"
-    ]
-  },
   "build": {
     "appId": "com.hypermotion.app",
     "productName": "hyper-motion",
