@@ -9,7 +9,7 @@
  *
  * The agent doesn't need to know about Y.Doc, CRDTs, or the desktop
  * app's internals. It only knows the JSON shape, which mirrors the
- * desktop's `Scene` type one-to-one.
+ * desktop's `Scene` type closely enough for file authoring.
  *
  * Common pattern:
  *
