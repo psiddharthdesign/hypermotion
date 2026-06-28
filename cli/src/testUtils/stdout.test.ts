@@ -20,6 +20,14 @@ test('captureStderr decodes Uint8Array chunks as text', async () => {
   assert.equal(output, 'render failed')
 })
 
+test('captureStdout honors string chunk encodings', async () => {
+  const output = await captureStdout(() => {
+    process.stdout.write('cmVuZGVyIGNvbXBsZXRl', 'base64')
+  })
+
+  assert.equal(output, 'render complete')
+})
+
 test('captureStdout restores the writer when the callback throws', async () => {
   const originalWrite = process.stdout.write
 
