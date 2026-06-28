@@ -84,8 +84,8 @@ export const createSceneTool: Tool = {
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
     "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
     `Property IDs you can keyframe: ${KEYFRAMEABLE_PROPERTY_DESCRIPTION}.\n\n` +
-    "Include exactly one 'camera' kind node (parent: null) plus a 'frame' kind root (parent: null) for the " +
-    "scene to render. The artboard size lives in meta.canvas.width / height.",
+    "Include a 'frame' kind root (parent: null) for the scene to render. A scene-level 'camera' kind node " +
+    "(parent: null) is optional unless the design needs camera properties. The artboard size lives in meta.canvas.width / height.",
   inputSchema: {
     type: 'object',
     properties: {

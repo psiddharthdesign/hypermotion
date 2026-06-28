@@ -61,6 +61,16 @@ test('create_scene description lists supported camera property ids', () => {
   }
 })
 
+test('create_scene description keeps camera nodes optional', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /'camera' kind node .* is optional/)
+  assert.doesNotMatch(description, /Include exactly one 'camera' kind node/)
+})
+
 test('create_scene description lists supported transform property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {
