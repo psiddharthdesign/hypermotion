@@ -5,11 +5,28 @@ import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/bui
 
 const VALIDATION_TOOLS = ['validate_scene'] as const
 const QUERY_TOOLS = ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'] as const
+const MCP_TOOLS = [
+  'doctor',
+  'get_capabilities',
+  'create_scene',
+  'info_scene',
+  'inspect_scene',
+  'patch_scene',
+  'validate_scene',
+  'list_layers',
+  'get_layer',
+  'list_tracks',
+  'list_cameras',
+  'open_scene',
+  'render_scene',
+  'list_keyframeable_properties',
+] as const
 const RENDER_FORMATS = ['mp4', 'webm', 'gif'] as const
 const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
 
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
+  mcpTools: typeof MCP_TOOLS
   nodeKinds: typeof NODE_KINDS
   patchOperations: typeof PATCH_OPERATION_TYPES
   validation: {
@@ -42,6 +59,7 @@ export const listKeyframeablePropertiesTool: Tool = {
 export async function handleGetCapabilities(): Promise<CallToolResult> {
   const payload: CapabilitiesPayload = {
     sceneExtension: '.hype',
+    mcpTools: MCP_TOOLS,
     nodeKinds: NODE_KINDS,
     patchOperations: PATCH_OPERATION_TYPES,
     validation: {
