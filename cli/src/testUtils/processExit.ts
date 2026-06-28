@@ -8,8 +8,9 @@ export async function withProcessExitThrow<T>(
   const previousExit = process.exit
   try {
     process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), {
-        exitCode: code,
+      const exitCode = code ?? 0
+      throw Object.assign(new Error(`process.exit ${exitCode}`), {
+        exitCode,
       })
     }) as typeof process.exit
 
