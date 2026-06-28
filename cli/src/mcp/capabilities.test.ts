@@ -28,6 +28,7 @@ test('capability tools list the full supported keyframe property set', async () 
   assert.deepEqual(capabilities.validationTools, ['validate_scene'])
   assert.deepEqual(capabilities.renderFormats, ['mp4', 'webm', 'gif'])
   assert.deepEqual(capabilities.renderQualities, ['comp', '720p', '2k', '4k'])
+  assert.equal(capabilities.renderFileSceneInput, true)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
   assert.equal(
@@ -48,6 +49,7 @@ function parseToolJson(result: CallToolResult): {
   validationTools?: string[]
   renderFormats?: string[]
   renderQualities?: string[]
+  renderFileSceneInput?: boolean
 } {
   const item = result.content[0]
   assert.equal(item?.type, 'text')
@@ -101,6 +103,7 @@ function parseToolJson(result: CallToolResult): {
     validationTools: optionalStringArray(parsedObject, 'validationTools'),
     renderFormats: optionalStringArray(parsedObject, 'renderFormats'),
     renderQualities: optionalStringArray(parsedObject, 'renderQualities'),
+    renderFileSceneInput: optionalBoolean(parsedObject, 'renderFileSceneInput'),
   }
 }
 
@@ -109,6 +112,14 @@ function optionalStringArray(parsed: Record<string, unknown>, key: string): stri
   if (value === undefined) return undefined
 
   assertStringArray(value)
+  return value
+}
+
+function optionalBoolean(parsed: Record<string, unknown>, key: string): boolean | undefined {
+  const value = parsed[key]
+  if (value === undefined) return undefined
+
+  assert.ok(typeof value === 'boolean')
   return value
 }
 
