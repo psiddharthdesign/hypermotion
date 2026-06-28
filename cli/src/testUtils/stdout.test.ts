@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { captureStdout } from './stdout.js'
+import { captureStderr, captureStdout } from './stdout.js'
 
 test('captureStdout decodes Uint8Array chunks as text', async () => {
   const output = await captureStdout(() => {
@@ -10,4 +10,12 @@ test('captureStdout decodes Uint8Array chunks as text', async () => {
   })
 
   assert.equal(output, 'render complete')
+})
+
+test('captureStderr decodes Uint8Array chunks as text', async () => {
+  const output = await captureStderr(() => {
+    process.stderr.write(new TextEncoder().encode('render failed'))
+  })
+
+  assert.equal(output, 'render failed')
 })
