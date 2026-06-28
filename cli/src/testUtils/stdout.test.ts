@@ -19,3 +19,29 @@ test('captureStderr decodes Uint8Array chunks as text', async () => {
 
   assert.equal(output, 'render failed')
 })
+
+test('captureStdout restores the writer when the callback throws', async () => {
+  const originalWrite = process.stdout.write
+
+  await assert.rejects(
+    captureStdout(() => {
+      throw new Error('boom')
+    }),
+    /boom/,
+  )
+
+  assert.equal(process.stdout.write, originalWrite)
+})
+
+test('captureStderr restores the writer when the callback throws', async () => {
+  const originalWrite = process.stderr.write
+
+  await assert.rejects(
+    captureStderr(() => {
+      throw new Error('boom')
+    }),
+    /boom/,
+  )
+
+  assert.equal(process.stderr.write, originalWrite)
+})
