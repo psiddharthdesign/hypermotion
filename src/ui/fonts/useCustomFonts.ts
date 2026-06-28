@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { registerFont, unregisterFont, isFontRegistered } from '@/fonts'
 import { notifyFontLoaded } from '@/ui/fonts/googleFonts'
@@ -14,10 +14,7 @@ import { notifyFontLoaded } from '@/ui/fonts/googleFonts'
  *   1. Snapshots the current `customFonts` set.
  *   2. Registers any fonts that are in the scene but not yet in the
  *      FontFaceSet.
- *   3. (TODO when needed) unregisters fonts that have been removed
- *      from the scene. Not done in MVP — leaving a stale FontFace
- *      registered is harmless (no node uses it) and avoids a churn
- *      cycle on every undo / redo.
+ *   3. Unregisters fonts that were removed from the scene.
  *   4. After each register, calls `notifyFontLoaded()` so useLayout
  *      re-solves with the new font's true metrics.
  *
@@ -30,10 +27,24 @@ import { notifyFontLoaded } from '@/ui/fonts/googleFonts'
 export function useCustomFonts(): void {
   const api = useSceneAPI()
   const version = useSceneVersion()
+  const previousFontsRef = useRef<Map<string, Parameters<typeof unregisterFont>[0]>>(
+    new Map(),
+  )
 
   useEffect(() => {
     let cancelled = false
     const fonts = api.getAllCustomFonts()
+    const nextFontIds = new Set(fonts.map((font) => font.id))
+    let removedAnyFont = false
+
+    for (const [id, font] of previousFontsRef.current) {
+      if (!nextFontIds.has(id)) {
+        void unregisterFont(font)
+        removedAnyFont = true
+      }
+    }
+    previousFontsRef.current = new Map(fonts.map((font) => [font.id, font]))
+    if (removedAnyFont) notifyFontLoaded()
 
     void (async () => {
       for (const font of fonts) {
