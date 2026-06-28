@@ -16,6 +16,10 @@ export function openCommand(): Command {
         console.error(`[open] scene file not found: ${scenePath}`)
         process.exit(2)
       }
+      if (!fs.statSync(scenePath).isFile()) {
+        console.error(`[open] scene path is not a file: ${scenePath}`)
+        process.exit(2)
+      }
       const appPath = await locateDesktopApp()
       if (!appPath) {
         console.error('[open] hyper-motion desktop app not found.')
