@@ -181,8 +181,20 @@ export async function handleCreateScene(
   // specify deep paths and we don't want a simple ENOENT to obscure
   // the actual failure.
   const outputPath = parsed.data.output
+  if (!path.isAbsolute(outputPath)) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: 'create_scene: output must be an absolute path.',
+        },
+      ],
+    }
+  }
+
   try {
-    fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true })
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   } catch (err) {
     return {
       isError: true,
