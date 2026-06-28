@@ -49,6 +49,19 @@ test('captureStdout invokes write callbacks', async () => {
   assert.equal(callbackCalled, true)
 })
 
+test('captureStderr invokes write callbacks', async () => {
+  let callbackCalled = false
+
+  const output = await captureStderr(() => {
+    process.stderr.write('render failed', () => {
+      callbackCalled = true
+    })
+  })
+
+  assert.equal(output, 'render failed')
+  assert.equal(callbackCalled, true)
+})
+
 test('captureStdout restores the writer when the callback throws', async () => {
   const originalWrite = process.stdout.write
 
