@@ -41,6 +41,23 @@ test('validate_scene reports missing files as MCP errors', async () => {
   }
 })
 
+test('validate_scene reports malformed scene files as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-malformed-'))
+  const scenePath = path.join(dir, 'malformed.hype')
+
+  try {
+    fs.writeFileSync(scenePath, 'not a yjs update')
+
+    const result = await handleValidateScene({ scene: scenePath })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, /^validate_scene: .*malformed\.hype doesn't look like a valid \.hype file:/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate_scene returns validation JSON for readable scenes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
