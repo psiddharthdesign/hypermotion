@@ -60,8 +60,8 @@ if (!gotSingleInstanceLock) {
 /**
  * Headless render mode — entry point for the CLI / MCP server.
  *
- * When the desktop binary is launched with `--render --out <out>` (plus
- * optional `--format`, `--quality`, `--fps`, `--scene <path>`), we skip
+ * When the desktop binary is launched with `--render --out=<out>` (plus
+ * optional `--format`, `--quality`, `--fps`, `--scene=<path>`), we skip
  * the normal editor window and instead:
  *
  *   1. Create an off-screen BrowserWindow
@@ -70,14 +70,14 @@ if (!gotSingleInstanceLock) {
  *   4. Renderer runs export, posts bytes via `export:headless-done`
  *   5. We write the bytes to <out>, exit 0
  *
- * Current scope: renders the user's CURRENT scene (whatever's in IndexedDB).
- * Future file-based headless rendering will honor `--scene` for `.hype`.
+ * If `--scene` points at a saved `.hype` file, the render window hydrates
+ * that file; otherwise it renders the user's current IndexedDB scene.
  *
  * The CLI in `@psiddharthdesign/hypermotion` is what spawns this binary
  * with these flags. See `cli/src/electron/driver.ts` for the parent side.
  */
 interface HeadlessRequest {
-  /** Future-compat: path to a .hype scene file. Ignored today. */
+  /** Optional path to a saved .hype scene file. */
   scenePath?: string
   outputPath: string
   format: 'mp4' | 'webm' | 'gif'
