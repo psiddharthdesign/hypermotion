@@ -61,6 +61,29 @@ test('withEnvVar restores values after async callbacks', async () => {
   }
 })
 
+test('withEnvVar returns sync callback values', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_SYNC_RETURN'
+  delete process.env[name]
+
+  const value = await withEnvVar(name, 'during', () => process.env[name])
+
+  assert.equal(value, 'during')
+  assert.equal(process.env[name], undefined)
+})
+
+test('withEnvVar returns async callback values', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_ASYNC_RETURN'
+  delete process.env[name]
+
+  const value = await withEnvVar(name, 'during', async () => {
+    await Promise.resolve()
+    return process.env[name]
+  })
+
+  assert.equal(value, 'during')
+  assert.equal(process.env[name], undefined)
+})
+
 test('withEnvVar restores values after sync callback failures', async () => {
   const name = 'HYPERMOTION_TEST_ENV_SYNC_THROW'
   process.env[name] = 'before'

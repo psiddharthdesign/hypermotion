@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-export async function withEnvVar(
+export async function withEnvVar<T>(
   name: string,
   value: string | undefined,
-  run: () => Promise<void> | void,
-): Promise<void> {
+  run: () => Promise<T> | T,
+): Promise<T> {
   const previous = process.env[name]
   if (value === undefined) {
     delete process.env[name]
@@ -12,7 +12,7 @@ export async function withEnvVar(
     process.env[name] = value
   }
   try {
-    await run()
+    return await run()
   } finally {
     if (previous === undefined) {
       delete process.env[name]
