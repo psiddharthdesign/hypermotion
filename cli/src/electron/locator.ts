@@ -31,7 +31,7 @@ export async function locateDesktopApp(): Promise<string | null> {
     }
     // Loud failure — silently falling through when the user set an
     // explicit override usually means a typo or a build that hasn't
-    // happened yet. Telling them is more helpful than searching elsewhere.
+    // happened yet, so report it instead of searching unrelated locations.
     console.error(
       `[locator] HYPERMOTION_APP_PATH is set but the file does not exist:\n` +
         `          ${override}\n` +
