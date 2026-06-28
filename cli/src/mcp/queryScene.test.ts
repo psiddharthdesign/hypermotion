@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { buildSceneBytes } from '../scene/build.js'
 import {
   handleGetLayer,
@@ -43,7 +44,7 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
 test('query scene MCP handlers report invalid arguments as MCP errors', async () => {
   const cases: Array<{
     name: string
-    run: () => Promise<Awaited<ReturnType<typeof handleListLayers>>>
+    run: () => Promise<CallToolResult>
   }> = [
     { name: 'list_layers', run: () => handleListLayers({ scene: 42 }) },
     { name: 'get_layer', run: () => handleGetLayer({ scene: '/tmp/scene.hype' }) },
@@ -66,7 +67,7 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
   try {
     const cases: Array<{
       name: string
-      run: () => Promise<Awaited<ReturnType<typeof handleListLayers>>>
+      run: () => Promise<CallToolResult>
     }> = [
       { name: 'list_layers', run: () => handleListLayers({ scene: missingScene }) },
       { name: 'get_layer', run: () => handleGetLayer({ scene: missingScene, nodeId: 'title' }) },
