@@ -36,23 +36,35 @@ export const patchSceneTool: Tool = {
 export async function handlePatchScene(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
-  const parsed = PatchInput.parse(args)
-  const output = path.resolve(parsed.output ?? parsed.scene)
+  const parsed = PatchInput.safeParse(args)
+  if (!parsed.success) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `patch_scene: invalid arguments — ${parsed.error.message}`,
+        },
+      ],
+    }
+  }
+
+  const output = path.resolve(parsed.data.output ?? parsed.data.scene)
   const patch =
-    typeof parsed.patch === 'string'
-      ? (JSON.parse(parsed.patch) as ScenePatch | PatchOperation[])
-      : (parsed.patch as ScenePatch | PatchOperation[])
-  const bytes = fs.readFileSync(parsed.scene)
+    typeof parsed.data.patch === 'string'
+      ? (JSON.parse(parsed.data.patch) as ScenePatch | PatchOperation[])
+      : (parsed.data.patch as ScenePatch | PatchOperation[])
+  const bytes = fs.readFileSync(parsed.data.scene)
   const next = applyScenePatch(new Uint8Array(bytes), patch)
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, Buffer.from(next))
-  const shouldApplyLive = parsed.applyLive ?? true
+  const shouldApplyLive = parsed.data.applyLive ?? true
   const liveApplied = shouldApplyLive ? await pushSceneToRunningApp(output) : false
   return {
     content: [
       {
         type: 'text' as const,
-        text: `Patched ${parsed.scene} → ${output}${liveApplied ? ' and applied it to the running desktop app' : ''}`,
+        text: `Patched ${parsed.data.scene} → ${output}${liveApplied ? ' and applied it to the running desktop app' : ''}`,
       },
     ],
   }
