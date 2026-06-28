@@ -45,6 +45,12 @@ export async function handleOpenScene(
       content: [{ type: 'text' as const, text: `Scene file not found: ${scenePath}` }],
     }
   }
+  if (!fs.statSync(scenePath).isFile()) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: `Scene path is not a file: ${scenePath}` }],
+    }
+  }
   const opened = await pushSceneToRunningApp(scenePath)
   if (!opened) {
     return {
