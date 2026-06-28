@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
+import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { inspectCommand } from './inspect.js'
 
@@ -104,24 +105,18 @@ test('inspect command defaults to JSON output', async () => {
 test('inspect command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'missing.hype')
-  const previousExit = process.exit
   try {
-    process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
-    }) as typeof process.exit
-
     const stderr = await captureStderr(async () => {
-      assert.throws(
-        () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
           inspectCommand().parse([scenePath], { from: 'user' })
-        },
+        }),
         { exitCode: 2 },
       )
     })
 
     assert.match(stderr, /^\[inspect\] failed to read .*missing\.hype:/)
   } finally {
-    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -129,25 +124,20 @@ test('inspect command reports missing scene files', async () => {
 test('inspect command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'broken.hype')
-  const previousExit = process.exit
   try {
     fs.writeFileSync(scenePath, 'not a yjs update')
-    process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
-    }) as typeof process.exit
 
     const stderr = await captureStderr(async () => {
-      assert.throws(
-        () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
           inspectCommand().parse([scenePath], { from: 'user' })
-        },
+        }),
         { exitCode: 2 },
       )
     })
 
     assert.match(stderr, /^\[inspect\] failed to inspect .*broken\.hype:/)
   } finally {
-    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
