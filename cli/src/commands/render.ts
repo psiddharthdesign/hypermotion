@@ -50,7 +50,7 @@ export function renderCommand(): Command {
     .option('--fps <n>', 'Frame rate', '30')
     .option(
       '--scene <path>',
-      'Path to a .hype scene file; accepted for forward compatibility',
+      'Path to a .hype scene file to forward to the desktop app',
     )
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
