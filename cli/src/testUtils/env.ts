@@ -2,11 +2,15 @@
 
 export async function withEnvVar(
   name: string,
-  value: string,
+  value: string | undefined,
   run: () => Promise<void> | void,
 ): Promise<void> {
   const previous = process.env[name]
-  process.env[name] = value
+  if (value === undefined) {
+    delete process.env[name]
+  } else {
+    process.env[name] = value
+  }
   try {
     await run()
   } finally {
