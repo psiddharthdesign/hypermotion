@@ -799,17 +799,15 @@ test('validateScene rejects unsupported track property ids', () => {
 })
 
 test('validateScene rejects tracks targeting missing nodes', () => {
-  const scene = {
-    ...sampleScene(),
-    tracks: {
-      orphan: {
-        id: 'orphan',
-        nodeId: 'missing-node',
-        propertyId: 'appearance.opacity',
-        keyframes: [],
-      },
+  const scene = sampleScene()
+  scene.tracks = {
+    orphan: {
+      id: 'orphan',
+      nodeId: 'missing-node',
+      propertyId: 'appearance.opacity',
+      keyframes: [],
     },
-  } as unknown as SceneJson
+  }
 
   const result = validateScene(buildSceneBytes(scene))
 
