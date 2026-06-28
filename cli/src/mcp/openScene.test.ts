@@ -39,3 +39,19 @@ test('open_scene reports missing files as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('open_scene reports directories as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-dir-'))
+  const sceneDir = path.join(dir, 'scene.hype')
+  fs.mkdirSync(sceneDir)
+
+  try {
+    const result = await handleOpenScene({ scene: sceneDir })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `Scene path is not a file: ${sceneDir}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
