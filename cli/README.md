@@ -83,7 +83,7 @@ command = "hypermotion-mcp"
 Spawn `hypermotion-mcp` as a subprocess. The server speaks MCP over
 stdio per the [Model Context Protocol spec](https://modelcontextprotocol.io).
 
-## v0.1.2 scope
+## Current scope
 
 What works today:
 
