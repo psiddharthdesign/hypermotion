@@ -3,6 +3,7 @@
 import { Command } from 'commander'
 import os from 'node:os'
 import { locateDesktopApp } from '../electron/locator.js'
+import { MCP_TOOLS, RENDER_FORMATS, RENDER_QUALITIES } from '../mcp/tools/capabilities.js'
 import { CLI_VERSION } from '../version.js'
 
 export interface DoctorReport {
@@ -51,25 +52,10 @@ export async function getDoctorReport(): Promise<DoctorReport> {
       'doctor',
       'serve --mcp',
     ],
-    mcpTools: [
-      'doctor',
-      'get_capabilities',
-      'create_scene',
-      'info_scene',
-      'inspect_scene',
-      'patch_scene',
-      'validate_scene',
-      'list_layers',
-      'get_layer',
-      'list_tracks',
-      'list_cameras',
-      'open_scene',
-      'render_scene',
-      'list_keyframeable_properties',
-    ],
+    mcpTools: [...MCP_TOOLS],
     render: {
-      formats: ['mp4', 'webm', 'gif'],
-      qualities: ['comp', '720p', '2k', '4k'],
+      formats: [...RENDER_FORMATS],
+      qualities: [...RENDER_QUALITIES],
       fileSceneInput: true,
     },
   }

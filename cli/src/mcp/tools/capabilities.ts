@@ -5,7 +5,7 @@ import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/bui
 
 const VALIDATION_TOOLS = ['validate_scene'] as const
 const QUERY_TOOLS = ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'] as const
-const MCP_TOOLS = [
+export const MCP_TOOLS = [
   'doctor',
   'get_capabilities',
   'create_scene',
@@ -21,8 +21,8 @@ const MCP_TOOLS = [
   'render_scene',
   'list_keyframeable_properties',
 ] as const
-const RENDER_FORMATS = ['mp4', 'webm', 'gif'] as const
-const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
+export const RENDER_FORMATS = ['mp4', 'webm', 'gif'] as const
+export const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
 
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
