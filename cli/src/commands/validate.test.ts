@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
+import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { validateCommand } from './validate.js'
 
@@ -229,24 +230,18 @@ test('validate command rejects a parent link missing from children', async () =>
 test('validate command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'missing.hype')
-  const previousExit = process.exit
   try {
-    process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
-    }) as typeof process.exit
-
-    const stderr = await captureStderr(async () => {
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
       assert.throws(
         () => {
           validateCommand().parse([scenePath], { from: 'user' })
         },
         { exitCode: 2 },
       )
-    })
+    }))
 
     assert.match(stderr, /^\[validate\] failed to read .*missing\.hype:/)
   } finally {
-    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -254,25 +249,20 @@ test('validate command reports missing scene files', async () => {
 test('validate command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'malformed.hype')
-  const previousExit = process.exit
   try {
     fs.writeFileSync(scenePath, 'not a yjs update')
-    process.exit = ((code?: number) => {
-      throw Object.assign(new Error(`process.exit ${code ?? 0}`), { exitCode: code })
-    }) as typeof process.exit
 
-    const stderr = await captureStderr(async () => {
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
       assert.throws(
         () => {
           validateCommand().parse([scenePath], { from: 'user' })
         },
         { exitCode: 2 },
       )
-    })
+    }))
 
     assert.match(stderr, /^\[validate\] .*malformed\.hype doesn't look like a valid \.hype file:/)
   } finally {
-    process.exit = previousExit
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
