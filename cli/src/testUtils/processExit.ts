@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 type ProcessExitCallback<T> = () => Promise<T> | T
+type ProcessExitCode = Parameters<typeof process.exit>[0]
 
 export interface ProcessExitError extends Error {
-  exitCode: number
+  exitCode: ProcessExitCode
 }
 
 export async function withProcessExitThrow<T>(
@@ -11,7 +12,7 @@ export async function withProcessExitThrow<T>(
 ): Promise<T> {
   const previousExit = process.exit
   try {
-    process.exit = ((code?: number) => {
+    process.exit = ((code?: ProcessExitCode) => {
       const exitCode = code ?? 0
       const err: ProcessExitError = Object.assign(
         new Error(`process.exit ${exitCode}`),
