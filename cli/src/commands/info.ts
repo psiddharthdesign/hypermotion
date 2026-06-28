@@ -10,7 +10,7 @@
 
 import { Command } from 'commander'
 import fs from 'node:fs'
-import { readSceneSummary } from '../scene/build.js'
+import { readSceneSummary, type SceneSummary } from '../scene/build.js'
 
 type InfoCommandOptions = {
   json?: boolean
@@ -39,7 +39,7 @@ export function infoCommand(): Command {
         process.exit(2)
       }
 
-      let summary: ReturnType<typeof readSceneSummary>
+      let summary: SceneSummary
       try {
         summary = readSceneSummary(new Uint8Array(bytes))
       } catch (err) {
