@@ -28,6 +28,14 @@ test('captureStdout honors string chunk encodings', async () => {
   assert.equal(output, 'render complete')
 })
 
+test('captureStderr honors string chunk encodings', async () => {
+  const output = await captureStderr(() => {
+    process.stderr.write('cmVuZGVyIGZhaWxlZA==', 'base64')
+  })
+
+  assert.equal(output, 'render failed')
+})
+
 test('captureStdout invokes write callbacks', async () => {
   let callbackCalled = false
 
