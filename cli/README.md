@@ -96,7 +96,6 @@ What works today:
 
 What's longer-term:
 
-- In-place editing for existing `.hype` files.
 - Chapter / range rendering and batch workflows.
 
 ## How rendering works
