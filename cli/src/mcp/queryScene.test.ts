@@ -26,7 +26,12 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
 
     assert.equal(sceneProperty?.type, 'string')
     assert.equal(sceneProperty?.description, 'Path to a .hype scene file.')
+    assert.ok(Array.isArray(tool.inputSchema.required))
+    assert.ok(tool.inputSchema.required.includes('scene'))
   }
+
+  assert.deepEqual(getLayerTool.inputSchema.required, ['scene', 'nodeId'])
+  assert.deepEqual(listTracksTool.inputSchema.required, ['scene'])
 
   const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as
     | Record<string, unknown>
