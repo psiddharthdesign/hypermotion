@@ -6,7 +6,31 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes, readSceneSummary } from '../scene/build.js'
-import { handlePatchScene } from './tools/patchScene.js'
+import { handlePatchScene, patchSceneTool } from './tools/patchScene.js'
+
+test('patch_scene input schema exposes required scene and patch', () => {
+  assert.deepEqual(patchSceneTool.inputSchema, {
+    type: 'object',
+    properties: {
+      scene: { type: 'string', description: 'Path to the input .hype scene file.' },
+      output: { type: 'string', description: 'Path to write. Defaults to overwriting scene.' },
+      patch: { description: 'Patch as { ops: [...] }, an operation array, or a JSON string.' },
+      applyLive: {
+        type: 'boolean',
+        description: 'Push the patched scene into the running desktop app. Defaults to true.',
+      },
+    },
+    required: ['scene', 'patch'],
+  })
+})
+
+test('patch_scene reports invalid arguments as MCP errors', async () => {
+  const result = await handlePatchScene({ scene: 42, patch: [] })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^patch_scene: invalid arguments/)
+})
 
 test('patch_scene writes alternate output without applying live', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-patch-'))
