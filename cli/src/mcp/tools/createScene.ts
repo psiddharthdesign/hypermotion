@@ -147,7 +147,7 @@ export async function handleCreateScene(
     }
   }
 
-  if (typeof scene !== 'object' || scene == null) {
+  if (typeof scene !== 'object' || scene == null || Array.isArray(scene)) {
     return {
       isError: true,
       content: [

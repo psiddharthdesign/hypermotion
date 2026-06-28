@@ -144,6 +144,17 @@ test('create_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^create_scene: invalid arguments/)
 })
 
+test('create_scene rejects array scene JSON', async () => {
+  const result = await handleCreateScene({
+    output: path.join(os.tmpdir(), 'array-scene.hype'),
+    scene: '[]',
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
