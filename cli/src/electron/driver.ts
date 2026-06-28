@@ -20,8 +20,8 @@
  *   5. CLI polls for the sentinel. When it appears, render is done.
  *      CLI cleans up the sentinel and returns success.
  *
- * This is the v0.1.0 fix for IndexedDB lock contention — the running
- * editor can stay open and still serve CLI render requests.
+ * This single-instance handoff avoids IndexedDB lock contention — the
+ * running editor can stay open and still serve CLI render requests.
  */
 
 import { spawn } from 'node:child_process'
