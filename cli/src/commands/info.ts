@@ -17,8 +17,8 @@ type InfoCommandOptions = {
 }
 
 type PrintableCanvas = {
-  width: number | string
-  height: number | string
+  width: number | '?'
+  height: number | '?'
 }
 
 export function infoCommand(): Command {
@@ -89,8 +89,7 @@ function printableCanvas(canvas: unknown): PrintableCanvas {
   return { width: '?', height: '?' }
 }
 
-function printableCanvasValue(value: unknown): number | string {
+function printableCanvasValue(value: unknown): number | '?' {
   if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') return value
   return '?'
 }
