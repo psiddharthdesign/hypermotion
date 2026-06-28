@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { withProcessExitThrow } from './processExit.js'
+import { type ProcessExitError, withProcessExitThrow } from './processExit.js'
 
 test('withProcessExitThrow restores process.exit after sync callbacks', async () => {
   const previousExit = process.exit
@@ -44,7 +44,11 @@ test('withProcessExitThrow converts process.exit into a thrown error', async () 
     withProcessExitThrow(() => {
       process.exit(2)
     }),
-    { exitCode: 2 },
+    (err: unknown) => {
+      assert.ok(err instanceof Error)
+      assert.equal((err as ProcessExitError).exitCode, 2)
+      return true
+    },
   )
 })
 
