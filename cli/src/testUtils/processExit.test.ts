@@ -45,8 +45,8 @@ test('withProcessExitThrow converts process.exit into a thrown error', async () 
       process.exit(2)
     }),
     (err: unknown) => {
-      assert.ok(err instanceof Error)
-      assert.equal((err as ProcessExitError).exitCode, 2)
+      assertProcessExitError(err)
+      assert.equal(err.exitCode, 2)
       return true
     },
   )
@@ -69,3 +69,8 @@ test('withProcessExitThrow treats process.exit without a code as success', async
     { exitCode: 0 },
   )
 })
+
+function assertProcessExitError(err: unknown): asserts err is ProcessExitError {
+  assert.ok(err instanceof Error)
+  assert.ok('exitCode' in err)
+}
