@@ -41,6 +41,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildSceneBytes, readSceneSummary, type SceneJson } from '../scene/build.js'
 
+interface CreateCommandOptions {
+  from?: string
+}
+
 export function createCommand(): Command {
   return new Command('create')
     .description(
@@ -52,7 +56,7 @@ export function createCommand(): Command {
       '-f, --from <json>',
       'Path to a JSON file describing the scene. Use "-" to read from stdin.',
     )
-    .action(async (output: string, options: { from?: string }) => {
+    .action(async (output: string, options: CreateCommandOptions) => {
       const source = options.from ?? '-'
       let raw: string
       try {
