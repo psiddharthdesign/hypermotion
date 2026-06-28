@@ -798,6 +798,27 @@ test('validateScene rejects unsupported track property ids', () => {
   ])
 })
 
+test('validateScene rejects tracks targeting missing nodes', () => {
+  const scene = {
+    ...sampleScene(),
+    tracks: {
+      orphan: {
+        id: 'orphan',
+        nodeId: 'missing-node',
+        propertyId: 'appearance.opacity',
+        keyframes: [],
+      },
+    },
+  } as unknown as SceneJson
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track orphan points to missing node: missing-node',
+  ])
+})
+
 test('validateScene rejects non-frame root nodes', () => {
   const scene = sampleScene()
   scene.root = 'title'
