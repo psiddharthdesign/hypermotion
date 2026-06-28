@@ -3,6 +3,11 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
 
+const VALIDATION_TOOLS = ['validate_scene'] as const
+const QUERY_TOOLS = ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'] as const
+const RENDER_FORMATS = ['mp4', 'webm', 'gif'] as const
+const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
+
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
   nodeKinds: typeof NODE_KINDS
@@ -10,10 +15,10 @@ type CapabilitiesPayload = {
   validation: {
     structuralSceneValidation: boolean
   }
-  validationTools: string[]
-  queryTools: string[]
-  renderFormats: string[]
-  renderQualities: string[]
+  validationTools: typeof VALIDATION_TOOLS
+  queryTools: typeof QUERY_TOOLS
+  renderFormats: typeof RENDER_FORMATS
+  renderQualities: typeof RENDER_QUALITIES
   renderFileSceneInput: boolean
   keyframeableProperties: typeof PROPERTY_IDS
 }
@@ -42,10 +47,10 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
     validation: {
       structuralSceneValidation: true,
     },
-    validationTools: ['validate_scene'],
-    queryTools: ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'],
-    renderFormats: ['mp4', 'webm', 'gif'],
-    renderQualities: ['comp', '720p', '2k', '4k'],
+    validationTools: VALIDATION_TOOLS,
+    queryTools: QUERY_TOOLS,
+    renderFormats: RENDER_FORMATS,
+    renderQualities: RENDER_QUALITIES,
     renderFileSceneInput: true,
     keyframeableProperties: PROPERTY_IDS,
   }
