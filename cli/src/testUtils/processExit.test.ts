@@ -14,6 +14,17 @@ test('withProcessExitThrow restores process.exit after sync callbacks', async ()
   assert.equal(process.exit, previousExit)
 })
 
+test('withProcessExitThrow restores process.exit after async callbacks', async () => {
+  const previousExit = process.exit
+
+  await withProcessExitThrow(async () => {
+    await Promise.resolve()
+    assert.notEqual(process.exit, previousExit)
+  })
+
+  assert.equal(process.exit, previousExit)
+})
+
 test('withProcessExitThrow restores process.exit after async callback failures', async () => {
   const previousExit = process.exit
 
