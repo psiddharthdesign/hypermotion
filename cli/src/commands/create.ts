@@ -82,7 +82,7 @@ export function createCommand(): Command {
         process.exit(2)
       }
 
-      if (typeof json !== 'object' || json == null) {
+      if (typeof json !== 'object' || json == null || Array.isArray(json)) {
         console.error('[create] scene JSON must be an object at the top level.')
         process.exit(2)
       }
