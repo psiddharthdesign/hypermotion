@@ -853,11 +853,13 @@ export function inspectScene(bytes: Uint8Array): Record<string, unknown> {
   return yToPlain(scene) as Record<string, unknown>
 }
 
-export function validateScene(bytes: Uint8Array): {
+export interface SceneValidationResult {
   ok: boolean
   errors: string[]
   warnings: string[]
-} {
+}
+
+export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const data = inspectScene(bytes)
   const errors: string[] = []
   const warnings: string[] = []

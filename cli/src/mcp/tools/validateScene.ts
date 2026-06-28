@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
-import { validateScene } from '../../scene/build.js'
+import { validateScene, type SceneValidationResult } from '../../scene/build.js'
 
 const ValidateInput = z.object({
   scene: z.string().describe('Path to a .hype scene file.'),
@@ -55,7 +55,7 @@ export async function handleValidateScene(
   }
 
   try {
-    const result = validateScene(new Uint8Array(bytes))
+    const result: SceneValidationResult = validateScene(new Uint8Array(bytes))
     return {
       isError: result.ok ? undefined : true,
       content: [
