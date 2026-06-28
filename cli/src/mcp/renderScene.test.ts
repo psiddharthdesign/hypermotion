@@ -67,6 +67,25 @@ test('render_scene reports missing scene files as MCP errors', async () => {
   }
 })
 
+test('render_scene reports scene directories as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-dir-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.mkdirSync(scenePath)
+
+  try {
+    const result = await handleRenderScene({
+      output: path.join(dir, 'out.mp4'),
+      scene: scenePath,
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `render_scene: scene path is not a file: ${scenePath}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function schemaProperty(name: string): JsonSchemaProperty | undefined {
   return renderSceneTool.inputSchema.properties?.[name] as
     | JsonSchemaProperty

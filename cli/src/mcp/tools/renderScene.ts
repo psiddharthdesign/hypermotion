@@ -106,6 +106,17 @@ export async function handleRenderScene(
       ],
     }
   }
+  if (scenePath && !fs.statSync(scenePath).isFile()) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `render_scene: scene path is not a file: ${scenePath}`,
+        },
+      ],
+    }
+  }
 
   const appPath = await locateDesktopApp()
   if (!appPath) {
