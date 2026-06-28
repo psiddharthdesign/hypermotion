@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-type ProcessExitCallback = () => Promise<void> | void
+type ProcessExitCallback<T> = () => Promise<T> | T
 
-export async function withProcessExitThrow(
-  run: ProcessExitCallback,
-): Promise<void> {
+export async function withProcessExitThrow<T>(
+  run: ProcessExitCallback<T>,
+): Promise<T> {
   const previousExit = process.exit
   try {
     process.exit = ((code?: number) => {
@@ -13,7 +13,7 @@ export async function withProcessExitThrow(
       })
     }) as typeof process.exit
 
-    await run()
+    return await run()
   } finally {
     process.exit = previousExit
   }
