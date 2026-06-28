@@ -125,7 +125,7 @@ Any MCP-compatible agent can register it and call its tools.
 | `doctor`       | ✅ v0.1.2 | Check desktop app and CLI environment health.                                |
 | `get_capabilities` | ✅ v0.1.2 | List supported formats, quality presets, patch ops, and scene features.   |
 | `create_scene` | ✅ v0.1.2 | Build a `.hype` scene file from a JSON description. Authoring entrypoint.    |
-| `render_scene` | ✅ v0.1.0 | Renders the current desktop scene to MP4 / WebM / GIF at the chosen quality. |
+| `render_scene` | ✅ v0.1.2 | Render the current desktop scene, or a provided `.hype` scene path, to MP4 / WebM / GIF. |
 | `info_scene`   | ✅ v0.1.2 | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
 | `inspect_scene` | ✅ v0.1.2 | Inspect a saved scene's structural contents.                                |
 | `patch_scene`  | ✅ v0.1.2 | Create a patched copy of an existing `.hype` scene.                          |
@@ -212,10 +212,13 @@ Patch a saved scene (v0.1.2):
 - "Create a patched copy of `~/Desktop/intro.hype` with the title opacity set to 0.5." ✅ (`patch_scene`)
 - "Validate the patched scene, then open it in Hyper Motion." ✅
 
-Still on the roadmap:
+Patch and render a saved scene:
 
 - "Modify the existing `<path>.hype` in place." ✅ (`patch_scene` without `output` overwrites the input scene)
-- "Modify the existing `<path>.hype` and render it headlessly in one call." ❌ — agents can patch, open, and render the current desktop scene, but file-based render still is not wired through as one atomic operation.
+- "Modify the existing `<path>.hype` and render it headlessly in one call." ✅ (`patch_scene`, then `render_scene` with `scene`)
+
+Still on the roadmap:
+
 - "Render only chapters 1 and 3." ❌ — CLI doesn't accept range/chapter flags yet.
 
 ---
@@ -443,12 +446,11 @@ Or from the terminal:
 ```sh
 cat scene.json | hypermotion create ~/Desktop/calendar.hype --from -
 hypermotion info ~/Desktop/calendar.hype
-hypermotion render -o ~/Desktop/current-scene.mp4 --quality 2k --fps 60
+hypermotion render --scene ~/Desktop/calendar.hype -o ~/Desktop/calendar.mp4 --quality 2k --fps 60
 ```
 
-Terminal render still targets the scene currently loaded in the desktop
-app; `render_scene` also accepts but currently ignores a `.hype` scene
-path until file-based headless rendering lands.
+Omit the optional scene path to render the scene currently loaded in
+the desktop app instead.
 
 ---
 
@@ -565,7 +567,7 @@ it without env hints.
 
 ## Roadmap
 
-### Later — file-based render, chapter / range rendering, batch rendering, headless watch mode
+### Later — chapter / range rendering, batch rendering, headless watch mode
 
 Likely v0.2.x. Track or propose in
 [GitHub Discussions](https://github.com/psiddharthdesign/hypermotion/discussions).

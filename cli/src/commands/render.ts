@@ -9,9 +9,9 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * ships the bytes back. The CLI writes them to `<out>`.
  *
- * Current scope: renders the current desktop scene. `--scene <path>` is
- * accepted for forward compatibility and forwarded to desktop builds
- * that know how to handle file-based rendering.
+ * `--scene <path>` forwards a saved .hype file to desktop builds that
+ * support file-based rendering; otherwise the current desktop scene is
+ * rendered.
  */
 
 import { Command } from 'commander'
