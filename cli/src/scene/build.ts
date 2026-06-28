@@ -490,12 +490,12 @@ export const PATCH_OPERATION_TYPES = [
 ] as const satisfies readonly PatchOperation['op'][]
 
 export type PatchOperation =
-  | { op: 'setMeta'; patch: Record<string, unknown> }
+  | { op: 'setMeta'; patch: JsonObject }
   | { op: 'setRoot'; nodeId: string }
   | { op: 'setActiveCameraId'; cameraId: string | null }
   | { op: 'createNode'; node: NodeJson }
   | { op: 'deleteNode'; nodeId: string }
-  | { op: 'setNode'; nodeId: string; patch: Record<string, unknown> }
+  | { op: 'setNode'; nodeId: string; patch: JsonObject }
   | { op: 'setNodeProperty'; nodeId: string; key: string; value: unknown }
   | { op: 'appendChild'; parentId: string; nodeId: string }
   | { op: 'moveChild'; parentId: string; nodeId: string; toIndex: number }
