@@ -2,7 +2,7 @@
 
 import { Command } from 'commander'
 import fs from 'node:fs'
-import { validateScene } from '../scene/build.js'
+import { validateScene, type SceneValidationResult } from '../scene/build.js'
 
 export function validateCommand(): Command {
   return new Command('validate')
@@ -11,7 +11,7 @@ export function validateCommand(): Command {
     .option('--json', 'Output validation result as JSON')
     .action((scenePath: string, options: { json?: boolean }) => {
       let bytes: Buffer
-      let result: ReturnType<typeof validateScene>
+      let result: SceneValidationResult
       try {
         bytes = fs.readFileSync(scenePath)
       } catch (err) {
