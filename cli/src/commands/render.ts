@@ -7,7 +7,7 @@
  * persisted to IndexedDB by the desktop app) to MP4, WebM, or GIF.
  * Internally shells out to the installed desktop app, which opens an
  * off-screen window, loads the scene, runs the export pipeline, and
- * ships the bytes back. The CLI writes them to `<out>`.
+ * writes the rendered file to `<out>`.
  *
  * `--scene <path>` forwards a saved .hype file to desktop builds that
  * support file-based rendering; otherwise the current desktop scene is
