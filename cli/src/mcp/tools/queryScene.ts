@@ -12,10 +12,15 @@ type ReadSceneResult =
   | { ok: true; scene: Record<string, unknown> }
   | { ok: false; result: CallToolResult }
 
+const SCENE_PATH_PROPERTY = {
+  type: 'string',
+  description: 'Path to a .hype scene file.',
+} as const
+
 export const listLayersTool: Tool = {
   name: 'list_layers',
   description: 'List all scene layers with id, name, kind, parent, and children.',
-  inputSchema: { type: 'object', properties: { scene: { type: 'string' } }, required: ['scene'] },
+  inputSchema: { type: 'object', properties: { scene: SCENE_PATH_PROPERTY }, required: ['scene'] },
 }
 
 export const getLayerTool: Tool = {
@@ -23,7 +28,10 @@ export const getLayerTool: Tool = {
   description: 'Return one layer/node by stable node id.',
   inputSchema: {
     type: 'object',
-    properties: { scene: { type: 'string' }, nodeId: { type: 'string' } },
+    properties: {
+      scene: SCENE_PATH_PROPERTY,
+      nodeId: { type: 'string', description: 'Stable layer/node id to return.' },
+    },
     required: ['scene', 'nodeId'],
   },
 }
@@ -33,7 +41,10 @@ export const listTracksTool: Tool = {
   description: 'List animation tracks, optionally filtered by node id.',
   inputSchema: {
     type: 'object',
-    properties: { scene: { type: 'string' }, nodeId: { type: 'string' } },
+    properties: {
+      scene: SCENE_PATH_PROPERTY,
+      nodeId: { type: 'string', description: 'Optional stable layer/node id to filter by.' },
+    },
     required: ['scene'],
   },
 }
@@ -41,7 +52,7 @@ export const listTracksTool: Tool = {
 export const listCamerasTool: Tool = {
   name: 'list_cameras',
   description: 'List camera nodes and the active camera id.',
-  inputSchema: { type: 'object', properties: { scene: { type: 'string' } }, required: ['scene'] },
+  inputSchema: { type: 'object', properties: { scene: SCENE_PATH_PROPERTY }, required: ['scene'] },
 }
 
 export async function handleListLayers(

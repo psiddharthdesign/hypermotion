@@ -11,7 +11,34 @@ import {
   handleListCameras,
   handleListLayers,
   handleListTracks,
+  getLayerTool,
+  listCamerasTool,
+  listLayersTool,
+  listTracksTool,
 } from './tools/queryScene.js'
+
+test('query scene MCP tool schemas describe their path and node id inputs', () => {
+  for (const tool of [listLayersTool, getLayerTool, listTracksTool, listCamerasTool]) {
+    const sceneProperty = tool.inputSchema.properties?.scene as
+      | Record<string, unknown>
+      | undefined
+
+    assert.equal(sceneProperty?.type, 'string')
+    assert.equal(sceneProperty?.description, 'Path to a .hype scene file.')
+  }
+
+  const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as
+    | Record<string, unknown>
+    | undefined
+  assert.equal(getNodeIdProperty?.type, 'string')
+  assert.equal(getNodeIdProperty?.description, 'Stable layer/node id to return.')
+
+  const filterNodeIdProperty = listTracksTool.inputSchema.properties?.nodeId as
+    | Record<string, unknown>
+    | undefined
+  assert.equal(filterNodeIdProperty?.type, 'string')
+  assert.equal(filterNodeIdProperty?.description, 'Optional stable layer/node id to filter by.')
+})
 
 test('query scene MCP handlers report invalid arguments as MCP errors', async () => {
   const cases: Array<{
