@@ -54,12 +54,26 @@ export async function handleInspectScene(
     }
   }
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(inspectScene(new Uint8Array(bytes)), null, 2),
-      },
-    ],
+  try {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(inspectScene(new Uint8Array(bytes)), null, 2),
+        },
+      ],
+    }
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `inspect_scene: failed to inspect ${parsed.data.scene}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
   }
 }
