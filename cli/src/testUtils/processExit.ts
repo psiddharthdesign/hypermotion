@@ -2,6 +2,10 @@
 
 type ProcessExitCallback<T> = () => Promise<T> | T
 
+export interface ProcessExitError extends Error {
+  exitCode: number
+}
+
 export async function withProcessExitThrow<T>(
   run: ProcessExitCallback<T>,
 ): Promise<T> {
@@ -9,9 +13,13 @@ export async function withProcessExitThrow<T>(
   try {
     process.exit = ((code?: number) => {
       const exitCode = code ?? 0
-      throw Object.assign(new Error(`process.exit ${exitCode}`), {
-        exitCode,
-      })
+      const err: ProcessExitError = Object.assign(
+        new Error(`process.exit ${exitCode}`),
+        {
+          exitCode,
+        },
+      )
+      throw err
     }) as typeof process.exit
 
     return await run()
