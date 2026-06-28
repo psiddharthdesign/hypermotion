@@ -141,6 +141,15 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
               { id: 'fade-end', time: 0.3, value: 1 },
             ],
           },
+          moveRoot: {
+            id: 'move-root',
+            nodeId: 'root',
+            propertyId: 'transform.x',
+            keyframes: [
+              { id: 'move-start', time: 0, value: 0 },
+              { id: 'move-end', time: 0.3, value: 12 },
+            ],
+          },
         },
       }),
     )
@@ -185,6 +194,17 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.equal(tracksPayload.tracks[0]?.id, 'fade-title')
     assert.equal(tracksPayload.tracks[0]?.nodeId, 'title')
     assert.equal(tracksPayload.tracks[0]?.propertyId, 'appearance.opacity')
+
+    const allTracksResult = await handleListTracks({ scene: scenePath })
+    const allTracksText =
+      allTracksResult.content[0]?.type === 'text' ? allTracksResult.content[0].text : ''
+    const allTracksPayload = JSON.parse(allTracksText) as {
+      tracks: Array<{ id: string; nodeId: string; propertyId: string }>
+    }
+    assert.deepEqual(
+      allTracksPayload.tracks.map((track) => track.id).sort(),
+      ['fade-title', 'move-root'],
+    )
 
     const camerasResult = await handleListCameras({ scene: scenePath })
     const camerasText = camerasResult.content[0]?.type === 'text' ? camerasResult.content[0].text : ''
