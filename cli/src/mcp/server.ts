@@ -57,7 +57,7 @@ import { CLI_VERSION } from '../version.js'
 
 const SERVER_NAME = 'hypermotion'
 
-const TOOLS: Tool[] = [
+export const TOOLS: Tool[] = [
   doctorTool,
   getCapabilitiesTool,
   createSceneTool,

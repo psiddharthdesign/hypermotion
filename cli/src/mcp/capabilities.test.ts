@@ -7,6 +7,7 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
 } from './tools/capabilities.js'
+import { TOOLS } from './server.js'
 import {
   NODE_KINDS,
   PATCH_OPERATION_TYPES,
@@ -70,6 +71,10 @@ test('capability tools list the full supported keyframe property set', async () 
   assert.equal(capabilities.renderFileSceneInput, true)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
+  assert.deepEqual(
+    capabilities.mcpTools,
+    TOOLS.map((tool) => tool.name),
+  )
   assert.equal(
     new Set(capabilities.keyframeableProperties).size,
     PROPERTY_IDS.length,
