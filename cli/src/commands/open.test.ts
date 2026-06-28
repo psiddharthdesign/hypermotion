@@ -4,11 +4,48 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import type { ChildProcess } from 'node:child_process'
 import test from 'node:test'
 import { withEnvVar } from '../testUtils/env.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
-import { captureStderr } from '../testUtils/stdout.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { openCommand } from './open.js'
+
+test('open command launches the desktop app with the resolved scene path', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-ok-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const appPath = path.join(dir, 'hyper-motion')
+  const spawnCalls: Array<{
+    command: string
+    args: readonly string[]
+    options: { detached?: boolean; stdio?: string }
+  }> = []
+  let unrefCalled = false
+  fs.writeFileSync(scenePath, '')
+  try {
+    const stdout = await captureStdout(async () => {
+      await openCommand({
+        locateApp: async () => appPath,
+        spawnApp: (command, args, options) => {
+          spawnCalls.push({ command, args, options })
+          return { unref: () => { unrefCalled = true } } as ChildProcess
+        },
+      }).parseAsync([scenePath], { from: 'user' })
+    })
+
+    assert.deepEqual(spawnCalls, [
+      {
+        command: appPath,
+        args: [scenePath],
+        options: { detached: true, stdio: 'ignore' },
+      },
+    ])
+    assert.equal(unrefCalled, true)
+    assert.match(stdout, new RegExp(`^Opened ${scenePath}$`, 'm'))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('open command reports missing scene files before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-'))
