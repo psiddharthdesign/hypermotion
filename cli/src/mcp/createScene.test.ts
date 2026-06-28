@@ -155,6 +155,17 @@ test('create_scene rejects array scene JSON', async () => {
   assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
 })
 
+test('create_scene rejects relative output paths', async () => {
+  const result = await handleCreateScene({
+    output: 'relative-scene.hype',
+    scene: { nodes: {} },
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'create_scene: output must be an absolute path.')
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
