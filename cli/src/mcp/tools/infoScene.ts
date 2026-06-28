@@ -10,7 +10,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
-import { readSceneSummary } from '../../scene/build.js'
+import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
   scene: z.string().describe('Path to a .hype scene file'),
@@ -65,7 +65,7 @@ export async function handleInfoScene(
     }
   }
 
-  let summary: ReturnType<typeof readSceneSummary>
+  let summary: SceneSummary
   try {
     summary = readSceneSummary(new Uint8Array(bytes))
   } catch (err) {
