@@ -52,6 +52,15 @@ test('withProcessExitThrow converts process.exit into a thrown error', async () 
   )
 })
 
+test('withProcessExitThrow preserves string exit codes', async () => {
+  await assert.rejects(
+    withProcessExitThrow(() => {
+      process.exit('1')
+    }),
+    { exitCode: '1' },
+  )
+})
+
 test('withProcessExitThrow treats process.exit without a code as success', async () => {
   await assert.rejects(
     withProcessExitThrow(() => {
