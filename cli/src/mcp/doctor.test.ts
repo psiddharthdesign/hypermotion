@@ -14,6 +14,7 @@ test('doctor input schema accepts no arguments', () => {
   assert.deepEqual(doctorTool.inputSchema, {
     type: 'object',
     properties: {},
+    required: [],
   })
 })
 

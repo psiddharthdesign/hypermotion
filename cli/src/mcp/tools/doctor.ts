@@ -6,7 +6,7 @@ import { getDoctorReport } from '../../commands/doctor.js'
 export const doctorTool: Tool = {
   name: 'doctor',
   description: 'Check hyper-motion CLI, desktop app, scene format, render, and MCP capabilities.',
-  inputSchema: { type: 'object', properties: {} },
+  inputSchema: { type: 'object', properties: {}, required: [] },
 }
 
 export async function handleDoctor(): Promise<CallToolResult> {
