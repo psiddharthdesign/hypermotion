@@ -7,7 +7,29 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
 } from './tools/capabilities.js'
-import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../scene/build.js'
+import {
+  NODE_KINDS,
+  PATCH_OPERATION_TYPES,
+  PROPERTY_IDS,
+  type NodeKindJson,
+  type PatchOperation,
+  type PropertyIdJson,
+} from '../scene/build.js'
+
+type CapabilitiesToolPayload = {
+  keyframeableProperties: readonly PropertyIdJson[]
+  sceneExtension?: string
+  validation?: {
+    structuralSceneValidation: boolean
+  }
+  nodeKinds?: readonly NodeKindJson[]
+  patchOperations?: readonly PatchOperation['op'][]
+  queryTools?: readonly string[]
+  validationTools?: readonly string[]
+  renderFormats?: readonly string[]
+  renderQualities?: readonly string[]
+  renderFileSceneInput?: boolean
+}
 
 test('capability tools list the full supported keyframe property set', async () => {
   const capabilities = parseToolJson(await handleGetCapabilities())
@@ -37,20 +59,7 @@ test('capability tools list the full supported keyframe property set', async () 
   )
 })
 
-function parseToolJson(result: CallToolResult): {
-  keyframeableProperties: string[]
-  sceneExtension?: string
-  validation?: {
-    structuralSceneValidation: boolean
-  }
-  nodeKinds?: string[]
-  patchOperations?: string[]
-  queryTools?: string[]
-  validationTools?: string[]
-  renderFormats?: string[]
-  renderQualities?: string[]
-  renderFileSceneInput?: boolean
-} {
+function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   const item = result.content[0]
   assert.equal(item?.type, 'text')
 
@@ -85,20 +94,23 @@ function parseToolJson(result: CallToolResult): {
 
   const properties = parsedObject.keyframeableProperties
   assertStringArray(properties)
+  const keyframeableProperties = properties as readonly PropertyIdJson[]
 
   const rawNodeKinds = parsedObject.nodeKinds
-  let nodeKinds: string[] | undefined
+  let nodeKinds: readonly NodeKindJson[] | undefined
   if (rawNodeKinds !== undefined) {
     assertStringArray(rawNodeKinds)
-    nodeKinds = rawNodeKinds
+    nodeKinds = rawNodeKinds as readonly NodeKindJson[]
   }
 
   return {
-    keyframeableProperties: properties,
+    keyframeableProperties,
     sceneExtension,
     validation,
     nodeKinds,
-    patchOperations: optionalStringArray(parsedObject, 'patchOperations'),
+    patchOperations: optionalStringArray(parsedObject, 'patchOperations') as
+      | readonly PatchOperation['op'][]
+      | undefined,
     queryTools: optionalStringArray(parsedObject, 'queryTools'),
     validationTools: optionalStringArray(parsedObject, 'validationTools'),
     renderFormats: optionalStringArray(parsedObject, 'renderFormats'),
