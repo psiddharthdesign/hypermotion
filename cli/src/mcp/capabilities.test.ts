@@ -19,6 +19,7 @@ import {
 type CapabilitiesToolPayload = {
   keyframeableProperties: readonly PropertyIdJson[]
   sceneExtension?: string
+  mcpTools?: readonly string[]
   validation?: {
     structuralSceneValidation: boolean
   }
@@ -36,6 +37,22 @@ test('capability tools list the full supported keyframe property set', async () 
   const listed = parseToolJson(await handleListKeyframeableProperties())
 
   assert.equal(capabilities.sceneExtension, '.hype')
+  assert.deepEqual(capabilities.mcpTools, [
+    'doctor',
+    'get_capabilities',
+    'create_scene',
+    'info_scene',
+    'inspect_scene',
+    'patch_scene',
+    'validate_scene',
+    'list_layers',
+    'get_layer',
+    'list_tracks',
+    'list_cameras',
+    'open_scene',
+    'render_scene',
+    'list_keyframeable_properties',
+  ])
   assert.deepEqual(capabilities.nodeKinds, NODE_KINDS)
   assert.deepEqual(capabilities.patchOperations, PATCH_OPERATION_TYPES)
   assert.deepEqual(capabilities.queryTools, [
@@ -106,6 +123,7 @@ function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   return {
     keyframeableProperties,
     sceneExtension,
+    mcpTools: optionalStringArray(parsedObject, 'mcpTools'),
     validation,
     nodeKinds,
     patchOperations: optionalStringArray(parsedObject, 'patchOperations') as
