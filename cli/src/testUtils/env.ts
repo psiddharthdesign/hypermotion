@@ -3,7 +3,7 @@
 export async function withEnvVar(
   name: string,
   value: string,
-  run: () => Promise<void>,
+  run: () => Promise<void> | void,
 ): Promise<void> {
   const previous = process.env[name]
   process.env[name] = value
