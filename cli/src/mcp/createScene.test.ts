@@ -172,6 +172,7 @@ test('create_scene reports persisted layer and track counts', async () => {
   try {
     const result = await handleCreateScene({
       output: scenePath,
+      open: false,
       scene: {
         nodes: {
           aliasA: {
