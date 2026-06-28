@@ -2,7 +2,7 @@
 
 /**
  * `info_scene` MCP tool — read a `.hype` file and return a structured
- * summary (canvas, duration, framerate, layer/track/section/keyframe
+ * summary (canvas, duration, frame rate, layer/track/section/keyframe
  * counts). Used by AI agents to inspect a scene before deciding what
  * to render or modify.
  */
