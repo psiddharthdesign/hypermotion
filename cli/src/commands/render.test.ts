@@ -24,6 +24,21 @@ test('render command reports invalid fps before launching the app', async () => 
   assert.match(stderr, /^\[render\] invalid fps: 0$/m)
 })
 
+test('render command rejects fps values above the MCP limit before launching the app', async () => {
+  const stderr = await captureStderr(() => {
+    return withProcessExitThrow(async () => {
+      await assert.rejects(
+        renderCommand().parseAsync(['-o', 'out.mp4', '--fps', '121'], {
+          from: 'user',
+        }),
+        { exitCode: 1 },
+      )
+    })
+  })
+
+  assert.match(stderr, /^\[render\] invalid fps: 121$/m)
+})
+
 test('render command reports missing scene files before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-'))
   const scenePath = path.join(dir, 'missing.hype')
