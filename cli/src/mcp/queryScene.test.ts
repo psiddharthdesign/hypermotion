@@ -206,6 +206,12 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
       ['fade-title', 'move-root'],
     )
 
+    const unrelatedTracksResult = await handleListTracks({ scene: scenePath, nodeId: 'missing' })
+    const unrelatedTracksText =
+      unrelatedTracksResult.content[0]?.type === 'text' ? unrelatedTracksResult.content[0].text : ''
+    const unrelatedTracksPayload = JSON.parse(unrelatedTracksText) as { tracks: unknown[] }
+    assert.deepEqual(unrelatedTracksPayload.tracks, [])
+
     const camerasResult = await handleListCameras({ scene: scenePath })
     const camerasText = camerasResult.content[0]?.type === 'text' ? camerasResult.content[0].text : ''
     const camerasPayload = JSON.parse(camerasText) as {
