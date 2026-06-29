@@ -8,6 +8,7 @@ import { inspectScene } from '../../scene/build.js'
 const SceneInput = z.object({ scene: z.string() })
 const LayerInput = z.object({ scene: z.string(), nodeId: z.string() })
 const TrackInput = z.object({ scene: z.string(), nodeId: z.string().optional() })
+type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
 type ReadSceneResult =
   | { ok: true; scene: Record<string, unknown> }
   | { ok: false; result: CallToolResult }
@@ -131,7 +132,7 @@ export async function handleListCameras(
   return text({ activeCameraId: loaded.scene.activeCameraId ?? null, cameras })
 }
 
-function read(toolName: string, scenePath: string): ReadSceneResult {
+function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult {
   try {
     return { ok: true, scene: inspectScene(new Uint8Array(fs.readFileSync(scenePath))) }
   } catch (err) {
@@ -162,7 +163,7 @@ function text(value: unknown): CallToolResult {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] }
 }
 
-function invalidArgs(toolName: string, message: string): CallToolResult {
+function invalidArgs(toolName: QuerySceneToolName, message: string): CallToolResult {
   return {
     isError: true,
     content: [
