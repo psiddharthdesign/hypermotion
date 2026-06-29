@@ -87,7 +87,22 @@ export async function handlePatchScene(
       ],
     }
   }
-  const next = applyScenePatch(new Uint8Array(bytes), patch)
+  let next: Uint8Array
+  try {
+    next = applyScenePatch(new Uint8Array(bytes), patch)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `patch_scene: failed to apply patch: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, Buffer.from(next))
   const shouldApplyLive = input.applyLive ?? true
