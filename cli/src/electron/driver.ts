@@ -5,8 +5,8 @@
  *
  * Wire diagram:
  *
- *   1. CLI deletes any stale `<output>` and `<output>.done` from a
- *      previous run.
+ *   1. CLI deletes any stale `<output>`, `<output>.done`, and
+ *      `<output>.error` from a previous run.
  *   2. CLI spawns the .app binary with `--render --out=<path> ...`.
  *   3. Inside the binary, `app.requestSingleInstanceLock()` either
  *      succeeds (we're the first instance) or fails (another hyper-motion
