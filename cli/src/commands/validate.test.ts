@@ -179,6 +179,53 @@ test('validate command rejects a non-camera active camera id', async () => {
   }
 })
 
+test('validate command rejects camera nodes nested under frames', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Nested Camera',
+          canvas: { width: 320, height: 180 },
+        },
+        activeCameraId: 'camera',
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['camera'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          camera: {
+            id: 'camera',
+            kind: 'camera',
+            parent: 'root',
+            transform: { x: 160, y: 90, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: camera node camera must be scene-level with parent: null$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command rejects a parent link missing from children', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')
