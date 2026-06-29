@@ -65,7 +65,7 @@ export const NODE_KINDS = [
   'component',
   'instance',
   'camera',
-] as const
+] as const satisfies readonly NodeKindJson[]
 
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
