@@ -889,6 +889,27 @@ test('validateScene rejects cameras nested under scene nodes', () => {
   ])
 })
 
+test('validateScene rejects multiple camera nodes', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  scene.nodes = {
+    ...scene.nodes,
+    cameraB: {
+      ...camera,
+      id: 'cameraB',
+      name: 'Second Camera',
+    },
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene has multiple camera nodes: camera, cameraB',
+  ])
+})
+
 test('validateScene rejects duplicate child references', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
