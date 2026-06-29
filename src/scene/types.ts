@@ -739,6 +739,7 @@ export type Node =
   | InstanceNode
   | CameraNode
 
+export type SceneNode = Node
 export type NodeKind = Node['kind']
 
 // ---------------------------------------------------------------------------
