@@ -33,7 +33,7 @@ export interface HeadlessRenderRequest {
   format: 'mp4' | 'webm' | 'gif'
   quality: 'comp' | '720p' | '2k' | '4k'
   fps: number
-  /** Optional .hype scene path to forward to compatible desktop builds. */
+  /** Optional .hype scene path to render instead of the current desktop scene. */
   scenePath?: string
 }
 

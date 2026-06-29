@@ -9,9 +9,8 @@
  * off-screen window, loads the scene, runs the export pipeline, and
  * writes the rendered file to `<out>`.
  *
- * `--scene <path>` forwards a saved .hype file to desktop builds that
- * support file-based rendering; otherwise the current desktop scene is
- * rendered.
+ * `--scene <path>` renders a saved .hype file; without it, the current
+ * desktop scene is rendered.
  */
 
 import { Command } from 'commander'

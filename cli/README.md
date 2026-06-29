@@ -45,7 +45,7 @@ Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 Render targets whichever scene is currently loaded in your desktop app.
 To script a scene from JSON, build a `.hype` file with
 `hypermotion create`, inspect it with `hypermotion info`, and pass it to
-compatible desktop builds with `hypermotion render --scene <path>`.
+the installed desktop app with `hypermotion render --scene <path>`.
 
 ## MCP server — AI agent integration
 
