@@ -128,8 +128,8 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       try {
         const raw = fs.readFileSync(errorPath, 'utf-8')
         try {
-          const data = JSON.parse(raw) as { message?: string }
-          if (data.message) message = data.message
+          const data = JSON.parse(raw) as { message?: unknown }
+          if (typeof data.message === 'string' && data.message) message = data.message
         } catch {
           const text = raw.trim()
           if (text) message = text
