@@ -274,6 +274,54 @@ test('validate command rejects a parent link missing from children', async () =>
   }
 })
 
+test('validate command rejects duplicate child entries', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Duplicate Child',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['title', 'title'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          title: {
+            id: 'title',
+            kind: 'text',
+            parent: 'root',
+            text: 'Duplicate child',
+            fontFamily: 'Inter',
+            fontSize: 24,
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: node root lists duplicate child: title$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'missing.hype')
