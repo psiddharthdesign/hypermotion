@@ -911,6 +911,13 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
   }
 
+  const cameraIds = Object.entries(nodes)
+    .filter(([, raw]) => asRecord(raw).kind === 'camera')
+    .map(([id]) => id)
+  if (cameraIds.length > 1) {
+    errors.push(`scene has multiple camera nodes: ${cameraIds.join(', ')}`)
+  }
+
   for (const [id, raw] of Object.entries(tracks)) {
     const track = asRecord(raw)
     if (track.id !== id) errors.push(`track map key ${id} does not match track id: ${String(track.id)}`)
