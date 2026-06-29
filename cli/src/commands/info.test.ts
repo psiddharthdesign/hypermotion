@@ -184,6 +184,42 @@ test('info command omits camera line when no active camera exists', async () => 
   }
 })
 
+test('info command prints builder default timing when scene meta omits it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Default Timing',
+          canvas: { width: 400, height: 300 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 400, height: 300 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await infoCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^ {2}Duration: {2}5s @ 60fps$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('info command falls back for blank scene names', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
