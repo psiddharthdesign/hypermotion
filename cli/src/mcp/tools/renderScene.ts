@@ -41,6 +41,7 @@ const RenderInput = z.object({
       'Path to a .hype scene file to render instead of the current desktop scene.',
     ),
 })
+type RenderInputData = z.infer<typeof RenderInput>
 
 export const renderSceneTool: Tool = {
   name: 'render_scene',
@@ -94,11 +95,12 @@ export async function handleRenderScene(
     }
   }
 
-  const outputPath = path.resolve(parsed.data.output)
-  const scenePath = parsed.data.scene ? path.resolve(parsed.data.scene) : undefined
-  const format = parsed.data.format ?? inferFormat(outputPath)
-  const quality = parsed.data.quality ?? 'comp'
-  const fps = parsed.data.fps ?? 30
+  const input: RenderInputData = parsed.data
+  const outputPath = path.resolve(input.output)
+  const scenePath = input.scene ? path.resolve(input.scene) : undefined
+  const format = input.format ?? inferFormat(outputPath)
+  const quality = input.quality ?? 'comp'
+  const fps = input.fps ?? 30
 
   if (scenePath && !fs.existsSync(scenePath)) {
     return {
