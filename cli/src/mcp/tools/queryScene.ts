@@ -8,6 +8,9 @@ import { inspectScene } from '../../scene/build.js'
 const SceneInput = z.object({ scene: z.string() })
 const LayerInput = z.object({ scene: z.string(), nodeId: z.string() })
 const TrackInput = z.object({ scene: z.string(), nodeId: z.string().optional() })
+type SceneInputData = z.infer<typeof SceneInput>
+type LayerInputData = z.infer<typeof LayerInput>
+type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
 type QuerySceneSnapshot = {
   root?: unknown
@@ -75,7 +78,8 @@ export async function handleListLayers(
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
 
-  const loaded = read('list_layers', parsed.data.scene)
+  const input: SceneInputData = parsed.data
+  const loaded = read('list_layers', input.scene)
   if (!loaded.ok) return loaded.result
 
   const nodes = record(loaded.scene.nodes)
@@ -101,11 +105,12 @@ export async function handleGetLayer(
   const parsed = LayerInput.safeParse(args)
   if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
 
-  const loaded = read('get_layer', parsed.data.scene)
+  const input: LayerInputData = parsed.data
+  const loaded = read('get_layer', input.scene)
   if (!loaded.ok) return loaded.result
 
-  const node = record(record(loaded.scene.nodes)[parsed.data.nodeId])
-  if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${parsed.data.nodeId}` }] }
+  const node = record(record(loaded.scene.nodes)[input.nodeId])
+  if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${input.nodeId}` }] }
   return text(node)
 }
 
@@ -115,12 +120,13 @@ export async function handleListTracks(
   const parsed = TrackInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
 
-  const loaded = read('list_tracks', parsed.data.scene)
+  const input: TrackInputData = parsed.data
+  const loaded = read('list_tracks', input.scene)
   if (!loaded.ok) return loaded.result
 
   const tracks = Object.values(record(loaded.scene.tracks)).filter((raw) => {
     const t = record(raw)
-    return parsed.data.nodeId ? t.nodeId === parsed.data.nodeId : true
+    return input.nodeId ? t.nodeId === input.nodeId : true
   })
   return text({ tracks })
 }
@@ -131,7 +137,8 @@ export async function handleListCameras(
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
 
-  const loaded = read('list_cameras', parsed.data.scene)
+  const input: SceneInputData = parsed.data
+  const loaded = read('list_cameras', input.scene)
   if (!loaded.ok) return loaded.result
 
   const cameras = Object.values(record(loaded.scene.nodes)).filter((raw) => record(raw).kind === 'camera')
