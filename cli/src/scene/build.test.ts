@@ -896,6 +896,18 @@ test('validateScene rejects duplicate child references', () => {
   assert.deepEqual(result.errors, ['node root lists duplicate child: title'])
 })
 
+test('validateScene rejects child references to missing nodes', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.children = ['title', 'missing-child']
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['node root has missing child: missing-child'])
+})
+
 test('validateScene rejects node ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
