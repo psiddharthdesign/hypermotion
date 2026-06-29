@@ -1132,6 +1132,7 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 }
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
+  const version = useSceneVersion()
   // Whether this node's parent is a frame with fill explicitly set to
   // null. When that's the case, a child fill would paint on top of a
   // parent that's invisible — so we dim the FillField to signal
@@ -1174,15 +1175,19 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       : 0
   const liveFocusWorldX =
     node.kind === 'camera'
-      ? anim?.focusWorldX ?? node.focusWorldX ?? node.focusX ?? node.transform.x
+      ? anim?.focusWorldX ??
+        anim?.focusX ??
+        node.focusWorldX ??
+        node.focusX ??
+        node.transform.x
       : 0
   const liveFocusWorldY =
     node.kind === 'camera'
-      ? anim?.focusWorldY ?? node.focusWorldY ?? node.focusY ?? node.transform.y
-      : 0
-  const liveFocusWorldZ =
-    node.kind === 'camera'
-      ? anim?.focusWorldZ ?? node.focusWorldZ ?? node.focusDistance ?? 0
+      ? anim?.focusWorldY ??
+        anim?.focusY ??
+        node.focusWorldY ??
+        node.focusY ??
+        node.transform.y
       : 0
   const liveFocusRadius =
     node.kind === 'camera' ? anim?.focusRadius ?? node.focusRadius ?? 160 : 160
@@ -1193,28 +1198,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveIso = node.kind === 'camera' ? node.iso ?? 100 : 100
   const liveBlurLevel =
     node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
-  const liveFocalLength =
-    node.kind === 'camera' ? anim?.focalLength ?? node.focalLength ?? 1000 : 1000
   const liveFieldOfView =
     node.kind === 'camera' ? anim?.fieldOfView ?? node.fieldOfView ?? 35 : 35
   const liveNearClip =
     node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
   const liveFarClip =
     node.kind === 'camera' ? anim?.farClip ?? node.farClip ?? 100000 : 100000
-  const livePointOfInterestX =
-    node.kind === 'camera'
-      ? anim?.pointOfInterestX ?? node.pointOfInterestX ?? node.transform.x
-      : 0
-  const livePointOfInterestY =
-    node.kind === 'camera'
-      ? anim?.pointOfInterestY ?? node.pointOfInterestY ?? node.transform.y
-      : 0
-  const livePointOfInterestZ =
-    node.kind === 'camera'
-      ? anim?.pointOfInterestZ ?? node.pointOfInterestZ ?? 0
-      : 0
-  const focusPickingCameraId = useUI((s) => s.focusPickingCameraId)
-  const setFocusPickingCameraId = useUI((s) => s.setFocusPickingCameraId)
+  useEffect(() => {
+    if (node.kind !== 'camera') return
+    if ((node.focusMode ?? 'screen') === 'screen' && !node.focusTargetNodeId) {
+      return
+    }
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'focusMode', 'screen')
+      api.setNodeProperty(node.id, 'focusTargetNodeId', null)
+    })
+  }, [api, node])
   // Convenience patchers. Each reads the current group, merges the patch,
   // and writes the whole group back. This is the granularity setNodeProperty
   // accepts today; later we might split groups into nested Y.Maps so
@@ -1582,59 +1581,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             </FieldRow>
           </Section>
 
-          <Section title="Point of Interest">
-            <FieldRow
-              label="Target X"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.pointOfInterestX"
-                  currentValue={livePointOfInterestX}
-                />
-              }
-            >
-              <NumberField
-                value={livePointOfInterestX}
-                onCommit={(v) => patchCamera({ pointOfInterestX: v })}
-                step={1}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Target Y"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.pointOfInterestY"
-                  currentValue={livePointOfInterestY}
-                />
-              }
-            >
-              <NumberField
-                value={livePointOfInterestY}
-                onCommit={(v) => patchCamera({ pointOfInterestY: v })}
-                step={1}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Target Z"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.pointOfInterestZ"
-                  currentValue={livePointOfInterestZ}
-                />
-              }
-            >
-              <NumberField
-                value={livePointOfInterestZ}
-                onCommit={(v) => patchCamera({ pointOfInterestZ: v })}
-                step={5}
-                suffix="px"
-              />
-            </FieldRow>
-          </Section>
         </>
       )}
 
@@ -1949,27 +1895,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <>
           <Section title="Lens">
             <FieldRow
-              label="Focal length"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.focalLength"
-                  currentValue={liveFocalLength}
-                />
-              }
-            >
-              <NumberField
-                value={liveFocalLength / 20}
-                onCommit={(v) =>
-                  patchCamera({ focalLength: Math.max(5, v) * 20 })
-                }
-                min={5}
-                max={300}
-                step={1}
-                suffix="mm"
-              />
-            </FieldRow>
-            <FieldRow
               label="Field of View"
               keyframe={
                 <KeyframeButton
@@ -2046,69 +1971,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 suffix="px"
               />
             </FieldRow>
-            <FieldRow label="Focus point">
-              <div className="grid w-full grid-cols-3 gap-1">
-                <button
-                  type="button"
-                  className="h-7 rounded border border-border bg-panel px-2 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text"
-                  onClick={() => {
-                    const canvas = api.getMeta().canvas
-                    patchCamera({
-                      focusMode: 'screen',
-                      focusX: canvas.width / 2,
-                      focusY: canvas.height / 2,
-                      focusTargetNodeId: null,
-                    })
-                  }}
-                >
-                  Center
-                </button>
-                <button
-                  type="button"
-                  className={[
-                    'h-7 rounded border px-2 text-[11px] font-medium transition-colors',
-                    focusPickingCameraId === node.id
-                      ? 'border-accent bg-accent/15 text-text'
-                      : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
-                  ].join(' ')}
-                  onClick={() =>
-                    setFocusPickingCameraId(
-                      focusPickingCameraId === node.id ? null : node.id,
-                    )
-                  }
-                >
-                  {focusPickingCameraId === node.id ? 'Click canvas' : 'Pick'}
-                </button>
-                <button
-                  type="button"
-                  className="h-7 rounded border border-border bg-panel px-2 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-danger"
-                  onClick={() => {
-                    const focusProps = new Set([
-                      'camera.focusX',
-                      'camera.focusY',
-                      'camera.focusWorldX',
-                      'camera.focusWorldY',
-                      'camera.focusWorldZ',
-                      'camera.focusDistance',
-                    ])
-                    for (const track of api.getTracksForNode(node.id)) {
-                      if (focusProps.has(track.propertyId)) {
-                        removeTrack(api, track.id)
-                      }
-                    }
-                    const canvas = api.getMeta().canvas
-                    patchCamera({
-                      focusMode: 'screen',
-                      focusX: canvas.width / 2,
-                      focusY: canvas.height / 2,
-                      focusTargetNodeId: null,
-                    })
-                  }}
-                >
-                  Clear
-                </button>
-              </div>
-            </FieldRow>
             <FieldRow
               label="Focus X"
               keyframe={
@@ -2154,29 +2016,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   })
                 }
                 step={1}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Focus Z depth"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.focusWorldZ"
-                  currentValue={liveFocusWorldZ}
-                />
-              }
-            >
-              <NumberField
-                value={liveFocusWorldZ}
-                onCommit={(v) =>
-                  patchCamera({
-                    focusWorldZ: v,
-                    focusDistance: v,
-                    focusTargetNodeId: null,
-                  })
-                }
-                step={5}
                 suffix="px"
               />
             </FieldRow>

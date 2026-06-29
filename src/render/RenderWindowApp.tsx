@@ -20,6 +20,7 @@ import {
   computeCameraDepthOfField,
   resolveCameraFocusTargetPoint,
 } from '@/ui/Canvas'
+import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import { getAnimEngine } from '@/anim'
 import {
   createElectronCapture,
@@ -367,6 +368,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
       inherited,
     ],
   )
+  const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
 
   // Output scale — the render window's content area is sized to the
   // output dimensions in main. The artboard is rendered at its own
@@ -440,28 +442,51 @@ function RenderCanvas({ job }: { job: RenderJob }) {
             className="absolute inset-0"
             style={{ transformStyle: 'preserve-3d' }}
           >
-            <ScenePostProcessLayer
-              rootId={rootId}
-              solved={solved}
-              order={renderOrder}
+            <div
+              className="absolute inset-0"
+              style={{ opacity: threeCameraAvailable ? 0 : 1 }}
+            >
+              <ScenePostProcessLayer
+                rootId={rootId}
+                solved={solved}
+                order={renderOrder}
+                animated={animated}
+                inherited={inherited}
+                cameraDepthOfField={threeCameraAvailable ? null : cameraDepthOfField}
+                sceneFill={sceneFill}
+                canvasWidth={canvasWidth}
+                canvasHeight={canvasHeight}
+                sceneCorner={sceneCorner}
+                includeSceneFill
+                textureSource
+                sceneContentStyle={
+                  threeCameraAvailable
+                    ? undefined
+                    : cameraTransform
+                      ? {
+                          transform: cameraTransform,
+                          transformOrigin: '0 0',
+                          transformStyle: 'preserve-3d',
+                          backfaceVisibility: 'visible',
+                        }
+                      : undefined
+                }
+              />
+            </div>
+            <ThreeSceneViewport
+              api={api}
+              layout={solved}
               animated={animated}
-              inherited={inherited}
-              cameraDepthOfField={cameraDepthOfField}
+              camera={camera}
+              cameraAnim={cameraAnim}
+              width={canvasWidth}
+              height={canvasHeight}
               sceneFill={sceneFill}
-              canvasWidth={canvasWidth}
-              canvasHeight={canvasHeight}
-              sceneCorner={sceneCorner}
-              includeSceneFill
-              sceneContentStyle={
-                cameraTransform
-                  ? {
-                      transform: cameraTransform,
-                      transformOrigin: '0 0',
-                      transformStyle: 'preserve-3d',
-                      backfaceVisibility: 'visible',
-                    }
-                  : undefined
-              }
+              selectedIds={[]}
+              showHelpers={false}
+              showPlanes
+              exportable
+              onAvailabilityChange={setThreeCameraAvailable}
             />
           </div>
         ) : (
