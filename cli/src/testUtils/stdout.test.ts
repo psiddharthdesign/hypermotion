@@ -117,11 +117,39 @@ test('captureStdout restores the writer when the callback throws', async () => {
   assert.equal(process.stdout.write, originalWrite)
 })
 
+test('captureStdout restores the writer when async callbacks reject', async () => {
+  const originalWrite = process.stdout.write
+
+  await assert.rejects(
+    captureStdout(async () => {
+      await Promise.resolve()
+      throw new Error('boom')
+    }),
+    /boom/,
+  )
+
+  assert.equal(process.stdout.write, originalWrite)
+})
+
 test('captureStderr restores the writer when the callback throws', async () => {
   const originalWrite = process.stderr.write
 
   await assert.rejects(
     captureStderr(() => {
+      throw new Error('boom')
+    }),
+    /boom/,
+  )
+
+  assert.equal(process.stderr.write, originalWrite)
+})
+
+test('captureStderr restores the writer when async callbacks reject', async () => {
+  const originalWrite = process.stderr.write
+
+  await assert.rejects(
+    captureStderr(async () => {
+      await Promise.resolve()
       throw new Error('boom')
     }),
     /boom/,
