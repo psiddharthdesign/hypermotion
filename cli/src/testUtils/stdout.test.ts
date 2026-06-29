@@ -62,6 +62,26 @@ test('captureStderr invokes write callbacks', async () => {
   assert.equal(callbackCalled, true)
 })
 
+test('captureStdout restores the writer after sync callbacks', async () => {
+  const originalWrite = process.stdout.write
+
+  await captureStdout(() => {
+    process.stdout.write('render complete')
+  })
+
+  assert.equal(process.stdout.write, originalWrite)
+})
+
+test('captureStderr restores the writer after sync callbacks', async () => {
+  const originalWrite = process.stderr.write
+
+  await captureStderr(() => {
+    process.stderr.write('render failed')
+  })
+
+  assert.equal(process.stderr.write, originalWrite)
+})
+
 test('captureStdout restores the writer after async callbacks', async () => {
   const originalWrite = process.stdout.write
 
