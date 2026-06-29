@@ -15,8 +15,8 @@
  *
  *   1. Agent composes JSON for a layout (a card, a calendar, a list).
  *   2. Agent calls `create_scene` with the JSON and an output path.
- *   3. User opens that `.hype` in the desktop app; `render_scene`
- *      can then export the current desktop scene to MP4/WebM/GIF.
+ *   3. User opens that `.hype` in the desktop app, or `render_scene`
+ *      exports the saved scene file directly to MP4/WebM/GIF.
  *
  * Step 2 produces a file the user can ALSO open in the desktop app
  * for hand-editing, so this isn't a black box — it's a real authoring
