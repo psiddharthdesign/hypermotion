@@ -52,10 +52,25 @@ export async function handlePatchScene(
 
   const input: PatchInputData = parsed.data
   const output = path.resolve(input.output ?? input.scene)
-  const patch =
-    typeof input.patch === 'string'
-      ? (JSON.parse(input.patch) as ScenePatch | PatchOperation[])
-      : (input.patch as ScenePatch | PatchOperation[])
+  let patch: ScenePatch | PatchOperation[]
+  try {
+    patch =
+      typeof input.patch === 'string'
+        ? (JSON.parse(input.patch) as ScenePatch | PatchOperation[])
+        : (input.patch as ScenePatch | PatchOperation[])
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `patch_scene: failed to parse patch JSON: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
   let bytes: Buffer
   try {
     bytes = fs.readFileSync(input.scene)
