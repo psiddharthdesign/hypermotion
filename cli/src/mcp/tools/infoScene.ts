@@ -15,6 +15,7 @@ import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 const InfoInput = z.object({
   scene: z.string().describe('Path to a .hype scene file'),
 })
+type InfoInputData = z.infer<typeof InfoInput>
 
 export const infoSceneTool: Tool = {
   name: 'info_scene',
@@ -47,7 +48,8 @@ export async function handleInfoScene(
     }
   }
 
-  const scenePath = parsed.data.scene
+  const input: InfoInputData = parsed.data
+  const scenePath = input.scene
   let bytes: Buffer
   try {
     bytes = fs.readFileSync(scenePath)
