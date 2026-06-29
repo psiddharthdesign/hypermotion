@@ -88,6 +88,40 @@ test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
   }
 })
 
+test('driveHeadlessRender falls back for blank plain-text error sentinels', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.mp4')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const out = outArg?.slice('--out='.length);",
+      "if (!out) process.exit(2);",
+      "await import('node:fs').then((fs) => fs.writeFileSync(`${out}.error`, '   \\n\\t  '))",
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    await assert.rejects(
+      driveHeadlessRender({
+        appPath,
+        outputPath,
+        format: 'mp4',
+        quality: 'comp',
+        fps: 30,
+      }),
+      /Render failed \(no details available\)/,
+    )
+    assert.equal(fs.existsSync(`${outputPath}.error`), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('driveHeadlessRender clears stale error sentinels after successful renders', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
   const appPath = path.join(dir, 'fake-app.mjs')
