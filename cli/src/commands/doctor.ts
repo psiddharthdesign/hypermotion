@@ -3,7 +3,8 @@
 import { Command } from 'commander'
 import os from 'node:os'
 import { locateDesktopApp } from '../electron/locator.js'
-import { MCP_TOOLS, RENDER_FORMATS, RENDER_QUALITIES } from '../mcp/tools/capabilities.js'
+import { MCP_TOOLS } from '../mcp/tools/capabilities.js'
+import { RENDER_FORMATS, RENDER_QUALITIES } from '../renderOptions.js'
 import { CLI_VERSION } from '../version.js'
 
 export interface DoctorReport {

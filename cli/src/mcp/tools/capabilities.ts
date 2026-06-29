@@ -2,6 +2,7 @@
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
+import { RENDER_FORMATS, RENDER_QUALITIES } from '../../renderOptions.js'
 
 const VALIDATION_TOOLS = ['validate_scene'] as const
 const QUERY_TOOLS = ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'] as const
@@ -21,9 +22,6 @@ export const MCP_TOOLS = [
   'render_scene',
   'list_keyframeable_properties',
 ] as const
-export const RENDER_FORMATS = ['mp4', 'webm', 'gif'] as const
-export const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
-
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
   mcpTools: typeof MCP_TOOLS
