@@ -10,10 +10,15 @@ import {
   validateScene,
   type SceneJson,
   type TextAnimationJson,
+  type TrackJson,
 } from './build.js'
 
 type PlainRecord = Record<string, unknown>
 type PlainSceneMap = Record<string, PlainRecord>
+type InvalidTrackJson = Omit<TrackJson, 'propertyId'> & { propertyId: string }
+type InvalidSceneJson = Omit<SceneJson, 'tracks'> & {
+  tracks: Record<string, InvalidTrackJson>
+}
 
 function sampleScene(): SceneJson {
   return {
@@ -786,11 +791,11 @@ test('validateScene rejects unsupported track property ids', () => {
         nodeId: 'title',
         propertyId: 'appearance.missing',
         keyframes: [],
-      },
+      } satisfies InvalidTrackJson,
     },
-  } as unknown as SceneJson
+  } satisfies InvalidSceneJson
 
-  const result = validateScene(buildSceneBytes(scene))
+  const result = validateScene(buildSceneBytes(scene as SceneJson))
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, [
