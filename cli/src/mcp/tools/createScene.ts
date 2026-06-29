@@ -52,6 +52,7 @@ const CreateInput = z.object({
     .default(true)
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 })
+type CreateInputData = z.infer<typeof CreateInput>
 
 const KEYFRAMEABLE_PROPERTY_DESCRIPTION = PROPERTY_IDS.join(', ')
 
@@ -127,12 +128,13 @@ export async function handleCreateScene(
   // Accept the scene either as an inline object or a JSON string.
   // Most MCP clients send objects, but some (and human users via the
   // CLI's inspector) find string-encoded JSON easier to construct.
+  const input: CreateInputData = parsed.data
   let scene: SceneJson
   try {
     scene =
-      typeof parsed.data.scene === 'string'
-        ? (JSON.parse(parsed.data.scene) as SceneJson)
-        : (parsed.data.scene as SceneJson)
+      typeof input.scene === 'string'
+        ? (JSON.parse(input.scene) as SceneJson)
+        : (input.scene as SceneJson)
   } catch (err) {
     return {
       isError: true,
@@ -180,7 +182,7 @@ export async function handleCreateScene(
   // Make sure the output's parent directory exists. Agents tend to
   // specify deep paths and we don't want a simple ENOENT to obscure
   // the actual failure.
-  const outputPath = parsed.data.output
+  const outputPath = input.output
   if (!path.isAbsolute(outputPath)) {
     return {
       isError: true,
@@ -228,7 +230,7 @@ export async function handleCreateScene(
   const summary = readSceneSummary(bytes)
   const layers = summary.layerCount
   const tracks = summary.trackCount
-  const shouldOpen = parsed.data.open
+  const shouldOpen = input.open
   let opened = false
   let openNote = ''
   if (shouldOpen) {
