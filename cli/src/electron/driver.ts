@@ -17,8 +17,9 @@
  *          our argv to the running app via `second-instance` event.
  *   4. The running app writes the output file, then writes a sentinel
  *      at `<output>.done` containing `{"ts":..., "bytes":...}`.
- *   5. CLI polls for the sentinel. When it appears, render is done.
- *      CLI cleans up the sentinel and returns success.
+ *   5. CLI polls for the success or error sentinel. On success, render
+ *      is done; on error, the renderer's message is surfaced. CLI cleans
+ *      up whichever sentinel it consumed.
  *
  * This single-instance handoff avoids IndexedDB lock contention — the
  * running editor can stay open and still serve CLI render requests.
