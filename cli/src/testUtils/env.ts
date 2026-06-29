@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
+type EnvVarCallback<T> = () => Promise<T> | T
+
 export async function withEnvVar<T>(
   name: string,
   value: string | undefined,
-  run: () => Promise<T> | T,
+  run: EnvVarCallback<T>,
 ): Promise<T> {
   const previous = process.env[name]
   if (value === undefined) {
