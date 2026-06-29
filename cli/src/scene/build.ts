@@ -899,6 +899,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
         errors.push(`node ${id} parent ${parent} does not list it as a child`)
       }
     }
+    if (node.children !== undefined && !Array.isArray(node.children)) {
+      errors.push(`node ${id} children must be an array`)
+    }
     const children = Array.isArray(node.children) ? node.children : []
     const seenChildren = new Set<string>()
     for (const child of children) {
