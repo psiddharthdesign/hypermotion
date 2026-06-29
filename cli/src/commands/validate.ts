@@ -2,6 +2,7 @@
 
 import { Command } from 'commander'
 import fs from 'node:fs'
+import path from 'node:path'
 import { validateScene, type SceneValidationResult } from '../scene/build.js'
 
 type ValidateCommandOptions = {
@@ -14,13 +15,18 @@ export function validateCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output validation result as JSON')
     .action((scenePath: string, options: ValidateCommandOptions) => {
+      const resolvedScenePath = path.resolve(scenePath)
       let bytes: Buffer
       let result: SceneValidationResult
+      if (fs.existsSync(resolvedScenePath) && !fs.statSync(resolvedScenePath).isFile()) {
+        console.error(`[validate] scene path is not a file: ${resolvedScenePath}`)
+        process.exit(2)
+      }
       try {
-        bytes = fs.readFileSync(scenePath)
+        bytes = fs.readFileSync(resolvedScenePath)
       } catch (err) {
         console.error(
-          `[validate] failed to read ${scenePath}: ${
+          `[validate] failed to read ${resolvedScenePath}: ${
             err instanceof Error ? err.message : err
           }`,
         )
@@ -30,7 +36,7 @@ export function validateCommand(): Command {
         result = validateScene(new Uint8Array(bytes))
       } catch (err) {
         console.error(
-          `[validate] ${scenePath} doesn't look like a valid .hype file: ${
+          `[validate] ${resolvedScenePath} doesn't look like a valid .hype file: ${
             err instanceof Error ? err.message : err
           }`,
         )

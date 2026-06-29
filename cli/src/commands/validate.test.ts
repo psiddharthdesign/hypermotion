@@ -293,6 +293,26 @@ test('validate command reports missing scene files', async () => {
   }
 })
 
+test('validate command reports directories before reading scene bytes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-dir-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.mkdirSync(scenePath)
+  try {
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
+      assert.throws(
+        () => {
+          validateCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    }))
+
+    assert.match(stderr, /^\[validate\] scene path is not a file: .*scene\.hype$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'malformed.hype')
