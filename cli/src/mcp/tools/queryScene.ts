@@ -11,6 +11,13 @@ const TrackInput = z.object({ scene: z.string(), nodeId: z.string().optional() }
 type ReadSceneResult =
   | { ok: true; scene: Record<string, unknown> }
   | { ok: false; result: CallToolResult }
+type LayerSummary = {
+  id: unknown
+  name: unknown
+  kind: unknown
+  parent: unknown
+  children: unknown[]
+}
 
 const SCENE_PATH_PROPERTY = {
   type: 'string',
@@ -68,7 +75,7 @@ export async function handleListLayers(
   return text({
     root: loaded.scene.root ?? null,
     activeCameraId: loaded.scene.activeCameraId ?? null,
-    layers: Object.values(nodes).map((raw) => {
+    layers: Object.values(nodes).map((raw): LayerSummary => {
       const n = record(raw)
       return {
         id: n.id,
