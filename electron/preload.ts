@@ -12,10 +12,11 @@
  * Today this exposes:
  *  - platform / version info (so UI can branch on Mac vs Win for
  *    keyboard hints, traffic-light insets, etc.)
- *  - a clipboard read bridge (so paste flows like Figma payload import
- *    can read the OS clipboard reliably — `navigator.clipboard.readText`
- *    in the Electron renderer returns empty under default permissions)
- *  - a generic invoke pinhole for future channels
+ *  - a clipboard bridge (so paste flows like Figma payload import can
+ *    read the OS clipboard reliably — `navigator.clipboard.readText` in
+ *    the Electron renderer returns empty under default permissions)
+ *  - a generic invoke pinhole for registered IPC channels
+ *  - an event subscription helper for headless export triggers
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
