@@ -133,3 +133,48 @@ test('validate_scene marks structurally invalid scenes as MCP errors', async () 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('validate_scene rejects nested camera nodes as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-camera-'))
+  const scenePath = path.join(dir, 'nested-camera.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Nested Camera MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        activeCameraId: 'camera',
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['camera'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          camera: {
+            id: 'camera',
+            kind: 'camera',
+            parent: 'root',
+            transform: { x: 160, y: 90, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+          },
+        },
+      }),
+    )
+
+    const result = await handleValidateScene({ scene: scenePath })
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+
+    assert.equal(result.isError, true)
+    assert.deepEqual(JSON.parse(text), {
+      ok: false,
+      errors: ['camera node camera must be scene-level with parent: null'],
+      warnings: [],
+    })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
