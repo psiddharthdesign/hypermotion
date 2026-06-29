@@ -91,6 +91,34 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
   }
 })
 
+test('query scene MCP handlers report malformed scene files as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-malformed-query-'))
+  const scenePath = path.join(dir, 'malformed.hype')
+
+  try {
+    fs.writeFileSync(scenePath, 'not a yjs update')
+
+    const cases: Array<{
+      name: string
+      run: () => Promise<CallToolResult>
+    }> = [
+      { name: 'list_layers', run: () => handleListLayers({ scene: scenePath }) },
+      { name: 'get_layer', run: () => handleGetLayer({ scene: scenePath, nodeId: 'title' }) },
+      { name: 'list_tracks', run: () => handleListTracks({ scene: scenePath }) },
+      { name: 'list_cameras', run: () => handleListCameras({ scene: scenePath }) },
+    ]
+
+    for (const entry of cases) {
+      const result = await entry.run()
+      assert.equal(result.isError, true)
+      const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+      assert.match(text, new RegExp(`^${entry.name}: failed to read ${scenePath}:`))
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('query scene MCP handlers return layers, tracks, and cameras', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
