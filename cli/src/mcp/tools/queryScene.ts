@@ -9,8 +9,14 @@ const SceneInput = z.object({ scene: z.string() })
 const LayerInput = z.object({ scene: z.string(), nodeId: z.string() })
 const TrackInput = z.object({ scene: z.string(), nodeId: z.string().optional() })
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
+type QuerySceneSnapshot = {
+  root?: unknown
+  activeCameraId?: unknown
+  nodes?: unknown
+  tracks?: unknown
+}
 type ReadSceneResult =
-  | { ok: true; scene: Record<string, unknown> }
+  | { ok: true; scene: QuerySceneSnapshot }
   | { ok: false; result: CallToolResult }
 type LayerSummary = {
   id: unknown
