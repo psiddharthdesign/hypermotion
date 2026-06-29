@@ -171,7 +171,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
 
 function cleanFile(p: string): void {
   try {
-    if (fs.existsSync(p)) fs.unlinkSync(p)
+    fs.rmSync(p, { force: true })
   } catch {
     /* best-effort */
   }
