@@ -54,7 +54,22 @@ export async function handlePatchScene(
     typeof parsed.data.patch === 'string'
       ? (JSON.parse(parsed.data.patch) as ScenePatch | PatchOperation[])
       : (parsed.data.patch as ScenePatch | PatchOperation[])
-  const bytes = fs.readFileSync(parsed.data.scene)
+  let bytes: Buffer
+  try {
+    bytes = fs.readFileSync(parsed.data.scene)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `patch_scene: failed to read ${parsed.data.scene}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
   const next = applyScenePatch(new Uint8Array(bytes), patch)
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, Buffer.from(next))
