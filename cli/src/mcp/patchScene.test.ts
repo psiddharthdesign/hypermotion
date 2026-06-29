@@ -32,6 +32,24 @@ test('patch_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^patch_scene: invalid arguments/)
 })
 
+test('patch_scene reports missing files as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-missing-'))
+  const missingScene = path.join(dir, 'scene.hype')
+
+  try {
+    const result = await handlePatchScene({
+      scene: missingScene,
+      patch: { ops: [{ op: 'setMeta', patch: { name: 'Patched' } }] },
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, new RegExp(`^patch_scene: failed to read ${escapeRegExp(missingScene)}:`))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('patch_scene writes alternate output without applying live', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-patch-'))
   const scenePath = path.join(dir, 'scene.hype')
