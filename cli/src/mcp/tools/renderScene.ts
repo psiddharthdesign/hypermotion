@@ -17,15 +17,20 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { locateDesktopApp } from '../../electron/locator.js'
 import { driveHeadlessRender } from '../../electron/driver.js'
+import {
+  RENDER_FORMATS,
+  RENDER_QUALITIES,
+  type RenderFormat,
+} from '../../renderOptions.js'
 
 const RenderInput = z.object({
   output: z.string().describe('Absolute or relative path where the rendered file should be written'),
   format: z
-    .enum(['mp4', 'webm', 'gif'])
+    .enum(RENDER_FORMATS)
     .optional()
     .describe('Output format. Defaults to inferred from the output file extension.'),
   quality: z
-    .enum(['comp', '720p', '2k', '4k'])
+    .enum(RENDER_QUALITIES)
     .optional()
     .describe('Output resolution preset. `comp` matches the scene canvas size (fastest). Default: comp.'),
   fps: z.number().int().positive().max(120).optional().describe('Frame rate. Default: 30.'),
@@ -49,12 +54,12 @@ export const renderSceneTool: Tool = {
       output: { type: 'string', description: 'Output file path' },
       format: {
         type: 'string',
-        enum: ['mp4', 'webm', 'gif'],
+        enum: [...RENDER_FORMATS],
         description: 'Output format. Defaults to inferred from the output extension.',
       },
       quality: {
         type: 'string',
-        enum: ['comp', '720p', '2k', '4k'],
+        enum: [...RENDER_QUALITIES],
         description: 'Resolution preset. `comp` matches scene canvas size. Default: comp.',
       },
       fps: {
@@ -157,8 +162,8 @@ export async function handleRenderScene(
   }
 }
 
-function inferFormat(outPath: string): 'mp4' | 'webm' | 'gif' {
+function inferFormat(outPath: string): RenderFormat {
   const ext = path.extname(outPath).toLowerCase().slice(1)
-  if (ext === 'mp4' || ext === 'webm' || ext === 'gif') return ext
+  if (RENDER_FORMATS.includes(ext as RenderFormat)) return ext as RenderFormat
   return 'mp4'
 }
