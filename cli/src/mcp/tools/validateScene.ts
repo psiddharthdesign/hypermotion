@@ -8,6 +8,7 @@ import { validateScene, type SceneValidationResult } from '../../scene/build.js'
 const ValidateInput = z.object({
   scene: z.string().describe('Path to a .hype scene file.'),
 })
+type ValidateInputData = z.infer<typeof ValidateInput>
 
 export const validateSceneTool: Tool = {
   name: 'validate_scene',
@@ -37,16 +38,17 @@ export async function handleValidateScene(
     }
   }
 
+  const input: ValidateInputData = parsed.data
   let bytes: Buffer
   try {
-    bytes = fs.readFileSync(parsed.data.scene)
+    bytes = fs.readFileSync(input.scene)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: failed to read ${parsed.data.scene}: ${
+          text: `validate_scene: failed to read ${input.scene}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -71,7 +73,7 @@ export async function handleValidateScene(
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: ${parsed.data.scene} doesn't look like a valid .hype file: ${
+          text: `validate_scene: ${input.scene} doesn't look like a valid .hype file: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
