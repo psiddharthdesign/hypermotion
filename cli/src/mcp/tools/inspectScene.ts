@@ -8,6 +8,7 @@ import { inspectScene } from '../../scene/build.js'
 const InspectInput = z.object({
   scene: z.string().describe('Path to a .hype scene file.'),
 })
+type InspectInputData = z.infer<typeof InspectInput>
 
 export const inspectSceneTool: Tool = {
   name: 'inspect_scene',
@@ -37,16 +38,17 @@ export async function handleInspectScene(
     }
   }
 
+  const input: InspectInputData = parsed.data
   let bytes: Buffer
   try {
-    bytes = fs.readFileSync(parsed.data.scene)
+    bytes = fs.readFileSync(input.scene)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: failed to read ${parsed.data.scene}: ${
+          text: `inspect_scene: failed to read ${input.scene}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -69,7 +71,7 @@ export async function handleInspectScene(
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: failed to inspect ${parsed.data.scene}: ${
+          text: `inspect_scene: failed to inspect ${input.scene}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
