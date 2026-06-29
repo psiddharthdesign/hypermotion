@@ -32,6 +32,14 @@ test('patch_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^patch_scene: invalid arguments/)
 })
 
+test('patch_scene reports malformed JSON patches as MCP errors', async () => {
+  const result = await handlePatchScene({ scene: 'scene.hype', patch: '{bad json' })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^patch_scene: failed to parse patch JSON:/)
+})
+
 test('patch_scene reports missing files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-missing-'))
   const missingScene = path.join(dir, 'scene.hype')
