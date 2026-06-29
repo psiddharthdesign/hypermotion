@@ -18,12 +18,15 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { locateDesktopApp } from '../electron/locator.js'
 import { driveHeadlessRender } from '../electron/driver.js'
+import {
+  RENDER_FORMATS,
+  RENDER_QUALITIES,
+  type RenderFormat,
+  type RenderQuality,
+} from '../renderOptions.js'
 
-type Format = 'mp4' | 'webm' | 'gif'
-type Quality = 'comp' | '720p' | '2k' | '4k'
-
-const FORMATS = ['mp4', 'webm', 'gif'] as const
-const QUALITIES = ['comp', '720p', '2k', '4k'] as const
+const FORMAT_HELP = RENDER_FORMATS.join(' / ')
+const QUALITY_HELP = RENDER_QUALITIES.join(' / ')
 
 interface RenderOptions {
   output: string
@@ -59,14 +62,14 @@ export function renderCommand(): Command {
 
       const requestedFormat = opts.format ?? inferFormat(outputPath)
       if (!isFormat(requestedFormat)) {
-        console.error(`[render] unsupported format: ${requestedFormat} (use mp4 / webm / gif)`)
+        console.error(`[render] unsupported format: ${requestedFormat} (use ${FORMAT_HELP})`)
         process.exit(1)
       }
       const format = requestedFormat
 
       const requestedQuality = opts.quality ?? 'comp'
       if (!isQuality(requestedQuality)) {
-        console.error(`[render] unsupported quality: ${requestedQuality} (use comp / 720p / 2k / 4k)`)
+        console.error(`[render] unsupported quality: ${requestedQuality} (use ${QUALITY_HELP})`)
         process.exit(1)
       }
       const quality = requestedQuality
@@ -126,16 +129,16 @@ export function renderCommand(): Command {
     })
 }
 
-function inferFormat(outPath: string): Format {
+function inferFormat(outPath: string): RenderFormat {
   const ext = path.extname(outPath).toLowerCase().slice(1)
   if (isFormat(ext)) return ext
   return 'mp4'
 }
 
-function isFormat(value: string): value is Format {
-  return FORMATS.includes(value as Format)
+function isFormat(value: string): value is RenderFormat {
+  return RENDER_FORMATS.includes(value as RenderFormat)
 }
 
-function isQuality(value: string): value is Quality {
-  return QUALITIES.includes(value as Quality)
+function isQuality(value: string): value is RenderQuality {
+  return RENDER_QUALITIES.includes(value as RenderQuality)
 }
