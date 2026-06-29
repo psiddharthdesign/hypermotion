@@ -23,6 +23,9 @@ import { driveHeadlessRender } from '../electron/driver.js'
 type Format = 'mp4' | 'webm' | 'gif'
 type Quality = 'comp' | '720p' | '2k' | '4k'
 
+const FORMATS = ['mp4', 'webm', 'gif'] as const
+const QUALITIES = ['comp', '720p', '2k', '4k'] as const
+
 interface RenderOptions {
   output: string
   format?: string
@@ -55,17 +58,19 @@ export function renderCommand(): Command {
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
-      const format = (opts.format ?? inferFormat(outputPath)) as Format
-      if (!['mp4', 'webm', 'gif'].includes(format)) {
-        console.error(`[render] unsupported format: ${format} (use mp4 / webm / gif)`)
+      const requestedFormat = opts.format ?? inferFormat(outputPath)
+      if (!isFormat(requestedFormat)) {
+        console.error(`[render] unsupported format: ${requestedFormat} (use mp4 / webm / gif)`)
         process.exit(1)
       }
+      const format = requestedFormat
 
-      const quality = (opts.quality ?? 'comp') as Quality
-      if (!['comp', '720p', '2k', '4k'].includes(quality)) {
-        console.error(`[render] unsupported quality: ${quality} (use comp / 720p / 2k / 4k)`)
+      const requestedQuality = opts.quality ?? 'comp'
+      if (!isQuality(requestedQuality)) {
+        console.error(`[render] unsupported quality: ${requestedQuality} (use comp / 720p / 2k / 4k)`)
         process.exit(1)
       }
+      const quality = requestedQuality
 
       const fps = Number(opts.fps ?? '30')
       if (!Number.isFinite(fps) || fps <= 0 || fps > 120) {
@@ -124,6 +129,14 @@ export function renderCommand(): Command {
 
 function inferFormat(outPath: string): Format {
   const ext = path.extname(outPath).toLowerCase().slice(1)
-  if (ext === 'mp4' || ext === 'webm' || ext === 'gif') return ext
+  if (isFormat(ext)) return ext
   return 'mp4'
+}
+
+function isFormat(value: string): value is Format {
+  return FORMATS.includes(value as Format)
+}
+
+function isQuality(value: string): value is Quality {
+  return QUALITIES.includes(value as Quality)
 }
