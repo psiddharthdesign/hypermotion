@@ -160,7 +160,10 @@ function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   }
 }
 
-function optionalStringArray(parsed: Record<string, unknown>, key: string): string[] | undefined {
+function optionalStringArray(
+  parsed: Record<string, unknown>,
+  key: string,
+): readonly string[] | undefined {
   const value = parsed[key]
   if (value === undefined) return undefined
 
@@ -176,7 +179,7 @@ function optionalBoolean(parsed: Record<string, unknown>, key: string): boolean 
   return value
 }
 
-function assertStringArray(value: unknown): asserts value is string[] {
+function assertStringArray(value: unknown): asserts value is readonly string[] {
   assert.ok(Array.isArray(value))
   assert.ok(value.every((item) => typeof item === 'string'))
 }
