@@ -58,6 +58,45 @@ test('patch_scene reports missing files as MCP errors', async () => {
   }
 })
 
+test('patch_scene reports invalid patch operations as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-patch-invalid-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Original',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handlePatchScene({
+      scene: scenePath,
+      applyLive: false,
+      patch: { ops: [{ op: 'setNode', nodeId: 'missing', patch: { kind: 'text' } }] },
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, /^patch_scene: failed to apply patch: node does not exist: missing$/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('patch_scene writes alternate output without applying live', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-patch-'))
   const scenePath = path.join(dir, 'scene.hype')
