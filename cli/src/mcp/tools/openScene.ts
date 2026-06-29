@@ -9,6 +9,7 @@ import { pushSceneToRunningApp } from '../../electron/live.js'
 const OpenInput = z.object({
   scene: z.string().describe('Path to a .hype scene file.'),
 })
+type OpenInputData = z.infer<typeof OpenInput>
 
 export const openSceneTool: Tool = {
   name: 'open_scene',
@@ -38,7 +39,8 @@ export async function handleOpenScene(
     }
   }
 
-  const scenePath = path.resolve(parsed.data.scene)
+  const input: OpenInputData = parsed.data
+  const scenePath = path.resolve(input.scene)
   if (!fs.existsSync(scenePath)) {
     return {
       isError: true,
