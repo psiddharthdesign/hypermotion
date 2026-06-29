@@ -54,10 +54,10 @@ const DEFAULT_UI_STATE: UiStateSlab = {
  * Y.Doc shape:
  *
  *   doc.getMap('scene')
- *     ├── meta    Y.Map<keyof SceneMeta, any>
+ *     ├── meta    Y.Map<unknown>          // flat SceneMeta fields
  *     ├── root    string (NodeId of the scene root)
- *     ├── nodes   Y.Map<NodeId, Y.Map>     // each value is a node's flat Y.Map
- *     └── tracks  Y.Map<TrackId, Y.Map>    // each value is a track's flat Y.Map
+ *     ├── nodes   Y.Map<Y.Map<unknown>>   // each value is a node's flat Y.Map
+ *     └── tracks  Y.Map<Y.Map<unknown>>   // each value is a track's flat Y.Map
  *
  * Nodes are stored as Y.Maps with FLAT keys. Whole property groups
  * (transform, layout, appearance, size) are stored as plain JS objects
