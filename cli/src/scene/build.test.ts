@@ -938,6 +938,21 @@ test('validateScene rejects track ids that do not match their map key', () => {
   ])
 })
 
+test('validateScene rejects track keyframes that are not arrays', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  tracks.get('fade-title')?.set('keyframes', null)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title keyframes must be an array',
+  ])
+})
+
 test('validateScene rejects section ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
