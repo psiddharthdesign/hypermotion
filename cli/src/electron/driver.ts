@@ -127,8 +127,13 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       let message = 'Render failed (no details available)'
       try {
         const raw = fs.readFileSync(errorPath, 'utf-8')
-        const data = JSON.parse(raw) as { message?: string }
-        if (data.message) message = data.message
+        try {
+          const data = JSON.parse(raw) as { message?: string }
+          if (data.message) message = data.message
+        } catch {
+          const text = raw.trim()
+          if (text) message = text
+        }
       } catch {
         /* best effort — fall through with the generic message */
       }
