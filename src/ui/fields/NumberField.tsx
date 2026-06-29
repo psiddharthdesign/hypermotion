@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+const SCRUB_CURSOR =
+  'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2724%27 height=%2724%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%230a0a0c%27 stroke-width=%272%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27m9 7-5 5 5 5%27/%3E%3Cpath d=%27m15 7 5 5-5 5%27/%3E%3C/svg%3E") 12 12, ew-resize'
+
 /**
  * A numeric input that commits on blur or Enter, cancels on Escape.
  *
@@ -36,6 +39,17 @@ export function NumberField({
   const [draft, setDraft] = useState(() => formatNumber(value))
   const [focused, setFocused] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
+  const latestRef = useRef({ value, onCommit, min, max, step })
+  const scrubRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    startValue: number
+    scrubbing: boolean
+    previousCursor: string
+  } | null>(null)
+
+  latestRef.current = { value, onCommit, min, max, step }
 
   // Keep the draft in sync with the prop when the user is not typing.
   useEffect(() => {
@@ -53,6 +67,76 @@ export function NumberField({
     setDraft(formatNumber(clamped))
   }
 
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      const scrub = scrubRef.current
+      if (!scrub || e.pointerId !== scrub.pointerId) return
+      const dx = e.clientX - scrub.startX
+      const dy = e.clientY - scrub.startY
+      if (!scrub.scrubbing && Math.hypot(dx, dy) < 3) return
+
+      scrub.scrubbing = true
+      e.preventDefault()
+      document.body.style.userSelect = 'none'
+      document.documentElement.style.cursor = SCRUB_CURSOR
+      document.body.style.cursor = SCRUB_CURSOR
+      ref.current?.blur()
+
+      const latest = latestRef.current
+      const multiplier = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+      const delta = (dx - dy) * latest.step * multiplier
+      const next = clamp(scrub.startValue + delta, latest.min, latest.max)
+      setDraft(formatNumber(next))
+      latest.onCommit(next)
+    }
+
+    const onPointerUp = (e: PointerEvent) => {
+      const scrub = scrubRef.current
+      if (!scrub || e.pointerId !== scrub.pointerId) return
+      scrubRef.current = null
+      document.body.style.userSelect = ''
+      document.documentElement.style.cursor = scrub.previousCursor
+      document.body.style.cursor = scrub.previousCursor
+      if (scrub.scrubbing) {
+        e.preventDefault()
+        ref.current?.blur()
+      }
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+      const scrub = scrubRef.current
+      document.body.style.userSelect = ''
+      if (scrub) {
+        document.documentElement.style.cursor = scrub.previousCursor
+        document.body.style.cursor = scrub.previousCursor
+        scrubRef.current = null
+      }
+    }
+  }, [])
+
+  const beginScrub = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const previousCursor = document.body.style.cursor
+    document.body.style.userSelect = 'none'
+    document.documentElement.style.cursor = SCRUB_CURSOR
+    document.body.style.cursor = SCRUB_CURSOR
+    scrubRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startValue: evaluateExpression(draft) ?? latestRef.current.value,
+      scrubbing: false,
+      previousCursor,
+    }
+  }
+
   // Framer-style filled input: solid dark fill (bg-app-bg, slightly
   // darker than the inspector panel), no border, 6px radius, accent
   // ring on focus. The label wrapper owns the chrome; the inner input
@@ -67,6 +151,29 @@ export function NumberField({
         width,
       ].join(' ')}
     >
+      <button
+        type="button"
+        aria-label="Drag to scrub value"
+        title="Drag to scrub value"
+        onPointerDown={beginScrub}
+        className="flex h-full w-5 shrink-0 cursor-ew-resize items-center justify-center rounded-l-md text-text-dim hover:text-text"
+        style={{ cursor: SCRUB_CURSOR }}
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m9 7-5 5 5 5" />
+          <path d="m15 7 5 5-5 5" />
+        </svg>
+      </button>
       <input
         ref={ref}
         type="text"
@@ -109,7 +216,7 @@ export function NumberField({
           // wrapper's edge. Left-aligned values match Framer's
           // inspector — the eye catches the START of the value
           // first, which reads as "this is the answer to the label".
-          'pl-2',
+          'pl-0.5',
           suffix ? '' : 'pr-2',
         ].join(' ')}
       />

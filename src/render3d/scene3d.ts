@@ -32,7 +32,11 @@ export interface ResolvedCamera3D {
   fieldOfView: number
   nearClip: number
   farClip: number
+  depthOfField: boolean
+  focusWorld: Vec3
   focusDistance: number
+  focusRadius: number
+  focusFalloff: number
   aperture: number
   blurLevel: number
   blurQuality: number
@@ -62,6 +66,12 @@ interface PlaneBuildOptions {
    * solid AE-style layers without requiring every old scene to be edited.
    */
   promoteRootChildren?: boolean
+  /**
+   * Emit normal design nodes as independent textured planes instead of
+   * flattening entire subtrees into one card. This keeps Figma/Yoga layout
+   * as the placement source while allowing children to move in 3D space.
+   */
+  independentNodes?: boolean
 }
 
 export interface FocusHit3D {
@@ -103,6 +113,7 @@ export function resolveCamera3D(
   camera: CameraNode,
   animated: AnimatedValue | undefined,
   viewport: ViewportSize,
+  focusWorldOverride?: Vec3 | null,
 ): ResolvedCamera3D {
   const fieldOfView =
     animated?.fieldOfView ??
@@ -116,14 +127,14 @@ export function resolveCamera3D(
           viewport.height,
         ),
       ),
-    )
+  )
   const focalLength = Math.max(1, fovToFocalLength(fieldOfView, viewport.height))
   const transformZ = animated?.z ?? camera.transform.z
-  const dolly = transformZ / 100
+  const dolly = transformZ
   const pointOfInterest = {
-    x: animated?.pointOfInterestX ?? camera.pointOfInterestX ?? camera.focusWorldX ?? camera.transform.x,
-    y: animated?.pointOfInterestY ?? camera.pointOfInterestY ?? camera.focusWorldY ?? camera.transform.y,
-    z: animated?.pointOfInterestZ ?? camera.pointOfInterestZ ?? camera.focusWorldZ ?? 0,
+    x: animated?.x ?? camera.transform.x,
+    y: animated?.y ?? camera.transform.y,
+    z: 0,
   }
   const rotation = {
     x: animated?.rotationX ?? camera.transform.rotationX,
@@ -131,22 +142,43 @@ export function resolveCamera3D(
     z: animated?.rotation ?? camera.transform.rotation,
   }
   const basePosition = {
-    x: animated?.x ?? camera.transform.x,
-    y: animated?.y ?? camera.transform.y,
+    x: pointOfInterest.x,
+    y: pointOfInterest.y,
     z: pointOfInterest.z - Math.max(1, focalLength - dolly),
   }
-  const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), rotation.x, rotation.y, 0)
+  const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
   const position = add3(pointOfInterest, orbitOffset)
-  const focusWorld = {
-    x: animated?.focusWorldX ?? camera.focusWorldX ?? camera.focusX ?? camera.transform.x,
-    y: animated?.focusWorldY ?? camera.focusWorldY ?? camera.focusY ?? camera.transform.y,
-    z: animated?.focusWorldZ ?? camera.focusWorldZ ?? 0,
+  const focusMode = camera.focusMode ?? 'screen'
+  const authoredFocusWorld = {
+    x:
+      animated?.focusWorldX ??
+      animated?.focusX ??
+      animated?.pointOfInterestX ??
+      camera.focusWorldX ??
+      camera.pointOfInterestX ??
+      camera.focusX ??
+      camera.transform.x,
+    y:
+      animated?.focusWorldY ??
+      animated?.focusY ??
+      animated?.pointOfInterestY ??
+      camera.focusWorldY ??
+      camera.pointOfInterestY ??
+      camera.focusY ??
+      camera.transform.y,
+    z:
+      animated?.focusWorldZ ??
+      animated?.focusDistance ??
+      animated?.pointOfInterestZ ??
+      camera.focusWorldZ ??
+      camera.pointOfInterestZ ??
+      0,
   }
-  const basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
-  const focusDepth = Math.max(
-    0.001,
-    (animated?.focusDistance ?? camera.focusDistance) || dot3(sub3(focusWorld, position), basis.forward),
-  )
+  const focusWorld =
+    focusWorldOverride ??
+    (focusMode === 'plane' ? pointOfInterest : authoredFocusWorld)
+  const basis = cameraBasisFromPosition(position, pointOfInterest, -rotation.z)
+  const focusDepth = Math.max(0.001, dot3(sub3(focusWorld, position), basis.forward))
   const nearClip = Math.max(0.001, animated?.nearClip ?? camera.nearClip ?? 1)
   const authoredFarClip = Math.max(1, animated?.farClip ?? camera.farClip ?? 100000)
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
@@ -164,7 +196,11 @@ export function resolveCamera3D(
     fieldOfView,
     nearClip,
     farClip,
+    depthOfField: camera.depthOfField ?? false,
+    focusWorld,
     focusDistance: focusDepth,
+    focusRadius: Math.max(1, animated?.focusRadius ?? camera.focusRadius ?? 160),
+    focusFalloff: Math.max(1, animated?.focusFalloff ?? camera.focusFalloff ?? 180),
     aperture: Math.max(0, animated?.aperture ?? camera.aperture ?? 0),
     blurLevel: Math.max(0, animated?.blurLevel ?? camera.blurLevel ?? 0),
     blurQuality: Math.max(1, animated?.blurQuality ?? camera.blurQuality ?? 8),
@@ -201,7 +237,7 @@ function cameraBasisFromPosition(
 }
 
 function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
-  return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
+  return cameraBasisFromPosition(camera.position, camera.pointOfInterest, -camera.rotation.z)
 }
 
 export function viewportPointToRay(
@@ -284,6 +320,19 @@ export function buildWorldPlanes(
       mul3(transform.basisZ, vector.z),
     )
 
+  const hasExplicit3DDescendant = (id: NodeId): boolean => {
+    const node = api.getNode(id)
+    if (!node) return false
+    for (const childId of node.children) {
+      const child = api.getNode(childId)
+      if (!child) continue
+      const childRenderMode = child.transform.renderMode ?? 'flat'
+      if (childRenderMode === 'plane' || childRenderMode === 'group3d') return true
+      if (hasExplicit3DDescendant(childId)) return true
+    }
+    return false
+  }
+
   const visit = (id: NodeId, inherited: Inherited3D): void => {
     const node = api.getNode(id)
     const rect = layout[id]
@@ -331,9 +380,11 @@ export function buildWorldPlanes(
     const renderMode = node.transform.renderMode ?? 'flat'
     const parentMode = parent?.transform.renderMode ?? 'flat'
     const isRootChild = node.parent === rootId
+    const independentNodes = options.independentNodes ?? false
     const shouldEmitPlane =
       !isRoot &&
-      (renderMode === 'plane' ||
+      (independentNodes ||
+        renderMode === 'plane' ||
         renderMode === 'group3d' ||
         parentMode === 'group3d' ||
         (options.promoteRootChildren ?? true) && isRootChild)
@@ -354,7 +405,7 @@ export function buildWorldPlanes(
         nodeId: id,
         node,
         rect,
-        contentMode: renderMode === 'group3d' ? 'self' : 'subtree',
+        contentMode: independentNodes || renderMode === 'group3d' ? 'self' : 'subtree',
         paintOrder: planes.length,
         center,
         rotation: { x: rotX, y: rotY, z: rotZ },
@@ -368,7 +419,12 @@ export function buildWorldPlanes(
       })
     }
 
-    if (!shouldEmitPlane || (node.transform.renderMode ?? 'flat') === 'group3d') {
+    if (
+      independentNodes ||
+      !shouldEmitPlane ||
+      (node.transform.renderMode ?? 'flat') === 'group3d' ||
+      hasExplicit3DDescendant(id)
+    ) {
       for (const child of node.children) visit(child, nextInherited)
     }
   }
@@ -411,16 +467,27 @@ export function hitTestPlanes(
 
 export function depthBlurAmount(
   cameraDepth: number,
+  planeCenter: Vec3,
+  focusWorld: Vec3,
   focusDistance: number,
+  focusRadius: number,
+  focusFalloff: number,
   aperture: number,
   blurLevel: number,
   focalLength: number,
+  enabled = true,
 ): number {
-  if (aperture <= 0 || blurLevel <= 0) return 0
-  const delta = Math.abs(cameraDepth - focusDistance)
+  if (!enabled || aperture <= 0 || blurLevel <= 0) return 0
+  const depthDelta = Math.abs(cameraDepth - focusDistance)
   const depthScale = Math.max(80, focalLength * 0.35)
-  const falloff = 1 - Math.exp(-(delta / depthScale) * aperture * 1.6)
-  return Math.max(0, Math.min(blurLevel, blurLevel * falloff))
+  const depthBlur = 1 - Math.exp(-(depthDelta / depthScale) * aperture * 1.6)
+  const pointDelta = len3(sub3(planeCenter, focusWorld))
+  const pointBlur = Math.max(
+    0,
+    Math.min(1, (pointDelta - focusRadius) / Math.max(1, focusFalloff)),
+  )
+  const combined = Math.max(depthBlur, pointBlur)
+  return Math.max(0, Math.min(blurLevel, blurLevel * combined))
 }
 
 export function cameraFrustumCorners(camera: ResolvedCamera3D, viewport: ViewportSize, depth: number): Vec3[] {

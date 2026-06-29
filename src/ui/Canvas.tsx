@@ -40,6 +40,7 @@ import {
   viewportPointToRay,
 } from '@/render3d/scene3d'
 import {
+  getAnimEngine,
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
   listTracksForNode,
@@ -415,12 +416,32 @@ export function computeCameraDepthOfField(
   )
   const mode = camera.focusMode ?? 'screen'
   const focusScreen = {
-    x: cameraAnim?.focusX ?? camera.focusX ?? canvasWidth / 2,
-    y: cameraAnim?.focusY ?? camera.focusY ?? canvasHeight / 2,
+    x:
+      cameraAnim?.focusX ??
+      cameraAnim?.focusWorldX ??
+      camera.focusX ??
+      camera.focusWorldX ??
+      canvasWidth / 2,
+    y:
+      cameraAnim?.focusY ??
+      cameraAnim?.focusWorldY ??
+      camera.focusY ??
+      camera.focusWorldY ??
+      canvasHeight / 2,
   }
   const focusWorld = focusWorldOverride ?? {
-    x: cameraAnim?.focusWorldX ?? camera.focusWorldX ?? focusScreen.x,
-    y: cameraAnim?.focusWorldY ?? camera.focusWorldY ?? focusScreen.y,
+    x:
+      cameraAnim?.focusWorldX ??
+      cameraAnim?.focusX ??
+      camera.focusWorldX ??
+      camera.focusX ??
+      focusScreen.x,
+    y:
+      cameraAnim?.focusWorldY ??
+      cameraAnim?.focusY ??
+      camera.focusWorldY ??
+      camera.focusY ??
+      focusScreen.y,
     z: focusZ,
   }
   const projected =
@@ -541,6 +562,8 @@ export function Canvas() {
   // component renders an empty artboard instead of crashing the whole app.
   const canvasWidth = meta.canvas?.width ?? 960
   const canvasHeight = meta.canvas?.height ?? 540
+  const frameStep = 1 / Math.max(1, meta.frameRate ?? 60)
+  const duration = Math.max(frameStep, meta.duration ?? 5)
   const rootId = api.getRoot() || null
   // Root appearance drives the canvas box itself — fill paints the
   // artboard background, corner radius rounds the box. Without this,
@@ -649,10 +672,25 @@ export function Canvas() {
     cameraId: NodeId
     transform: CameraNode['transform']
   } | null>(null)
+  const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
   const previewCameraTransform =
     camera && camera.kind === 'camera' && cameraPreview?.cameraId === camera.id
       ? cameraPreview.transform
       : null
+  const liveCameraAnim = useMemo<AnimatedValue | undefined>(() => {
+    if (!previewCameraTransform) return cameraAnim
+    return {
+      ...cameraAnim,
+      x: previewCameraTransform.x,
+      y: previewCameraTransform.y,
+      z: previewCameraTransform.z,
+      rotation: previewCameraTransform.rotation,
+      rotationX: previewCameraTransform.rotationX,
+      rotationY: previewCameraTransform.rotationY,
+      scaleX: previewCameraTransform.scaleX,
+      scaleY: previewCameraTransform.scaleY,
+    }
+  }, [cameraAnim, previewCameraTransform])
   // ---------------------------------------------------------------
   // 3D camera
   // ---------------------------------------------------------------
@@ -675,7 +713,7 @@ export function Canvas() {
       : 1000
   const cameraZ =
     camera && camera.kind === 'camera'
-      ? previewCameraTransform?.z ?? cameraAnim?.z ?? camera.transform.z
+      ? liveCameraAnim?.z ?? camera.transform.z
       : 0
   const cameraDollyZ = cameraZ / 100
   // Clamp the denominator so an animation through z = focal length
@@ -687,20 +725,14 @@ export function Canvas() {
 
   const cameraTransform = useMemo(() => {
     if (!camera || camera.kind !== 'camera') return null
-    const cx = previewCameraTransform?.x ?? cameraAnim?.x ?? camera.transform.x
-    const cy = previewCameraTransform?.y ?? cameraAnim?.y ?? camera.transform.y
+    const cx = liveCameraAnim?.x ?? camera.transform.x
+    const cy = liveCameraAnim?.y ?? camera.transform.y
     const rX =
-      previewCameraTransform?.rotationX ??
-      cameraAnim?.rotationX ??
-      camera.transform.rotationX
+      liveCameraAnim?.rotationX ?? camera.transform.rotationX
     const rY =
-      previewCameraTransform?.rotationY ??
-      cameraAnim?.rotationY ??
-      camera.transform.rotationY
+      liveCameraAnim?.rotationY ?? camera.transform.rotationY
     const rZ =
-      previewCameraTransform?.rotation ??
-      cameraAnim?.rotation ??
-      camera.transform.rotation
+      liveCameraAnim?.rotation ?? camera.transform.rotation
     const s = cameraScaleFromZ
     const w = canvasWidth
     const h = canvasHeight
@@ -718,11 +750,10 @@ export function Canvas() {
     )
   }, [
     camera,
-    cameraAnim,
+    liveCameraAnim,
     cameraScaleFromZ,
     canvasWidth,
     canvasHeight,
-    previewCameraTransform,
   ])
 
   // Inherited-from-ancestor effects per node, so a parent's animated
@@ -755,7 +786,7 @@ export function Canvas() {
     () =>
       computeCameraDepthOfField(
         camera && camera.kind === 'camera' ? camera : null,
-        cameraAnim,
+        liveCameraAnim,
         cameraScaleFromZ,
         canvasWidth,
         canvasHeight,
@@ -763,7 +794,7 @@ export function Canvas() {
       ),
     [
       camera,
-      cameraAnim,
+      liveCameraAnim,
       cameraScaleFromZ,
       canvasWidth,
       canvasHeight,
@@ -778,16 +809,16 @@ export function Canvas() {
   const displayedCameraTransform = useCallback(
     (node: CameraNode): CameraNode['transform'] => ({
       ...node.transform,
-      x: cameraAnim?.x ?? node.transform.x,
-      y: cameraAnim?.y ?? node.transform.y,
-      z: cameraAnim?.z ?? node.transform.z,
-      rotation: cameraAnim?.rotation ?? node.transform.rotation,
-      rotationX: cameraAnim?.rotationX ?? node.transform.rotationX,
-      rotationY: cameraAnim?.rotationY ?? node.transform.rotationY,
-      scaleX: cameraAnim?.scaleX ?? node.transform.scaleX,
-      scaleY: cameraAnim?.scaleY ?? node.transform.scaleY,
+      x: liveCameraAnim?.x ?? node.transform.x,
+      y: liveCameraAnim?.y ?? node.transform.y,
+      z: liveCameraAnim?.z ?? node.transform.z,
+      rotation: liveCameraAnim?.rotation ?? node.transform.rotation,
+      rotationX: liveCameraAnim?.rotationX ?? node.transform.rotationX,
+      rotationY: liveCameraAnim?.rotationY ?? node.transform.rotationY,
+      scaleX: liveCameraAnim?.scaleX ?? node.transform.scaleX,
+      scaleY: liveCameraAnim?.scaleY ?? node.transform.scaleY,
     }),
-    [cameraAnim],
+    [liveCameraAnim],
   )
 
   // --- pointer events: workspace-level click to clear / pan with H ----
@@ -829,6 +860,10 @@ export function Canvas() {
     startY: number
     transform: CameraNode['transform']
     latestTransform: CameraNode['transform']
+    startPlayhead: number
+    startPerfTime: number
+    lastSampleTime: number
+    didStampStart: boolean
     moved: boolean
   } | null>(null)
   const focusMaskDragRef = useRef<{
@@ -845,22 +880,103 @@ export function Canvas() {
       nodeId: NodeId,
       group: 'transform' | 'appearance' | 'size' | 'camera',
       patch: Record<string, unknown>,
+      time?: number,
     ) => {
       const ui = useUI.getState()
+      const playhead = time ?? ui.playhead
       if (ui.recording) {
-        recordKeyframesForPatch(api, nodeId, ui.playhead, group, patch)
+        recordKeyframesForPatch(api, nodeId, playhead, group, patch)
       } else {
-        stampToActiveTracksForPatch(api, nodeId, ui.playhead, group, patch)
+        stampToActiveTracksForPatch(api, nodeId, playhead, group, patch)
       }
     },
     [api],
   )
 
   const stampCanvasTransformPatch = useCallback(
-    (nodeId: NodeId, patch: Record<string, unknown>) => {
-      stampCanvasPatch(nodeId, 'transform', patch)
+    (nodeId: NodeId, patch: Record<string, unknown>, time?: number) => {
+      stampCanvasPatch(nodeId, 'transform', patch, time)
     },
     [stampCanvasPatch],
+  )
+
+  const applyCameraControlTransform = useCallback(
+    (cameraId: NodeId, transform: CameraNode['transform']) => {
+      const current = api.getNode(cameraId)
+      if (!current || current.kind !== 'camera') return
+      api.setNodeProperty(current.id, 'transform', {
+        ...current.transform,
+        ...transform,
+      })
+    },
+    [api],
+  )
+
+  const currentAnimationAuthorTime = useCallback(() => {
+    const ui = useUI.getState()
+    return ui.playing ? getAnimEngine().getPlayhead() : ui.playhead
+  }, [])
+
+  const cameraControlPatch = useCallback(
+    (
+      mode: 'rotate' | 'pan',
+      transform: CameraNode['transform'],
+    ): Record<string, number> =>
+      mode === 'rotate'
+        ? {
+            rotationX: transform.rotationX,
+            rotationY: transform.rotationY,
+          }
+        : {
+            x: transform.x,
+            y: transform.y,
+          },
+    [],
+  )
+
+  const maybeStampCameraControlSample = useCallback(
+    (
+      cameraControl: NonNullable<typeof cameraControlRef.current>,
+      nextTransform: CameraNode['transform'],
+    ) => {
+      const ui = useUI.getState()
+      if (!ui.recording && !ui.playing) return
+
+      const nextPatch = cameraControlPatch(cameraControl.mode, nextTransform)
+
+      if (ui.recording && !cameraControl.didStampStart) {
+        stampCanvasTransformPatch(
+          cameraControl.cameraId,
+          cameraControlPatch(cameraControl.mode, cameraControl.transform),
+          cameraControl.startPlayhead,
+        )
+        cameraControl.didStampStart = true
+      }
+
+      const sampleTime = ui.playing
+        ? currentAnimationAuthorTime()
+        : Math.min(
+            duration,
+            cameraControl.startPlayhead +
+              (performance.now() - cameraControl.startPerfTime) / 1000,
+          )
+      const minStep = frameStep * 0.75
+      if (
+        ui.playing &&
+        Math.abs(sampleTime - cameraControl.lastSampleTime) < minStep
+      ) {
+        return
+      }
+      stampCanvasTransformPatch(cameraControl.cameraId, nextPatch, sampleTime)
+      cameraControl.lastSampleTime = sampleTime
+    },
+    [
+      cameraControlPatch,
+      currentAnimationAuthorTime,
+      frameStep,
+      duration,
+      stampCanvasTransformPatch,
+    ],
   )
 
   const stampCanvasCameraPatch = useCallback(
@@ -915,12 +1031,12 @@ export function Canvas() {
   const resolvedCamera3D = useMemo(
     () =>
       camera && camera.kind === 'camera'
-        ? resolveCamera3D(camera, cameraAnim, {
+        ? resolveCamera3D(camera, liveCameraAnim, {
             width: canvasWidth,
             height: canvasHeight,
           })
         : null,
-    [camera, cameraAnim, canvasWidth, canvasHeight],
+    [camera, liveCameraAnim, canvasWidth, canvasHeight],
   )
 
   const planes3D = useMemo(
@@ -928,7 +1044,7 @@ export function Canvas() {
       resolvedCamera3D && solved
         ? buildWorldPlanes(api, solved, animated, resolvedCamera3D)
         : [],
-    [api, solved, animated, resolvedCamera3D],
+    [api, solved, animated, resolvedCamera3D, version],
   )
 
   const hitTestCanvas3D = useCallback(
@@ -992,11 +1108,11 @@ export function Canvas() {
       //        translate(-W/2, -H/2) · P'
       if (camera && camera.kind === 'camera') {
         // REPLACE semantics — match the forward cameraTransform above.
-        const camCx = cameraAnim?.x ?? camera.transform.x
-        const camCy = cameraAnim?.y ?? camera.transform.y
-        const camR = cameraAnim?.rotation ?? camera.transform.rotation
-        const camSx = cameraAnim?.scaleX ?? camera.transform.scaleX
-        const camSy = cameraAnim?.scaleY ?? camera.transform.scaleY
+        const camCx = liveCameraAnim?.x ?? camera.transform.x
+        const camCy = liveCameraAnim?.y ?? camera.transform.y
+        const camR = liveCameraAnim?.rotation ?? camera.transform.rotation
+        const camSx = liveCameraAnim?.scaleX ?? camera.transform.scaleX
+        const camSy = liveCameraAnim?.scaleY ?? camera.transform.scaleY
         const W = canvasWidth
         const H = canvasHeight
         // translate(-W/2, -H/2)
@@ -1023,7 +1139,7 @@ export function Canvas() {
       canvasWidth,
       canvasHeight,
       camera,
-      cameraAnim,
+      liveCameraAnim,
     ],
   )
 
@@ -1101,6 +1217,10 @@ export function Canvas() {
           startY: e.clientY,
           transform: startTransform,
           latestTransform: startTransform,
+          startPlayhead: currentAnimationAuthorTime(),
+          startPerfTime: performance.now(),
+          lastSampleTime: currentAnimationAuthorTime(),
+          didStampStart: false,
           moved: false,
         }
         setCameraPreview({ cameraId: camera.id, transform: startTransform })
@@ -1155,6 +1275,7 @@ export function Canvas() {
       setFocusPickingCameraId,
       setSelection,
       stampCanvasCameraPatch,
+      currentAnimationAuthorTime,
       camera,
       displayedCameraTransform,
       selection,
@@ -1369,6 +1490,10 @@ export function Canvas() {
 	            startY: e.clientY,
 	            transform: startTransform,
 	            latestTransform: startTransform,
+	            startPlayhead: currentAnimationAuthorTime(),
+	            startPerfTime: performance.now(),
+	            lastSampleTime: currentAnimationAuthorTime(),
+	            didStampStart: false,
 	            moved: false,
 	          }
 	          setCameraPreview({ cameraId: camera.id, transform: startTransform })
@@ -1428,6 +1553,7 @@ export function Canvas() {
       hitTestWorkspace,
 	      hitTestCanvas3D,
 	      setSelection,
+	      currentAnimationAuthorTime,
 		      camera,
 		      displayedCameraTransform,
 		      selection,
@@ -1469,6 +1595,8 @@ export function Canvas() {
 	          }
 	        }
 	        cameraControl.latestTransform = nextTransform
+	        applyCameraControlTransform(cameraControl.cameraId, nextTransform)
+	        maybeStampCameraControlSample(cameraControl, nextTransform)
 	        setCameraPreview({
 	          cameraId: cameraControl.cameraId,
 	          transform: nextTransform,
@@ -1510,7 +1638,16 @@ export function Canvas() {
         setMarqueeRect({ x, y, width, height, workspaceOnly: m.workspaceOnly })
       }
 	    },
-	    [api, cameraScaleFromZ, clientToCanvas, clientToViewport, setView, view.zoom],
+	    [
+	      api,
+	      applyCameraControlTransform,
+	      maybeStampCameraControlSample,
+	      cameraScaleFromZ,
+	      clientToCanvas,
+	      clientToViewport,
+	      setView,
+	      view.zoom,
+	    ],
 	  )
 
 	  const onBackgroundPointerUp = useCallback(
@@ -1520,21 +1657,11 @@ export function Canvas() {
 		        const current = api.getNode(cameraControl.cameraId)
 		        if (cameraControl.moved && current && current.kind === 'camera') {
 		          const nextTransform = cameraControl.latestTransform
-		          api.setNodeProperty(current.id, 'transform', {
-		            ...current.transform,
-		            ...nextTransform,
-		          })
-		          const patch =
-		            cameraControl.mode === 'rotate'
-		              ? {
-		                  rotationX: nextTransform.rotationX,
-		                  rotationY: nextTransform.rotationY,
-		                }
-		              : {
-		                  x: nextTransform.x,
-		                  y: nextTransform.y,
-		                }
-		          stampCanvasTransformPatch(current.id, patch)
+		          stampCanvasTransformPatch(
+		            current.id,
+		            cameraControlPatch(cameraControl.mode, nextTransform),
+		            currentAnimationAuthorTime(),
+		          )
 		        }
 		        cameraControlRef.current = null
 		        setCameraPreview(null)
@@ -1752,6 +1879,9 @@ export function Canvas() {
       setTool,
       solved,
       workspaceOrder,
+      cameraControlPatch,
+      currentAnimationAuthorTime,
+      stampCanvasTransformPatch,
       clearSelection,
     ],
   )
@@ -1949,7 +2079,7 @@ export function Canvas() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      style={{ cursor: workspaceCursor }}
+      style={{ cursor: workspaceCursor, touchAction: 'none' }}
     >
       {/* Single transform container for both scene paint + selection overlay.
           Placing the transform here (absolute, top-left) with explicit pan
@@ -2049,15 +2179,64 @@ export function Canvas() {
             >
               {camera && camera.kind === 'camera' ? (
                 <>
-                  {(selection.includes(camera.id) ||
-                    focusPickingCameraId === camera.id ||
-                    !!camera.showFocusPlane) ? (
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      opacity: threeCameraAvailable ? 0 : 1,
+                      pointerEvents: threeCameraAvailable ? 'none' : undefined,
+                    }}
+                  >
+                    <ScenePostProcessLayer
+                      rootId={rootId}
+                      solved={solved}
+                      order={renderOrder}
+                      animated={animated}
+                      inherited={inherited}
+                      cameraDepthOfField={threeCameraAvailable ? null : previewCameraDepthOfField}
+                      sceneFill={sceneFill}
+                      canvasWidth={canvasWidth}
+                      canvasHeight={canvasHeight}
+                      sceneCorner={sceneCorner}
+                      includeSceneFill
+                      textureSource
+                      sceneContentStyle={
+                        threeCameraAvailable
+                          ? undefined
+                          : cameraTransform
+                            ? {
+                                transform: cameraTransform,
+                                transformOrigin: '0 0',
+                                transformStyle: 'preserve-3d',
+                                backfaceVisibility: 'visible',
+                              }
+                            : undefined
+                      }
+                    />
+                  </div>
+                  <ThreeSceneViewport
+                    api={api}
+                    layout={solved}
+                    animated={animated}
+                    camera={camera}
+                    cameraAnim={liveCameraAnim}
+                    width={canvasWidth}
+                    height={canvasHeight}
+                    sceneFill={sceneFill}
+                    selectedIds={selection}
+                    showHelpers={false}
+                    showPlanes
+                    exportable
+                    onAvailabilityChange={setThreeCameraAvailable}
+                  />
+                  {selection.includes(camera.id) ||
+                  focusPickingCameraId === camera.id ||
+                  !!camera.showFocusPlane ? (
                     <ThreeSceneViewport
                       api={api}
                       layout={solved}
                       animated={animated}
                       camera={camera}
-                      cameraAnim={cameraAnim}
+                      cameraAnim={liveCameraAnim}
                       width={canvasWidth}
                       height={canvasHeight}
                       sceneFill={null}
@@ -2076,29 +2255,6 @@ export function Canvas() {
                       }
                     />
                   ) : null}
-                  <ScenePostProcessLayer
-                    rootId={rootId}
-                    solved={solved}
-                    order={renderOrder}
-                    animated={animated}
-                    inherited={inherited}
-                    cameraDepthOfField={previewCameraDepthOfField}
-                    sceneFill={sceneFill}
-                    canvasWidth={canvasWidth}
-                    canvasHeight={canvasHeight}
-                    sceneCorner={sceneCorner}
-                    includeSceneFill
-                    sceneContentStyle={
-                      cameraTransform
-                        ? {
-                            transform: cameraTransform,
-                            transformOrigin: '0 0',
-                            transformStyle: 'preserve-3d',
-                            backfaceVisibility: 'visible',
-                          }
-                        : undefined
-                    }
-                  />
                   {camera.showFocusPlane || focusPickingCameraId === camera.id ? (
                     <div
                       className="pointer-events-none absolute inset-0"
@@ -2114,7 +2270,7 @@ export function Canvas() {
                     >
                       <DomFocusPlaneOverlay
                         camera={camera}
-                        cameraAnim={cameraAnim}
+                        cameraAnim={liveCameraAnim}
                         cameraDepthOfField={previewCameraDepthOfField}
                         canvasWidth={canvasWidth}
                         canvasHeight={canvasHeight}
@@ -2221,7 +2377,7 @@ export function Canvas() {
           {camera && camera.kind === 'camera' ? (
             <CameraGizmo
               camera={camera}
-              cameraAnim={cameraAnim}
+              cameraAnim={liveCameraAnim}
               canvasWidth={canvasWidth}
               canvasHeight={canvasHeight}
               zoom={view.zoom}
@@ -2895,6 +3051,7 @@ export function ScenePostProcessLayer({
   sceneCorner,
   sceneContentStyle,
   includeSceneFill = false,
+  textureSource = false,
 }: {
   rootId: NodeId | null
   solved: SolvedLayout
@@ -2908,6 +3065,7 @@ export function ScenePostProcessLayer({
   sceneCorner: number
   sceneContentStyle?: CSSProperties
   includeSceneFill?: boolean
+  textureSource?: boolean
 }) {
   const sceneBody = (
     <>
@@ -2933,9 +3091,9 @@ export function ScenePostProcessLayer({
       />
     </>
   )
-  const scene = sceneContentStyle ? (
+  const scene = sceneContentStyle || textureSource ? (
     <div
-      data-three-texture-source="1"
+      data-three-texture-source={textureSource ? '1' : undefined}
       className="absolute inset-0"
       style={sceneContentStyle}
     >
@@ -3081,20 +3239,22 @@ function DomFocusPlaneOverlay({
   const focusX =
     cameraDepthOfField?.focusWorldX ??
     cameraAnim?.focusWorldX ??
+    cameraAnim?.focusX ??
     camera.focusWorldX ??
     camera.focusX ??
     canvasWidth / 2
   const focusY =
     cameraDepthOfField?.focusWorldY ??
     cameraAnim?.focusWorldY ??
+    cameraAnim?.focusY ??
     camera.focusWorldY ??
     camera.focusY ??
     canvasHeight / 2
   const focusZ =
     cameraDepthOfField?.focusWorldZ ??
     cameraAnim?.focusWorldZ ??
-    camera.focusWorldZ ??
     cameraAnim?.focusDistance ??
+    camera.focusWorldZ ??
     camera.focusDistance ??
     0
   const label =
