@@ -13,6 +13,7 @@ const PatchInput = z.object({
   patch: z.union([z.string(), z.record(z.unknown()), z.array(z.record(z.unknown()))]),
   applyLive: z.boolean().optional().describe('Push the patched scene into the running desktop app. Defaults to true.'),
 })
+type PatchInputData = z.infer<typeof PatchInput>
 
 export const patchSceneTool: Tool = {
   name: 'patch_scene',
@@ -49,21 +50,22 @@ export async function handlePatchScene(
     }
   }
 
-  const output = path.resolve(parsed.data.output ?? parsed.data.scene)
+  const input: PatchInputData = parsed.data
+  const output = path.resolve(input.output ?? input.scene)
   const patch =
-    typeof parsed.data.patch === 'string'
-      ? (JSON.parse(parsed.data.patch) as ScenePatch | PatchOperation[])
-      : (parsed.data.patch as ScenePatch | PatchOperation[])
+    typeof input.patch === 'string'
+      ? (JSON.parse(input.patch) as ScenePatch | PatchOperation[])
+      : (input.patch as ScenePatch | PatchOperation[])
   let bytes: Buffer
   try {
-    bytes = fs.readFileSync(parsed.data.scene)
+    bytes = fs.readFileSync(input.scene)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `patch_scene: failed to read ${parsed.data.scene}: ${
+          text: `patch_scene: failed to read ${input.scene}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -73,13 +75,13 @@ export async function handlePatchScene(
   const next = applyScenePatch(new Uint8Array(bytes), patch)
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, Buffer.from(next))
-  const shouldApplyLive = parsed.data.applyLive ?? true
+  const shouldApplyLive = input.applyLive ?? true
   const liveApplied = shouldApplyLive ? await pushSceneToRunningApp(output) : false
   return {
     content: [
       {
         type: 'text' as const,
-        text: `Patched ${parsed.data.scene} → ${output}${liveApplied ? ' and applied it to the running desktop app' : ''}`,
+        text: `Patched ${input.scene} → ${output}${liveApplied ? ' and applied it to the running desktop app' : ''}`,
       },
     ],
   }
