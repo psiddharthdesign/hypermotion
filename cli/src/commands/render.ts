@@ -81,7 +81,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       }
       const format = requestedFormat
 
-      const requestedQuality = opts.quality ?? 'comp'
+      const requestedQuality = opts.quality?.toLowerCase() ?? 'comp'
       if (!isQuality(requestedQuality)) {
         console.error(`[render] unsupported quality: ${requestedQuality} (use ${QUALITY_HELP})`)
         process.exit(1)
