@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 type WritableStream = typeof process.stdout | typeof process.stderr
-type CaptureCallback = () => Promise<void> | void
+type CaptureCallback<T> = () => Promise<T> | T
 
 function stringifyChunk(
   chunk: Parameters<typeof process.stdout.write>[0],
@@ -14,7 +14,7 @@ function stringifyChunk(
 
 async function captureStream(
   stream: WritableStream,
-  run: CaptureCallback,
+  run: CaptureCallback<unknown>,
 ): Promise<string> {
   let output = ''
   const write = stream.write
@@ -39,10 +39,14 @@ async function captureStream(
   return output
 }
 
-export async function captureStdout(run: CaptureCallback): Promise<string> {
+export async function captureStdout(
+  run: CaptureCallback<unknown>,
+): Promise<string> {
   return captureStream(process.stdout, run)
 }
 
-export async function captureStderr(run: CaptureCallback): Promise<string> {
+export async function captureStderr(
+  run: CaptureCallback<unknown>,
+): Promise<string> {
   return captureStream(process.stderr, run)
 }
