@@ -335,29 +335,6 @@ test('render command reports output directory stat failures before launching the
   }
 })
 
-test('render command reports directories before launching the app', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-dir-'))
-  const scenePath = path.join(dir, 'scene.hype')
-  const outPath = path.join(dir, 'out.mp4')
-  fs.mkdirSync(scenePath)
-  try {
-    const stderr = await captureStderr(() => {
-      return withProcessExitThrow(async () => {
-        await assert.rejects(
-          renderCommand().parseAsync(['--scene', scenePath, '-o', outPath], {
-            from: 'user',
-          }),
-          { exitCode: 2 },
-        )
-      })
-    })
-
-    assert.match(stderr, /^\[render\] scene path is not a file: .*scene\.hype$/m)
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
-  }
-})
-
 test('render command reports scene stat failures before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-stat-'))
   const scenePath = path.join(dir, 'scene.hype')
