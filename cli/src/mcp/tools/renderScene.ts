@@ -144,6 +144,19 @@ export async function handleRenderScene(
     }
   }
 
+  const outDir = path.dirname(outputPath)
+  if (fs.existsSync(outDir) && !fs.statSync(outDir).isDirectory()) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `render_scene: output directory is not a directory: ${outDir}`,
+        },
+      ],
+    }
+  }
+
   const appPath = await locateDesktopApp()
   if (!appPath) {
     return {
@@ -159,7 +172,6 @@ export async function handleRenderScene(
     }
   }
 
-  const outDir = path.dirname(outputPath)
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true })
   }
