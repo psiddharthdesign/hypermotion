@@ -101,6 +101,12 @@ test('capability tool schemas accept no arguments', () => {
   })
 })
 
+test('get_capabilities description mentions validation and query tools', () => {
+  const getCapabilities = TOOLS.find((tool) => tool.name === 'get_capabilities')
+
+  assert.match(getCapabilities?.description ?? '', /validation\/query tools/)
+})
+
 function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   const parsed: unknown = JSON.parse(assertToolText(result))
   assert.equal(typeof parsed, 'object')
