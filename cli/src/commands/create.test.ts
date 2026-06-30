@@ -140,3 +140,30 @@ test('create command rejects top-level JSON arrays', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('create command rejects top-level JSON null', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-'))
+  const sourcePath = path.join(dir, 'scene.json')
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(sourcePath, 'null')
+
+    const stderr = await withProcessExitThrow(async () => {
+      return captureStderr(async () => {
+        await assert.rejects(
+          createCommand()
+            .parseAsync([scenePath, '--from', sourcePath], { from: 'user' }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.match(
+      stderr,
+      /^\[create\] scene JSON must be an object at the top level\.$/m,
+    )
+    assert.equal(fs.existsSync(scenePath), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
