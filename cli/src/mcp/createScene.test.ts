@@ -171,6 +171,17 @@ test('create_scene rejects array scene JSON', async () => {
   }
 })
 
+test('create_scene reports malformed scene JSON strings as MCP errors', async () => {
+  const result = await handleCreateScene({
+    output: path.join(os.tmpdir(), 'malformed-scene.hype'),
+    scene: '{"nodes":',
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^create_scene: 'scene' was a string but not valid JSON:/)
+})
+
 test('create_scene rejects relative output paths', async () => {
   const result = await handleCreateScene({
     output: 'relative-scene.hype',
