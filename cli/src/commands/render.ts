@@ -100,9 +100,22 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       const outDir = path.dirname(outputPath)
       if (!existsSync(outDir)) {
         mkdirSync(outDir, { recursive: true })
-      } else if (!statSync(outDir).isDirectory()) {
-        console.error(`[render] output directory is not a directory: ${outDir}`)
-        process.exit(2)
+      } else {
+        let outDirStats: fs.Stats
+        try {
+          outDirStats = statSync(outDir)
+        } catch (err) {
+          console.error(
+            `[render] failed to read output directory ${outDir}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+          process.exit(2)
+        }
+        if (!outDirStats.isDirectory()) {
+          console.error(`[render] output directory is not a directory: ${outDir}`)
+          process.exit(2)
+        }
       }
 
       const scenePath = opts.scene ? path.resolve(opts.scene) : undefined
