@@ -99,6 +99,15 @@ test('withProcessExitThrow treats process.exit without a code as success', async
   )
 })
 
+test('withProcessExitThrow treats null process.exit codes as success', async () => {
+  await assert.rejects(
+    withProcessExitThrow(() => {
+      process.exit(null)
+    }),
+    { exitCode: 0 },
+  )
+})
+
 function assertProcessExitError(err: unknown): asserts err is ProcessExitError {
   assert.ok(err instanceof Error)
   assert.ok('exitCode' in err)
