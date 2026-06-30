@@ -17,12 +17,24 @@ export function patchCommand(): Command {
     .requiredOption('-f, --from <json>', 'Patch JSON file. Use "-" to read from stdin.')
     .option('-o, --output <path>', 'Path to write. Defaults to overwriting <scene>.')
     .action(async (scenePath: string, options: PatchCommandOptions) => {
+      const resolvedScenePath = path.resolve(scenePath)
       const output = path.resolve(options.output ?? scenePath)
       let sceneBytes: Buffer
+      let stats: fs.Stats
       try {
-        sceneBytes = fs.readFileSync(scenePath)
+        stats = fs.statSync(resolvedScenePath)
       } catch (err) {
-        console.error(`[patch] failed to read ${scenePath}: ${err instanceof Error ? err.message : err}`)
+        console.error(`[patch] failed to read ${resolvedScenePath}: ${err instanceof Error ? err.message : err}`)
+        process.exit(2)
+      }
+      if (!stats.isFile()) {
+        console.error(`[patch] scene path is not a file: ${resolvedScenePath}`)
+        process.exit(2)
+      }
+      try {
+        sceneBytes = fs.readFileSync(resolvedScenePath)
+      } catch (err) {
+        console.error(`[patch] failed to read ${resolvedScenePath}: ${err instanceof Error ? err.message : err}`)
         process.exit(2)
       }
 
@@ -45,7 +57,7 @@ export function patchCommand(): Command {
 
       fs.mkdirSync(path.dirname(output), { recursive: true })
       fs.writeFileSync(output, Buffer.from(next))
-      console.log(`Patched ${scenePath} → ${output}`)
+      console.log(`Patched ${resolvedScenePath} → ${output}`)
     })
 }
 
