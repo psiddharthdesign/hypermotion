@@ -7,7 +7,7 @@ function stringifyChunk(
   chunk: Parameters<typeof process.stdout.write>[0],
   encoding?: BufferEncoding,
 ): string {
-  if (chunk instanceof Uint8Array) return Buffer.from(chunk).toString()
+  if (chunk instanceof Uint8Array) return Buffer.from(chunk).toString(encoding)
   if (encoding) return Buffer.from(chunk, encoding).toString()
   return chunk.toString()
 }
