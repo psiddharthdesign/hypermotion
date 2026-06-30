@@ -20,8 +20,7 @@ import { driveHeadlessRender } from '../../electron/driver.js'
 import {
   RENDER_FORMATS,
   RENDER_QUALITIES,
-  isRenderFormat,
-  type RenderFormat,
+  inferRenderFormatFromPath,
 } from '../../renderOptions.js'
 
 const RenderInput = z.object({
@@ -99,7 +98,7 @@ export async function handleRenderScene(
   const input: RenderInputData = parsed.data
   const outputPath = path.resolve(input.output)
   const scenePath = input.scene ? path.resolve(input.scene) : undefined
-  const format = input.format ?? inferFormat(outputPath)
+  const format = input.format ?? inferRenderFormatFromPath(outputPath)
   const quality = input.quality ?? 'comp'
   const fps = input.fps ?? 30
 
@@ -223,10 +222,4 @@ export async function handleRenderScene(
       },
     ],
   }
-}
-
-function inferFormat(outPath: string): RenderFormat {
-  const ext = path.extname(outPath).toLowerCase().slice(1)
-  if (isRenderFormat(ext)) return ext
-  return 'mp4'
 }
