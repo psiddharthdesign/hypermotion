@@ -972,6 +972,21 @@ test('validateScene rejects child references to missing nodes', () => {
   assert.deepEqual(result.errors, ['node root has missing child: missing-child'])
 })
 
+test('validateScene rejects non-string child references', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  const children = new Y.Array<unknown>()
+  children.push(['title', 42])
+  nodes.get('root')?.set('children', children)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['node root has missing child: 42'])
+})
+
 test('validateScene rejects node children that are not arrays', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
