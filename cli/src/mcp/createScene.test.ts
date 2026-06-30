@@ -155,14 +155,20 @@ test('create_scene reports invalid arguments as MCP errors', async () => {
 })
 
 test('create_scene rejects array scene JSON', async () => {
-  const result = await handleCreateScene({
-    output: path.join(os.tmpdir(), 'array-scene.hype'),
-    scene: '[]',
-  })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-array-scene-'))
 
-  assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
+  try {
+    const result = await handleCreateScene({
+      output: path.join(dir, 'array-scene.hype'),
+      scene: '[]',
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('create_scene rejects relative output paths', async () => {
