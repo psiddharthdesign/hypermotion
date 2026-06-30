@@ -1184,14 +1184,42 @@ function deleteNode(scene: Y.Map<unknown>, nodeId: string): void {
   const nodes = getNodesMap(scene)
   const node = nodes.get(nodeId)
   if (!node) return
+  const deletedNodeIds = new Set<string>()
+  collectNodeSubtree(nodes, nodeId, deletedNodeIds)
   const parent = node.get('parent') as string | null
   detachFromParent(nodes, nodeId, parent)
   const children = node.get('children')
   const childIds = children instanceof Y.Array ? children.toArray() as string[] : []
   for (const childId of childIds) deleteNode(scene, childId)
   nodes.delete(nodeId)
+  deleteTracksForNodes(scene, deletedNodeIds)
   if (scene.get('root') === nodeId) scene.set('root', '')
   if (scene.get('activeCameraId') === nodeId) scene.set('activeCameraId', '')
+}
+
+function collectNodeSubtree(
+  nodes: Y.Map<Y.Map<unknown>>,
+  nodeId: string,
+  out: Set<string>,
+): void {
+  const node = nodes.get(nodeId)
+  if (!node || out.has(nodeId)) return
+  out.add(nodeId)
+  const children = node.get('children')
+  const childIds = children instanceof Y.Array ? children.toArray() as string[] : []
+  for (const childId of childIds) collectNodeSubtree(nodes, childId, out)
+}
+
+function deleteTracksForNodes(scene: Y.Map<unknown>, nodeIds: Set<string>): void {
+  if (nodeIds.size === 0) return
+  const tracks = ensureMap(scene, 'tracks')
+  const trackIdsToDelete: string[] = []
+  for (const [trackId, raw] of tracks.entries()) {
+    if (raw instanceof Y.Map && nodeIds.has(String(raw.get('nodeId')))) {
+      trackIdsToDelete.push(trackId)
+    }
+  }
+  for (const trackId of trackIdsToDelete) tracks.delete(trackId)
 }
 
 function detachFromParent(nodes: Y.Map<Y.Map<unknown>>, nodeId: string, parentId: string | null): void {

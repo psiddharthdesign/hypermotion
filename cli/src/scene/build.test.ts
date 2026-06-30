@@ -627,6 +627,21 @@ test('readSceneSummary reports deleted root and active camera ids as null', () =
   assert.equal(readSceneSummary(withoutCamera).activeCameraId, null)
 })
 
+test('applyScenePatch removes tracks for deleted nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [{ op: 'deleteNode', nodeId: 'title' }])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as PlainSceneMap
+  const tracks = data.tracks as PlainSceneMap
+  const result = validateScene(patched)
+
+  assert.equal(nodes.title, undefined)
+  assert.deepEqual(nodes.root.children, [])
+  assert.deepEqual(tracks, {})
+  assert.equal(readSceneSummary(patched).trackCount, 0)
+  assert.equal(result.ok, true)
+})
+
 test('applyScenePatch fills workspaceOnly default for created nodes', () => {
   const bytes = buildSceneBytes(sampleScene())
   const patched = applyScenePatch(bytes, [
