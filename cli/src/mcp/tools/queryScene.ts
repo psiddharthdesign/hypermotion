@@ -147,6 +147,22 @@ export async function handleListCameras(
 
 function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult {
   try {
+    const stats = fs.statSync(scenePath)
+    if (!stats.isFile()) {
+      return {
+        ok: false,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: `${toolName}: scene path is not a file: ${scenePath}`,
+            },
+          ],
+        },
+      }
+    }
+
     return { ok: true, scene: inspectScene(new Uint8Array(fs.readFileSync(scenePath))) }
   } catch (err) {
     return {
