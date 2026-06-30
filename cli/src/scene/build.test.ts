@@ -1187,6 +1187,27 @@ test('buildSceneBytes accepts camera ISO keyframes', () => {
   assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
 })
 
+test('buildSceneBytes accepts camera focal length keyframes', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    lens: {
+      id: 'lens',
+      nodeId: 'camera',
+      propertyId: 'camera.focalLength',
+      keyframes: [
+        { id: 'k1', time: 0, value: 500 },
+        { id: 'k2', time: 1, value: 1200 },
+      ],
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as PlainSceneMap
+
+  assert.equal(tracks.lens.propertyId, 'camera.focalLength')
+  assert.equal(readSceneSummary(buildSceneBytes(scene)).keyframeCount, 2)
+})
+
 test('buildSceneBytes preserves explicit camera viewport fields', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
