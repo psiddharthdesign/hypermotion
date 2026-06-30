@@ -21,9 +21,9 @@ import { driveHeadlessRender, type HeadlessRenderRequest } from '../electron/dri
 import {
   RENDER_FORMATS,
   RENDER_QUALITIES,
+  inferRenderFormatFromPath,
   isRenderFormat,
   isRenderQuality,
-  type RenderFormat,
 } from '../renderOptions.js'
 
 const FORMAT_HELP = RENDER_FORMATS.join(' / ')
@@ -75,7 +75,8 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
-      const requestedFormat = opts.format?.trim().toLowerCase() ?? inferFormat(outputPath)
+      const requestedFormat =
+        opts.format?.trim().toLowerCase() ?? inferRenderFormatFromPath(outputPath)
       if (!isRenderFormat(requestedFormat)) {
         console.error(`[render] unsupported format: ${requestedFormat} (use ${FORMAT_HELP})`)
         process.exit(1)
@@ -172,10 +173,4 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
         process.exit(1)
       }
     })
-}
-
-function inferFormat(outPath: string): RenderFormat {
-  const ext = path.extname(outPath).toLowerCase().slice(1)
-  if (isRenderFormat(ext)) return ext
-  return 'mp4'
 }
