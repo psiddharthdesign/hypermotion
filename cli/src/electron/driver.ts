@@ -184,7 +184,7 @@ function hasErrorMessage(value: unknown): value is { message: string } {
     value !== null &&
     'message' in value &&
     typeof value.message === 'string' &&
-    value.message.length > 0
+    value.message.trim().length > 0
   )
 }
 
