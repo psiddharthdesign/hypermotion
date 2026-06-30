@@ -155,6 +155,39 @@ test('render_scene reports output parent files before locating the app', async (
   }
 })
 
+test('render_scene reports output directory stat failures as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-stat-'))
+  const outDir = path.join(dir, 'exports')
+  fs.mkdirSync(outDir)
+  const previousStatSync = fs.statSync
+
+  try {
+    Object.defineProperty(fs, 'statSync', {
+      configurable: true,
+      value: (targetPath: fs.PathLike) => {
+        if (targetPath === outDir) throw new Error('stat failed')
+        return previousStatSync(targetPath)
+      },
+    })
+
+    const result = await handleRenderScene({
+      output: path.join(outDir, 'out.mp4'),
+    })
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: failed to read output directory ${outDir}: stat failed`,
+    )
+  } finally {
+    Object.defineProperty(fs, 'statSync', {
+      configurable: true,
+      value: previousStatSync,
+    })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene reports desktop driver failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-fail-'))
   const appPath = path.join(dir, 'hyper-motion')
