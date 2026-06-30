@@ -163,14 +163,26 @@ export async function handleRenderScene(
     fs.mkdirSync(outDir, { recursive: true })
   }
 
-  await driveHeadlessRender({
-    appPath,
-    outputPath,
-    format,
-    quality,
-    fps,
-    scenePath,
-  })
+  try {
+    await driveHeadlessRender({
+      appPath,
+      outputPath,
+      format,
+      quality,
+      fps,
+      scenePath,
+    })
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `render_scene: failed: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ],
+    }
+  }
 
   return {
     content: [
