@@ -369,6 +369,36 @@ test('info command reports directory inputs as non-files', async () => {
   }
 })
 
+test('info command reports stat failures as read errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const originalStatSync = fs.statSync
+  try {
+    Object.defineProperty(fs, 'statSync', {
+      value: ((statPath: fs.PathLike) => {
+        if (statPath === scenePath) throw new Error('stat failed')
+        return originalStatSync(statPath)
+      }) as typeof fs.statSync,
+    })
+
+    const stderr = await captureStderr(async () => {
+      await withProcessExitThrow(() => {
+        assert.throws(
+          () => {
+            infoCommand().parse([scenePath], { from: 'user' })
+          },
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[info\] failed to read .*scene\.hype: stat failed/)
+  } finally {
+    Object.defineProperty(fs, 'statSync', { value: originalStatSync })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('info command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'malformed.hype')
