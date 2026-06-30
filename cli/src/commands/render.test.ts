@@ -66,6 +66,25 @@ test('render command infers formats case-insensitively from output extensions', 
   }
 })
 
+test('render command accepts explicit formats case-insensitively', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-explicit-format-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', outputPath, '--format', 'WEBM'], { from: 'user' })
+
+    assert.equal(calls[0]?.format, 'webm')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
