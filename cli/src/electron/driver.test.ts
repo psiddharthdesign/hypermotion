@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { driveHeadlessRender } from './driver.js'
+import { withEnvVar } from '../testUtils/env.js'
 
 test('driveHeadlessRender passes saved scene paths and clears stale files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
@@ -154,6 +155,42 @@ test('driveHeadlessRender clears stale error sentinels after successful renders'
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('driveHeadlessRender enables Electron logging when verbose mode is set', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.mp4')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const out = outArg?.slice('--out='.length);",
+      "if (!out) process.exit(2);",
+      "fs.writeFileSync(out, process.env.ELECTRON_ENABLE_LOGGING ?? '');",
+      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 1 }));",
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    await withEnvVar('HYPERMOTION_VERBOSE', '1', async () => {
+      await driveHeadlessRender({
+        appPath,
+        outputPath,
+        format: 'mp4',
+        quality: 'comp',
+        fps: 30,
+      })
+    })
+
+    assert.equal(fs.readFileSync(outputPath, 'utf-8'), '1')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
