@@ -41,6 +41,20 @@ test('validate_scene reports missing files as MCP errors', async () => {
   }
 })
 
+test('validate_scene rejects directory inputs as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-dir-'))
+
+  try {
+    const result = await handleValidateScene({ scene: dir })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `validate_scene: scene path is not a file: ${dir}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate_scene reports malformed scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-malformed-'))
   const scenePath = path.join(dir, 'malformed.hype')

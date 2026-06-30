@@ -40,6 +40,33 @@ export async function handleValidateScene(
 
   const input: ValidateInputData = parsed.data
   let bytes: Buffer
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(input.scene)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `validate_scene: failed to read ${input.scene}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+  if (!stat.isFile()) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `validate_scene: scene path is not a file: ${input.scene}`,
+        },
+      ],
+    }
+  }
   try {
     bytes = fs.readFileSync(input.scene)
   } catch (err) {
