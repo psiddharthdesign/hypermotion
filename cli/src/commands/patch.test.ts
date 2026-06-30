@@ -6,7 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes, readSceneSummary } from '../scene/build.js'
-import { captureStdout } from '../testUtils/stdout.js'
+import { withProcessExitThrow } from '../testUtils/processExit.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { patchCommand } from './patch.js'
 
 test('patch command writes alternate output files', async () => {
@@ -94,6 +95,30 @@ test('patch command overwrites the input scene by default', async () => {
 
     assert.match(stdout, /^Patched .*scene\.hype → .*scene\.hype$/m)
     assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'After')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('patch command reports directories before reading scene bytes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-dir-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const patchPath = path.join(dir, 'patch.json')
+  fs.mkdirSync(scenePath)
+  fs.writeFileSync(
+    patchPath,
+    JSON.stringify({ ops: [{ op: 'setMeta', patch: { name: 'Patched' } }] }),
+  )
+
+  try {
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
+      return assert.rejects(
+        patchCommand().parseAsync([scenePath, '--from', patchPath], { from: 'user' }),
+        { exitCode: 2 },
+      )
+    }))
+
+    assert.match(stderr, /^\[patch\] scene path is not a file: .*scene\.hype$/m)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
