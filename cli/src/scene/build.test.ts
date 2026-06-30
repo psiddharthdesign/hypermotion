@@ -797,6 +797,17 @@ test('validateScene accepts a valid authored scene', () => {
   assert.deepEqual(result.warnings, [])
 })
 
+test('validateScene warns when no active camera is selected', () => {
+  const scene = sampleScene()
+  scene.activeCameraId = null
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, ['scene.activeCameraId is missing'])
+})
+
 test('validateScene rejects unsupported track property ids', () => {
   const scene = {
     ...sampleScene(),
