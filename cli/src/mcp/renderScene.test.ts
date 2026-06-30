@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { assertToolText } from '../testUtils/mcp.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 
 type JsonSchemaProperty = {
@@ -45,8 +46,7 @@ test('render_scene reports invalid arguments as MCP errors', async () => {
   })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^render_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^render_scene: invalid arguments/)
 })
 
 test('render_scene reports missing scene files as MCP errors', async () => {
@@ -60,8 +60,10 @@ test('render_scene reports missing scene files as MCP errors', async () => {
     })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `render_scene: scene file not found: ${missingScene}`)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: scene file not found: ${missingScene}`,
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -79,8 +81,10 @@ test('render_scene reports scene directories as MCP errors', async () => {
     })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `render_scene: scene path is not a file: ${scenePath}`)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: scene path is not a file: ${scenePath}`,
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -106,8 +110,10 @@ test('render_scene reports scene stat failures as MCP errors', async () => {
     })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `render_scene: failed to read ${scenePath}: stat failed`)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: failed to read ${scenePath}: stat failed`,
+    )
   } finally {
     Object.defineProperty(fs, 'statSync', {
       configurable: true,
