@@ -47,6 +47,25 @@ test('render command forwards saved scene paths to the driver', async () => {
   }
 })
 
+test('render command infers formats case-insensitively from output extensions', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-'))
+  const outputPath = path.join(dir, 'out.GIF')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', outputPath], { from: 'user' })
+
+    assert.equal(calls[0]?.format, 'gif')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
