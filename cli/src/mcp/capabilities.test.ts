@@ -16,6 +16,7 @@ import {
   type PatchOperation,
   type PropertyIdJson,
 } from '../scene/build.js'
+import { assertToolText } from '../testUtils/mcp.js'
 
 type CapabilitiesToolPayload = {
   keyframeableProperties: readonly PropertyIdJson[]
@@ -100,10 +101,7 @@ test('capability tool schemas accept no arguments', () => {
 })
 
 function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
-  const item = result.content[0]
-  assert.equal(item?.type, 'text')
-
-  const parsed: unknown = JSON.parse(item.text)
+  const parsed: unknown = JSON.parse(assertToolText(result))
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
   const parsedObject = parsed as Record<string, unknown>
