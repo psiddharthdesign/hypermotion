@@ -126,6 +126,23 @@ test('captureStdout scopes nested captures to the active writer', async () => {
   assert.equal(process.stdout.write, originalWrite)
 })
 
+test('captureStderr scopes nested captures to the active writer', async () => {
+  const originalWrite = process.stderr.write
+  let innerOutput = ''
+
+  const outerOutput = await captureStderr(async () => {
+    process.stderr.write('before ')
+    innerOutput = await captureStderr(() => {
+      process.stderr.write('inner')
+    })
+    process.stderr.write(' after')
+  })
+
+  assert.equal(innerOutput, 'inner')
+  assert.equal(outerOutput, 'before  after')
+  assert.equal(process.stderr.write, originalWrite)
+})
+
 test('captureStderr restores the writer after async callbacks', async () => {
   const originalWrite = process.stderr.write
 
