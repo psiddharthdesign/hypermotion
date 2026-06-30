@@ -75,21 +75,22 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
-      const requestedFormat = opts.format?.toLowerCase() ?? inferFormat(outputPath)
+      const requestedFormat = opts.format?.trim().toLowerCase() ?? inferFormat(outputPath)
       if (!isRenderFormat(requestedFormat)) {
         console.error(`[render] unsupported format: ${requestedFormat} (use ${FORMAT_HELP})`)
         process.exit(1)
       }
       const format = requestedFormat
 
-      const requestedQuality = opts.quality?.toLowerCase() ?? 'comp'
+      const requestedQuality = opts.quality?.trim().toLowerCase() ?? 'comp'
       if (!isRenderQuality(requestedQuality)) {
         console.error(`[render] unsupported quality: ${requestedQuality} (use ${QUALITY_HELP})`)
         process.exit(1)
       }
       const quality = requestedQuality
 
-      const fps = Number(opts.fps ?? '30')
+      const fpsInput = opts.fps?.trim() ?? '30'
+      const fps = Number(fpsInput)
       if (!Number.isInteger(fps) || fps <= 0 || fps > 120) {
         console.error(`[render] invalid fps: ${opts.fps}`)
         process.exit(1)
