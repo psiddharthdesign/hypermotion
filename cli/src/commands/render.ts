@@ -74,7 +74,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
     .action(async (opts: RenderOptions) => {
       const outputPath = path.resolve(opts.output)
 
-      const requestedFormat = opts.format ?? inferFormat(outputPath)
+      const requestedFormat = opts.format?.toLowerCase() ?? inferFormat(outputPath)
       if (!isFormat(requestedFormat)) {
         console.error(`[render] unsupported format: ${requestedFormat} (use ${FORMAT_HELP})`)
         process.exit(1)
