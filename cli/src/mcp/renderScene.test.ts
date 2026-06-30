@@ -135,6 +135,26 @@ test('render_scene reports scene stat failures as MCP errors', async () => {
   }
 })
 
+test('render_scene reports output parent files before locating the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-parent-'))
+  const parentPath = path.join(dir, 'exports')
+  fs.writeFileSync(parentPath, 'not a directory')
+
+  try {
+    const result = await handleRenderScene({
+      output: path.join(parentPath, 'out.mp4'),
+    })
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: output directory is not a directory: ${parentPath}`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene reports desktop driver failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-fail-'))
   const appPath = path.join(dir, 'hyper-motion')
