@@ -107,6 +107,22 @@ test('info_scene reports missing files as MCP errors', async () => {
   }
 })
 
+test('info_scene reports directories as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-directory-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.mkdirSync(scenePath)
+
+  try {
+    const result = await handleInfoScene({ scene: scenePath })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `info_scene: scene path is not a file: ${scenePath}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('info_scene reports malformed scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-malformed-'))
   const scenePath = path.join(dir, 'malformed.hype')
