@@ -349,6 +349,26 @@ test('info command reports missing scene files', async () => {
   }
 })
 
+test('info command reports directory inputs as non-files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  try {
+    const stderr = await captureStderr(async () => {
+      await withProcessExitThrow(() => {
+        assert.throws(
+          () => {
+            infoCommand().parse([dir], { from: 'user' })
+          },
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[info\] scene path is not a file: /)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('info command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'malformed.hype')
