@@ -26,7 +26,7 @@ import fs from 'node:fs'
 export async function locateDesktopApp(): Promise<string | null> {
   const override = process.env.HYPERMOTION_APP_PATH
   if (override) {
-    if (fs.existsSync(override)) {
+    if (isFile(override)) {
       return override
     }
     // Loud failure — silently falling through when the user set an
@@ -58,7 +58,7 @@ function locateMac(): string | null {
     path.join(os.homedir(), 'Applications/hyper-motion.app/Contents/MacOS/hyper-motion'),
   ]
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c
+    if (isFile(c)) return c
   }
   return null
 }
@@ -71,7 +71,7 @@ function locateWindows(): string | null {
     path.join(localAppData, 'Programs', 'hyper-motion', 'hyper-motion.exe'),
   ]
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c
+    if (isFile(c)) return c
   }
   return null
 }
@@ -84,7 +84,15 @@ function locateLinux(): string | null {
     path.join(os.homedir(), '.local/bin/hyper-motion'),
   ]
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c
+    if (isFile(c)) return c
   }
   return null
+}
+
+function isFile(p: string): boolean {
+  try {
+    return fs.statSync(p).isFile()
+  } catch {
+    return false
+  }
 }
