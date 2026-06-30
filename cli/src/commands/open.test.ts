@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { ChildProcess } from 'node:child_process'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import test from 'node:test'
 import { withEnvVar } from '../testUtils/env.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
@@ -18,7 +18,7 @@ test('open command launches the desktop app with the resolved scene path', async
   const spawnCalls: Array<{
     command: string
     args: readonly string[]
-    options: { detached?: boolean; stdio?: string }
+    options: Pick<SpawnOptions, 'detached' | 'stdio'>
   }> = []
   let unrefCalled = false
   fs.writeFileSync(scenePath, '')
@@ -28,7 +28,10 @@ test('open command launches the desktop app with the resolved scene path', async
         locateApp: async () => appPath,
         spawnApp: (command, args, options) => {
           spawnCalls.push({ command, args, options })
-          return { unref: () => { unrefCalled = true } } as ChildProcess
+          return { unref: () => { unrefCalled = true } } satisfies Pick<
+            ChildProcess,
+            'unref'
+          >
         },
       }).parseAsync([scenePath], { from: 'user' })
     })
