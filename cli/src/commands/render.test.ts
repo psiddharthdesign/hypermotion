@@ -123,6 +123,30 @@ test('render command accepts explicit quality presets case-insensitively', async
   }
 })
 
+test('render command trims padded format, quality, and fps values', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-options-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(
+      ['-o', outputPath, '--format', ' webm ', '--quality', ' 4K ', '--fps', ' 60 '],
+      { from: 'user' },
+    )
+
+    assert.equal(calls[0]?.format, 'webm')
+    assert.equal(calls[0]?.quality, '4k')
+    assert.equal(calls[0]?.fps, 60)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
