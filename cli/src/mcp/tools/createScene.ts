@@ -80,7 +80,7 @@ export const createSceneTool: Tool = {
     "Component timelines are local tracks triggered by interactions, e.g. onClick -> playTimeline, and are scoped per instance.\n" +
     "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing? } — omitted keyframes default to [].\n" +
     "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
-    "depthOfField, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
+    "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
     "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
     "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +

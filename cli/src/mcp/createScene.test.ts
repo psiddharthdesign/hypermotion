@@ -59,6 +59,7 @@ test('create_scene description lists supported camera property ids', () => {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
   }
+  assert.match(description, /focusMode/)
 })
 
 test('create_scene description keeps camera nodes optional', () => {
