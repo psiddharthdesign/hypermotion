@@ -36,6 +36,22 @@ test('captureStderr honors string chunk encodings', async () => {
   assert.equal(output, 'render failed')
 })
 
+test('captureStdout honors binary chunk encodings', async () => {
+  const output = await captureStdout(() => {
+    process.stdout.write(Buffer.from('render complete'), 'hex')
+  })
+
+  assert.equal(output, '72656e64657220636f6d706c657465')
+})
+
+test('captureStderr honors binary chunk encodings', async () => {
+  const output = await captureStderr(() => {
+    process.stderr.write(Buffer.from('render failed'), 'hex')
+  })
+
+  assert.equal(output, '72656e646572206661696c6564')
+})
+
 test('captureStdout invokes write callbacks', async () => {
   let callbackCalled = false
 
