@@ -258,6 +258,36 @@ test('render command reports output parent files before launching the app', asyn
   }
 })
 
+test('render command reports output directory stat failures before launching the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-stat-'))
+  const outPath = path.join(dir, 'out.mp4')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => path.join(dir, 'hyper-motion'),
+            driveRender: async () => {
+              throw new Error('should not render')
+            },
+            statSync: ((targetPath: fs.PathLike) => {
+              if (targetPath === dir) throw new Error('stat failed')
+              return fs.statSync(targetPath)
+            }) as typeof fs.statSync,
+          }).parseAsync(['-o', outPath], {
+            from: 'user',
+          }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.equal(stderr, `[render] failed to read output directory ${dir}: stat failed\n`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports directories before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-dir-'))
   const scenePath = path.join(dir, 'scene.hype')
