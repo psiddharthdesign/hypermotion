@@ -5,13 +5,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { applyScenePatch, type ScenePatch, type PatchOperation } from '../scene/build.js'
 
+interface PatchCommandOptions {
+  from: string
+  output?: string
+}
+
 export function patchCommand(): Command {
   return new Command('patch')
     .description('Apply targeted JSON patch operations to a .hype scene file.')
     .argument('<scene>', 'Path to the input .hype scene file')
     .requiredOption('-f, --from <json>', 'Patch JSON file. Use "-" to read from stdin.')
     .option('-o, --output <path>', 'Path to write. Defaults to overwriting <scene>.')
-    .action(async (scenePath: string, options: { from: string; output?: string }) => {
+    .action(async (scenePath: string, options: PatchCommandOptions) => {
       const output = path.resolve(options.output ?? scenePath)
       let sceneBytes: Buffer
       try {
@@ -48,7 +53,7 @@ function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = ''
     process.stdin.setEncoding('utf-8')
-    process.stdin.on('data', (chunk) => {
+    process.stdin.on('data', (chunk: string) => {
       data += chunk
     })
     process.stdin.on('end', () => resolve(data))
