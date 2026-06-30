@@ -16,6 +16,7 @@ import {
   type PatchOperation,
   type PropertyIdJson,
 } from '../scene/build.js'
+import type { RenderFormat, RenderQuality } from '../renderOptions.js'
 import { assertToolText } from '../testUtils/mcp.js'
 
 type CapabilitiesToolPayload = {
@@ -29,8 +30,8 @@ type CapabilitiesToolPayload = {
   patchOperations?: readonly PatchOperation['op'][]
   queryTools?: readonly string[]
   validationTools?: readonly string[]
-  renderFormats?: readonly string[]
-  renderQualities?: readonly string[]
+  renderFormats?: readonly RenderFormat[]
+  renderQualities?: readonly RenderQuality[]
   renderFileSceneInput?: boolean
 }
 
@@ -152,8 +153,12 @@ function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
       | undefined,
     queryTools: optionalStringArray(parsedObject, 'queryTools'),
     validationTools: optionalStringArray(parsedObject, 'validationTools'),
-    renderFormats: optionalStringArray(parsedObject, 'renderFormats'),
-    renderQualities: optionalStringArray(parsedObject, 'renderQualities'),
+    renderFormats: optionalStringArray(parsedObject, 'renderFormats') as
+      | readonly RenderFormat[]
+      | undefined,
+    renderQualities: optionalStringArray(parsedObject, 'renderQualities') as
+      | readonly RenderQuality[]
+      | undefined,
     renderFileSceneInput: optionalBoolean(parsedObject, 'renderFileSceneInput'),
   }
 }
