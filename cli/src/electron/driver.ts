@@ -50,6 +50,7 @@ const POST_EXIT_GRACE_MS = 1500
 export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<void> {
   const sentinelPath = `${req.outputPath}.done`
   const errorPath = `${req.outputPath}.error`
+  const verbose = process.env.HYPERMOTION_VERBOSE === '1'
 
   // Clean slate — remove any stale output / sentinels from previous runs
   // so we can't false-positive on old data.
@@ -78,7 +79,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      ELECTRON_ENABLE_LOGGING: process.env.HYPERMOTION_VERBOSE ? '1' : '',
+      ELECTRON_ENABLE_LOGGING: verbose ? '1' : '',
     },
   })
 
@@ -98,7 +99,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   })
   child.stderr.on('data', (chunk: Buffer) => {
     stderr += chunk.toString()
-    if (process.env.HYPERMOTION_VERBOSE) {
+    if (verbose) {
       process.stderr.write(chunk)
     }
   })
