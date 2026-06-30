@@ -10,6 +10,17 @@ const OpenInput = z.object({
   scene: z.string().describe('Path to a .hype scene file.'),
 })
 type OpenInputData = z.infer<typeof OpenInput>
+type OpenSceneDeps = {
+  existsSync: typeof fs.existsSync
+  statSync: typeof fs.statSync
+  openScene: typeof pushSceneToRunningApp
+}
+
+const defaultDeps: OpenSceneDeps = {
+  existsSync: fs.existsSync,
+  statSync: fs.statSync,
+  openScene: pushSceneToRunningApp,
+}
 
 export const openSceneTool: Tool = {
   name: 'open_scene',
@@ -25,6 +36,7 @@ export const openSceneTool: Tool = {
 
 export async function handleOpenScene(
   args: Record<string, unknown>,
+  deps: OpenSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = OpenInput.safeParse(args)
   if (!parsed.success) {
@@ -41,19 +53,35 @@ export async function handleOpenScene(
 
   const input: OpenInputData = parsed.data
   const scenePath = path.resolve(input.scene)
-  if (!fs.existsSync(scenePath)) {
+  if (!deps.existsSync(scenePath)) {
     return {
       isError: true,
       content: [{ type: 'text' as const, text: `Scene file not found: ${scenePath}` }],
     }
   }
-  if (!fs.statSync(scenePath).isFile()) {
+  let stats: fs.Stats
+  try {
+    stats = deps.statSync(scenePath)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `open_scene: failed to read ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
+  if (!stats.isFile()) {
     return {
       isError: true,
       content: [{ type: 'text' as const, text: `Scene path is not a file: ${scenePath}` }],
     }
   }
-  const opened = await pushSceneToRunningApp(scenePath)
+  const opened = await deps.openScene(scenePath)
   if (!opened) {
     return {
       isError: true,
