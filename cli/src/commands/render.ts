@@ -17,7 +17,7 @@ import { Command } from 'commander'
 import path from 'node:path'
 import fs from 'node:fs'
 import { locateDesktopApp } from '../electron/locator.js'
-import { driveHeadlessRender } from '../electron/driver.js'
+import { driveHeadlessRender, type HeadlessRenderRequest } from '../electron/driver.js'
 import {
   RENDER_FORMATS,
   RENDER_QUALITIES,
@@ -36,7 +36,15 @@ interface RenderOptions {
   scene?: string
 }
 
-export function renderCommand(): Command {
+interface RenderCommandDeps {
+  locateApp?: () => Promise<string | null>
+  driveRender?: (req: HeadlessRenderRequest) => Promise<void>
+}
+
+export function renderCommand(deps: RenderCommandDeps = {}): Command {
+  const locateApp = deps.locateApp ?? locateDesktopApp
+  const driveRender = deps.driveRender ?? driveHeadlessRender
+
   return new Command('render')
     .description(
       "Render the current scene (whatever's loaded in the desktop app) " +
@@ -97,7 +105,7 @@ export function renderCommand(): Command {
         process.exit(2)
       }
 
-      const appPath = await locateDesktopApp()
+      const appPath = await locateApp()
       if (!appPath) {
         console.error(
           '[render] hyper-motion desktop app not found.\n' +
@@ -113,7 +121,7 @@ export function renderCommand(): Command {
       console.log(`[render] running… (the desktop app launches off-screen)`)
 
       try {
-        await driveHeadlessRender({
+        await driveRender({
           appPath,
           outputPath,
           format,

@@ -5,9 +5,47 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import type { HeadlessRenderRequest } from '../electron/driver.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
-import { captureStderr } from '../testUtils/stdout.js'
+import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { renderCommand } from './render.js'
+
+test('render command forwards saved scene paths to the driver', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-ok-'))
+  const scenePath = path.join(dir, 'scene with spaces.hype')
+  const outputPath = path.join(dir, 'exports', 'out.webm')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  fs.writeFileSync(scenePath, 'fake scene')
+  try {
+    const stdout = await captureStdout(async () => {
+      await renderCommand({
+        locateApp: async () => appPath,
+        driveRender: async (req) => {
+          calls.push(req)
+        },
+      }).parseAsync(
+        ['--scene', scenePath, '-o', outputPath, '--quality', '720p', '--fps', '60'],
+        { from: 'user' },
+      )
+    })
+
+    assert.deepEqual(calls, [
+      {
+        appPath,
+        outputPath,
+        format: 'webm',
+        quality: '720p',
+        fps: 60,
+        scenePath,
+      },
+    ])
+    assert.match(stdout, new RegExp(`^\\[render\\] scene:   ${scenePath}$`, 'm'))
+    assert.equal(fs.existsSync(path.dirname(outputPath)), true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
