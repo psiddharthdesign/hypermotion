@@ -34,6 +34,20 @@ test('inspect_scene reports missing files as MCP errors', async () => {
   assert.match(text, /^inspect_scene: failed to read /)
 })
 
+test('inspect_scene rejects directory inputs as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-dir-'))
+
+  try {
+    const result = await handleInspectScene({ scene: dir })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `inspect_scene: scene path is not a file: ${dir}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect_scene reports malformed scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-mcp-'))
   const scenePath = path.join(dir, 'broken.hype')
