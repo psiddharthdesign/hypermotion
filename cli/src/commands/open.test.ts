@@ -89,6 +89,35 @@ test('open command reports directories before launching the app', async () => {
   }
 })
 
+test('open command reports stat failures before launching the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-stat-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.writeFileSync(scenePath, '')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          openCommand({
+            locateApp: async () => path.join(dir, 'hyper-motion'),
+            existsSync: fs.existsSync,
+            statSync: () => {
+              throw new Error('stat failed')
+            },
+            spawnApp: () => {
+              throw new Error('should not launch')
+            },
+          }).parseAsync([scenePath], { from: 'user' }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.equal(stderr, `[open] failed to read ${scenePath}: stat failed\n`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('open command reports when the desktop app cannot be found', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-app-'))
   const scenePath = path.join(dir, 'scene.hype')
