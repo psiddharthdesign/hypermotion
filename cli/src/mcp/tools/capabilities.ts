@@ -44,7 +44,8 @@ type KeyframeablePropertiesPayload = {
 
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
-  description: 'Return supported scene node kinds, patch operations, render formats, and keyframeable properties.',
+  description:
+    'Return supported scene node kinds, patch operations, render formats, validation/query tools, and keyframeable properties.',
   inputSchema: { type: 'object', properties: {}, required: [] },
 }
 
