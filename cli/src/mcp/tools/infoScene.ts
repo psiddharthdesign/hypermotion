@@ -52,6 +52,19 @@ export async function handleInfoScene(
   const scenePath = input.scene
   let bytes: Buffer
   try {
+    const stats = fs.statSync(scenePath)
+    if (!stats.isFile()) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `info_scene: scene path is not a file: ${scenePath}`,
+          },
+        ],
+      }
+    }
+
     bytes = fs.readFileSync(scenePath)
   } catch (err) {
     return {
