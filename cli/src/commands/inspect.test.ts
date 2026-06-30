@@ -141,6 +141,36 @@ test('inspect command reports directory inputs', async () => {
   }
 })
 
+test('inspect command reports resolved relative scene paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-relative-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousCwd = process.cwd()
+  fs.mkdirSync(scenePath)
+  try {
+    process.chdir(dir)
+    const resolvedScenePath = path.resolve('scene.hype')
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          inspectCommand().parse(['scene.hype'], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(
+      stderr,
+      new RegExp(
+        `^\\[inspect\\] scene path is not a file: ${escapeRegExp(resolvedScenePath)}$`,
+        'm',
+      ),
+    )
+  } finally {
+    process.chdir(previousCwd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'broken.hype')
@@ -161,3 +191,7 @@ test('inspect command reports malformed scene files', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
