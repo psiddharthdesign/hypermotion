@@ -42,6 +42,23 @@ test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
   }
 })
 
+test('locator rejects a directory HYPERMOTION_APP_PATH override', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-dir-'))
+
+  try {
+    const stderr = await captureStderr(() =>
+      withEnvVar('HYPERMOTION_APP_PATH', dir, async () => {
+        assert.equal(await locateDesktopApp(), null)
+      }),
+    )
+
+    assert.match(stderr, /HYPERMOTION_APP_PATH is set/)
+    assert.equal(stderr.includes(dir), true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('locator treats an empty HYPERMOTION_APP_PATH as unset', async () => {
   let locatedPath: string | null = null
 
