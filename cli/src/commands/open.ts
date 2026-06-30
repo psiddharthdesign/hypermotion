@@ -56,10 +56,20 @@ export function openCommand(deps: Partial<OpenCommandDeps> = {}): Command {
         console.error('[open] hyper-motion desktop app not found.')
         process.exit(1)
       }
-      const child = commandDeps.spawnApp(appPath, [scenePath], {
-        detached: true,
-        stdio: 'ignore',
-      })
+      let child: Pick<ChildProcess, 'unref'>
+      try {
+        child = commandDeps.spawnApp(appPath, [scenePath], {
+          detached: true,
+          stdio: 'ignore',
+        })
+      } catch (err) {
+        console.error(
+          `[open] failed to open ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+        process.exit(1)
+      }
       child.unref()
       console.log(`Opened ${scenePath}`)
     })
