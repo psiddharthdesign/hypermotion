@@ -15,6 +15,7 @@
     "build:mac": "vite build && electron-builder --mac --publish=never",
     "build:win": "vite build && electron-builder --win --publish=never",
     "lint": "eslint .",
+    "test": "pnpm --dir cli test",
     "typecheck": "tsc -b",
     "preview": "vite preview"
   },
