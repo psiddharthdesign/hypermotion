@@ -9,6 +9,8 @@ import { locateDesktopApp } from '../electron/locator.js'
 
 interface OpenCommandDeps {
   locateApp: typeof locateDesktopApp
+  existsSync: typeof fs.existsSync
+  statSync: typeof fs.statSync
   spawnApp: (
     command: string,
     args: string[],
@@ -18,29 +20,43 @@ interface OpenCommandDeps {
 
 const defaultDeps: OpenCommandDeps = {
   locateApp: locateDesktopApp,
+  existsSync: fs.existsSync,
+  statSync: fs.statSync,
   spawnApp: spawn,
 }
 
-export function openCommand(deps: OpenCommandDeps = defaultDeps): Command {
+export function openCommand(deps: Partial<OpenCommandDeps> = {}): Command {
+  const commandDeps = { ...defaultDeps, ...deps }
   return new Command('open')
     .description('Open a .hype scene file in the hyper-motion desktop app.')
     .argument('<scene>', 'Path to a .hype scene file')
     .action(async (scene: string) => {
       const scenePath = path.resolve(scene)
-      if (!fs.existsSync(scenePath)) {
+      if (!commandDeps.existsSync(scenePath)) {
         console.error(`[open] scene file not found: ${scenePath}`)
         process.exit(2)
       }
-      if (!fs.statSync(scenePath).isFile()) {
+      let stats: fs.Stats
+      try {
+        stats = commandDeps.statSync(scenePath)
+      } catch (err) {
+        console.error(
+          `[open] failed to read ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+        process.exit(2)
+      }
+      if (!stats.isFile()) {
         console.error(`[open] scene path is not a file: ${scenePath}`)
         process.exit(2)
       }
-      const appPath = await deps.locateApp()
+      const appPath = await commandDeps.locateApp()
       if (!appPath) {
         console.error('[open] hyper-motion desktop app not found.')
         process.exit(1)
       }
-      const child = deps.spawnApp(appPath, [scenePath], {
+      const child = commandDeps.spawnApp(appPath, [scenePath], {
         detached: true,
         stdio: 'ignore',
       })
