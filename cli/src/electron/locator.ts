@@ -24,7 +24,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 
 export async function locateDesktopApp(): Promise<string | null> {
-  const override = process.env.HYPERMOTION_APP_PATH
+  const override = process.env.HYPERMOTION_APP_PATH?.trim()
   if (override) {
     if (isFile(override)) {
       return override

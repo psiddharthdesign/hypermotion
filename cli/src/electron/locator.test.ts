@@ -73,3 +73,18 @@ test('locator treats an empty HYPERMOTION_APP_PATH as unset', async () => {
     assert.equal(fs.existsSync(locatedPath), true)
   }
 })
+
+test('locator treats a whitespace-only HYPERMOTION_APP_PATH as unset', async () => {
+  let locatedPath: string | null = null
+
+  const stderr = await captureStderr(() =>
+    withEnvVar('HYPERMOTION_APP_PATH', '   ', async () => {
+      locatedPath = await locateDesktopApp()
+    }),
+  )
+
+  assert.equal(stderr, '')
+  if (locatedPath !== null) {
+    assert.equal(fs.existsSync(locatedPath), true)
+  }
+})
