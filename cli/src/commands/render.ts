@@ -39,11 +39,17 @@ interface RenderOptions {
 interface RenderCommandDeps {
   locateApp?: () => Promise<string | null>
   driveRender?: (req: HeadlessRenderRequest) => Promise<void>
+  existsSync?: typeof fs.existsSync
+  mkdirSync?: typeof fs.mkdirSync
+  statSync?: typeof fs.statSync
 }
 
 export function renderCommand(deps: RenderCommandDeps = {}): Command {
   const locateApp = deps.locateApp ?? locateDesktopApp
   const driveRender = deps.driveRender ?? driveHeadlessRender
+  const existsSync = deps.existsSync ?? fs.existsSync
+  const mkdirSync = deps.mkdirSync ?? fs.mkdirSync
+  const statSync = deps.statSync ?? fs.statSync
 
   return new Command('render')
     .description(
@@ -91,18 +97,31 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       // Make sure the output directory exists so the desktop app's
       // post-render write doesn't fail on a missing parent.
       const outDir = path.dirname(outputPath)
-      if (!fs.existsSync(outDir)) {
-        fs.mkdirSync(outDir, { recursive: true })
+      if (!existsSync(outDir)) {
+        mkdirSync(outDir, { recursive: true })
       }
 
       const scenePath = opts.scene ? path.resolve(opts.scene) : undefined
-      if (scenePath && !fs.existsSync(scenePath)) {
+      if (scenePath && !existsSync(scenePath)) {
         console.error(`[render] scene file not found: ${scenePath}`)
         process.exit(2)
       }
-      if (scenePath && !fs.statSync(scenePath).isFile()) {
-        console.error(`[render] scene path is not a file: ${scenePath}`)
-        process.exit(2)
+      if (scenePath) {
+        let stats: fs.Stats
+        try {
+          stats = statSync(scenePath)
+        } catch (err) {
+          console.error(
+            `[render] failed to read ${scenePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+          process.exit(2)
+        }
+        if (!stats.isFile()) {
+          console.error(`[render] scene path is not a file: ${scenePath}`)
+          process.exit(2)
+        }
       }
 
       const appPath = await locateApp()
