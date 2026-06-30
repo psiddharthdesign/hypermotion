@@ -55,3 +55,28 @@ test('open_scene reports directories as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('open_scene reports stat failures as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-stat-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.writeFileSync(scenePath, '')
+
+  try {
+    const result = await handleOpenScene(
+      { scene: scenePath },
+      {
+        existsSync: fs.existsSync,
+        statSync: () => {
+          throw new Error('stat failed')
+        },
+        openScene: async () => true,
+      },
+    )
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `open_scene: failed to read ${scenePath}: stat failed`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
