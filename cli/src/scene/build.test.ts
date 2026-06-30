@@ -870,6 +870,18 @@ test('validateScene rejects non-camera active camera ids', () => {
   ])
 })
 
+test('validateScene rejects active camera ids pointing to missing nodes', () => {
+  const scene = sampleScene()
+  scene.activeCameraId = 'missing-camera'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.activeCameraId points to missing node: missing-camera',
+  ])
+})
+
 test('validateScene rejects unsupported node kinds', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
