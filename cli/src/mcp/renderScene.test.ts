@@ -50,6 +50,17 @@ test('render_scene reports invalid arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^render_scene: invalid arguments/)
 })
 
+test('render_scene rejects fractional fps values as MCP errors', async () => {
+  const result = await handleRenderScene({
+    output: 'demo.mp4',
+    fps: 30.5,
+  })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^render_scene: invalid arguments/)
+  assert.match(assertToolText(result), /Expected integer/)
+})
+
 test('render_scene reports missing scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-missing-'))
   const missingScene = path.join(dir, 'scene.hype')
