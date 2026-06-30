@@ -7,6 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import type { DoctorReport } from '../commands/doctor.js'
 import { withEnvVar } from '../testUtils/env.js'
+import { assertToolText } from '../testUtils/mcp.js'
 import { captureStderr } from '../testUtils/stdout.js'
 import { doctorTool, handleDoctor } from './tools/doctor.js'
 
@@ -32,8 +33,7 @@ test('doctor returns the report as MCP JSON content', async () => {
     const { result } = state
     if (result === undefined) throw new Error('doctor result was not produced')
     assert.equal(result.isError, undefined)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    const report = JSON.parse(text) as DoctorReport
+    const report = JSON.parse(assertToolText(result)) as DoctorReport
 
     assert.equal(report.ok, false)
     assert.equal(report.desktopApp.found, false)
