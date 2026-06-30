@@ -20,6 +20,7 @@ import { driveHeadlessRender } from '../../electron/driver.js'
 import {
   RENDER_FORMATS,
   RENDER_QUALITIES,
+  isRenderFormat,
   type RenderFormat,
 } from '../../renderOptions.js'
 
@@ -196,6 +197,6 @@ export async function handleRenderScene(
 
 function inferFormat(outPath: string): RenderFormat {
   const ext = path.extname(outPath).toLowerCase().slice(1)
-  if (RENDER_FORMATS.includes(ext as RenderFormat)) return ext as RenderFormat
+  if (isRenderFormat(ext)) return ext
   return 'mp4'
 }
