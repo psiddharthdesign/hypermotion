@@ -60,8 +60,7 @@ test('query scene MCP handlers report invalid arguments as MCP errors', async ()
   for (const entry of cases) {
     const result = await entry.run()
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, new RegExp(`^${entry.name}: invalid arguments`))
+    assert.match(assertToolText(result), new RegExp(`^${entry.name}: invalid arguments`))
   }
 })
 
@@ -83,8 +82,7 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-      assert.match(text, new RegExp(`^${entry.name}: failed to read ${missingScene}:`))
+      assert.match(assertToolText(result), new RegExp(`^${entry.name}: failed to read ${missingScene}:`))
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -110,8 +108,7 @@ test('query scene MCP handlers report directories as MCP errors', async () => {
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-      assert.equal(text, `${entry.name}: scene path is not a file: ${scenePath}`)
+      assert.equal(assertToolText(result), `${entry.name}: scene path is not a file: ${scenePath}`)
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -138,8 +135,7 @@ test('query scene MCP handlers report malformed scene files as MCP errors', asyn
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-      assert.match(text, new RegExp(`^${entry.name}: failed to read ${scenePath}:`))
+      assert.match(assertToolText(result), new RegExp(`^${entry.name}: failed to read ${scenePath}:`))
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -210,8 +206,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     )
 
     const layersResult = await handleListLayers({ scene: scenePath })
-    const layersText = layersResult.content[0]?.type === 'text' ? layersResult.content[0].text : ''
-    const layersPayload = JSON.parse(layersText) as {
+    const layersPayload = JSON.parse(assertToolText(layersResult)) as {
       root: string
       activeCameraId: string
       layers: Array<{ id: string; name?: string; kind: string; children: string[] }>
@@ -229,20 +224,16 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     )
 
     const layerResult = await handleGetLayer({ scene: scenePath, nodeId: 'title' })
-    const layerText = layerResult.content[0]?.type === 'text' ? layerResult.content[0].text : ''
-    const layerPayload = JSON.parse(layerText) as { id: string; text: string }
+    const layerPayload = JSON.parse(assertToolText(layerResult)) as { id: string; text: string }
     assert.equal(layerPayload.id, 'title')
     assert.equal(layerPayload.text, 'Queryable')
 
     const missingLayerResult = await handleGetLayer({ scene: scenePath, nodeId: 'missing' })
     assert.equal(missingLayerResult.isError, true)
-    const missingLayerText =
-      missingLayerResult.content[0]?.type === 'text' ? missingLayerResult.content[0].text : ''
-    assert.equal(missingLayerText, 'Layer not found: missing')
+    assert.equal(assertToolText(missingLayerResult), 'Layer not found: missing')
 
     const tracksResult = await handleListTracks({ scene: scenePath, nodeId: 'title' })
-    const tracksText = tracksResult.content[0]?.type === 'text' ? tracksResult.content[0].text : ''
-    const tracksPayload = JSON.parse(tracksText) as {
+    const tracksPayload = JSON.parse(assertToolText(tracksResult)) as {
       tracks: Array<{ id: string; nodeId: string; propertyId: string }>
     }
     assert.equal(tracksPayload.tracks.length, 1)
@@ -251,9 +242,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.equal(tracksPayload.tracks[0]?.propertyId, 'appearance.opacity')
 
     const allTracksResult = await handleListTracks({ scene: scenePath })
-    const allTracksText =
-      allTracksResult.content[0]?.type === 'text' ? allTracksResult.content[0].text : ''
-    const allTracksPayload = JSON.parse(allTracksText) as {
+    const allTracksPayload = JSON.parse(assertToolText(allTracksResult)) as {
       tracks: Array<{ id: string; nodeId: string; propertyId: string }>
     }
     assert.deepEqual(
@@ -262,14 +251,13 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     )
 
     const unrelatedTracksResult = await handleListTracks({ scene: scenePath, nodeId: 'missing' })
-    const unrelatedTracksText =
-      unrelatedTracksResult.content[0]?.type === 'text' ? unrelatedTracksResult.content[0].text : ''
-    const unrelatedTracksPayload = JSON.parse(unrelatedTracksText) as { tracks: unknown[] }
+    const unrelatedTracksPayload = JSON.parse(assertToolText(unrelatedTracksResult)) as {
+      tracks: unknown[]
+    }
     assert.deepEqual(unrelatedTracksPayload.tracks, [])
 
     const camerasResult = await handleListCameras({ scene: scenePath })
-    const camerasText = camerasResult.content[0]?.type === 'text' ? camerasResult.content[0].text : ''
-    const camerasPayload = JSON.parse(camerasText) as {
+    const camerasPayload = JSON.parse(assertToolText(camerasResult)) as {
       activeCameraId: string
       cameras: Array<{ id: string; kind: string }>
     }
@@ -281,3 +269,9 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function assertToolText(result: CallToolResult): string {
+  const firstContent = result.content[0]
+  assert.equal(firstContent?.type, 'text')
+  return firstContent.text
+}
