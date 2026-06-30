@@ -141,6 +141,47 @@ test('patch_scene writes alternate output without applying live', async () => {
   }
 })
 
+test('patch_scene overwrites the input scene by default without applying live', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-patch-in-place-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Before',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handlePatchScene({
+      scene: scenePath,
+      applyLive: false,
+      patch: {
+        ops: [{ op: 'setMeta', patch: { name: 'After' } }],
+      },
+    })
+
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, new RegExp(`^Patched ${escapeRegExp(scenePath)} → ${escapeRegExp(scenePath)}$`))
+    assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'After')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
