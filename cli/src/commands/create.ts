@@ -20,7 +20,13 @@
  *         "parent": null,
  *         "children": ["text"],
  *         "size": { "width": 1080, "height": 1920 },
- *         "layout": { "mode": "none" }
+ *         "layout": {
+ *           "mode": "flex",
+ *           "direction": "column",
+ *           "justify": "center",
+ *           "align": "center",
+ *           "padding": { "top": 24, "right": 24, "bottom": 24, "left": 24 }
+ *         }
  *       },
  *       "text":   { "id": "text", "kind": "text", "parent": "root", "text": "Hello" },
  *       "camera": {
