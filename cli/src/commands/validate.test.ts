@@ -396,6 +396,41 @@ test('validate command reports stat failures as read errors', async () => {
   }
 })
 
+test('validate command reports read failures after stat succeeds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-read-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousReadFileSync = fs.readFileSync
+  try {
+    fs.writeFileSync(scenePath, '')
+    Object.defineProperty(fs, 'readFileSync', {
+      configurable: true,
+      value: () => {
+        throw new Error('read failed')
+      },
+    })
+
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
+      assert.throws(
+        () => {
+          validateCommand().parse([scenePath], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    }))
+
+    assert.equal(
+      stderr,
+      `[validate] failed to read ${path.resolve(scenePath)}: read failed\n`,
+    )
+  } finally {
+    Object.defineProperty(fs, 'readFileSync', {
+      configurable: true,
+      value: previousReadFileSync,
+    })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'malformed.hype')
