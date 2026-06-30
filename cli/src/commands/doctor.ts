@@ -28,6 +28,10 @@ export interface DoctorReport {
   }
 }
 
+type DoctorCommandOptions = {
+  json?: boolean
+}
+
 export async function getDoctorReport(): Promise<DoctorReport> {
   const appPath = await locateDesktopApp()
   return {
@@ -66,7 +70,7 @@ export function doctorCommand(): Command {
   return new Command('doctor')
     .description('Check hyper-motion CLI, desktop app, and agent tool capabilities.')
     .option('--json', 'Output the report as JSON')
-    .action(async (options: { json?: boolean }) => {
+    .action(async (options: DoctorCommandOptions) => {
       const report = await getDoctorReport()
       if (options.json) {
         process.stdout.write(JSON.stringify(report, null, 2) + '\n')
