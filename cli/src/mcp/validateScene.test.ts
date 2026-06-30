@@ -55,6 +55,34 @@ test('validate_scene rejects directory inputs as MCP errors', async () => {
   }
 })
 
+test('validate_scene reports read failures after stat succeeds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-read-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousReadFileSync = fs.readFileSync
+
+  try {
+    fs.writeFileSync(scenePath, '')
+    Object.defineProperty(fs, 'readFileSync', {
+      configurable: true,
+      value: () => {
+        throw new Error('read failed')
+      },
+    })
+
+    const result = await handleValidateScene({ scene: scenePath })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `validate_scene: failed to read ${scenePath}: read failed`)
+  } finally {
+    Object.defineProperty(fs, 'readFileSync', {
+      configurable: true,
+      value: previousReadFileSync,
+    })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate_scene reports malformed scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-malformed-'))
   const scenePath = path.join(dir, 'malformed.hype')
