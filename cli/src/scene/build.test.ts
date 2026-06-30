@@ -2043,6 +2043,22 @@ test('readSceneSummary treats missing sections as empty', () => {
   assert.equal(summary.sectionCount, 0)
 })
 
+test('readSceneSummary treats empty root and active camera ids as missing', () => {
+  const doc = new Y.Doc()
+  const scene = doc.getMap<unknown>('scene')
+  scene.set('meta', new Y.Map<unknown>())
+  scene.set('nodes', new Y.Map<Y.Map<unknown>>())
+  scene.set('tracks', new Y.Map<Y.Map<unknown>>())
+  scene.set('sections', new Y.Map<unknown>())
+  scene.set('root', '')
+  scene.set('activeCameraId', '')
+
+  const summary = readSceneSummary(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(summary.root, null)
+  assert.equal(summary.activeCameraId, null)
+})
+
 function inspectScene(bytes: Uint8Array): PlainRecord {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, bytes)
