@@ -129,8 +129,8 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       try {
         const raw = fs.readFileSync(errorPath, 'utf-8')
         try {
-          const data = JSON.parse(raw) as { message?: unknown }
-          if (typeof data.message === 'string' && data.message) message = data.message
+          const data = JSON.parse(raw)
+          if (hasErrorMessage(data)) message = data.message
         } catch {
           const text = raw.trim()
           if (text) message = text
@@ -176,6 +176,16 @@ function cleanFile(p: string): void {
   } catch {
     /* best-effort */
   }
+}
+
+function hasErrorMessage(value: unknown): value is { message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'message' in value &&
+    typeof value.message === 'string' &&
+    value.message.length > 0
+  )
 }
 
 function sleep(ms: number): Promise<void> {
