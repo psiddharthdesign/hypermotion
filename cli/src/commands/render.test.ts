@@ -216,6 +216,29 @@ test('render command reports missing scene files before launching the app', asyn
   }
 })
 
+test('render command reports output parent files before launching the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-parent-'))
+  const parentPath = path.join(dir, 'exports')
+  const outPath = path.join(parentPath, 'out.mp4')
+  fs.writeFileSync(parentPath, 'not a directory')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand().parseAsync(['-o', outPath], {
+            from: 'user',
+          }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[render\] output directory is not a directory: .*exports$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports directories before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-dir-'))
   const scenePath = path.join(dir, 'scene.hype')
@@ -253,9 +276,10 @@ test('render command reports scene stat failures before launching the app', asyn
             driveRender: async () => {
               throw new Error('should not render')
             },
-            statSync: () => {
-              throw new Error('stat failed')
-            },
+            statSync: ((targetPath: fs.PathLike) => {
+              if (targetPath === scenePath) throw new Error('stat failed')
+              return fs.statSync(targetPath)
+            }) as typeof fs.statSync,
           }).parseAsync(['--scene', scenePath, '-o', outPath], {
             from: 'user',
           }),
