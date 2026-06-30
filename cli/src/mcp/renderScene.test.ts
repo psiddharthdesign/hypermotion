@@ -86,6 +86,37 @@ test('render_scene reports scene directories as MCP errors', async () => {
   }
 })
 
+test('render_scene reports scene stat failures as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-stat-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.writeFileSync(scenePath, '')
+  const previousStatSync = fs.statSync
+
+  try {
+    Object.defineProperty(fs, 'statSync', {
+      configurable: true,
+      value: () => {
+        throw new Error('stat failed')
+      },
+    })
+
+    const result = await handleRenderScene({
+      output: path.join(dir, 'out.mp4'),
+      scene: scenePath,
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, `render_scene: failed to read ${scenePath}: stat failed`)
+  } finally {
+    Object.defineProperty(fs, 'statSync', {
+      configurable: true,
+      value: previousStatSync,
+    })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function schemaProperty(name: string): JsonSchemaProperty | undefined {
   return renderSceneTool.inputSchema.properties?.[name] as
     | JsonSchemaProperty

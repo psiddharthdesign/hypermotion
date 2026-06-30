@@ -113,15 +113,33 @@ export async function handleRenderScene(
       ],
     }
   }
-  if (scenePath && !fs.statSync(scenePath).isFile()) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: `render_scene: scene path is not a file: ${scenePath}`,
-        },
-      ],
+  if (scenePath) {
+    let stats: fs.Stats
+    try {
+      stats = fs.statSync(scenePath)
+    } catch (err) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: failed to read ${scenePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      }
+    }
+    if (!stats.isFile()) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: scene path is not a file: ${scenePath}`,
+          },
+        ],
+      }
     }
   }
 
