@@ -18,11 +18,12 @@ export function validateCommand(): Command {
       const resolvedScenePath = path.resolve(scenePath)
       let bytes: Buffer
       let result: SceneValidationResult
-      if (fs.existsSync(resolvedScenePath) && !fs.statSync(resolvedScenePath).isFile()) {
-        console.error(`[validate] scene path is not a file: ${resolvedScenePath}`)
-        process.exit(2)
-      }
       try {
+        const stats = fs.statSync(resolvedScenePath)
+        if (!stats.isFile()) {
+          console.error(`[validate] scene path is not a file: ${resolvedScenePath}`)
+          process.exit(2)
+        }
         bytes = fs.readFileSync(resolvedScenePath)
       } catch (err) {
         console.error(
