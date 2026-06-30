@@ -15,6 +15,17 @@ export function inspectCommand(): Command {
     .option('--json', 'Output JSON (default)', true)
     .action((scenePath: string, _options: InspectCommandOptions) => {
       let bytes: Buffer
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(scenePath)
+      } catch (err) {
+        console.error(`[inspect] failed to read ${scenePath}: ${err instanceof Error ? err.message : err}`)
+        process.exit(2)
+      }
+      if (!stat.isFile()) {
+        console.error(`[inspect] scene path is not a file: ${scenePath}`)
+        process.exit(2)
+      }
       try {
         bytes = fs.readFileSync(scenePath)
       } catch (err) {

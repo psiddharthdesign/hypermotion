@@ -121,6 +121,26 @@ test('inspect command reports missing scene files', async () => {
   }
 })
 
+test('inspect command reports directory inputs', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-dir-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.mkdirSync(scenePath)
+  try {
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          inspectCommand().parse([scenePath], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[inspect\] scene path is not a file: .*scene\.hype$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'broken.hype')
