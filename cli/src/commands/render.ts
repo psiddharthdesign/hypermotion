@@ -100,6 +100,9 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       const outDir = path.dirname(outputPath)
       if (!existsSync(outDir)) {
         mkdirSync(outDir, { recursive: true })
+      } else if (!statSync(outDir).isDirectory()) {
+        console.error(`[render] output directory is not a directory: ${outDir}`)
+        process.exit(2)
       }
 
       const scenePath = opts.scene ? path.resolve(opts.scene) : undefined
