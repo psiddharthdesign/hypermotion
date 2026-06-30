@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { withEnvVar } from '../testUtils/env.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 
@@ -126,26 +127,21 @@ test('render_scene reports scene stat failures as MCP errors', async () => {
 test('render_scene reports desktop driver failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-fail-'))
   const appPath = path.join(dir, 'hyper-motion')
-  const previousAppPath = process.env.HYPERMOTION_APP_PATH
 
   try {
     fs.writeFileSync(appPath, '#!/bin/sh\nprintf "render failed\\n" >&2\nexit 2\n')
     fs.chmodSync(appPath, 0o755)
-    process.env.HYPERMOTION_APP_PATH = appPath
 
-    const result = await handleRenderScene({
-      output: path.join(dir, 'out.mp4'),
-    })
+    const result = await withEnvVar('HYPERMOTION_APP_PATH', appPath, () =>
+      handleRenderScene({
+        output: path.join(dir, 'out.mp4'),
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.match(assertToolText(result), /^render_scene: failed: Desktop app exited with code 2/)
     assert.match(assertToolText(result), /render failed/)
   } finally {
-    if (previousAppPath === undefined) {
-      delete process.env.HYPERMOTION_APP_PATH
-    } else {
-      process.env.HYPERMOTION_APP_PATH = previousAppPath
-    }
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
