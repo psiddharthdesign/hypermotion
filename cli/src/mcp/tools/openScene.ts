@@ -81,7 +81,22 @@ export async function handleOpenScene(
       content: [{ type: 'text' as const, text: `Scene path is not a file: ${scenePath}` }],
     }
   }
-  const opened = await deps.openScene(scenePath)
+  let opened: boolean
+  try {
+    opened = await deps.openScene(scenePath)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `open_scene: failed to open ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
+    }
+  }
   if (!opened) {
     return {
       isError: true,
