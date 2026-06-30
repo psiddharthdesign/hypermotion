@@ -10,6 +10,7 @@
 
 import { Command } from 'commander'
 import fs from 'node:fs'
+import path from 'node:path'
 import { readSceneSummary, type SceneSummary } from '../scene/build.js'
 
 type InfoCommandOptions = {
@@ -27,12 +28,17 @@ export function infoCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output the summary as JSON for scripting')
     .action((scenePath: string, options: InfoCommandOptions) => {
+      const resolvedScenePath = path.resolve(scenePath)
       let bytes: Buffer
+      if (fs.existsSync(resolvedScenePath) && !fs.statSync(resolvedScenePath).isFile()) {
+        console.error(`[info] scene path is not a file: ${resolvedScenePath}`)
+        process.exit(2)
+      }
       try {
-        bytes = fs.readFileSync(scenePath)
+        bytes = fs.readFileSync(resolvedScenePath)
       } catch (err) {
         console.error(
-          `[info] failed to read ${scenePath}: ${
+          `[info] failed to read ${resolvedScenePath}: ${
             err instanceof Error ? err.message : err
           }`,
         )
@@ -44,7 +50,7 @@ export function infoCommand(): Command {
         summary = readSceneSummary(new Uint8Array(bytes))
       } catch (err) {
         console.error(
-          `[info] ${scenePath} doesn't look like a valid .hype file: ${
+          `[info] ${resolvedScenePath} doesn't look like a valid .hype file: ${
             err instanceof Error ? err.message : err
           }`,
         )
