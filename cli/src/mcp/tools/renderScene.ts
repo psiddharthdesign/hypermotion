@@ -145,15 +145,33 @@ export async function handleRenderScene(
   }
 
   const outDir = path.dirname(outputPath)
-  if (fs.existsSync(outDir) && !fs.statSync(outDir).isDirectory()) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: `render_scene: output directory is not a directory: ${outDir}`,
-        },
-      ],
+  if (fs.existsSync(outDir)) {
+    let stats: fs.Stats
+    try {
+      stats = fs.statSync(outDir)
+    } catch (err) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: failed to read output directory ${outDir}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      }
+    }
+    if (!stats.isDirectory()) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: output directory is not a directory: ${outDir}`,
+          },
+        ],
+      }
     }
   }
 
