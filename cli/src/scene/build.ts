@@ -937,6 +937,15 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
     if (!Array.isArray(track.keyframes)) {
       errors.push(`track ${id} keyframes must be an array`)
+    } else {
+      track.keyframes.forEach((rawKeyframe, index) => {
+        const keyframe = asRecord(rawKeyframe)
+        const label = typeof keyframe.id === 'string' ? keyframe.id : `#${index}`
+        if (typeof keyframe.id !== 'string') errors.push(`track ${id} keyframe ${index} id must be a string`)
+        if (typeof keyframe.time !== 'number' || !Number.isFinite(keyframe.time)) {
+          errors.push(`track ${id} keyframe ${label} time must be a finite number`)
+        }
+      })
     }
     if (typeof track.propertyId !== 'string' || !isPropertyId(track.propertyId)) {
       errors.push(`track ${id} has unsupported propertyId: ${String(track.propertyId)}`)

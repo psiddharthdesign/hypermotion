@@ -1083,6 +1083,25 @@ test('validateScene rejects track keyframes that are not arrays', () => {
   ])
 })
 
+test('validateScene rejects malformed keyframe ids and times', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  tracks.get('fade-title')?.set('keyframes', [
+    { time: 0, value: 0 },
+    { id: 'end', time: Number.NaN, value: 1 },
+  ])
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title keyframe 0 id must be a string',
+    'track fade-title keyframe end time must be a finite number',
+  ])
+})
+
 test('validateScene rejects section ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
