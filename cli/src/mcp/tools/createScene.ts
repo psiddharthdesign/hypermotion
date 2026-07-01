@@ -183,7 +183,7 @@ export async function handleCreateScene(
   // Make sure the output's parent directory exists. Agents tend to
   // specify deep paths and we don't want a simple ENOENT to obscure
   // the actual failure.
-  const outputPath = input.output
+  const outputPath = input.output.trim()
   if (!path.isAbsolute(outputPath)) {
     return {
       isError: true,
