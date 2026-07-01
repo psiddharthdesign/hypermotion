@@ -134,6 +134,35 @@ test('buildSceneBytes preserves text animation track config', () => {
   assert.deepEqual(tracks['fade-title']?.textAnimation, track.textAnimation)
 })
 
+test('buildSceneBytes accepts soft text animation smoothing', () => {
+  const scene = sampleScene()
+  const track = scene.tracks?.['fade-title']
+  if (!track) throw new Error('missing sample track')
+  track.propertyId = 'text.progress'
+  track.textAnimation = {
+    id: 'character-wave',
+    mode: 'in',
+    applyTo: 'letters',
+    order: 'forward',
+    delay: 0.06,
+    smoothing: 'soft',
+    duration: 0.9,
+    startTime: 0,
+    acceleration: 'slow-down',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0.5,
+    blurRadius: 20,
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as PlainSceneMap
+  const textAnimation = tracks['fade-title']?.textAnimation as PlainRecord
+
+  assert.equal(textAnimation.smoothing, 'soft')
+})
+
 test('buildSceneBytes fills default metadata for minimal scenes', () => {
   const bytes = buildSceneBytes({
     nodes: {
