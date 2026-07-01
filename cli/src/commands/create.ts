@@ -110,7 +110,8 @@ export function createCommand(): Command {
       // Make sure the output's parent directory exists. Tools and
       // agents tend to specify deeply-nested paths; we don't want a
       // simple ENOENT to obscure the real error.
-      const outDir = path.dirname(path.resolve(output))
+      const outputPath = path.resolve(output)
+      const outDir = path.dirname(outputPath)
       try {
         fs.mkdirSync(outDir, { recursive: true })
       } catch (err) {
@@ -123,10 +124,10 @@ export function createCommand(): Command {
       }
 
       try {
-        fs.writeFileSync(output, Buffer.from(bytes))
+        fs.writeFileSync(outputPath, Buffer.from(bytes))
       } catch (err) {
         console.error(
-          `[create] failed to write ${output}: ${
+          `[create] failed to write ${outputPath}: ${
             err instanceof Error ? err.message : err
           }`,
         )
@@ -137,7 +138,7 @@ export function createCommand(): Command {
       const layers = summary.layerCount
       const tracks = summary.trackCount
       console.log(
-        `Wrote ${output} (${formatBytes(bytes.length)}, ${layers} layer${layers === 1 ? '' : 's'}, ${tracks} track${tracks === 1 ? '' : 's'})`,
+        `Wrote ${outputPath} (${formatBytes(bytes.length)}, ${layers} layer${layers === 1 ? '' : 's'}, ${tracks} track${tracks === 1 ? '' : 's'})`,
       )
     })
 }
