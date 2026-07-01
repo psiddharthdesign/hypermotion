@@ -872,7 +872,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
 
-  if (!root) errors.push('scene.root is missing')
+  if (data.root !== undefined && typeof data.root !== 'string') {
+    errors.push('scene.root must be a string')
+  } else if (!root) errors.push('scene.root is missing')
   else if (!nodes[root]) errors.push(`scene.root points to missing node: ${root}`)
   else if (asRecord(nodes[root]).kind !== 'frame') {
     errors.push(`scene.root is not a frame node: ${root}`)

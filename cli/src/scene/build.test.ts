@@ -906,6 +906,17 @@ test('validateScene rejects non-frame root nodes', () => {
   assert.deepEqual(result.errors, ['scene.root is not a frame node: title'])
 })
 
+test('validateScene rejects non-string root ids', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  doc.getMap<unknown>('scene').set('root', 42)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['scene.root must be a string'])
+})
+
 test('validateScene rejects non-camera active camera ids', () => {
   const scene = sampleScene()
   scene.activeCameraId = 'title'
