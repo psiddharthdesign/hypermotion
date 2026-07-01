@@ -22,7 +22,7 @@ export const infoSceneTool: Tool = {
   description:
     'Read a hyper-motion .hype scene file and return a structured summary ' +
     '(canvas size, duration, frame rate, layer count, track count, section ' +
-    'count, keyframe count). Pass the absolute path to the .hype file.',
+    'count, keyframe count). Pass the path to the .hype file.',
   inputSchema: {
     type: 'object',
     properties: {
