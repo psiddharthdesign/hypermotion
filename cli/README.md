@@ -95,7 +95,7 @@ What works today:
 - `hypermotion info out.hype` — prints scene metadata.
 - `hypermotion inspect`, `patch`, `validate`, and `open` — inspect,
   modify, verify, and launch saved `.hype` scenes.
-- `hypermotion doctor` and `serve` — check local setup and run the MCP server.
+- `hypermotion doctor` and `serve --mcp` — check local setup and run the MCP server.
 - `hypermotion-mcp` — registers + responds to MCP clients.
 - MCP tools for scene authoring, inspection, patching, validation,
   querying, opening, rendering, diagnostics, and capability discovery.
