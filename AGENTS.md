@@ -27,7 +27,7 @@ codesign --force --deep --sign - /Applications/hyper-motion.app
 Then double-click. Full reasoning + alternatives in the
 [main README's install section](https://github.com/psiddharthdesign/hypermotion#install-macos).
 
-Windows build is not shipping yet — coming in a later v0.1.x release.
+Windows build is not shipping yet — track upcoming platform support in releases.
 
 The CLI uses the installed desktop app to actually run renders — it
 doesn't ship its own render engine. If the app isn't installed, the CLI

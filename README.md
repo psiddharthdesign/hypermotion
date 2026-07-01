@@ -59,7 +59,7 @@ Safari / Brave / Chrome add to downloaded files, and
 downloaded one). Apple Developer signing + notarization — which removes
 both steps entirely — is on the v0.2 roadmap.
 
-> Windows build is not shipping yet. Coming in a later v0.1.x release.
+> Windows build is not shipping yet. Track upcoming platform support in releases.
 
 ### Build from source
 
