@@ -966,6 +966,24 @@ test('validateScene rejects unsupported node kinds', () => {
   assert.deepEqual(result.errors, ['node title has unsupported kind: shape'])
 })
 
+test('validateScene rejects node entries that are not objects', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<unknown>
+  nodes.set('title', 'text')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    "node root lists child title, but child's parent is undefined",
+    'node title must be an object',
+    'node map key title does not match node id: undefined',
+    'node title has unsupported kind: undefined',
+  ])
+})
+
 test('validateScene rejects root nodes with parents', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
