@@ -147,6 +147,27 @@ test('render command trims padded format, quality, and fps values', async () => 
   }
 })
 
+test('render command trims padded scene paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-scene-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const outputPath = path.join(dir, 'out.mp4')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  fs.writeFileSync(scenePath, 'fake scene')
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', outputPath, '--scene', ` ${scenePath} `], { from: 'user' })
+
+    assert.equal(calls[0]?.scenePath, scenePath)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
