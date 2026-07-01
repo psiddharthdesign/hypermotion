@@ -12,6 +12,10 @@ type SceneInputData = z.infer<typeof SceneInput>
 type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
+type StringSchemaProperty = {
+  type: 'string'
+  description: string
+}
 type QuerySceneSnapshot = {
   root?: unknown
   activeCameraId?: unknown
@@ -29,10 +33,10 @@ type LayerSummary = {
   children: unknown[]
 }
 
-const SCENE_PATH_PROPERTY = {
+const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
   description: 'Path to a .hype scene file.',
-} as const
+}
 
 export const listLayersTool: Tool = {
   name: 'list_layers',
