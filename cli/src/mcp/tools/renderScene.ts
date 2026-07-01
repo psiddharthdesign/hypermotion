@@ -200,7 +200,7 @@ export async function handleRenderScene(
         content: [
           {
             type: 'text' as const,
-            text: `render_scene: failed to create output directory: ${
+            text: `render_scene: failed to create output directory ${outDir}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           },

@@ -218,7 +218,7 @@ test('render_scene reports output directory creation failures as MCP errors', as
     assert.equal(result.isError, true)
     assert.equal(
       assertToolText(result),
-      'render_scene: failed to create output directory: mkdir failed',
+      `render_scene: failed to create output directory ${outDir}: mkdir failed`,
     )
   } finally {
     Object.defineProperty(fs, 'mkdirSync', {
