@@ -6,9 +6,26 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { HeadlessRenderRequest } from '../electron/driver.js'
+import {
+  inferRenderFormatFromPath,
+  isRenderFormat,
+  isRenderQuality,
+} from '../renderOptions.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { renderCommand } from './render.js'
+
+test('render option guards accept supported values only', () => {
+  assert.equal(isRenderFormat('mp4'), true)
+  assert.equal(isRenderFormat('mov'), false)
+  assert.equal(isRenderQuality('2k'), true)
+  assert.equal(isRenderQuality('1080p'), false)
+})
+
+test('render format inference handles case and unknown extensions', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/preview.WEBM'), 'webm')
+  assert.equal(inferRenderFormatFromPath('/tmp/preview.mov'), 'mp4')
+})
 
 test('render command forwards saved scene paths to the driver', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-ok-'))
