@@ -235,6 +235,17 @@ test('create_scene rejects relative output paths', async () => {
   assert.equal(text, 'create_scene: output must be an absolute path.')
 })
 
+test('create_scene validates output paths before building scene bytes', async () => {
+  const result = await handleCreateScene({
+    output: 'relative-scene.hype',
+    scene: { nodes: null },
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'create_scene: output must be an absolute path.')
+})
+
 test('create_scene trims output paths before writing', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-trim-'))
   const scenePath = path.join(dir, 'trimmed-scene.hype')
