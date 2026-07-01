@@ -1017,6 +1017,8 @@ test('validateScene rejects root nodes with parents', () => {
   assert.deepEqual(result.errors, [
     'scene.root must be scene-level with parent: null: root',
     'node root parent title does not list it as a child',
+    'node root has a parent cycle through root',
+    'node title has a parent cycle through title',
   ])
 })
 
@@ -1067,6 +1069,37 @@ test('validateScene rejects duplicate child references', () => {
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, ['node root lists duplicate child: title'])
+})
+
+test('validateScene rejects parent cycles', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    ...scene.nodes,
+    loopA: {
+      id: 'loopA',
+      kind: 'frame',
+      parent: 'loopB',
+      children: ['loopB'],
+      size: { width: 100, height: 100 },
+      layout: { mode: 'none' },
+    },
+    loopB: {
+      id: 'loopB',
+      kind: 'frame',
+      parent: 'loopA',
+      children: ['loopA'],
+      size: { width: 100, height: 100 },
+      layout: { mode: 'none' },
+    },
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'node loopA has a parent cycle through loopA',
+    'node loopB has a parent cycle through loopB',
+  ])
 })
 
 test('validateScene rejects non-object keyframes', () => {
