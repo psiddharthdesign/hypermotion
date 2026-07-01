@@ -889,6 +889,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       errors.push(`node ${id} has unsupported kind: ${String(node.kind)}`)
     }
     const parent = typeof node.parent === 'string' ? node.parent : null
+    if (node.parent !== undefined && node.parent !== null && typeof node.parent !== 'string') {
+      errors.push(`node ${id} parent must be a string or null`)
+    }
     if (node.kind === 'camera' && parent) {
       errors.push(`camera node ${id} must be scene-level with parent: null`)
     }

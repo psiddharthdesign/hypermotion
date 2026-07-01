@@ -1003,6 +1003,22 @@ test('validateScene rejects node children that are not arrays', () => {
   ])
 })
 
+test('validateScene rejects node parents that are not strings or null', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('title')?.set('parent', 42)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'node root lists child title, but child\'s parent is 42',
+    'node title parent must be a string or null',
+  ])
+})
+
 test('validateScene rejects node ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
