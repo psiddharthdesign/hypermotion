@@ -191,6 +191,25 @@ test('render command trims padded scene paths', async () => {
   }
 })
 
+test('render command trims padded output paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-output-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', ` ${outputPath} `], { from: 'user' })
+
+    assert.equal(calls[0]?.outputPath, outputPath)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command rejects empty output paths before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
