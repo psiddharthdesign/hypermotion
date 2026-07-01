@@ -138,6 +138,41 @@ test('validate_scene returns validation JSON for readable scenes', async () => {
   }
 })
 
+test('validate_scene trims padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Trimmed MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleValidateScene({ scene: `  ${scenePath}\n` })
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+
+    assert.equal(result.isError, undefined)
+    assert.equal(JSON.parse(text).ok, true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate_scene marks structurally invalid scenes as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-invalid-'))
   const scenePath = path.join(dir, 'invalid.hype')
