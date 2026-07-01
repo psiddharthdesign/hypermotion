@@ -508,10 +508,10 @@ export type PatchOperation =
   | { op: 'setSection'; section: SectionJson }
   | { op: 'deleteSection'; sectionId: string }
 
-type LayoutMode = 'none' | 'flex' | 'grid'
-type FlexDirection = 'row' | 'column'
-type FlexJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around'
-type FlexAlign = 'start' | 'center' | 'end' | 'stretch'
+type LayoutMode = NonNullable<LayoutJson['mode']>
+type FlexDirection = NonNullable<LayoutJson['direction']>
+type FlexJustify = NonNullable<LayoutJson['justify']>
+type FlexAlign = NonNullable<LayoutJson['align']>
 
 type SceneTransform = NonNullable<NodeJson['transform']> & {
   anchorX: number
