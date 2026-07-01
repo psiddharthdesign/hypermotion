@@ -966,6 +966,8 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     const section = asRecord(raw)
     if (!isPlainObject(raw)) errors.push(`section ${id} must be an object`)
     if (section.id !== id) errors.push(`section map key ${id} does not match section id: ${String(section.id)}`)
+    if (typeof section.name !== 'string') errors.push(`section ${id} name must be a string`)
+    if (typeof section.color !== 'string') errors.push(`section ${id} color must be a string`)
     if (typeof section.start !== 'number' || !Number.isFinite(section.start)) {
       errors.push(`section ${id} start must be a finite number`)
     }
