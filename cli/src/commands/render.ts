@@ -28,6 +28,7 @@ import {
 
 const FORMAT_HELP = RENDER_FORMATS.join(' / ')
 const QUALITY_HELP = RENDER_QUALITIES.join(' / ')
+const EMPTY_OPTION_LABEL = '<empty>'
 
 interface RenderOptions {
   output: string
@@ -78,14 +79,18 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       const requestedFormat =
         opts.format?.trim().toLowerCase() ?? inferRenderFormatFromPath(outputPath)
       if (!isRenderFormat(requestedFormat)) {
-        console.error(`[render] unsupported format: ${requestedFormat} (use ${FORMAT_HELP})`)
+        console.error(
+          `[render] unsupported format: ${formatOptionValue(requestedFormat)} (use ${FORMAT_HELP})`,
+        )
         process.exit(1)
       }
       const format = requestedFormat
 
       const requestedQuality = opts.quality?.trim().toLowerCase() ?? 'comp'
       if (!isRenderQuality(requestedQuality)) {
-        console.error(`[render] unsupported quality: ${requestedQuality} (use ${QUALITY_HELP})`)
+        console.error(
+          `[render] unsupported quality: ${formatOptionValue(requestedQuality)} (use ${QUALITY_HELP})`,
+        )
         process.exit(1)
       }
       const quality = requestedQuality
@@ -183,4 +188,8 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
         process.exit(1)
       }
     })
+}
+
+function formatOptionValue(value: string): string {
+  return value === '' ? EMPTY_OPTION_LABEL : value
 }
