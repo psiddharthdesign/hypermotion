@@ -93,7 +93,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       const fpsInput = opts.fps?.trim() ?? '30'
       const fps = Number(fpsInput)
       if (!Number.isInteger(fps) || fps <= 0 || fps > 120) {
-        console.error(`[render] invalid fps: ${opts.fps}`)
+        console.error(`[render] invalid fps: ${fpsInput}`)
         process.exit(1)
       }
 
