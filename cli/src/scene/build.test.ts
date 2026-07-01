@@ -1239,6 +1239,7 @@ test('validateScene rejects section entries that are not objects', () => {
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, [
+    'section intro must be an object',
     'section map key intro does not match section id: undefined',
     'section intro start must be a finite number',
     'section intro end must be a finite number',
