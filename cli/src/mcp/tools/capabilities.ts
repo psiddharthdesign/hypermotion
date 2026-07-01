@@ -42,6 +42,8 @@ type KeyframeablePropertiesPayload = {
   keyframeableProperties: typeof PROPERTY_IDS
 }
 
+type CapabilityToolPayload = CapabilitiesPayload | KeyframeablePropertiesPayload
+
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description:
@@ -83,7 +85,7 @@ export async function handleListKeyframeableProperties(): Promise<CallToolResult
   return text(payload)
 }
 
-function text(value: unknown): CallToolResult {
+function text(value: CapabilityToolPayload): CallToolResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
   }
