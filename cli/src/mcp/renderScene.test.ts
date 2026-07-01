@@ -260,6 +260,42 @@ test('render_scene normalizes padded format and quality values', async () => {
   }
 })
 
+test('render_scene normalizes padded output paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-output-normalize-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.mp4')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const out = outArg?.slice('--out='.length);",
+      `if (out !== ${JSON.stringify(outputPath)}) process.exit(2);`,
+      "fs.writeFileSync(out, 'ok');",
+      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 2 }));",
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    const result = await withEnvVar('HYPERMOTION_APP_PATH', appPath, () =>
+      handleRenderScene({
+        output: ` ${outputPath} `,
+      }),
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.equal(
+      assertToolText(result),
+      `Rendered current desktop scene → ${outputPath} (mp4 · comp · 30fps)`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene normalizes padded scene paths', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-scene-normalize-'))
   const appPath = path.join(dir, 'fake-app.mjs')
