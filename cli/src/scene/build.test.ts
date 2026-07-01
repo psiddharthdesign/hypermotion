@@ -1102,6 +1102,24 @@ test('validateScene rejects malformed keyframe ids and times', () => {
   ])
 })
 
+test('validateScene rejects duplicate keyframe ids within a track', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  tracks.get('fade-title')?.set('keyframes', [
+    { id: 'intro', time: 0, value: 0 },
+    { id: 'intro', time: 0.5, value: 1 },
+  ])
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title has duplicate keyframe id: intro',
+  ])
+})
+
 test('validateScene rejects section ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
