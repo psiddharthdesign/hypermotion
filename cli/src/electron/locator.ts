@@ -7,8 +7,8 @@
  *
  *   macOS   — Check `/Applications/hyper-motion.app/Contents/MacOS/hyper-motion`
  *             then `~/Applications/...`. Future: query `mdfind`.
- *   Windows — Check `%ProgramFiles%\hyper-motion\hyper-motion.exe` and
- *             `%LOCALAPPDATA%\Programs\hyper-motion\hyper-motion.exe`.
+ *   Windows — Reserved for the future Windows build; check expected
+ *             installer locations once that build ships.
  *   Linux   — Check common binary/AppImage install locations:
  *             `/opt/hyper-motion`, `/usr/bin`, `~/Applications`, and
  *             `~/.local/bin`.
