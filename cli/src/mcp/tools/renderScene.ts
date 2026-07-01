@@ -100,7 +100,7 @@ export async function handleRenderScene(
   }
 
   const input: RenderInputData = parsed.data
-  const outputPath = path.resolve(input.output)
+  const outputPath = path.resolve(input.output.trim())
   const sceneInput = input.scene?.trim()
   const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
   const format = input.format ?? inferRenderFormatFromPath(outputPath)
