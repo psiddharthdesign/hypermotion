@@ -13,8 +13,8 @@ type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
 type StringSchemaProperty = {
-  type: 'string'
-  description: string
+  readonly type: 'string'
+  readonly description: string
 }
 type QuerySceneSnapshot = {
   root?: unknown
