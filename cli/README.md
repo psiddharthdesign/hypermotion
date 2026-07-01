@@ -58,7 +58,7 @@ claude mcp add -s user hypermotion -- hypermotion-mcp
 Then in Claude Code, the agent has access to:
 
 - **`doctor`** — check desktop app and CLI environment health.
-- **`get_capabilities`** — list supported formats, quality presets, and scene features.
+- **`get_capabilities`** — list supported formats, quality presets, patch operations, and scene features.
 - **`create_scene`** — build a `.hype` scene file from a JSON description.
 - **`info_scene`** — read `.hype` scene metadata.
 - **`inspect_scene`** — inspect a saved scene's structural contents.
