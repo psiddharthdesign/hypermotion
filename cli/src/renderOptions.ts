@@ -9,15 +9,22 @@ export type RenderFormat = (typeof RENDER_FORMATS)[number]
 export type RenderQuality = (typeof RENDER_QUALITIES)[number]
 
 export function isRenderFormat(value: unknown): value is RenderFormat {
-  return typeof value === 'string' && RENDER_FORMATS.includes(value as RenderFormat)
+  return isStringMember(RENDER_FORMATS, value)
 }
 
 export function isRenderQuality(value: unknown): value is RenderQuality {
-  return typeof value === 'string' && RENDER_QUALITIES.includes(value as RenderQuality)
+  return isStringMember(RENDER_QUALITIES, value)
 }
 
 export function inferRenderFormatFromPath(filePath: string): RenderFormat {
   const cleanPath = (filePath.split(/[?#]/, 1)[0] ?? filePath).trim()
   const ext = path.extname(cleanPath).toLowerCase().slice(1)
   return isRenderFormat(ext) ? ext : 'mp4'
+}
+
+function isStringMember<const T extends readonly string[]>(
+  values: T,
+  value: unknown,
+): value is T[number] {
+  return typeof value === 'string' && values.includes(value)
 }
