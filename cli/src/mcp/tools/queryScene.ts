@@ -146,6 +146,7 @@ export async function handleListCameras(
 }
 
 function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult {
+  let bytes: Buffer
   try {
     const stats = fs.statSync(scenePath)
     if (!stats.isFile()) {
@@ -163,7 +164,7 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
       }
     }
 
-    return { ok: true, scene: inspectScene(new Uint8Array(fs.readFileSync(scenePath))) }
+    bytes = fs.readFileSync(scenePath)
   } catch (err) {
     return {
       ok: false,
@@ -173,6 +174,25 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
           {
             type: 'text' as const,
             text: `${toolName}: failed to read ${scenePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      },
+    }
+  }
+
+  try {
+    return { ok: true, scene: inspectScene(new Uint8Array(bytes)) }
+  } catch (err) {
+    return {
+      ok: false,
+      result: {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `${toolName}: ${scenePath} is not a valid .hype file: ${
               err instanceof Error ? err.message : String(err)
             }`,
           },

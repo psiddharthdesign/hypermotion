@@ -141,7 +141,7 @@ test('query scene MCP handlers report malformed scene files as MCP errors', asyn
       assert.equal(result.isError, true)
       assert.match(
         assertToolText(result),
-        new RegExp(`^${entry.name}: failed to read ${escapeRegExp(scenePath)}:`),
+        new RegExp(`^${entry.name}: ${escapeRegExp(scenePath)} is not a valid \\.hype file:`),
       )
     }
   } finally {
