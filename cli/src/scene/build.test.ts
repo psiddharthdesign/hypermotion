@@ -450,6 +450,25 @@ test('buildSceneBytes preserves image import warnings', () => {
   )
 })
 
+test('buildSceneBytes preserves image fit none', () => {
+  const scene = sampleScene()
+  scene.nodes = {
+    image: {
+      id: 'image',
+      kind: 'image',
+      parent: null,
+      size: { width: 320, height: 180 },
+      src: '/tmp/source.png',
+      fit: 'none',
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.equal(nodes.image.fit, 'none')
+})
+
 test('buildSceneBytes writes text defaults expected by the desktop app', () => {
   const scene = sampleScene()
   scene.nodes = {
