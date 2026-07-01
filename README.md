@@ -11,8 +11,8 @@ properties (variant state, opacity, scale, gap, padding) — not raw `x`
 and `y`. When the design moves, the animation survives.
 
 Plus everything you expect from a Jitter-class tool: a real timeline,
-in/out presets, easing curves, 3D camera with depth-of-field, MP4 / WebM
-/ GIF / Lottie export.
+in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
+WebM / GIF export.
 
 ## Status — v0.1.11 research preview
 
