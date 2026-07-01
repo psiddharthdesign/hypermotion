@@ -74,7 +74,12 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       'Path to a .hype scene file to forward to the desktop app',
     )
     .action(async (opts: RenderOptions) => {
-      const outputPath = path.resolve(opts.output)
+      const outputInput = opts.output.trim()
+      if (!outputInput) {
+        console.error('[render] output path is required')
+        process.exit(1)
+      }
+      const outputPath = path.resolve(outputInput)
 
       const requestedFormat =
         opts.format?.trim().toLowerCase() ?? inferRenderFormatFromPath(outputPath)

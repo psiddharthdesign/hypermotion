@@ -191,6 +191,23 @@ test('render command trims padded scene paths', async () => {
   }
 })
 
+test('render command rejects empty output paths before launching the app', async () => {
+  const stderr = await captureStderr(() => {
+    return withProcessExitThrow(async () => {
+      await assert.rejects(
+        renderCommand({
+          locateApp: async () => {
+            throw new Error('should not locate app')
+          },
+        }).parseAsync(['-o', '   '], { from: 'user' }),
+        { exitCode: 1 },
+      )
+    })
+  })
+
+  assert.equal(stderr, '[render] output path is required\n')
+})
+
 test('render command reports invalid fps before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
