@@ -42,9 +42,8 @@ contextBridge.exposeInMainWorld('hypermotion', {
   // future feature.
   invoke: (channel: string, ...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args),
-  // Event subscription. Returns an unsubscribe function. Used by the
-  // headless export driver to receive `export:headless-trigger` events
-  // when the running editor handles a second-instance render request.
+  // Event subscription. Returns an unsubscribe function. Used by export
+  // flows to receive headless triggers and render-window progress events.
   on: (
     channel: string,
     listener: (...args: unknown[]) => void,
