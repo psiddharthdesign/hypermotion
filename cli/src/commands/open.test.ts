@@ -50,6 +50,32 @@ test('open command launches the desktop app with the resolved scene path', async
   }
 })
 
+test('open command resolves relative scene paths before launching the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-relative-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const appPath = path.join(dir, 'hyper-motion')
+  const originalCwd = process.cwd()
+  const spawnCalls: Array<{ command: string; args: readonly string[] }> = []
+  fs.writeFileSync(scenePath, '')
+  try {
+    process.chdir(dir)
+    const resolvedScenePath = path.resolve('scene.hype')
+
+    await openCommand({
+      locateApp: async () => appPath,
+      spawnApp: (command, args) => {
+        spawnCalls.push({ command, args })
+        return { unref: () => {} } satisfies Pick<ChildProcess, 'unref'>
+      },
+    }).parseAsync(['scene.hype'], { from: 'user' })
+
+    assert.deepEqual(spawnCalls, [{ command: appPath, args: [resolvedScenePath] }])
+  } finally {
+    process.chdir(originalCwd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('open command reports missing scene files before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-'))
   const scenePath = path.join(dir, 'missing.hype')
