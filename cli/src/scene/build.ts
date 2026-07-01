@@ -872,6 +872,16 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
 
+  if (data.nodes !== undefined && !isPlainObject(data.nodes)) {
+    errors.push('scene.nodes must be an object')
+  }
+  if (data.tracks !== undefined && !isPlainObject(data.tracks)) {
+    errors.push('scene.tracks must be an object')
+  }
+  if (data.sections !== undefined && !isPlainObject(data.sections)) {
+    errors.push('scene.sections must be an object')
+  }
+
   if (data.root !== undefined && typeof data.root !== 'string') {
     errors.push('scene.root must be a string')
   } else if (!root) errors.push('scene.root is missing')

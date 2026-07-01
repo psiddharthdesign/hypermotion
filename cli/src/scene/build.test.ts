@@ -917,6 +917,26 @@ test('validateScene rejects non-string root ids', () => {
   assert.deepEqual(result.errors, ['scene.root must be a string'])
 })
 
+test('validateScene rejects non-object scene collections', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  scene.set('nodes', [])
+  scene.set('tracks', 'fade-title')
+  scene.set('sections', null)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.nodes must be an object',
+    'scene.tracks must be an object',
+    'scene.sections must be an object',
+    'scene.root points to missing node: root',
+    'scene.activeCameraId points to missing node: camera',
+  ])
+})
+
 test('validateScene rejects non-camera active camera ids', () => {
   const scene = sampleScene()
   scene.activeCameraId = 'title'
