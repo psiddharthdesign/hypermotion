@@ -38,8 +38,8 @@ export interface HeadlessRenderRequest {
   scenePath?: string
 }
 
-// Maximum wait for a render to complete. 5 minutes is generous — even
-// a 60-second 4K render finishes in under 2 minutes.
+// Maximum wait for a render to complete. Keep hung desktop handoffs
+// bounded while still allowing high-quality renders to finish.
 const RENDER_TIMEOUT_MS = 5 * 60 * 1000
 // How often we poll for the sentinel file.
 const POLL_INTERVAL_MS = 250
