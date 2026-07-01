@@ -1187,6 +1187,23 @@ test('validateScene rejects section ids that do not match their map key', () => 
   ])
 })
 
+test('validateScene rejects section entries that are not objects', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const sections = scene.get('sections') as Y.Map<unknown>
+  sections.set('intro', null)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'section map key intro does not match section id: undefined',
+    'section intro start must be a finite number',
+    'section intro end must be a finite number',
+  ])
+})
+
 test('validateScene rejects malformed section bounds', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
