@@ -927,7 +927,8 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     const children = Array.isArray(node.children) ? node.children : []
     const seenChildren = new Set<string>()
     for (const child of children) {
-      if (typeof child !== 'string' || !nodes[child]) errors.push(`node ${id} has missing child: ${String(child)}`)
+      if (typeof child !== 'string') errors.push(`node ${id} child must be a string: ${String(child)}`)
+      else if (!nodes[child]) errors.push(`node ${id} has missing child: ${child}`)
       else if (seenChildren.has(child)) errors.push(`node ${id} lists duplicate child: ${child}`)
       else if (asRecord(nodes[child]).parent !== id) {
         errors.push(`node ${id} lists child ${child}, but child's parent is ${String(asRecord(nodes[child]).parent)}`)
