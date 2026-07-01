@@ -43,7 +43,10 @@ test('create command makes nested output directories', async () => {
 
     const summary = readSceneSummary(fs.readFileSync(scenePath))
 
-    assert.match(stdout, /^Wrote .+scene\.hype \(.*1 layer, 0 tracks\)$/m)
+    assert.match(
+      stdout,
+      new RegExp(`^Wrote ${escapeRegExp(scenePath)} \\(.*1 layer, 0 tracks\\)$`, 'm'),
+    )
     assert.equal(summary.meta.name, 'Nested Create')
     assert.deepEqual(summary.meta.canvas, { width: 320, height: 180 })
     assert.equal(summary.root, 'root')
@@ -106,13 +109,20 @@ test('create command reports authored layer and track counts', async () => {
 
     const summary = readSceneSummary(fs.readFileSync(scenePath))
 
-    assert.match(stdout, /^Wrote .+scene\.hype \(.*1 layer, 1 track\)$/m)
+    assert.match(
+      stdout,
+      new RegExp(`^Wrote ${escapeRegExp(scenePath)} \\(.*1 layer, 1 track\\)$`, 'm'),
+    )
     assert.equal(summary.layerCount, 1)
     assert.equal(summary.trackCount, 1)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 test('create command rejects top-level JSON arrays', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-'))
