@@ -73,10 +73,20 @@ test('capability tools list the full supported keyframe property set', async () 
   assert.equal(capabilities.renderFileSceneInput, true)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
+  const registeredToolNames = TOOLS.map((tool) => tool.name)
   assert.deepEqual(
     capabilities.mcpTools,
-    TOOLS.map((tool) => tool.name),
+    registeredToolNames,
   )
+  for (const toolName of [
+    ...(capabilities.validationTools ?? []),
+    ...(capabilities.queryTools ?? []),
+  ]) {
+    assert.ok(
+      registeredToolNames.includes(toolName),
+      `${toolName} should be a registered MCP tool`,
+    )
+  }
   assert.equal(
     new Set(capabilities.keyframeableProperties).size,
     PROPERTY_IDS.length,
