@@ -120,6 +120,40 @@ test('create command reports authored layer and track counts', async () => {
   }
 })
 
+test('create command trims padded output paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-trimmed-output-'))
+  const sourcePath = path.join(dir, 'scene.json')
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    await captureStdout(async () => {
+      await createCommand()
+        .exitOverride()
+        .parseAsync([` ${scenePath} `, '--from', sourcePath], { from: 'user' })
+    })
+
+    assert.equal(fs.existsSync(scenePath), true)
+    assert.equal(fs.existsSync(path.join(dir, ` ${path.basename(scenePath)} `)), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

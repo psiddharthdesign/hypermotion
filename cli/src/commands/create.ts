@@ -110,7 +110,7 @@ export function createCommand(): Command {
       // Make sure the output's parent directory exists. Tools and
       // agents tend to specify deeply-nested paths; we don't want a
       // simple ENOENT to obscure the real error.
-      const outputPath = path.resolve(output)
+      const outputPath = path.resolve(output.trim())
       const outDir = path.dirname(outputPath)
       try {
         fs.mkdirSync(outDir, { recursive: true })
