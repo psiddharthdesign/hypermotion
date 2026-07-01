@@ -26,11 +26,11 @@ import {
 const RenderInput = z.object({
   output: z.string().describe('Absolute or relative path where the rendered file should be written'),
   format: z
-    .enum(RENDER_FORMATS)
+    .preprocess(normalizeStringOption, z.enum(RENDER_FORMATS))
     .optional()
     .describe('Output format. Defaults to inferred from the output file extension.'),
   quality: z
-    .enum(RENDER_QUALITIES)
+    .preprocess(normalizeStringOption, z.enum(RENDER_QUALITIES))
     .optional()
     .describe('Output resolution preset. `comp` matches the scene canvas size (fastest). Default: comp.'),
   fps: z.number().int().positive().max(120).optional().describe('Frame rate. Default: 30.'),
@@ -42,6 +42,10 @@ const RenderInput = z.object({
     ),
 })
 type RenderInputData = z.infer<typeof RenderInput>
+
+function normalizeStringOption(value: unknown): unknown {
+  return typeof value === 'string' ? value.trim().toLowerCase() : value
+}
 
 export const renderSceneTool: Tool = {
   name: 'render_scene',
