@@ -166,7 +166,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
             name: 'Root frame',
             kind: 'frame',
             parent: null,
-            children: ['title'],
+            children: ['title', 'title.*'],
             size: { width: 320, height: 180 },
             layout: { mode: 'none' },
           },
@@ -178,6 +178,15 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
             text: 'Queryable',
             fontFamily: 'Inter',
             fontSize: 24,
+          },
+          'title.*': {
+            id: 'title.*',
+            name: 'Literal title glob',
+            kind: 'text',
+            parent: 'root',
+            text: 'Literal query id',
+            fontFamily: 'Inter',
+            fontSize: 20,
           },
           camera: {
             id: 'camera',
@@ -196,6 +205,15 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
             keyframes: [
               { id: 'fade-start', time: 0, value: 0 },
               { id: 'fade-end', time: 0.3, value: 1 },
+            ],
+          },
+          fadeLiteralTitle: {
+            id: 'fade-literal-title',
+            nodeId: 'title.*',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'literal-fade-start', time: 0, value: 0 },
+              { id: 'literal-fade-end', time: 0.3, value: 1 },
             ],
           },
           moveRoot: {
@@ -222,11 +240,11 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.equal(layersPayload.activeCameraId, 'camera')
     assert.deepEqual(
       layersPayload.layers.map((layer) => layer.id).sort(),
-      ['camera', 'root', 'title'],
+      ['camera', 'root', 'title', 'title.*'],
     )
     assert.deepEqual(
       layersPayload.layers.find((layer) => layer.id === 'root')?.children,
-      ['title'],
+      ['title', 'title.*'],
     )
 
     const layerResult = await handleGetLayer({ scene: scenePath, nodeId: 'title' })
@@ -247,13 +265,22 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.equal(tracksPayload.tracks[0]?.nodeId, 'title')
     assert.equal(tracksPayload.tracks[0]?.propertyId, 'appearance.opacity')
 
+    const literalTracksResult = await handleListTracks({ scene: scenePath, nodeId: 'title.*' })
+    const literalTracksPayload = JSON.parse(assertToolText(literalTracksResult)) as {
+      tracks: Array<{ id: string; nodeId: string; propertyId: string }>
+    }
+    assert.deepEqual(
+      literalTracksPayload.tracks.map((track) => track.id),
+      ['fade-literal-title'],
+    )
+
     const allTracksResult = await handleListTracks({ scene: scenePath })
     const allTracksPayload = JSON.parse(assertToolText(allTracksResult)) as {
       tracks: Array<{ id: string; nodeId: string; propertyId: string }>
     }
     assert.deepEqual(
       allTracksPayload.tracks.map((track) => track.id).sort(),
-      ['fade-title', 'move-root'],
+      ['fade-literal-title', 'fade-title', 'move-root'],
     )
 
     const unrelatedTracksResult = await handleListTracks({ scene: scenePath, nodeId: 'missing' })
