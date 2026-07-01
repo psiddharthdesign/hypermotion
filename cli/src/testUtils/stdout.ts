@@ -2,9 +2,12 @@
 
 type WritableStream = typeof process.stdout | typeof process.stderr
 type CaptureCallback<T> = () => Promise<T> | T
+type WritableChunk = Parameters<WritableStream['write']>[0]
+type WritableEncodingOrCallback = Parameters<WritableStream['write']>[1]
+type WritableCallback = Parameters<WritableStream['write']>[2]
 
 function stringifyChunk(
-  chunk: Parameters<typeof process.stdout.write>[0],
+  chunk: WritableChunk,
   encoding?: BufferEncoding,
 ): string {
   if (chunk instanceof Uint8Array) return Buffer.from(chunk).toString(encoding)
@@ -19,9 +22,9 @@ async function captureStream(
   let output = ''
   const write = stream.write
   stream.write = ((
-    chunk: Parameters<typeof stream.write>[0],
-    encodingOrCallback?: Parameters<typeof stream.write>[1],
-    callback?: Parameters<typeof stream.write>[2],
+    chunk: WritableChunk,
+    encodingOrCallback?: WritableEncodingOrCallback,
+    callback?: WritableCallback,
   ) => {
     const encoding =
       typeof encodingOrCallback === 'string' ? encodingOrCallback : undefined
