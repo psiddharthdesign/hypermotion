@@ -145,3 +145,30 @@ test('open_scene reports opened scene paths', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('open_scene trims padded scene paths before opening', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const openedPaths: string[] = []
+  fs.writeFileSync(scenePath, '')
+
+  try {
+    const result = await handleOpenScene(
+      { scene: ` ${scenePath} ` },
+      {
+        existsSync: fs.existsSync,
+        statSync: fs.statSync,
+        openScene: async (pathToOpen) => {
+          openedPaths.push(pathToOpen)
+          return true
+        },
+      },
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(openedPaths, [scenePath])
+    assert.equal(assertToolText(result), `Opened ${scenePath}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
