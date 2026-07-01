@@ -67,6 +67,8 @@ export const NODE_KINDS = [
   'camera',
 ] as const satisfies readonly NodeKindJson[]
 
+const NODE_KIND_SET: ReadonlySet<string> = new Set(NODE_KINDS)
+
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
   height?: number | 'hug' | 'fill'
@@ -323,6 +325,8 @@ export const PROPERTY_IDS = [
 ] as const
 
 export type PropertyIdJson = (typeof PROPERTY_IDS)[number]
+
+const PROPERTY_ID_SET: ReadonlySet<string> = new Set(PROPERTY_IDS)
 
 export type EasingJson =
   | 'linear'
@@ -949,11 +953,11 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 }
 
 function isNodeKind(value: string): value is NodeKindJson {
-  return (NODE_KINDS as readonly string[]).includes(value)
+  return NODE_KIND_SET.has(value)
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
-  return (PROPERTY_IDS as readonly string[]).includes(value)
+  return PROPERTY_ID_SET.has(value)
 }
 
 export function applyScenePatch(bytes: Uint8Array, patch: ScenePatch | PatchOperation[]): Uint8Array {
