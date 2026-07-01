@@ -368,6 +368,59 @@ test('validate command rejects unsupported node kinds', async () => {
   }
 })
 
+test('validate command rejects missing keyframe values', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Keyframe Value',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+        tracks: {
+          fade: {
+            id: 'fade',
+            nodeId: 'root',
+            propertyId: 'appearance.opacity',
+            keyframes: [
+              { id: 'start', time: 0 } as { id: string; time: number; value: number },
+            ],
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(
+      stdout,
+      /^error: track fade keyframe start value must be JSON-compatible$/m,
+    )
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'missing.hype')
