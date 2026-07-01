@@ -52,7 +52,7 @@ export async function handleOpenScene(
   }
 
   const input: OpenInputData = parsed.data
-  const scenePath = path.resolve(input.scene)
+  const scenePath = path.resolve(input.scene.trim())
   if (!deps.existsSync(scenePath)) {
     return {
       isError: true,
