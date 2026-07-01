@@ -39,17 +39,18 @@ export async function handleValidateScene(
   }
 
   const input: ValidateInputData = parsed.data
+  const scenePath = input.scene.trim()
   let bytes: Buffer
   let stat: fs.Stats
   try {
-    stat = fs.statSync(input.scene)
+    stat = fs.statSync(scenePath)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: failed to read ${input.scene}: ${
+          text: `validate_scene: failed to read ${scenePath}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -62,20 +63,20 @@ export async function handleValidateScene(
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: scene path is not a file: ${input.scene}`,
+          text: `validate_scene: scene path is not a file: ${scenePath}`,
         },
       ],
     }
   }
   try {
-    bytes = fs.readFileSync(input.scene)
+    bytes = fs.readFileSync(scenePath)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: failed to read ${input.scene}: ${
+          text: `validate_scene: failed to read ${scenePath}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -100,7 +101,7 @@ export async function handleValidateScene(
       content: [
         {
           type: 'text' as const,
-          text: `validate_scene: ${input.scene} doesn't look like a valid .hype file: ${
+          text: `validate_scene: ${scenePath} doesn't look like a valid .hype file: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
