@@ -102,10 +102,10 @@ What's longer-term:
 
 The CLI doesn't render frames itself. It locates the installed
 hyper-motion desktop app and spawns it with command-line flags that put
-it into a headless render mode. The desktop app boots an off-screen
-window, the renderer waits for the scene to hydrate from IndexedDB,
-the existing export pipeline runs (`webContents.capturePage` →
-WebCodecs → mp4-muxer), and the rendered bytes ship back through IPC.
+it into a headless render mode. The desktop app boots a hidden render
+window, the renderer waits for the scene to hydrate, the export pipeline
+captures frames and encodes them for the requested format, and the
+rendered bytes ship back through IPC.
 The CLI writes them to your output path.
 
 Locations checked, in order:
