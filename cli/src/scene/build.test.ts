@@ -1143,7 +1143,7 @@ test('validateScene rejects non-string child references', () => {
   const result = validateScene(Y.encodeStateAsUpdate(doc))
 
   assert.equal(result.ok, false)
-  assert.deepEqual(result.errors, ['node root has missing child: 42'])
+  assert.deepEqual(result.errors, ['node root child must be a string: 42'])
 })
 
 test('validateScene rejects node children that are not arrays', () => {
