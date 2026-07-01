@@ -942,6 +942,7 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       track.keyframes.forEach((rawKeyframe, index) => {
         const keyframe = asRecord(rawKeyframe)
         const label = typeof keyframe.id === 'string' ? keyframe.id : `#${index}`
+        if (!isPlainObject(rawKeyframe)) errors.push(`track ${id} keyframe ${index} must be an object`)
         if (typeof keyframe.id !== 'string') errors.push(`track ${id} keyframe ${index} id must be a string`)
         else if (seenKeyframes.has(keyframe.id)) errors.push(`track ${id} has duplicate keyframe id: ${keyframe.id}`)
         else seenKeyframes.add(keyframe.id)
@@ -1294,9 +1295,11 @@ function yToPlain(value: unknown): unknown {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
+  return isPlainObject(value) ? value : {}
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 /**

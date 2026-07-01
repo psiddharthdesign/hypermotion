@@ -979,6 +979,23 @@ test('validateScene rejects duplicate child references', () => {
   assert.deepEqual(result.errors, ['node root lists duplicate child: title'])
 })
 
+test('validateScene rejects non-object keyframes', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  tracks.get('fade-title')?.set('keyframes', [null])
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title keyframe 0 must be an object',
+    'track fade-title keyframe 0 id must be a string',
+    'track fade-title keyframe #0 time must be a finite number',
+  ])
+})
+
 test('validateScene rejects child references to missing nodes', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
