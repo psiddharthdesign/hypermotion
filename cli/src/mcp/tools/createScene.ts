@@ -127,8 +127,8 @@ export async function handleCreateScene(
   }
 
   // Accept the scene either as an inline object or a JSON string.
-  // Most MCP clients send objects, but some (and human users via the
-  // CLI's inspector) find string-encoded JSON easier to construct.
+  // Most MCP clients send objects, but some agents and scripts find
+  // string-encoded JSON easier to construct and pass through stdio.
   const input: CreateInputData = parsed.data
   let scene: SceneJson
   try {
