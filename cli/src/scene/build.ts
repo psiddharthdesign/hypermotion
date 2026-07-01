@@ -960,6 +960,14 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   for (const [id, raw] of Object.entries(sections)) {
     const section = asRecord(raw)
     if (section.id !== id) errors.push(`section map key ${id} does not match section id: ${String(section.id)}`)
+    if (typeof section.start !== 'number' || !Number.isFinite(section.start)) {
+      errors.push(`section ${id} start must be a finite number`)
+    }
+    if (typeof section.end !== 'number' || !Number.isFinite(section.end)) {
+      errors.push(`section ${id} end must be a finite number`)
+    } else if (typeof section.start === 'number' && Number.isFinite(section.start) && section.end < section.start) {
+      errors.push(`section ${id} end must be greater than or equal to start`)
+    }
   }
 
   return { ok: errors.length === 0, errors, warnings }
