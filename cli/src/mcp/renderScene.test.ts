@@ -188,6 +188,46 @@ test('render_scene reports output directory stat failures as MCP errors', async 
   }
 })
 
+test('render_scene normalizes padded format and quality values', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-normalize-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.webm')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const formatArg = process.argv.find((arg) => arg === '--format=webm');",
+      "const qualityArg = process.argv.find((arg) => arg === '--quality=4k');",
+      "const out = outArg?.slice('--out='.length);",
+      "if (!out || !formatArg || !qualityArg) process.exit(2);",
+      "fs.writeFileSync(out, 'ok');",
+      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 2 }));",
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    const result = await withEnvVar('HYPERMOTION_APP_PATH', appPath, () =>
+      handleRenderScene({
+        output: outputPath,
+        format: ' WEBM ',
+        quality: ' 4K ',
+      }),
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.equal(
+      assertToolText(result),
+      `Rendered current desktop scene → ${outputPath} (webm · 4k · 30fps)`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene reports desktop driver failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-fail-'))
   const appPath = path.join(dir, 'hyper-motion')
