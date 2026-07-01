@@ -1158,6 +1158,35 @@ test('validateScene rejects section ids that do not match their map key', () => 
   ])
 })
 
+test('validateScene rejects malformed section bounds', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const sections = scene.get('sections') as Y.Map<Record<string, unknown>>
+  sections.set('bad-start', {
+    id: 'bad-start',
+    name: 'Bad start',
+    color: '#2563eb',
+    start: Number.NaN,
+    end: 1,
+  })
+  sections.set('reversed', {
+    id: 'reversed',
+    name: 'Reversed',
+    color: '#2563eb',
+    start: 2,
+    end: 1,
+  })
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'section bad-start start must be a finite number',
+    'section reversed end must be greater than or equal to start',
+  ])
+})
+
 test('buildSceneBytes preserves variant selection keyframe values', () => {
   const scene = sampleScene()
   scene.tracks = {
