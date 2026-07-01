@@ -42,14 +42,10 @@ async function captureStream(
   return output
 }
 
-export async function captureStdout(
-  run: CaptureCallback<unknown>,
-): Promise<string> {
+export async function captureStdout<T>(run: CaptureCallback<T>): Promise<string> {
   return captureStream(process.stdout, run)
 }
 
-export async function captureStderr(
-  run: CaptureCallback<unknown>,
-): Promise<string> {
+export async function captureStderr<T>(run: CaptureCallback<T>): Promise<string> {
   return captureStream(process.stderr, run)
 }
