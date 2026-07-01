@@ -1241,8 +1241,32 @@ test('validateScene rejects section entries that are not objects', () => {
   assert.deepEqual(result.errors, [
     'section intro must be an object',
     'section map key intro does not match section id: undefined',
+    'section intro name must be a string',
+    'section intro color must be a string',
     'section intro start must be a finite number',
     'section intro end must be a finite number',
+  ])
+})
+
+test('validateScene rejects malformed section labels', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const sections = scene.get('sections') as Y.Map<Record<string, unknown>>
+  sections.set('bad-labels', {
+    id: 'bad-labels',
+    name: 42,
+    color: null,
+    start: 0,
+    end: 1,
+  })
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'section bad-labels name must be a string',
+    'section bad-labels color must be a string',
   ])
 })
 
