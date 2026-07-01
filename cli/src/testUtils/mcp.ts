@@ -7,7 +7,7 @@ type ToolTextContent = Extract<CallToolResult['content'][number], { type: 'text'
 
 export function assertToolText(result: CallToolResult): string {
   const item = result.content[0]
-  assert.ok(isToolTextContent(item))
+  assert.ok(isToolTextContent(item), 'expected first MCP content item to be text')
   return item.text
 }
 
