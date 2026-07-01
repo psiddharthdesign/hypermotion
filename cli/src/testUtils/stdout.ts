@@ -14,7 +14,7 @@ function stringifyChunk(
 
 async function captureStream(
   stream: WritableStream,
-  run: CaptureCallback<unknown>,
+  run: CaptureCallback<void>,
 ): Promise<string> {
   let output = ''
   const write = stream.write
@@ -40,13 +40,13 @@ async function captureStream(
 }
 
 export async function captureStdout(
-  run: CaptureCallback<unknown>,
+  run: CaptureCallback<void>,
 ): Promise<string> {
   return captureStream(process.stdout, run)
 }
 
 export async function captureStderr(
-  run: CaptureCallback<unknown>,
+  run: CaptureCallback<void>,
 ): Promise<string> {
   return captureStream(process.stderr, run)
 }
