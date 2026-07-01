@@ -935,6 +935,7 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 
   for (const [id, raw] of Object.entries(tracks)) {
     const track = asRecord(raw)
+    if (!isPlainObject(raw)) errors.push(`track ${id} must be an object`)
     if (track.id !== id) errors.push(`track map key ${id} does not match track id: ${String(track.id)}`)
     const nodeId = track.nodeId
     if (typeof nodeId !== 'string' || !nodes[nodeId]) {

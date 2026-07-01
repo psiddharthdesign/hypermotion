@@ -1155,6 +1155,25 @@ test('validateScene rejects track ids that do not match their map key', () => {
   ])
 })
 
+test('validateScene rejects track entries that are not objects', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<unknown>
+  tracks.set('fade-title', 'fade')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title must be an object',
+    'track map key fade-title does not match track id: undefined',
+    'track fade-title points to missing node: undefined',
+    'track fade-title keyframes must be an array',
+    'track fade-title has unsupported propertyId: undefined',
+  ])
+})
+
 test('validateScene rejects track keyframes that are not arrays', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
