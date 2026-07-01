@@ -162,6 +162,22 @@ export async function handleCreateScene(
     }
   }
 
+  // Make sure the output's parent directory exists. Agents tend to
+  // specify deep paths and we don't want a simple ENOENT to obscure
+  // the actual failure.
+  const outputPath = input.output.trim()
+  if (!path.isAbsolute(outputPath)) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: 'create_scene: output must be an absolute path.',
+        },
+      ],
+    }
+  }
+
   // Build the Y.Doc bytes.
   let bytes: Uint8Array
   try {
@@ -175,22 +191,6 @@ export async function handleCreateScene(
           text: `create_scene: failed to build scene: ${
             err instanceof Error ? err.message : String(err)
           }`,
-        },
-      ],
-    }
-  }
-
-  // Make sure the output's parent directory exists. Agents tend to
-  // specify deep paths and we don't want a simple ENOENT to obscure
-  // the actual failure.
-  const outputPath = input.output.trim()
-  if (!path.isAbsolute(outputPath)) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: 'create_scene: output must be an absolute path.',
         },
       ],
     }
