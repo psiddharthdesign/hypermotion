@@ -301,6 +301,7 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
   const appPath = path.join(dir, 'fake-app.mjs')
   const outputPath = path.join(dir, 'out.mp4')
 
+  fs.writeFileSync(outputPath, 'stale output')
   fs.writeFileSync(
     appPath,
     [
@@ -325,6 +326,7 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
       }),
       /encoder reported JSON failure/,
     )
+    assert.equal(fs.existsSync(outputPath), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
