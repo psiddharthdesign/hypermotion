@@ -2,7 +2,24 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { inferRenderFormatFromPath } from './renderOptions.js'
+import {
+  inferRenderFormatFromPath,
+  isRenderFormat,
+  isRenderQuality,
+} from './renderOptions.js'
+
+test('render option guards accept supported values only', () => {
+  assert.equal(isRenderFormat('mp4'), true)
+  assert.equal(isRenderFormat('webm'), true)
+  assert.equal(isRenderFormat('gif'), true)
+  assert.equal(isRenderFormat('mov'), false)
+
+  assert.equal(isRenderQuality('comp'), true)
+  assert.equal(isRenderQuality('720p'), true)
+  assert.equal(isRenderQuality('2k'), true)
+  assert.equal(isRenderQuality('4k'), true)
+  assert.equal(isRenderQuality('1080p'), false)
+})
 
 test('inferRenderFormatFromPath uses supported file extensions', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.mp4'), 'mp4')
