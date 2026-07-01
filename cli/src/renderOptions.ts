@@ -8,12 +8,12 @@ export const RENDER_QUALITIES = ['comp', '720p', '2k', '4k'] as const
 export type RenderFormat = (typeof RENDER_FORMATS)[number]
 export type RenderQuality = (typeof RENDER_QUALITIES)[number]
 
-export function isRenderFormat(value: string): value is RenderFormat {
-  return RENDER_FORMATS.includes(value as RenderFormat)
+export function isRenderFormat(value: unknown): value is RenderFormat {
+  return typeof value === 'string' && RENDER_FORMATS.includes(value as RenderFormat)
 }
 
-export function isRenderQuality(value: string): value is RenderQuality {
-  return RENDER_QUALITIES.includes(value as RenderQuality)
+export function isRenderQuality(value: unknown): value is RenderQuality {
+  return typeof value === 'string' && RENDER_QUALITIES.includes(value as RenderQuality)
 }
 
 export function inferRenderFormatFromPath(filePath: string): RenderFormat {
