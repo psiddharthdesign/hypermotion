@@ -101,7 +101,8 @@ export async function handleRenderScene(
 
   const input: RenderInputData = parsed.data
   const outputPath = path.resolve(input.output)
-  const scenePath = input.scene ? path.resolve(input.scene) : undefined
+  const sceneInput = input.scene?.trim()
+  const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
   const format = input.format ?? inferRenderFormatFromPath(outputPath)
   const quality = input.quality ?? 'comp'
   const fps = input.fps ?? 30
