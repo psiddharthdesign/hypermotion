@@ -18,12 +18,22 @@ export function validateCommand(): Command {
       const resolvedScenePath = path.resolve(scenePath)
       let bytes: Buffer
       let result: SceneValidationResult
+      let stats: fs.Stats
       try {
-        const stats = fs.statSync(resolvedScenePath)
-        if (!stats.isFile()) {
-          console.error(`[validate] scene path is not a file: ${resolvedScenePath}`)
-          process.exit(2)
-        }
+        stats = fs.statSync(resolvedScenePath)
+      } catch (err) {
+        console.error(
+          `[validate] failed to read ${resolvedScenePath}: ${
+            err instanceof Error ? err.message : err
+          }`,
+        )
+        process.exit(2)
+      }
+      if (!stats.isFile()) {
+        console.error(`[validate] scene path is not a file: ${resolvedScenePath}`)
+        process.exit(2)
+      }
+      try {
         bytes = fs.readFileSync(resolvedScenePath)
       } catch (err) {
         console.error(
