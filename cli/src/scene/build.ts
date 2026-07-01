@@ -938,10 +938,13 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     if (!Array.isArray(track.keyframes)) {
       errors.push(`track ${id} keyframes must be an array`)
     } else {
+      const seenKeyframes = new Set<string>()
       track.keyframes.forEach((rawKeyframe, index) => {
         const keyframe = asRecord(rawKeyframe)
         const label = typeof keyframe.id === 'string' ? keyframe.id : `#${index}`
         if (typeof keyframe.id !== 'string') errors.push(`track ${id} keyframe ${index} id must be a string`)
+        else if (seenKeyframes.has(keyframe.id)) errors.push(`track ${id} has duplicate keyframe id: ${keyframe.id}`)
+        else seenKeyframes.add(keyframe.id)
         if (typeof keyframe.time !== 'number' || !Number.isFinite(keyframe.time)) {
           errors.push(`track ${id} keyframe ${label} time must be a finite number`)
         }
