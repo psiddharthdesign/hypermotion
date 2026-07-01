@@ -936,6 +936,19 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
   }
 
+  for (const id of Object.keys(nodes)) {
+    const seenParents = new Set<string>([id])
+    let current = asRecord(nodes[id]).parent
+    while (typeof current === 'string') {
+      if (seenParents.has(current)) {
+        errors.push(`node ${id} has a parent cycle through ${current}`)
+        break
+      }
+      seenParents.add(current)
+      current = asRecord(nodes[current]).parent
+    }
+  }
+
   const cameraIds = Object.entries(nodes)
     .filter(([, raw]) => asRecord(raw).kind === 'camera')
     .map(([id]) => id)
