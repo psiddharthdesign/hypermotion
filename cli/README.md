@@ -45,8 +45,8 @@ hypermotion render --scene intro.hype -o intro.mp4
 Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
 `2k` (2560×1440), `4k` (3840×2160). Default: `comp`.
 
-Render targets whichever scene is currently loaded in your desktop app.
-To script a scene from JSON, build a `.hype` file with
+Without `--scene`, render targets whichever scene is currently loaded in
+your desktop app. To script a scene from JSON, build a `.hype` file with
 `hypermotion create`, inspect it with `hypermotion info`, and pass it to
 the installed desktop app with `hypermotion render --scene <path>`.
 
