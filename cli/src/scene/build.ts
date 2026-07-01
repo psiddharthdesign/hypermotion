@@ -880,7 +880,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     errors.push(`scene.root must be scene-level with parent: null: ${root}`)
   }
 
-  if (!activeCameraId) warnings.push('scene.activeCameraId is missing')
+  if (data.activeCameraId !== undefined && data.activeCameraId !== null && typeof data.activeCameraId !== 'string') {
+    errors.push('scene.activeCameraId must be a string')
+  } else if (!activeCameraId) warnings.push('scene.activeCameraId is missing')
   else if (!nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
   else if (asRecord(nodes[activeCameraId]).kind !== 'camera') {
     errors.push(`scene.activeCameraId is not a camera node: ${activeCameraId}`)
