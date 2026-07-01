@@ -191,25 +191,37 @@ test('create_scene rejects array scene JSON', async () => {
 })
 
 test('create_scene rejects null scene JSON', async () => {
-  const result = await handleCreateScene({
-    output: path.join(os.tmpdir(), 'null-scene.hype'),
-    scene: 'null',
-  })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-null-scene-'))
 
-  assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
+  try {
+    const result = await handleCreateScene({
+      output: path.join(dir, 'null-scene.hype'),
+      scene: 'null',
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.equal(text, 'create_scene: scene must be an object (or a JSON-encoded object).')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('create_scene reports malformed scene JSON strings as MCP errors', async () => {
-  const result = await handleCreateScene({
-    output: path.join(os.tmpdir(), 'malformed-scene.hype'),
-    scene: '{"nodes":',
-  })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-malformed-scene-'))
 
-  assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^create_scene: 'scene' was a string but not valid JSON:/)
+  try {
+    const result = await handleCreateScene({
+      output: path.join(dir, 'malformed-scene.hype'),
+      scene: '{"nodes":',
+    })
+
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    assert.match(text, /^create_scene: 'scene' was a string but not valid JSON:/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('create_scene rejects relative output paths', async () => {
