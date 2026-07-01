@@ -7,6 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { buildSceneBytes } from '../scene/build.js'
+import { assertToolText } from '../testUtils/mcp.js'
 import {
   handleGetLayer,
   handleListCameras,
@@ -302,12 +303,6 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
-
-function assertToolText(result: CallToolResult): string {
-  const firstContent = result.content[0]
-  assert.equal(firstContent?.type, 'text')
-  return firstContent.text
-}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
