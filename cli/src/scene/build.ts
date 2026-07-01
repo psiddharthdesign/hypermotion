@@ -948,12 +948,16 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       track.keyframes.forEach((rawKeyframe, index) => {
         const keyframe = asRecord(rawKeyframe)
         const label = typeof keyframe.id === 'string' ? keyframe.id : `#${index}`
-        if (!isPlainObject(rawKeyframe)) errors.push(`track ${id} keyframe ${index} must be an object`)
+        const keyframeIsObject = isPlainObject(rawKeyframe)
+        if (!keyframeIsObject) errors.push(`track ${id} keyframe ${index} must be an object`)
         if (typeof keyframe.id !== 'string') errors.push(`track ${id} keyframe ${index} id must be a string`)
         else if (seenKeyframes.has(keyframe.id)) errors.push(`track ${id} has duplicate keyframe id: ${keyframe.id}`)
         else seenKeyframes.add(keyframe.id)
         if (typeof keyframe.time !== 'number' || !Number.isFinite(keyframe.time)) {
           errors.push(`track ${id} keyframe ${label} time must be a finite number`)
+        }
+        if (keyframeIsObject && (!('value' in keyframe) || !isJsonValue(keyframe.value))) {
+          errors.push(`track ${id} keyframe ${label} value must be JSON-compatible`)
         }
       })
     }
@@ -988,6 +992,15 @@ function isNodeKind(value: string): value is NodeKindJson {
 
 function isPropertyId(value: string): value is PropertyIdJson {
   return PROPERTY_ID_SET.has(value)
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true
+  if (typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every(isJsonValue)
+  if (!isPlainObject(value)) return false
+  return Object.values(value).every(isJsonValue)
 }
 
 export function applyScenePatch(bytes: Uint8Array, patch: ScenePatch | PatchOperation[]): Uint8Array {
