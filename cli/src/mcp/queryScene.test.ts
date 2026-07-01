@@ -82,7 +82,10 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      assert.match(assertToolText(result), new RegExp(`^${entry.name}: failed to read ${missingScene}:`))
+      assert.match(
+        assertToolText(result),
+        new RegExp(`^${entry.name}: failed to read ${escapeRegExp(missingScene)}:`),
+      )
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -135,7 +138,10 @@ test('query scene MCP handlers report malformed scene files as MCP errors', asyn
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      assert.match(assertToolText(result), new RegExp(`^${entry.name}: failed to read ${scenePath}:`))
+      assert.match(
+        assertToolText(result),
+        new RegExp(`^${entry.name}: failed to read ${escapeRegExp(scenePath)}:`),
+      )
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -274,4 +280,8 @@ function assertToolText(result: CallToolResult): string {
   const firstContent = result.content[0]
   assert.equal(firstContent?.type, 'text')
   return firstContent.text
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
