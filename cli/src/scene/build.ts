@@ -892,6 +892,7 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 
   for (const [id, raw] of Object.entries(nodes)) {
     const node = asRecord(raw)
+    if (!isPlainObject(raw)) errors.push(`node ${id} must be an object`)
     if (node.id !== id) errors.push(`node map key ${id} does not match node id: ${String(node.id)}`)
     if (typeof node.kind !== 'string' || !isNodeKind(node.kind)) {
       errors.push(`node ${id} has unsupported kind: ${String(node.kind)}`)
