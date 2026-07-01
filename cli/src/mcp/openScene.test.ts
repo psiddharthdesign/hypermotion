@@ -123,3 +123,25 @@ test('open_scene reports missing desktop apps as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('open_scene reports opened scene paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-success-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.writeFileSync(scenePath, '')
+
+  try {
+    const result = await handleOpenScene(
+      { scene: scenePath },
+      {
+        existsSync: fs.existsSync,
+        statSync: fs.statSync,
+        openScene: async () => true,
+      },
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.equal(assertToolText(result), `Opened ${scenePath}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
