@@ -247,7 +247,7 @@ export interface TextAnimationJson {
   applyTo: 'letters' | 'words' | 'lines'
   order: 'forward' | 'reverse' | 'random'
   delay: number
-  smoothing: 'none' | 'smooth'
+  smoothing: 'none' | 'soft' | 'smooth'
   duration: number
   startTime: number
   acceleration: 'linear' | 'speed-up' | 'slow-down'
