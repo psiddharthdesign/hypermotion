@@ -18,6 +18,12 @@ test('info_scene input schema exposes required scene path', () => {
   })
 })
 
+test('info_scene description does not require absolute paths', () => {
+  const description = infoSceneTool.description ?? ''
+  assert.match(description, /Pass the path to the \.hype file\./)
+  assert.doesNotMatch(description, /absolute path/i)
+})
+
 test('info_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleInfoScene({ scene: 42 })
 
