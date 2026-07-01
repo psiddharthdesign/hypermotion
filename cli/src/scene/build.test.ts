@@ -918,6 +918,18 @@ test('validateScene rejects non-camera active camera ids', () => {
   ])
 })
 
+test('validateScene rejects non-string active camera ids', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  doc.getMap<unknown>('scene').set('activeCameraId', 42)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['scene.activeCameraId must be a string'])
+  assert.deepEqual(result.warnings, [])
+})
+
 test('validateScene rejects active camera ids pointing to missing nodes', () => {
   const scene = sampleScene()
   scene.activeCameraId = 'missing-camera'
