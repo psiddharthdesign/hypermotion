@@ -188,6 +188,38 @@ test('render_scene reports output directory stat failures as MCP errors', async 
   }
 })
 
+test('render_scene reports output directory creation failures as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-mkdir-'))
+  const outDir = path.join(dir, 'exports')
+  const previousMkdirSync = fs.mkdirSync
+
+  try {
+    Object.defineProperty(fs, 'mkdirSync', {
+      configurable: true,
+      value: (targetPath: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+        if (targetPath === outDir) throw new Error('mkdir failed')
+        return previousMkdirSync(targetPath, options)
+      },
+    })
+
+    const result = await handleRenderScene({
+      output: path.join(outDir, 'out.mp4'),
+    })
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      'render_scene: failed to create output directory: mkdir failed',
+    )
+  } finally {
+    Object.defineProperty(fs, 'mkdirSync', {
+      configurable: true,
+      value: previousMkdirSync,
+    })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene normalizes padded format and quality values', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-normalize-'))
   const appPath = path.join(dir, 'fake-app.mjs')

@@ -179,6 +179,24 @@ export async function handleRenderScene(
     }
   }
 
+  if (!fs.existsSync(outDir)) {
+    try {
+      fs.mkdirSync(outDir, { recursive: true })
+    } catch (err) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: failed to create output directory: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      }
+    }
+  }
+
   const appPath = await locateDesktopApp()
   if (!appPath) {
     return {
@@ -192,10 +210,6 @@ export async function handleRenderScene(
         },
       ],
     }
-  }
-
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true })
   }
 
   try {
