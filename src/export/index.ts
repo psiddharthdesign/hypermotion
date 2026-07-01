@@ -12,7 +12,7 @@
  *   - webm → tab capture: getDisplayMedia + MediaRecorder records the
  *            rendered tab in real time. Bound to screen pixel ratio
  *            but real-time speed.
- *   - gif  → native render: html-to-image → gifenc. 720p · 24fps
+ *   - gif  → native render: capturePage → gifenc. 720p · 24fps
  *            default; quality picker still applies.
  *
  * Public surface:
