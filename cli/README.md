@@ -90,6 +90,9 @@ What works today:
 - `hypermotion render -o out.mp4` — renders the desktop app's current scene.
 - `hypermotion create out.hype --from scene.json` — builds a scene file.
 - `hypermotion info out.hype` — prints scene metadata.
+- `hypermotion inspect`, `patch`, `validate`, and `open` — inspect,
+  modify, verify, and launch saved `.hype` scenes.
+- `hypermotion doctor` and `serve` — check local setup and run the MCP server.
 - `hypermotion-mcp` — registers + responds to MCP clients.
 - MCP tools for scene authoring, inspection, patching, validation,
   querying, opening, rendering, diagnostics, and capability discovery.
