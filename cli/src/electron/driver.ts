@@ -27,12 +27,13 @@
 
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import type { RenderFormat, RenderQuality } from '../renderOptions.js'
 
 export interface HeadlessRenderRequest {
   appPath: string
   outputPath: string
-  format: 'mp4' | 'webm' | 'gif'
-  quality: 'comp' | '720p' | '2k' | '4k'
+  format: RenderFormat
+  quality: RenderQuality
   fps: number
   /** Optional .hype scene path to render instead of the current desktop scene. */
   scenePath?: string
