@@ -7,7 +7,7 @@
  *
  *   `hypermotion <subcommand>` — interactive CLI for humans (render, create,
  *                                  info, inspect, patch, validate, open,
- *                                  doctor, serve).
+ *                                  doctor, serve --mcp).
  *   `hypermotion-mcp`          — dedicated MCP server binary used by AI
  *                                  coding agents (Claude Code, Codex) over
  *                                  stdio.
