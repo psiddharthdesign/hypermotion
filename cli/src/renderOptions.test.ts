@@ -36,6 +36,11 @@ test('inferRenderFormatFromPath normalizes extension casing', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.WEBM'), 'webm')
 })
 
+test('inferRenderFormatFromPath ignores URL-style suffixes', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/demo.gif?download=1'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/demo.webm#preview'), 'webm')
+})
+
 test('inferRenderFormatFromPath falls back to mp4 for unknown extensions', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.mov'), 'mp4')
   assert.equal(inferRenderFormatFromPath('/tmp/demo'), 'mp4')
