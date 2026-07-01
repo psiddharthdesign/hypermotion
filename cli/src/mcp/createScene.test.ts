@@ -116,6 +116,24 @@ test('create_scene description lists supported layout property ids', () => {
   }
 })
 
+test('create_scene description mentions text animation track fields', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  for (const field of [
+    'textAnimation',
+    'applyTo',
+    'startTime',
+    'easingPresetId',
+    'travelDistance',
+    'blurRadius',
+  ]) {
+    assert.match(description, new RegExp(field))
+  }
+})
+
 test('create_scene description stays in sync with supported property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {

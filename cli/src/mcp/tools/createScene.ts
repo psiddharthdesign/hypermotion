@@ -78,7 +78,8 @@ export const createSceneTool: Tool = {
     "Components can define variants, defaultSelection, variantOverrides, timelines, and interactions. " +
     "Instances point at componentId and carry selection, overrides, and instance-local interaction additions. " +
     "Component timelines are local tracks triggered by interactions, e.g. onClick -> playTimeline, and are scoped per instance.\n" +
-    "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing? } — omitted keyframes default to [].\n" +
+    "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing?, textAnimation? } — omitted keyframes default to [].\n" +
+    "Text animation tracks can include textAnimation with mode, applyTo, order, delay, smoothing, duration, startTime, acceleration, easingPresetId, easingStrength, direction, travelDistance, and blurRadius.\n" +
     "Camera nodes can include focalLength, fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
     "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
     "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
