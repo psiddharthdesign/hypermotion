@@ -363,7 +363,7 @@ test('info command reports directory inputs as non-files', async () => {
       })
     })
 
-    assert.match(stderr, /^\[info\] scene path is not a file: /)
+    assert.equal(stderr, `[info] scene path is not a file: ${dir}\n`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
