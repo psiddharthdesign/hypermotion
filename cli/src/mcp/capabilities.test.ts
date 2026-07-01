@@ -111,10 +111,14 @@ test('capability tool schemas accept no arguments', () => {
   })
 })
 
-test('get_capabilities description mentions validation and query tools', () => {
+test('get_capabilities description mentions agent-facing capability groups', () => {
   const getCapabilities = TOOLS.find((tool) => tool.name === 'get_capabilities')
+  const description = getCapabilities?.description ?? ''
 
-  assert.match(getCapabilities?.description ?? '', /validation\/query tools/)
+  assert.match(description, /render formats\/qualities/)
+  assert.match(description, /saved-scene render support/)
+  assert.match(description, /validation\/query tools/)
+  assert.match(description, /keyframeable properties/)
 })
 
 function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
