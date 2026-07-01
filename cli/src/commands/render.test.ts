@@ -10,15 +10,21 @@ import {
   inferRenderFormatFromPath,
   isRenderFormat,
   isRenderQuality,
+  RENDER_FORMATS,
+  RENDER_QUALITIES,
 } from '../renderOptions.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { renderCommand } from './render.js'
 
 test('render option guards accept supported values only', () => {
-  assert.equal(isRenderFormat('mp4'), true)
+  for (const format of RENDER_FORMATS) {
+    assert.equal(isRenderFormat(format), true)
+  }
   assert.equal(isRenderFormat('mov'), false)
-  assert.equal(isRenderQuality('2k'), true)
+  for (const quality of RENDER_QUALITIES) {
+    assert.equal(isRenderQuality(quality), true)
+  }
   assert.equal(isRenderQuality('1080p'), false)
 })
 
