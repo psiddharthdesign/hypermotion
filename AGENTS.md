@@ -461,7 +461,7 @@ app and spawns it with command-line flags that put it into headless
 render mode:
 
 ```
-hyper-motion --render --out=<path> --format=<fmt> --quality=<q> --fps=<n>
+hyper-motion --render --out=<path> --format=<fmt> --quality=<q> --fps=<n> [--scene=<path>]
 ```
 
 ### Single-instance lock
