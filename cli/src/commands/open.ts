@@ -31,7 +31,7 @@ export function openCommand(deps: Partial<OpenCommandDeps> = {}): Command {
     .description('Open a .hype scene file in the hyper-motion desktop app.')
     .argument('<scene>', 'Path to a .hype scene file')
     .action(async (scene: string) => {
-      const scenePath = path.resolve(scene)
+      const scenePath = path.resolve(scene.trim())
       if (!commandDeps.existsSync(scenePath)) {
         console.error(`[open] scene file not found: ${scenePath}`)
         process.exit(2)
