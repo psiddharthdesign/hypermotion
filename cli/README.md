@@ -37,6 +37,9 @@ hypermotion render -o out.webm -q 720p --fps 60
 
 # 4K MP4
 hypermotion render -o out.mp4 -q 4k
+
+# Render a saved .hype scene file
+hypermotion render --scene intro.hype -o intro.mp4
 ```
 
 Quality presets: `comp` (matches the scene canvas — fastest), `720p`,
