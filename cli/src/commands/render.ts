@@ -101,7 +101,16 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       // post-render write doesn't fail on a missing parent.
       const outDir = path.dirname(outputPath)
       if (!existsSync(outDir)) {
-        mkdirSync(outDir, { recursive: true })
+        try {
+          mkdirSync(outDir, { recursive: true })
+        } catch (err) {
+          console.error(
+            `[render] failed to create output directory ${outDir}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+          process.exit(2)
+        }
       } else {
         let outDirStats: fs.Stats
         try {
