@@ -24,6 +24,21 @@ test('locator returns an existing HYPERMOTION_APP_PATH override', async () => {
   }
 })
 
+test('locator trims whitespace around HYPERMOTION_APP_PATH overrides', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-spaces-'))
+  const appPath = path.join(dir, 'hyper-motion')
+
+  try {
+    fs.writeFileSync(appPath, '')
+
+    await withEnvVar('HYPERMOTION_APP_PATH', `  ${appPath}  `, async () => {
+      assert.equal(await locateDesktopApp(), appPath)
+    })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-missing-'))
   const missingPath = path.join(dir, 'hyper-motion')
