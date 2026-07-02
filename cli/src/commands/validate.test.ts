@@ -460,6 +460,55 @@ test('validate command rejects unsupported node kinds', async () => {
   }
 })
 
+test('validate command rejects unsupported node positions', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Unsupported Position',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: ['title'],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+          title: {
+            id: 'title',
+            kind: 'text',
+            parent: 'root',
+            position: 'fixed',
+            text: 'Unsupported position',
+            fontFamily: 'Inter',
+            fontSize: 24,
+          },
+        },
+      } as unknown as Parameters<typeof buildSceneBytes>[0]),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand().exitOverride().parseAsync([scenePath], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene is invalid$/m)
+    assert.match(stdout, /^error: node title has unsupported position: fixed$/m)
+    assert.equal(process.exitCode, 1)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command rejects missing keyframe values', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')
