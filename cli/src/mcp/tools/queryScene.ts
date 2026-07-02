@@ -152,6 +152,13 @@ export async function handleListCameras(
 
 function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult {
   const normalizedScenePath = scenePath.trim()
+  if (!normalizedScenePath) {
+    return {
+      ok: false,
+      result: errorText(`${toolName}: scene path is required`),
+    }
+  }
+
   let bytes: Buffer
   try {
     const stats = fs.statSync(normalizedScenePath)
