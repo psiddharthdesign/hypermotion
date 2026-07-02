@@ -179,3 +179,31 @@ test('open_scene trims padded scene paths before opening', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('open_scene resolves relative scene paths before opening', async () => {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), 'hypermotion-open-relative-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const relativeScenePath = path.relative(process.cwd(), scenePath)
+  const openedPaths: string[] = []
+  fs.writeFileSync(scenePath, '')
+
+  try {
+    const result = await handleOpenScene(
+      { scene: relativeScenePath },
+      {
+        existsSync: fs.existsSync,
+        statSync: fs.statSync,
+        openScene: async (pathToOpen) => {
+          openedPaths.push(pathToOpen)
+          return true
+        },
+      },
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(openedPaths, [scenePath])
+    assert.equal(assertToolText(result), `Opened ${scenePath}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
