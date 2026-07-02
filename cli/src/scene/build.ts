@@ -1209,6 +1209,14 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
     handledKeys.add('size')
     y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
   }
+  if (node.kind === 'image') {
+    handledKeys.add('src')
+    handledKeys.add('fit')
+    handledKeys.add('importWarning')
+    y.set('src', node.src ?? '')
+    y.set('fit', node.fit ?? 'cover')
+    if (node.importWarning !== undefined) y.set('importWarning', node.importWarning)
+  }
   if (node.kind === 'frame' || node.kind === 'component') {
     for (const key of [
       'size',
