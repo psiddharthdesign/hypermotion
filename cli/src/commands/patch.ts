@@ -46,6 +46,10 @@ export function patchCommand(): Command {
         console.error(`[patch] failed to read patch: ${err instanceof Error ? err.message : err}`)
         process.exit(2)
       }
+      if (typeof patch !== 'object' || patch == null) {
+        console.error('[patch] patch JSON must be an array or object at the top level.')
+        process.exit(2)
+      }
 
       let next: Uint8Array
       try {
