@@ -81,6 +81,8 @@ export interface GradientStopJson {
   color: string
 }
 
+export type ImageFillFitJson = 'cover' | 'contain' | 'fill' | 'tile'
+
 export type FillJson =
   | { kind: 'solid'; color: string }
   | { kind: 'linear'; stops: GradientStopJson[]; angle: number }
@@ -101,7 +103,7 @@ export type FillJson =
   | {
       kind: 'image'
       src: string
-      fit: 'cover' | 'contain' | 'fill' | 'tile'
+      fit: ImageFillFitJson
     }
 
 export type StrokeStyleJson = 'solid' | 'dashed' | 'dotted'
