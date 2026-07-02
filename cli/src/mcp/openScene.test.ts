@@ -40,7 +40,7 @@ test('open_scene reports missing files as MCP errors', async () => {
     const result = await handleOpenScene({ scene: missingScene })
 
     assert.equal(result.isError, true)
-    assert.equal(assertToolText(result), `Scene file not found: ${missingScene}`)
+    assert.equal(assertToolText(result), `open_scene: scene file not found: ${missingScene}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -55,7 +55,7 @@ test('open_scene reports directories as MCP errors', async () => {
     const result = await handleOpenScene({ scene: sceneDir })
 
     assert.equal(result.isError, true)
-    assert.equal(assertToolText(result), `Scene path is not a file: ${sceneDir}`)
+    assert.equal(assertToolText(result), `open_scene: scene path is not a file: ${sceneDir}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

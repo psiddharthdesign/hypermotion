@@ -64,7 +64,7 @@ export async function handleOpenScene(
   if (!deps.existsSync(scenePath)) {
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: `Scene file not found: ${scenePath}` }],
+      content: [{ type: 'text' as const, text: `open_scene: scene file not found: ${scenePath}` }],
     }
   }
   let stats: fs.Stats
@@ -86,7 +86,7 @@ export async function handleOpenScene(
   if (!stats.isFile()) {
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: `Scene path is not a file: ${scenePath}` }],
+      content: [{ type: 'text' as const, text: `open_scene: scene path is not a file: ${scenePath}` }],
     }
   }
   let opened: boolean
