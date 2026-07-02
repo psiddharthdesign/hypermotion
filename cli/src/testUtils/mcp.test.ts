@@ -21,3 +21,14 @@ test('assertToolText reports missing text content clearly', () => {
     /expected first MCP content item to be text/,
   )
 })
+
+test('assertToolText rejects non-text first content items', () => {
+  const result: CallToolResult = {
+    content: [{ type: 'image', data: 'base64-png', mimeType: 'image/png' }],
+  }
+
+  assert.throws(
+    () => assertToolText(result),
+    /expected first MCP content item to be text/,
+  )
+})
