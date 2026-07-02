@@ -68,8 +68,13 @@ export const NODE_KINDS = [
   'camera',
 ] as const satisfies readonly NodeKindJson[]
 
+export const NODE_POSITIONS = [
+  'flow',
+  'absolute',
+] as const satisfies readonly NodePositionJson[]
+
 const NODE_KIND_SET: ReadonlySet<string> = new Set(NODE_KINDS)
-const NODE_POSITION_SET: ReadonlySet<string> = new Set(['flow', 'absolute'])
+const NODE_POSITION_SET: ReadonlySet<string> = new Set(NODE_POSITIONS)
 
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
