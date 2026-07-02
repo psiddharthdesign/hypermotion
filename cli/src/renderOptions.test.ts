@@ -35,6 +35,10 @@ test('inferRenderFormatFromPath uses supported file extensions', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.final.mp4'), 'mp4')
 })
 
+test('inferRenderFormatFromPath ignores extensions in parent directories', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/exports.webm/demo'), 'mp4')
+})
+
 test('inferRenderFormatFromPath normalizes extension casing', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.WEBM'), 'webm')
 })
