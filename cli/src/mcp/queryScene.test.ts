@@ -65,6 +65,23 @@ test('query scene MCP handlers report invalid arguments as MCP errors', async ()
   }
 })
 
+test('query scene MCP handlers reject blank node ids clearly', async () => {
+  const cases: Array<{
+    name: string
+    run: () => Promise<CallToolResult>
+  }> = [
+    { name: 'get_layer', run: () => handleGetLayer({ scene: '/tmp/scene.hype', nodeId: '  ' }) },
+    { name: 'list_tracks', run: () => handleListTracks({ scene: '/tmp/scene.hype', nodeId: '\n' }) },
+  ]
+
+  for (const entry of cases) {
+    const result = await entry.run()
+    assert.equal(result.isError, true)
+    assert.match(assertToolText(result), new RegExp(`^${entry.name}: invalid arguments`))
+    assert.match(assertToolText(result), /nodeId is required/)
+  }
+})
+
 test('query scene MCP handlers report missing scene files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-missing-query-'))
   const missingScene = path.join(dir, 'missing.hype')
@@ -330,6 +347,15 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.deepEqual(
       literalTracksPayload.tracks.map((track) => track.id),
       ['fade-literal-title'],
+    )
+
+    const paddedTracksResult = await handleListTracks({ scene: scenePath, nodeId: ' title ' })
+    const paddedTracksPayload = JSON.parse(assertToolText(paddedTracksResult)) as {
+      tracks: Array<{ id: string; nodeId: string; propertyId: string }>
+    }
+    assert.deepEqual(
+      paddedTracksPayload.tracks.map((track) => track.id),
+      ['fade-title'],
     )
 
     const allTracksResult = await handleListTracks({ scene: scenePath })
