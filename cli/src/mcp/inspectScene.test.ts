@@ -123,3 +123,39 @@ test('inspect_scene returns editable scene JSON for readable scenes', async () =
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('inspect_scene trims padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Trimmed Inspect MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleInspectScene({ scene: `  ${scenePath}\n` })
+
+    assert.equal(result.isError, undefined)
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const scene = JSON.parse(text) as { meta: { name?: string } }
+    assert.equal(scene.meta.name, 'Trimmed Inspect MCP')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
