@@ -224,6 +224,39 @@ test('inspect command reports resolved relative scene paths', async () => {
   }
 })
 
+test('inspect command reports read failures after stat succeeds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-read-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const originalReadFileSync = fs.readFileSync
+  try {
+    fs.writeFileSync(scenePath, '')
+    Object.defineProperty(fs, 'readFileSync', {
+      configurable: true,
+      value: ((readPath: fs.PathOrFileDescriptor) => {
+        if (readPath === scenePath) throw new Error('read failed')
+        return originalReadFileSync(readPath)
+      }) as typeof fs.readFileSync,
+    })
+
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          inspectCommand().parse([scenePath], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.equal(
+      stderr,
+      `[inspect] failed to read ${path.resolve(scenePath)}: read failed\n`,
+    )
+  } finally {
+    Object.defineProperty(fs, 'readFileSync', { value: originalReadFileSync })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect command reports malformed scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'broken.hype')
