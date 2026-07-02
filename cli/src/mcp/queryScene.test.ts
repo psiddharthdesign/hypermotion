@@ -327,6 +327,14 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     assert.equal(layerPayload.id, 'title')
     assert.equal(layerPayload.text, 'Queryable')
 
+    const paddedLayerResult = await handleGetLayer({ scene: scenePath, nodeId: ' title ' })
+    const paddedLayerPayload = JSON.parse(assertToolText(paddedLayerResult)) as {
+      id: string
+      text: string
+    }
+    assert.equal(paddedLayerPayload.id, 'title')
+    assert.equal(paddedLayerPayload.text, 'Queryable')
+
     const missingLayerResult = await handleGetLayer({ scene: scenePath, nodeId: 'missing' })
     assert.equal(missingLayerResult.isError, true)
     assert.equal(assertToolText(missingLayerResult), 'Layer not found: missing')
