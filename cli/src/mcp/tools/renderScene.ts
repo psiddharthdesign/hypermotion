@@ -42,6 +42,21 @@ const RenderInput = z.object({
     ),
 })
 type RenderInputData = z.infer<typeof RenderInput>
+type RenderSceneDeps = {
+  existsSync: typeof fs.existsSync
+  statSync: (path: fs.PathLike) => fs.Stats
+  mkdirSync: (path: fs.PathLike, options: { recursive: true }) => string | undefined
+  locateApp: typeof locateDesktopApp
+  render: typeof driveHeadlessRender
+}
+
+const defaultDeps: RenderSceneDeps = {
+  existsSync: fs.existsSync,
+  statSync: fs.statSync,
+  mkdirSync: fs.mkdirSync,
+  locateApp: locateDesktopApp,
+  render: driveHeadlessRender,
+}
 
 function normalizeStringOption(value: unknown): unknown {
   return typeof value === 'string' ? value.trim().toLowerCase() : value
@@ -88,6 +103,7 @@ export const renderSceneTool: Tool = {
 
 export async function handleRenderScene(
   args: Record<string, unknown>,
+  deps: RenderSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = RenderInput.safeParse(args)
   if (!parsed.success) {
@@ -122,7 +138,7 @@ export async function handleRenderScene(
   const quality = input.quality ?? 'comp'
   const fps = input.fps ?? 30
 
-  if (scenePath && !fs.existsSync(scenePath)) {
+  if (scenePath && !deps.existsSync(scenePath)) {
     return {
       isError: true,
       content: [
@@ -136,7 +152,7 @@ export async function handleRenderScene(
   if (scenePath) {
     let stats: fs.Stats
     try {
-      stats = fs.statSync(scenePath)
+      stats = deps.statSync(scenePath)
     } catch (err) {
       return {
         isError: true,
@@ -164,10 +180,10 @@ export async function handleRenderScene(
   }
 
   const outDir = path.dirname(outputPath)
-  if (fs.existsSync(outDir)) {
+  if (deps.existsSync(outDir)) {
     let stats: fs.Stats
     try {
-      stats = fs.statSync(outDir)
+      stats = deps.statSync(outDir)
     } catch (err) {
       return {
         isError: true,
@@ -194,9 +210,9 @@ export async function handleRenderScene(
     }
   }
 
-  if (!fs.existsSync(outDir)) {
+  if (!deps.existsSync(outDir)) {
     try {
-      fs.mkdirSync(outDir, { recursive: true })
+      deps.mkdirSync(outDir, { recursive: true })
     } catch (err) {
       return {
         isError: true,
@@ -212,7 +228,7 @@ export async function handleRenderScene(
     }
   }
 
-  const appPath = await locateDesktopApp()
+  const appPath = await deps.locateApp()
   if (!appPath) {
     return {
       isError: true,
@@ -228,7 +244,7 @@ export async function handleRenderScene(
   }
 
   try {
-    await driveHeadlessRender({
+    await deps.render({
       appPath,
       outputPath,
       format,
