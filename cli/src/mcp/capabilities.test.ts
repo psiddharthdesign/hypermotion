@@ -16,7 +16,12 @@ import {
   type PatchOperation,
   type PropertyIdJson,
 } from '../scene/build.js'
-import type { RenderFormat, RenderQuality } from '../renderOptions.js'
+import {
+  RENDER_FORMATS,
+  RENDER_QUALITIES,
+  type RenderFormat,
+  type RenderQuality,
+} from '../renderOptions.js'
 import { assertToolText } from '../testUtils/mcp.js'
 
 type CapabilitiesToolPayload = {
@@ -68,8 +73,8 @@ test('capability tools list the full supported keyframe property set', async () 
     structuralSceneValidation: true,
   })
   assert.deepEqual(capabilities.validationTools, ['validate_scene'])
-  assert.deepEqual(capabilities.renderFormats, ['mp4', 'webm', 'gif'])
-  assert.deepEqual(capabilities.renderQualities, ['comp', '720p', '2k', '4k'])
+  assert.deepEqual(capabilities.renderFormats, RENDER_FORMATS)
+  assert.deepEqual(capabilities.renderQualities, RENDER_QUALITIES)
   assert.equal(capabilities.renderFileSceneInput, true)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
