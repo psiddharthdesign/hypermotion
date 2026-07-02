@@ -17,3 +17,15 @@ test('serve command requires an explicit server mode', async () => {
 
   assert.match(stderr, /^\[serve\] no mode specified\. Use --mcp/m)
 })
+
+test('serve command starts the MCP server in MCP mode', async () => {
+  let calls = 0
+
+  await serveCommand({
+    startServer: async () => {
+      calls += 1
+    },
+  }).parseAsync(['--mcp'], { from: 'user' })
+
+  assert.equal(calls, 1)
+})
