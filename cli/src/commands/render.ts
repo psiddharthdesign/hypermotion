@@ -66,7 +66,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
     )
     .option(
       '-q, --quality <quality>',
-      'Quality: comp (match comp) | 720p | 2k | 4k',
+      'Quality: comp (match scene canvas) | 720p | 2k | 4k',
       'comp',
     )
     .option('--fps <n>', 'Frame rate', '30')

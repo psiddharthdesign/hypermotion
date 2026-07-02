@@ -38,6 +38,12 @@ test('render command description mentions saved scene support', () => {
   assert.match(renderCommand().description(), /current desktop scene/)
 })
 
+test('render command quality help describes comp output size', () => {
+  const qualityOption = renderCommand().options.find((option) => option.long === '--quality')
+
+  assert.equal(qualityOption?.description, 'Quality: comp (match scene canvas) | 720p | 2k | 4k')
+})
+
 test('render command forwards saved scene paths to the driver', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-ok-'))
   const scenePath = path.join(dir, 'scene with spaces.hype')
