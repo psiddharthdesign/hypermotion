@@ -502,6 +502,8 @@ export const PATCH_OPERATION_TYPES = [
   'deleteSection',
 ] as const satisfies readonly PatchOperation['op'][]
 
+export type PatchOperationType = (typeof PATCH_OPERATION_TYPES)[number]
+
 export type PatchOperation =
   | { op: 'setMeta'; patch: JsonObject }
   | { op: 'setRoot'; nodeId: string }
