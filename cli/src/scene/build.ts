@@ -509,7 +509,7 @@ export type PatchOperation =
   | { op: 'createNode'; node: NodeJson }
   | { op: 'deleteNode'; nodeId: string }
   | { op: 'setNode'; nodeId: string; patch: JsonObject }
-  | { op: 'setNodeProperty'; nodeId: string; key: string; value: unknown }
+  | { op: 'setNodeProperty'; nodeId: string; key: string; value: JsonValue }
   | { op: 'appendChild'; parentId: string; nodeId: string }
   | { op: 'moveChild'; parentId: string; nodeId: string; toIndex: number }
   | { op: 'setTrack'; track: TrackJson }
