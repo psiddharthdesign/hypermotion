@@ -97,6 +97,26 @@ test('open command trims padded scene paths before launching the app', async () 
   }
 })
 
+test('open command rejects blank scene paths before launching the app', async () => {
+  const stderr = await captureStderr(() => {
+    return withProcessExitThrow(async () => {
+      await assert.rejects(
+        openCommand({
+          locateApp: async () => {
+            throw new Error('should not locate app')
+          },
+          spawnApp: () => {
+            throw new Error('should not launch')
+          },
+        }).parseAsync(['   '], { from: 'user' }),
+        { exitCode: 2 },
+      )
+    })
+  })
+
+  assert.equal(stderr, '[open] scene path is required\n')
+})
+
 test('open command reports missing scene files before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-'))
   const scenePath = path.join(dir, 'missing.hype')
