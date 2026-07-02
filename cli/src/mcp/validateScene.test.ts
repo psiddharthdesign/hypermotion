@@ -26,6 +26,14 @@ test('validate_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^validate_scene: invalid arguments/)
 })
 
+test('validate_scene rejects empty scene paths as MCP errors', async () => {
+  const result = await handleValidateScene({ scene: '   ' })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'validate_scene: scene path is required')
+})
+
 test('validate_scene reports missing files as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-missing-'))
   const missingScene = path.join(dir, 'scene.hype')
