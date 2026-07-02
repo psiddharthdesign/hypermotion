@@ -41,6 +41,7 @@ export interface SceneJson {
 }
 
 export type TextAlignJson = 'start' | 'center' | 'end'
+export type NodePositionJson = 'flow' | 'absolute'
 
 export type NodeKindJson =
   | 'frame'
@@ -68,6 +69,7 @@ export const NODE_KINDS = [
 ] as const satisfies readonly NodeKindJson[]
 
 const NODE_KIND_SET: ReadonlySet<string> = new Set(NODE_KINDS)
+const NODE_POSITION_SET: ReadonlySet<string> = new Set(['flow', 'absolute'])
 
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
@@ -150,7 +152,7 @@ export interface NodeJson {
   children?: string[]
   visible?: boolean
   locked?: boolean
-  position?: 'flow' | 'absolute'
+  position?: NodePositionJson
   isMask?: boolean
   componentSourceId?: string | null
   workspaceOnly?: boolean
@@ -907,6 +909,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     if (typeof node.kind !== 'string' || !isNodeKind(node.kind)) {
       errors.push(`node ${id} has unsupported kind: ${String(node.kind)}`)
     }
+    if (node.position !== undefined && (typeof node.position !== 'string' || !isNodePosition(node.position))) {
+      errors.push(`node ${id} has unsupported position: ${String(node.position)}`)
+    }
     const parent = typeof node.parent === 'string' ? node.parent : null
     if (node.parent !== undefined && node.parent !== null && typeof node.parent !== 'string') {
       errors.push(`node ${id} parent must be a string or null`)
@@ -1012,6 +1017,10 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 
 function isNodeKind(value: string): value is NodeKindJson {
   return NODE_KIND_SET.has(value)
+}
+
+function isNodePosition(value: string): value is NodePositionJson {
+  return NODE_POSITION_SET.has(value)
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
