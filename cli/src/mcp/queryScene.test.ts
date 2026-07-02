@@ -93,6 +93,24 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
   }
 })
 
+test('query scene MCP handlers reject empty scene paths clearly', async () => {
+  const cases: Array<{
+    name: string
+    run: () => Promise<CallToolResult>
+  }> = [
+    { name: 'list_layers', run: () => handleListLayers({ scene: '  ' }) },
+    { name: 'get_layer', run: () => handleGetLayer({ scene: '\n', nodeId: 'title' }) },
+    { name: 'list_tracks', run: () => handleListTracks({ scene: '\t' }) },
+    { name: 'list_cameras', run: () => handleListCameras({ scene: '' }) },
+  ]
+
+  for (const entry of cases) {
+    const result = await entry.run()
+    assert.equal(result.isError, true)
+    assert.equal(assertToolText(result), `${entry.name}: scene path is required`)
+  }
+})
+
 test('query scene MCP handlers report directories as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-directory-query-'))
   const scenePath = path.join(dir, 'scene.hype')
