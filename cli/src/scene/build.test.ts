@@ -754,6 +754,26 @@ test('applyScenePatch fills size defaults for created shape nodes', () => {
   assert.deepEqual(nodes.badge.size, { width: 100, height: 100 })
 })
 
+test('applyScenePatch fills image defaults for created nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'thumbnail',
+        kind: 'image',
+        parent: 'root',
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes.thumbnail.size, { width: 100, height: 100 })
+  assert.equal(nodes.thumbnail.src, '')
+  assert.equal(nodes.thumbnail.fit, 'cover')
+})
+
 test('applyScenePatch fills layout defaults for created frame nodes', () => {
   const bytes = buildSceneBytes(sampleScene())
   const patched = applyScenePatch(bytes, [
