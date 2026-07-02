@@ -39,7 +39,7 @@ interface RenderOptions {
   scene?: string
 }
 
-interface RenderCommandDeps {
+export interface RenderCommandDeps {
   locateApp?: () => Promise<string | null>
   driveRender?: (req: HeadlessRenderRequest) => Promise<void>
   existsSync?: typeof fs.existsSync
