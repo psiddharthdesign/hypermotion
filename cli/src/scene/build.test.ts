@@ -877,6 +877,20 @@ test('validateScene rejects unsupported track property ids', () => {
   ])
 })
 
+test('validateScene rejects unsupported node positions', () => {
+  const scene = sampleScene()
+  const title = scene.nodes?.title
+  if (!title) throw new Error('missing sample title')
+  title.position = 'floating' as typeof title.position
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'node title has unsupported position: floating',
+  ])
+})
+
 test('validateScene rejects tracks targeting missing nodes', () => {
   const scene = sampleScene()
   scene.tracks = {
