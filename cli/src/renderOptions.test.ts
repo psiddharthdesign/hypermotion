@@ -47,6 +47,8 @@ test('inferRenderFormatFromPath ignores URL-style suffixes', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.mp4?download=1#preview'), 'mp4')
   assert.equal(inferRenderFormatFromPath(' /tmp/demo.webm?download=1 '), 'webm')
   assert.equal(inferRenderFormatFromPath('/tmp/demo.GIF?download=1'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/demo?format=gif'), 'mp4')
+  assert.equal(inferRenderFormatFromPath('/tmp/demo#preview.webm'), 'mp4')
 })
 
 test('inferRenderFormatFromPath falls back to mp4 for unknown extensions', () => {
