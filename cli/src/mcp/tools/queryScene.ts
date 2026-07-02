@@ -25,6 +25,7 @@ type QuerySceneSnapshot = {
 type ReadSceneResult =
   | { ok: true; scene: QuerySceneSnapshot }
   | { ok: false; result: CallToolResult }
+type QuerySceneErrorMessage = `${QuerySceneToolName}: ${string}` | `Layer not found: ${string}`
 type LayerSummary = {
   id: unknown
   name: unknown
@@ -114,7 +115,7 @@ export async function handleGetLayer(
   if (!loaded.ok) return loaded.result
 
   const node = record(record(loaded.scene.nodes)[input.nodeId])
-  if (!node.id) return { isError: true, content: [{ type: 'text' as const, text: `Layer not found: ${input.nodeId}` }] }
+  if (!node.id) return errorText(`Layer not found: ${input.nodeId}`)
   return text(node)
 }
 
@@ -156,15 +157,7 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
     if (!stats.isFile()) {
       return {
         ok: false,
-        result: {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `${toolName}: scene path is not a file: ${scenePath}`,
-            },
-          ],
-        },
+        result: errorText(`${toolName}: scene path is not a file: ${scenePath}`),
       }
     }
 
@@ -172,17 +165,11 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
   } catch (err) {
     return {
       ok: false,
-      result: {
-        isError: true,
-        content: [
-          {
-            type: 'text' as const,
-            text: `${toolName}: failed to read ${scenePath}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          },
-        ],
-      },
+      result: errorText(
+        `${toolName}: failed to read ${scenePath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
     }
   }
 
@@ -191,17 +178,11 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
   } catch (err) {
     return {
       ok: false,
-      result: {
-        isError: true,
-        content: [
-          {
-            type: 'text' as const,
-            text: `${toolName}: ${scenePath} is not a valid .hype file: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          },
-        ],
-      },
+      result: errorText(
+        `${toolName}: ${scenePath} is not a valid .hype file: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
     }
   }
 }
@@ -217,13 +198,12 @@ function text(value: unknown): CallToolResult {
 }
 
 function invalidArgs(toolName: QuerySceneToolName, message: string): CallToolResult {
+  return errorText(`${toolName}: invalid arguments — ${message}`)
+}
+
+function errorText(message: QuerySceneErrorMessage): CallToolResult {
   return {
     isError: true,
-    content: [
-      {
-        type: 'text' as const,
-        text: `${toolName}: invalid arguments — ${message}`,
-      },
-    ],
+    content: [{ type: 'text' as const, text: message }],
   }
 }
