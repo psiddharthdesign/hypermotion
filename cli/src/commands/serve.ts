@@ -16,7 +16,13 @@
 import { Command } from 'commander'
 import { startMcpServer } from '../mcp/server.js'
 
-export function serveCommand(): Command {
+interface ServeCommandDeps {
+  startServer?: () => Promise<void>
+}
+
+export function serveCommand(deps: ServeCommandDeps = {}): Command {
+  const startServer = deps.startServer ?? startMcpServer
+
   return new Command('serve')
     .description('Start a server (MCP over stdio, for AI agents).')
     .option('--mcp', 'Run as a Model Context Protocol server over stdio')
@@ -25,6 +31,6 @@ export function serveCommand(): Command {
         console.error('[serve] no mode specified. Use --mcp to start the MCP server.')
         process.exit(1)
       }
-      await startMcpServer()
+      await startServer()
     })
 }
