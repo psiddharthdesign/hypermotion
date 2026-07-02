@@ -28,7 +28,13 @@ export function infoCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output the summary as JSON for scripting')
     .action((scenePath: string, options: InfoCommandOptions) => {
-      const resolvedScenePath = path.resolve(scenePath)
+      const trimmedScenePath = scenePath.trim()
+      if (!trimmedScenePath) {
+        console.error('[info] scene path is required')
+        process.exit(2)
+      }
+
+      const resolvedScenePath = path.resolve(trimmedScenePath)
       let bytes: Buffer
       let stats: fs.Stats
       try {
