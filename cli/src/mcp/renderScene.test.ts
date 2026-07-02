@@ -16,6 +16,7 @@ type JsonSchemaProperty = {
   maximum?: number
   description?: string
 }
+type RenderSceneDeps = NonNullable<Parameters<typeof handleRenderScene>[1]>
 
 test('render_scene input schema exposes fps bounds', () => {
   const fpsProperty = schemaProperty('fps')
@@ -122,20 +123,19 @@ test('render_scene reports scene stat failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-stat-'))
   const scenePath = path.join(dir, 'scene.hype')
   fs.writeFileSync(scenePath, '')
-  const previousStatSync = fs.statSync
 
   try {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: () => {
-        throw new Error('stat failed')
+    const result = await handleRenderScene(
+      {
+        output: path.join(dir, 'out.mp4'),
+        scene: scenePath,
       },
-    })
-
-    const result = await handleRenderScene({
-      output: path.join(dir, 'out.mp4'),
-      scene: scenePath,
-    })
+      testDeps({
+        statSync: () => {
+          throw new Error('stat failed')
+        },
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.equal(
@@ -143,10 +143,6 @@ test('render_scene reports scene stat failures as MCP errors', async () => {
       `render_scene: failed to read ${scenePath}: stat failed`,
     )
   } finally {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: previousStatSync,
-    })
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -175,20 +171,19 @@ test('render_scene reports output directory stat failures as MCP errors', async 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-stat-'))
   const outDir = path.join(dir, 'exports')
   fs.mkdirSync(outDir)
-  const previousStatSync = fs.statSync
 
   try {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: (targetPath: fs.PathLike) => {
-        if (targetPath === outDir) throw new Error('stat failed')
-        return previousStatSync(targetPath)
+    const result = await handleRenderScene(
+      {
+        output: path.join(outDir, 'out.mp4'),
       },
-    })
-
-    const result = await handleRenderScene({
-      output: path.join(outDir, 'out.mp4'),
-    })
+      testDeps({
+        statSync: (targetPath: fs.PathLike) => {
+          if (targetPath === outDir) throw new Error('stat failed')
+          return fs.statSync(targetPath)
+        },
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.equal(
@@ -196,10 +191,6 @@ test('render_scene reports output directory stat failures as MCP errors', async 
       `render_scene: failed to read output directory ${outDir}: stat failed`,
     )
   } finally {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: previousStatSync,
-    })
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -207,20 +198,19 @@ test('render_scene reports output directory stat failures as MCP errors', async 
 test('render_scene reports output directory creation failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-mkdir-'))
   const outDir = path.join(dir, 'exports')
-  const previousMkdirSync = fs.mkdirSync
 
   try {
-    Object.defineProperty(fs, 'mkdirSync', {
-      configurable: true,
-      value: (targetPath: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
-        if (targetPath === outDir) throw new Error('mkdir failed')
-        return previousMkdirSync(targetPath, options)
+    const result = await handleRenderScene(
+      {
+        output: path.join(outDir, 'out.mp4'),
       },
-    })
-
-    const result = await handleRenderScene({
-      output: path.join(outDir, 'out.mp4'),
-    })
+      testDeps({
+        mkdirSync: (targetPath: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+          if (targetPath === outDir) throw new Error('mkdir failed')
+          return fs.mkdirSync(targetPath, options)
+        },
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.equal(
@@ -228,10 +218,6 @@ test('render_scene reports output directory creation failures as MCP errors', as
       `render_scene: failed to create output directory ${outDir}: mkdir failed`,
     )
   } finally {
-    Object.defineProperty(fs, 'mkdirSync', {
-      configurable: true,
-      value: previousMkdirSync,
-    })
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -379,4 +365,15 @@ function schemaProperty(name: string): JsonSchemaProperty | undefined {
   return renderSceneTool.inputSchema.properties?.[name] as
     | JsonSchemaProperty
     | undefined
+}
+
+function testDeps(overrides: Partial<RenderSceneDeps>): RenderSceneDeps {
+  return {
+    existsSync: fs.existsSync,
+    statSync: fs.statSync,
+    mkdirSync: fs.mkdirSync,
+    locateApp: async () => null,
+    render: async () => {},
+    ...overrides,
+  }
 }
