@@ -63,6 +63,12 @@ export function createCommand(): Command {
       'Path to a JSON file describing the scene. Use "-" to read from stdin.',
     )
     .action(async (output: string, options: CreateCommandOptions) => {
+      const trimmedOutput = output.trim()
+      if (!trimmedOutput) {
+        console.error('[create] output path is required')
+        process.exit(2)
+      }
+
       const source = options.from ?? '-'
       let raw: string
       try {
@@ -110,7 +116,7 @@ export function createCommand(): Command {
       // Make sure the output's parent directory exists. Tools and
       // agents tend to specify deeply-nested paths; we don't want a
       // simple ENOENT to obscure the real error.
-      const outputPath = path.resolve(output.trim())
+      const outputPath = path.resolve(trimmedOutput)
       const outDir = path.dirname(outputPath)
       try {
         fs.mkdirSync(outDir, { recursive: true })

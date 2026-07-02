@@ -154,6 +154,20 @@ test('create command trims padded output paths', async () => {
   }
 })
 
+test('create command rejects blank output paths before reading input', async () => {
+  const stderr = await withProcessExitThrow(async () => {
+    return captureStderr(async () => {
+      await assert.rejects(
+        createCommand()
+          .parseAsync(['   ', '--from', 'missing.json'], { from: 'user' }),
+        { exitCode: 2 },
+      )
+    })
+  })
+
+  assert.equal(stderr, '[create] output path is required\n')
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
