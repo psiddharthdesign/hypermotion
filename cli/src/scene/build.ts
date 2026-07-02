@@ -440,14 +440,6 @@ export interface KeyframeJson {
   presetOrigin?: 'in' | 'out'
 }
 
-export type KeyframeValueJson =
-  | number
-  | string
-  | null
-  | JsonObject
-  | 'row'
-  | 'column'
-
 export type JsonValue =
   | string
   | number
@@ -459,6 +451,8 @@ export type JsonValue =
 export interface JsonObject {
   [key: string]: JsonValue
 }
+
+export type KeyframeValueJson = JsonValue
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends unknown[]
