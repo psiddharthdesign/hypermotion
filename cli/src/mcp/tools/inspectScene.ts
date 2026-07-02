@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
 
 const InspectInput = z.object({
@@ -39,17 +40,26 @@ export async function handleInspectScene(
   }
 
   const input: InspectInputData = parsed.data
+  const trimmedScene = input.scene.trim()
+  if (!trimmedScene) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: 'inspect_scene: scene path is required' }],
+    }
+  }
+
+  const scenePath = path.resolve(trimmedScene)
   let bytes: Buffer
   let stat: fs.Stats
   try {
-    stat = fs.statSync(input.scene)
+    stat = fs.statSync(scenePath)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: failed to read ${input.scene}: ${
+          text: `inspect_scene: failed to read ${scenePath}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -62,20 +72,20 @@ export async function handleInspectScene(
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: scene path is not a file: ${input.scene}`,
+          text: `inspect_scene: scene path is not a file: ${scenePath}`,
         },
       ],
     }
   }
   try {
-    bytes = fs.readFileSync(input.scene)
+    bytes = fs.readFileSync(scenePath)
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: failed to read ${input.scene}: ${
+          text: `inspect_scene: failed to read ${scenePath}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },
@@ -98,7 +108,7 @@ export async function handleInspectScene(
       content: [
         {
           type: 'text' as const,
-          text: `inspect_scene: failed to inspect ${input.scene}: ${
+          text: `inspect_scene: failed to inspect ${scenePath}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         },

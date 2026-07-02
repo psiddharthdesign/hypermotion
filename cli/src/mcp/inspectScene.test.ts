@@ -26,6 +26,14 @@ test('inspect_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^inspect_scene: invalid arguments/)
 })
 
+test('inspect_scene rejects blank scene paths as MCP errors', async () => {
+  const result = await handleInspectScene({ scene: '   ' })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'inspect_scene: scene path is required')
+})
+
 test('inspect_scene reports missing files as MCP errors', async () => {
   const result = await handleInspectScene({ scene: '/tmp/hypermotion-missing-inspect-scene.hype' })
 
