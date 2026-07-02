@@ -231,7 +231,14 @@ test('render command reports invalid fps before launching the app', async () => 
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
       await assert.rejects(
-        renderCommand().parseAsync(['-o', 'out.mp4', '--fps', '0'], {
+        renderCommand({
+          locateApp: async () => {
+            throw new Error('should not locate app')
+          },
+          driveRender: async () => {
+            throw new Error('should not render')
+          },
+        }).parseAsync(['-o', 'out.mp4', '--fps', '0'], {
           from: 'user',
         }),
         { exitCode: 1 },
