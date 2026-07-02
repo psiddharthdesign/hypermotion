@@ -121,7 +121,7 @@ Locations checked, in order:
 - Windows: `%ProgramFiles%\hyper-motion\hyper-motion.exe`, then
   `%LOCALAPPDATA%\Programs\hyper-motion\...`
 - Linux: `/opt/hyper-motion/...`, `/usr/bin/hyper-motion`, AppImage in
-  `~/Applications`
+  `~/Applications`, then `~/.local/bin/hyper-motion`
 
 If the app isn't installed, the CLI exits with a clean message
 pointing you at the download page.
