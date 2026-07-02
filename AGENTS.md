@@ -309,6 +309,7 @@ A single-frame artboard with a title:
       "id": "camera",
       "kind": "camera",
       "parent": null,
+      "focalLength": 1000,
       "transform": { "x": 480, "y": 270, "z": 0, "rotation": 0, "scaleX": 1, "scaleY": 1 }
     }
   }
