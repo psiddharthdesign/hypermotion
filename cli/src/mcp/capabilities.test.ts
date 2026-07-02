@@ -83,6 +83,7 @@ test('capability tools list the full supported keyframe property set', async () 
     capabilities.mcpTools,
     registeredToolNames,
   )
+  assert.equal(new Set(capabilities.mcpTools).size, capabilities.mcpTools.length)
   for (const toolName of [
     ...(capabilities.validationTools ?? []),
     ...(capabilities.queryTools ?? []),
