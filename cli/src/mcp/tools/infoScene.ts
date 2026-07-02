@@ -49,7 +49,13 @@ export async function handleInfoScene(
   }
 
   const input: InfoInputData = parsed.data
-  const scenePath = input.scene
+  const scenePath = input.scene.trim()
+  if (!scenePath) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: 'info_scene: scene path is required' }],
+    }
+  }
   let bytes: Buffer
   try {
     const stats = fs.statSync(scenePath)
