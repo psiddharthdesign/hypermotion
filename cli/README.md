@@ -118,10 +118,9 @@ Locations checked, in order:
 
 - `$HYPERMOTION_APP_PATH` (env override, if set)
 - macOS: `/Applications/hyper-motion.app/...`, then `~/Applications/...`
-- Windows: `%ProgramFiles%\hyper-motion\hyper-motion.exe`, then
-  `%LOCALAPPDATA%\Programs\hyper-motion\...`
-- Linux: `/opt/hyper-motion/...`, `/usr/bin/hyper-motion`, AppImage in
-  `~/Applications`, then `~/.local/bin/hyper-motion`
+- Windows/Linux: best-effort lookup paths for future or development
+  builds. Public desktop releases are macOS-only today; see AGENTS.md
+  for the current install status.
 
 If the app isn't installed, the CLI exits with a clean message
 pointing you at the download page.
