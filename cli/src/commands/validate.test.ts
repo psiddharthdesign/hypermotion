@@ -53,6 +53,58 @@ test('validate command prints JSON validation results', async () => {
   }
 })
 
+test('validate command trims scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousExitCode = process.exitCode
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Trimmed Path',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await validateCommand()
+        .exitOverride()
+        .parseAsync([`  ${scenePath}  `], { from: 'user' })
+    })
+
+    assert.match(stdout, /^Scene is valid$/m)
+    assert.equal(process.exitCode, previousExitCode)
+  } finally {
+    process.exitCode = previousExitCode
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('validate command rejects blank scene paths after trimming', async () => {
+  const stderr = await withProcessExitThrow(() => captureStderr(() => {
+    assert.throws(
+      () => {
+        validateCommand().parse(['   '], { from: 'user' })
+      },
+      { exitCode: 2 },
+    )
+  }))
+
+  assert.equal(stderr, '[validate] scene path is required\n')
+})
+
 test('validate command prints human-readable validation errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')

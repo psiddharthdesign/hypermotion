@@ -15,7 +15,13 @@ export function validateCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output validation result as JSON')
     .action((scenePath: string, options: ValidateCommandOptions) => {
-      const resolvedScenePath = path.resolve(scenePath)
+      const trimmedScenePath = scenePath.trim()
+      if (!trimmedScenePath) {
+        console.error('[validate] scene path is required')
+        process.exit(2)
+      }
+
+      const resolvedScenePath = path.resolve(trimmedScenePath)
       let bytes: Buffer
       let result: SceneValidationResult
       let stats: fs.Stats
