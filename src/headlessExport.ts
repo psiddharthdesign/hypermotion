@@ -21,9 +21,8 @@
  * `exportScene()` with an `onBlob` interceptor that ships bytes back to
  * main via `export:headless-done`.
  *
- * Current scope: renders the user's CURRENT scene from IndexedDB. Future
- * file-based headless rendering will honor `--scene <path>` for `.hype`
- * files.
+ * Current scope: renders either the user's CURRENT scene from IndexedDB
+ * or a saved `.hype` file provided as `--scene <path>`.
  */
 
 import {
