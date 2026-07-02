@@ -40,6 +40,12 @@ export async function handleValidateScene(
 
   const input: ValidateInputData = parsed.data
   const scenePath = input.scene.trim()
+  if (!scenePath) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: 'validate_scene: scene path is required' }],
+    }
+  }
   let bytes: Buffer
   let stat: fs.Stats
   try {
