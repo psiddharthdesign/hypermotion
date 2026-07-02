@@ -52,7 +52,15 @@ export async function handleOpenScene(
   }
 
   const input: OpenInputData = parsed.data
-  const scenePath = path.resolve(input.scene.trim())
+  const trimmedScene = input.scene.trim()
+  if (!trimmedScene) {
+    return {
+      isError: true,
+      content: [{ type: 'text' as const, text: 'open_scene: scene path is required' }],
+    }
+  }
+
+  const scenePath = path.resolve(trimmedScene)
   if (!deps.existsSync(scenePath)) {
     return {
       isError: true,
