@@ -100,6 +100,59 @@ test('patch command overwrites the input scene by default', async () => {
   }
 })
 
+test('patch command trims padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const patchPath = path.join(dir, 'patch.json')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Before',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+    fs.writeFileSync(
+      patchPath,
+      JSON.stringify({ ops: [{ op: 'setMeta', patch: { name: 'Trimmed' } }] }),
+    )
+
+    await patchCommand()
+      .exitOverride()
+      .parseAsync([`  ${scenePath}\n`, '--from', patchPath], {
+        from: 'user',
+      })
+
+    assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'Trimmed')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('patch command rejects blank scene paths before reading patch JSON', async () => {
+  const stderr = await withProcessExitThrow(() => captureStderr(() => {
+    return assert.rejects(
+      patchCommand().parseAsync(['   ', '--from', 'missing.json'], { from: 'user' }),
+      { exitCode: 2 },
+    )
+  }))
+
+  assert.equal(stderr, '[patch] scene path is required\n')
+})
+
 test('patch command reports directories before reading scene bytes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-dir-'))
   const scenePath = path.join(dir, 'scene.hype')

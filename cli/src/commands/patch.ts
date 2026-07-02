@@ -17,8 +17,14 @@ export function patchCommand(): Command {
     .requiredOption('-f, --from <json>', 'Patch JSON file. Use "-" to read from stdin.')
     .option('-o, --output <path>', 'Path to write. Defaults to overwriting <scene>.')
     .action(async (scenePath: string, options: PatchCommandOptions) => {
-      const resolvedScenePath = path.resolve(scenePath)
-      const output = path.resolve(options.output ?? scenePath)
+      const trimmedScenePath = scenePath.trim()
+      if (!trimmedScenePath) {
+        console.error('[patch] scene path is required')
+        process.exit(2)
+      }
+
+      const resolvedScenePath = path.resolve(trimmedScenePath)
+      const output = path.resolve(options.output ?? trimmedScenePath)
       let sceneBytes: Buffer
       let stats: fs.Stats
       try {
