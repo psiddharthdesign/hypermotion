@@ -15,9 +15,9 @@ function stringifyChunk(
   return chunk.toString()
 }
 
-async function captureStream(
+async function captureStream<T>(
   stream: WritableStream,
-  run: CaptureCallback<unknown>,
+  run: CaptureCallback<T>,
 ): Promise<string> {
   let output = ''
   const write = stream.write
