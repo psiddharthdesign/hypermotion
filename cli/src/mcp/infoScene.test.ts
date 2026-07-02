@@ -153,3 +153,39 @@ test('info_scene reports malformed scene files as MCP errors', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('info_scene trims padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Trimmed Info MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleInfoScene({ scene: `  ${scenePath}\n` })
+    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const summary = JSON.parse(text) as SceneSummary
+
+    assert.equal(result.isError, undefined)
+    assert.equal(summary.meta.name, 'Trimmed Info MCP')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
