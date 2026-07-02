@@ -33,6 +33,11 @@ test('render format inference handles case and unknown extensions', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/preview.mov'), 'mp4')
 })
 
+test('render command description mentions saved scene support', () => {
+  assert.match(renderCommand().description(), /saved \.hype scene/)
+  assert.match(renderCommand().description(), /current desktop scene/)
+})
+
 test('render command forwards saved scene paths to the driver', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-ok-'))
   const scenePath = path.join(dir, 'scene with spaces.hype')
