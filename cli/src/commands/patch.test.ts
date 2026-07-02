@@ -123,3 +123,47 @@ test('patch command reports directories before reading scene bytes', async () =>
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('patch command rejects top-level primitive JSON values', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-primitive-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const patchPath = path.join(dir, 'patch.json')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Original',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+    fs.writeFileSync(patchPath, '"patch"')
+
+    const stderr = await withProcessExitThrow(() => captureStderr(() => {
+      return assert.rejects(
+        patchCommand().parseAsync([scenePath, '--from', patchPath], { from: 'user' }),
+        { exitCode: 2 },
+      )
+    }))
+
+    assert.match(
+      stderr,
+      /^\[patch\] patch JSON must be an array or object at the top level\.$/m,
+    )
+    assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'Original')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
