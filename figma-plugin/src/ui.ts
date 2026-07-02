@@ -115,7 +115,6 @@ copyBtn.addEventListener('click', () => {
       await navigator.clipboard.write([item])
       return true
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('[hyper-motion] modern clipboard write failed', err)
       return false
     }
@@ -151,7 +150,6 @@ copyBtn.addEventListener('click', () => {
     try {
       fallbackOk = await tryFallbackWrite()
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('[hyper-motion] fallback clipboard write failed', err)
     }
     if (fallbackOk) {
@@ -230,7 +228,6 @@ function copyViaExecCommand(text: string): boolean {
   try {
     ok = document.execCommand('copy')
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('[hyper-motion] execCommand copy failed', err)
   } finally {
     document.body.removeChild(ta)
