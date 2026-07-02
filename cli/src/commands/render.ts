@@ -3,8 +3,9 @@
 /**
  * `hypermotion render -o <out>`
  *
- * Renders the user's current hyper-motion scene (whatever was last
- * persisted to IndexedDB by the desktop app) to MP4, WebM, or GIF.
+ * Renders a saved `.hype` scene, or the user's current hyper-motion scene
+ * (whatever was last persisted to IndexedDB by the desktop app), to MP4,
+ * WebM, or GIF.
  * Internally shells out to the installed desktop app, which opens an
  * off-screen window, loads the scene, runs the export pipeline, and
  * writes the rendered file to `<out>`.
@@ -55,7 +56,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
 
   return new Command('render')
     .description(
-      "Render the current scene (whatever's loaded in the desktop app) " +
+      'Render a saved .hype scene, or the current desktop scene, ' +
         'to MP4, WebM, or GIF.',
     )
     .requiredOption('-o, --output <path>', 'Output file path')
