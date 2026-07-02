@@ -5,7 +5,7 @@ import test from 'node:test'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { assertToolText } from './mcp.js'
 
-test('assertToolText returns the first MCP text content item', () => {
+test('assertToolText returns the only MCP text content item', () => {
   const result: CallToolResult = {
     content: [{ type: 'text', text: 'hello' }],
   }
@@ -13,12 +13,26 @@ test('assertToolText returns the first MCP text content item', () => {
   assert.equal(assertToolText(result), 'hello')
 })
 
+test('assertToolText rejects extra content items', () => {
+  const result: CallToolResult = {
+    content: [
+      { type: 'text', text: 'hello' },
+      { type: 'text', text: 'extra' },
+    ],
+  }
+
+  assert.throws(
+    () => assertToolText(result),
+    /expected exactly one MCP content item/,
+  )
+})
+
 test('assertToolText reports missing text content clearly', () => {
   const result: CallToolResult = { content: [] }
 
   assert.throws(
     () => assertToolText(result),
-    /expected first MCP content item to be text/,
+    /expected exactly one MCP content item/,
   )
 })
 
