@@ -133,6 +133,17 @@ export async function handleRenderScene(
   }
   const outputPath = path.resolve(outputInput)
   const sceneInput = input.scene?.trim()
+  if (input.scene !== undefined && !sceneInput) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: 'render_scene: scene path is required',
+        },
+      ],
+    }
+  }
   const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
   const format = input.format ?? inferRenderFormatFromPath(outputPath)
   const quality = input.quality ?? 'comp'
