@@ -4068,13 +4068,22 @@ function TextGlyphs({
   const playhead = useUI((s) => s.playhead)
   const api = useSceneAPI()
   const isEditing = editingTextId === node.id
-  const hasTextAnimationTracks = listTracksForNode(api, node.id).some(
+  const textAnimationTracks = listTracksForNode(api, node.id).filter(
     (track) =>
       track.propertyId === 'text.progress' && track.keyframes.length >= 2,
   )
+  const fallbackTextAnimation =
+    anim?.textProgress === undefined
+      ? null
+      : textAnimationForProgressTrack(
+          textAnimationTracks,
+          playhead,
+          node.textAnimation,
+        )
   const textAnimation =
     anim?.textAnimation ??
-    (hasTextAnimationTracks ? null : normalizeTextAnimation(node.textAnimation))
+    fallbackTextAnimation ??
+    (textAnimationTracks.length > 0 ? null : normalizeTextAnimation(node.textAnimation))
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.
@@ -4256,6 +4265,38 @@ function renderTextAnimationSegments(
       </span>
     )
   })
+}
+
+function textAnimationForProgressTrack(
+  tracks: ReturnType<typeof listTracksForNode>,
+  playhead: number,
+  nodeTextAnimation: unknown,
+): TextAnimationConfig | null {
+  const nodeConfig = normalizeTextAnimation(nodeTextAnimation)
+  for (let i = tracks.length - 1; i >= 0; i--) {
+    const track = tracks[i]!
+    const config = normalizeTextAnimation(track.textAnimation ?? nodeConfig)
+    if (!config) continue
+    const range = textProgressTrackRange(track)
+    if (!range) continue
+    if (playhead >= range.start && playhead <= range.end) return config
+    if (config.mode === 'in' && playhead < range.start) return config
+    if (config.mode === 'out' && playhead > range.end) return config
+  }
+  return null
+}
+
+function textProgressTrackRange(
+  track: ReturnType<typeof listTracksForNode>[number],
+): { start: number; end: number } | null {
+  if (track.keyframes.length < 2) return null
+  let start = Infinity
+  let end = -Infinity
+  for (const keyframe of track.keyframes) {
+    start = Math.min(start, keyframe.time)
+    end = Math.max(end, keyframe.time)
+  }
+  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null
 }
 
 function trackingTextStyle(

@@ -52,6 +52,7 @@ export interface Plane3D {
   rotation: Vec3
   scaleX: number
   scaleY: number
+  opacity: number
   anchor: Vec3
   right: Vec3
   down: Vec3
@@ -94,6 +95,8 @@ const IDENTITY_INHERITED = {
   rotationY: 0,
   scaleX: 1,
   scaleY: 1,
+  opacity: 1,
+  visible: true,
 }
 
 interface Inherited3D {
@@ -107,6 +110,8 @@ interface Inherited3D {
   rotationY: number
   scaleX: number
   scaleY: number
+  opacity: number
+  visible: boolean
 }
 
 export function resolveCamera3D(
@@ -337,6 +342,7 @@ export function buildWorldPlanes(
     const node = api.getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera') return
+    if (!inherited.visible || !node.visible) return
     const a = animated[id]
     const isRoot = id === rootId
     const x = a?.x ?? node.transform.x
@@ -347,6 +353,7 @@ export function buildWorldPlanes(
     const rotationY = a?.rotationY ?? node.transform.rotationY
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
+    const opacity = a?.opacity ?? node.appearance.opacity
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -374,6 +381,8 @@ export function buildWorldPlanes(
       rotationY: inherited.rotationY + rotationY,
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
+      opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
+      visible: true,
     }
 
     const parent = node.parent ? api.getNode(node.parent) : null
@@ -411,6 +420,7 @@ export function buildWorldPlanes(
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
         scaleY: nextInherited.scaleY,
+        opacity: nextInherited.opacity,
         anchor,
         right,
         down,
