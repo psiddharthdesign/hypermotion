@@ -1279,6 +1279,23 @@ test('validateScene rejects duplicate keyframe ids within a track', () => {
   ])
 })
 
+test('validateScene rejects keyframe values that are not JSON-compatible', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  tracks.get('fade-title')?.set('keyframes', [
+    { id: 'bad-value', time: 0, value: Number.NaN },
+  ])
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track fade-title keyframe bad-value value must be JSON-compatible',
+  ])
+})
+
 test('validateScene rejects section ids that do not match their map key', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
