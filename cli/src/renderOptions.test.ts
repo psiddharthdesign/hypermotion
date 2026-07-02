@@ -37,6 +37,11 @@ test('inferRenderFormatFromPath normalizes extension casing', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.WEBM'), 'webm')
 })
 
+test('inferRenderFormatFromPath recognizes extension-only output filenames', () => {
+  assert.equal(inferRenderFormatFromPath('.gif'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/.WEBM'), 'webm')
+})
+
 test('inferRenderFormatFromPath trims surrounding whitespace', () => {
   assert.equal(inferRenderFormatFromPath(' /tmp/demo.gif '), 'gif')
 })

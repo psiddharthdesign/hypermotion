@@ -21,6 +21,11 @@ export function isRenderQuality(value: unknown): value is RenderQuality {
 
 export function inferRenderFormatFromPath(filePath: string): RenderFormat {
   const cleanPath = (filePath.split(/[?#]/, 1)[0] ?? filePath).trim()
-  const ext = path.extname(cleanPath).toLowerCase().slice(1)
+  const basename = path.basename(cleanPath)
+  const ext = (
+    path.extname(cleanPath) || (basename.startsWith('.') ? basename : '')
+  )
+    .toLowerCase()
+    .slice(1)
   return isRenderFormat(ext) ? ext : 'mp4'
 }
