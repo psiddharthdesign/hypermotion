@@ -102,6 +102,59 @@ test('inspect command defaults to JSON output', async () => {
   }
 })
 
+test('inspect command trims padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-trimmed-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Inspect Trimmed Path',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await inspectCommand()
+        .exitOverride()
+        .parseAsync([`  ${scenePath}  `], { from: 'user' })
+    })
+
+    const scene = JSON.parse(stdout) as {
+      meta: { name?: string }
+    }
+
+    assert.equal(scene.meta.name, 'Inspect Trimmed Path')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('inspect command rejects blank scene paths after trimming', async () => {
+  const stderr = await withProcessExitThrow(() => captureStderr(() => {
+    assert.throws(
+      () => {
+        inspectCommand().parse(['   '], { from: 'user' })
+      },
+      { exitCode: 2 },
+    )
+  }))
+
+  assert.equal(stderr, '[inspect] scene path is required\n')
+})
+
 test('inspect command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-'))
   const scenePath = path.join(dir, 'missing.hype')

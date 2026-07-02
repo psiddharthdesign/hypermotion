@@ -11,7 +11,13 @@ export function inspectCommand(): Command {
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output JSON (default)', true)
     .action((scenePath: string) => {
-      const resolvedScenePath = path.resolve(scenePath)
+      const trimmedScenePath = scenePath.trim()
+      if (!trimmedScenePath) {
+        console.error('[inspect] scene path is required')
+        process.exit(2)
+      }
+
+      const resolvedScenePath = path.resolve(trimmedScenePath)
       let bytes: Buffer
       let stat: fs.Stats
       try {
