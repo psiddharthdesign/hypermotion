@@ -884,6 +884,25 @@ test('buildSceneBytes accepts JSON-compatible keyframe values', () => {
   assert.deepEqual(keyframes[1]?.value, ['visible', true])
 })
 
+test('validateScene rejects non-finite keyframe values', () => {
+  const scene = sampleScene()
+  scene.tracks = {
+    invalid: {
+      id: 'invalid',
+      nodeId: 'title',
+      propertyId: 'appearance.opacity',
+      keyframes: [{ id: 'k1', time: 0, value: Number.NaN }],
+    },
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'track invalid keyframe k1 value must be JSON-compatible',
+  ])
+})
+
 test('validateScene accepts a valid authored scene', () => {
   const result = validateScene(buildSceneBytes(sampleScene()))
 
