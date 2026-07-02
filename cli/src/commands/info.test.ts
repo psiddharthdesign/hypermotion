@@ -292,6 +292,57 @@ test('info command trims padded scene names', async () => {
   }
 })
 
+test('info command trims padded scene paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Trimmed Path',
+          canvas: { width: 400, height: 300 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 400, height: 300 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stdout = await captureStdout(async () => {
+      await infoCommand().exitOverride().parseAsync([`  ${scenePath}\n`], {
+        from: 'user',
+      })
+    })
+
+    assert.match(stdout, /^Scene: Trimmed Path$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('info command rejects empty scene paths clearly', async () => {
+  const stderr = await captureStderr(async () => {
+    await withProcessExitThrow(() => {
+      assert.throws(
+        () => {
+          infoCommand().parse(['  '], { from: 'user' })
+        },
+        { exitCode: 2 },
+      )
+    })
+  })
+
+  assert.equal(stderr, '[info] scene path is required\n')
+})
+
 test('info command replaces non-finite canvas numbers with placeholders', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
