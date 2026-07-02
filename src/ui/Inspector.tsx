@@ -192,76 +192,34 @@ export function Inspector() {
 }
 
 // ---------------------------------------------------------------------------
-// Tabs
+// Mode links
 // ---------------------------------------------------------------------------
 
 function ModeTabs() {
   const mode = useUI((s) => s.inspectorMode)
   const setMode = useUI((s) => s.setInspectorMode)
-  // Apple HIG segmented pill — sits inside the panel padding instead of
-  // claiming a full-width strip. Active tab is a raised inner pill with
-  // shadow; inactive tabs read as transparent. Matches macOS System
-  // Settings / Notion view-picker patterns. The whole control sits in
-  // its own padded band so it integrates with the rest of the panel
-  // chrome rather than reading like a top-of-viewport navigation bar.
+
   return (
-    <div className="shrink-0 border-b border-border bg-panel-raised px-3 py-2.5">
-      <div className="flex h-[30px] items-center gap-0.5 rounded-md border border-border bg-app-bg p-[2px]">
-        {(['properties', 'animate'] as const).map((m) => {
-          const active = mode === m
-          return (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={[
-                'flex h-[24px] flex-1 items-center justify-center gap-1.5 rounded-[5px] text-[12px] font-medium transition-colors',
-                active
-                  ? 'bg-panel-raised text-text shadow-sm'
-                  : 'text-text-muted hover:text-text',
-              ].join(' ')}
-            >
-              <span className="flex h-3 w-3 items-center justify-center">
-                {m === 'properties' ? <PenTabIcon /> : <PlayTabIcon />}
-              </span>
-              {m === 'properties' ? 'Properties' : 'Animate'}
-            </button>
-          )
-        })}
-      </div>
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
+      {(['properties', 'animate'] as const).map((m) => {
+        const active = mode === m
+        return (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className={[
+              'h-6 rounded px-2 text-[11px] font-medium transition-colors',
+              active
+                ? 'bg-panel-raised text-text'
+                : 'text-text-muted hover:bg-panel-raised/70 hover:text-text',
+            ].join(' ')}
+          >
+            {m === 'properties' ? 'Properties' : 'Animate'}
+          </button>
+        )
+      })}
     </div>
-  )
-}
-
-function PenTabIcon() {
-  return (
-    <svg
-      width={12}
-      height={12}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M11 2l3 3-8.5 8.5L2 14l.5-3.5L11 2z" />
-    </svg>
-  )
-}
-
-function PlayTabIcon() {
-  return (
-    <svg
-      width={12}
-      height={12}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path d="M4 3l9 5-9 5V3z" />
-    </svg>
   )
 }
 
