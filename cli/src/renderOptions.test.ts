@@ -61,4 +61,7 @@ test('inferRenderFormatFromPath falls back to mp4 for unknown extensions', () =>
   assert.equal(inferRenderFormatFromPath('/tmp/demo.mov'), 'mp4')
   assert.equal(inferRenderFormatFromPath('/tmp/demo'), 'mp4')
   assert.equal(inferRenderFormatFromPath('/tmp/demo.'), 'mp4')
+  assert.equal(inferRenderFormatFromPath('   '), 'mp4')
+  assert.equal(inferRenderFormatFromPath('?download=1'), 'mp4')
+  assert.equal(inferRenderFormatFromPath('#preview'), 'mp4')
 })
