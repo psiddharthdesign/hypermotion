@@ -181,7 +181,7 @@ test('open_scene trims padded scene paths before opening', async () => {
 })
 
 test('open_scene resolves relative scene paths before opening', async () => {
-  const dir = fs.mkdtempSync(path.join(process.cwd(), 'hypermotion-open-relative-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-relative-'))
   const scenePath = path.join(dir, 'scene.hype')
   const relativeScenePath = path.relative(process.cwd(), scenePath)
   const openedPaths: string[] = []
