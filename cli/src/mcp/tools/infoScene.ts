@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
-  scene: z.string().describe('Path to a .hype scene file'),
+  scene: z.string().describe('Path to a .hype scene file.'),
 })
 type InfoInputData = z.infer<typeof InfoInput>
 
@@ -26,7 +26,7 @@ export const infoSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      scene: { type: 'string', description: 'Path to a .hype scene file' },
+      scene: { type: 'string', description: 'Path to a .hype scene file.' },
     },
     required: ['scene'],
   },
