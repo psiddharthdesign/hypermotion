@@ -857,6 +857,33 @@ test('buildSceneBytes defaults omitted track easing to ease-in-out', () => {
   assert.equal(tracks['fade-title'].defaultEasing, 'ease-in-out')
 })
 
+test('buildSceneBytes accepts JSON-compatible keyframe values', () => {
+  const scene = {
+    ...sampleScene(),
+    tracks: {
+      'toggle-visible': {
+        id: 'toggle-visible',
+        nodeId: 'title',
+        propertyId: 'appearance.opacity',
+        keyframes: [
+          { id: 'k1', time: 0, value: false },
+          { id: 'k2', time: 1, value: ['visible', true] },
+        ],
+      },
+    },
+  } satisfies SceneJson
+
+  const bytes = buildSceneBytes(scene)
+  const result = validateScene(bytes)
+  const data = inspectScene(bytes)
+  const tracks = data.tracks as PlainSceneMap
+  const keyframes = tracks['toggle-visible']?.keyframes as PlainSceneObject[]
+
+  assert.equal(result.ok, true)
+  assert.equal(keyframes[0]?.value, false)
+  assert.deepEqual(keyframes[1]?.value, ['visible', true])
+})
+
 test('validateScene accepts a valid authored scene', () => {
   const result = validateScene(buildSceneBytes(sampleScene()))
 
