@@ -56,7 +56,10 @@ export const renderSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      output: { type: 'string', description: 'Output file path' },
+      output: {
+        type: 'string',
+        description: 'Absolute or relative output file path.',
+      },
       format: {
         type: 'string',
         enum: [...RENDER_FORMATS],

@@ -25,6 +25,13 @@ test('render_scene input schema exposes fps bounds', () => {
   assert.equal(fpsProperty?.maximum, 120)
 })
 
+test('render_scene input schema documents relative output paths', () => {
+  const outputProperty = schemaProperty('output')
+
+  assert.equal(outputProperty?.type, 'string')
+  assert.match(String(outputProperty?.description), /relative output file path/)
+})
+
 test('render_scene input schema exposes render preset enums', () => {
   const formatProperty = schemaProperty('format')
   const qualityProperty = schemaProperty('quality')
