@@ -32,6 +32,14 @@ test('info_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^info_scene: invalid arguments/)
 })
 
+test('info_scene rejects empty scene paths as MCP errors', async () => {
+  const result = await handleInfoScene({ scene: '   ' })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.equal(text, 'info_scene: scene path is required')
+})
+
 test('info_scene returns a structured scene summary', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-scene-'))
   const scenePath = path.join(dir, 'scene.hype')
