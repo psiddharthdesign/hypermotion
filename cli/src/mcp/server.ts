@@ -27,6 +27,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
@@ -56,6 +57,13 @@ import {
 import { CLI_VERSION } from '../version.js'
 
 const SERVER_NAME = 'hypermotion'
+
+function textToolResult(text: string, isError?: boolean): CallToolResult {
+  return {
+    isError,
+    content: [{ type: 'text', text }],
+  }
+}
 
 export const TOOLS: Tool[] = [
   doctorTool,
@@ -115,21 +123,13 @@ export async function startMcpServer(): Promise<void> {
         case 'list_keyframeable_properties':
           return await handleListKeyframeableProperties()
         default:
-          return {
-            isError: true,
-            content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
-          }
+          return textToolResult(`Unknown tool: ${name}`, true)
       }
     } catch (err) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text' as const,
-            text: `Tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-      }
+      return textToolResult(
+        `Tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`,
+        true,
+      )
     }
   })
 
