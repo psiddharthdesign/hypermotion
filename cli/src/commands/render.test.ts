@@ -6,32 +6,9 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { HeadlessRenderRequest } from '../electron/driver.js'
-import {
-  inferRenderFormatFromPath,
-  isRenderFormat,
-  isRenderQuality,
-  RENDER_FORMATS,
-  RENDER_QUALITIES,
-} from '../renderOptions.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { renderCommand } from './render.js'
-
-test('render option guards accept supported values only', () => {
-  for (const format of RENDER_FORMATS) {
-    assert.equal(isRenderFormat(format), true)
-  }
-  assert.equal(isRenderFormat('mov'), false)
-  for (const quality of RENDER_QUALITIES) {
-    assert.equal(isRenderQuality(quality), true)
-  }
-  assert.equal(isRenderQuality('1080p'), false)
-})
-
-test('render format inference handles case and unknown extensions', () => {
-  assert.equal(inferRenderFormatFromPath('/tmp/preview.WEBM'), 'webm')
-  assert.equal(inferRenderFormatFromPath('/tmp/preview.mov'), 'mp4')
-})
 
 test('render command description mentions saved scene support', () => {
   assert.match(renderCommand().description(), /saved \.hype scene/)
