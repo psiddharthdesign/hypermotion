@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
+import { assertToolText } from '../testUtils/mcp.js'
 import { handleInfoScene, infoSceneTool } from './tools/infoScene.js'
 
 test('info_scene input schema exposes required scene path', () => {
@@ -28,16 +29,14 @@ test('info_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleInfoScene({ scene: 42 })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^info_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^info_scene: invalid arguments/)
 })
 
 test('info_scene rejects empty scene paths as MCP errors', async () => {
   const result = await handleInfoScene({ scene: '   ' })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.equal(text, 'info_scene: scene path is required')
+  assert.equal(assertToolText(result), 'info_scene: scene path is required')
 })
 
 test('info_scene returns a structured scene summary', async () => {
@@ -90,8 +89,7 @@ test('info_scene returns a structured scene summary', async () => {
     const result = await handleInfoScene({ scene: scenePath })
 
     assert.equal(result.isError, undefined)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    const summary = JSON.parse(text) as SceneSummary
+    const summary = JSON.parse(assertToolText(result)) as SceneSummary
 
     assert.equal(summary.meta.name, 'MCP Info')
     assert.deepEqual(summary.meta.canvas, { width: 640, height: 360 })
@@ -113,7 +111,7 @@ test('info_scene reports missing files as MCP errors', async () => {
     const result = await handleInfoScene({ scene: missingScene })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const text = assertToolText(result)
     assert.match(text, /^info_scene: failed to read /)
     assert.match(text, /hypermotion-missing-/)
   } finally {
@@ -130,8 +128,7 @@ test('info_scene reports directories as MCP errors', async () => {
     const result = await handleInfoScene({ scene: scenePath })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `info_scene: scene path is not a file: ${scenePath}`)
+    assert.equal(assertToolText(result), `info_scene: scene path is not a file: ${scenePath}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -147,8 +144,10 @@ test('info_scene reports malformed scene files as MCP errors', async () => {
     const result = await handleInfoScene({ scene: scenePath })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, /^info_scene: .*malformed\.hype is not a valid \.hype file:/)
+    assert.match(
+      assertToolText(result),
+      /^info_scene: .*malformed\.hype is not a valid \.hype file:/,
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -180,8 +179,7 @@ test('info_scene trims padded scene paths before reading', async () => {
     )
 
     const result = await handleInfoScene({ scene: `  ${scenePath}\n` })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    const summary = JSON.parse(text) as SceneSummary
+    const summary = JSON.parse(assertToolText(result)) as SceneSummary
 
     assert.equal(result.isError, undefined)
     assert.equal(summary.meta.name, 'Trimmed Info MCP')
