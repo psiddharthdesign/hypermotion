@@ -149,6 +149,45 @@ test('query scene MCP handlers report malformed scene files as MCP errors', asyn
   }
 })
 
+test('query scene MCP handlers trim padded scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-trimmed-query-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: { name: 'Trimmed Query', canvas: { width: 320, height: 180 } },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleListLayers({ scene: `  ${scenePath}\n` })
+    const payload = JSON.parse(assertToolText(result)) as {
+      root: string
+      layers: Array<{ id: string }>
+    }
+
+    assert.equal(result.isError, undefined)
+    assert.equal(payload.root, 'root')
+    assert.deepEqual(
+      payload.layers.map((layer) => layer.id),
+      ['root'],
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('query scene MCP handlers return layers, tracks, and cameras', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
