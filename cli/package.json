@@ -27,7 +27,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "prepublishOnly": "pnpm run build",
-    "test": "pnpm run build && node --test dist/**/*.test.js"
+    "test": "pnpm run build && node --test --test-concurrency=1 dist/**/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
