@@ -25,25 +25,29 @@ import {
 } from '../renderOptions.js'
 import { assertToolText } from '../testUtils/mcp.js'
 
-type CapabilitiesToolPayload = {
+type GetCapabilitiesToolPayload = {
   keyframeableProperties: readonly PropertyIdJson[]
-  sceneExtension?: string
-  mcpTools?: typeof MCP_TOOLS
-  validation?: {
+  sceneExtension: string
+  mcpTools: typeof MCP_TOOLS
+  validation: {
     structuralSceneValidation: boolean
   }
-  nodeKinds?: readonly NodeKindJson[]
-  patchOperations?: readonly PatchOperation['op'][]
-  queryTools?: readonly string[]
-  validationTools?: readonly string[]
-  renderFormats?: readonly RenderFormat[]
-  renderQualities?: readonly RenderQuality[]
-  renderFileSceneInput?: boolean
+  nodeKinds: readonly NodeKindJson[]
+  patchOperations: readonly PatchOperation['op'][]
+  queryTools: readonly string[]
+  validationTools: readonly string[]
+  renderFormats: readonly RenderFormat[]
+  renderQualities: readonly RenderQuality[]
+  renderFileSceneInput: boolean
+}
+
+type KeyframeablePropertiesToolPayload = {
+  keyframeableProperties: readonly PropertyIdJson[]
 }
 
 test('capability tools list the full supported keyframe property set', async () => {
-  const capabilities = parseToolJson(await handleGetCapabilities())
-  const listed = parseToolJson(await handleListKeyframeableProperties())
+  const capabilities = parseCapabilitiesJson(await handleGetCapabilities())
+  const listed = parseKeyframeablePropertiesJson(await handleListKeyframeableProperties())
 
   assert.equal(capabilities.sceneExtension, '.hype')
   assert.deepEqual(capabilities.mcpTools, MCP_TOOLS)
@@ -113,34 +117,24 @@ test('get_capabilities description mentions agent-facing capability groups', () 
   assert.match(description, /keyframeable properties/)
 })
 
-function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
+function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPayload {
   const parsed: unknown = JSON.parse(assertToolText(result))
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
   const parsedObject = parsed as Record<string, unknown>
 
   const rawSceneExtension = parsedObject.sceneExtension
-  let sceneExtension: string | undefined
-  if (rawSceneExtension !== undefined) {
-    assert.ok(typeof rawSceneExtension === 'string')
-    sceneExtension = rawSceneExtension
-  }
+  assert.ok(typeof rawSceneExtension === 'string')
+  const sceneExtension = rawSceneExtension
 
   const rawValidation = parsedObject.validation
-  let validation:
-    | {
-        structuralSceneValidation: boolean
-      }
-    | undefined
-  if (rawValidation !== undefined) {
-    assert.equal(typeof rawValidation, 'object')
-    assert.notEqual(rawValidation, null)
-    const validationObject = rawValidation as Record<string, unknown>
-    const structuralSceneValidation = validationObject.structuralSceneValidation
-    assert.ok(typeof structuralSceneValidation === 'boolean')
-    validation = {
-      structuralSceneValidation,
-    }
+  assert.equal(typeof rawValidation, 'object')
+  assert.notEqual(rawValidation, null)
+  const validationObject = rawValidation as Record<string, unknown>
+  const structuralSceneValidation = validationObject.structuralSceneValidation
+  assert.ok(typeof structuralSceneValidation === 'boolean')
+  const validation = {
+    structuralSceneValidation,
   }
 
   const properties = parsedObject.keyframeableProperties
@@ -148,48 +142,47 @@ function parseToolJson(result: CallToolResult): CapabilitiesToolPayload {
   const keyframeableProperties = properties as readonly PropertyIdJson[]
 
   const rawNodeKinds = parsedObject.nodeKinds
-  let nodeKinds: readonly NodeKindJson[] | undefined
-  if (rawNodeKinds !== undefined) {
-    assertStringArray(rawNodeKinds)
-    nodeKinds = rawNodeKinds as readonly NodeKindJson[]
-  }
+  assertStringArray(rawNodeKinds)
+  const nodeKinds = rawNodeKinds as readonly NodeKindJson[]
 
   return {
     keyframeableProperties,
     sceneExtension,
-    mcpTools: optionalStringArray(parsedObject, 'mcpTools') as typeof MCP_TOOLS | undefined,
+    mcpTools: requiredStringArray(parsedObject, 'mcpTools') as typeof MCP_TOOLS,
     validation,
     nodeKinds,
-    patchOperations: optionalStringArray(parsedObject, 'patchOperations') as
-      | readonly PatchOperation['op'][]
-      | undefined,
-    queryTools: optionalStringArray(parsedObject, 'queryTools'),
-    validationTools: optionalStringArray(parsedObject, 'validationTools'),
-    renderFormats: optionalStringArray(parsedObject, 'renderFormats') as
-      | readonly RenderFormat[]
-      | undefined,
-    renderQualities: optionalStringArray(parsedObject, 'renderQualities') as
-      | readonly RenderQuality[]
-      | undefined,
-    renderFileSceneInput: optionalBoolean(parsedObject, 'renderFileSceneInput'),
+    patchOperations: requiredStringArray(parsedObject, 'patchOperations') as readonly PatchOperation['op'][],
+    queryTools: requiredStringArray(parsedObject, 'queryTools'),
+    validationTools: requiredStringArray(parsedObject, 'validationTools'),
+    renderFormats: requiredStringArray(parsedObject, 'renderFormats') as readonly RenderFormat[],
+    renderQualities: requiredStringArray(parsedObject, 'renderQualities') as readonly RenderQuality[],
+    renderFileSceneInput: requiredBoolean(parsedObject, 'renderFileSceneInput'),
   }
 }
 
-function optionalStringArray(
-  parsed: Record<string, unknown>,
-  key: string,
-): readonly string[] | undefined {
-  const value = parsed[key]
-  if (value === undefined) return undefined
+function parseKeyframeablePropertiesJson(
+  result: CallToolResult,
+): KeyframeablePropertiesToolPayload {
+  const parsed: unknown = JSON.parse(assertToolText(result))
+  assert.equal(typeof parsed, 'object')
+  assert.notEqual(parsed, null)
+  const parsedObject = parsed as Record<string, unknown>
+  const keyframeableProperties = requiredStringArray(
+    parsedObject,
+    'keyframeableProperties',
+  ) as readonly PropertyIdJson[]
 
+  return { keyframeableProperties }
+}
+
+function requiredStringArray(parsed: Record<string, unknown>, key: string): readonly string[] {
+  const value = parsed[key]
   assertStringArray(value)
   return value
 }
 
-function optionalBoolean(parsed: Record<string, unknown>, key: string): boolean | undefined {
+function requiredBoolean(parsed: Record<string, unknown>, key: string): boolean {
   const value = parsed[key]
-  if (value === undefined) return undefined
-
   assert.ok(typeof value === 'boolean')
   return value
 }
