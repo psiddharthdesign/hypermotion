@@ -808,6 +808,44 @@ test('applyScenePatch fills layout defaults for created frame nodes', () => {
   assert.deepEqual(nodes.panel.layoutGuides, [])
 })
 
+test('applyScenePatch fills camera defaults for created nodes', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    { op: 'deleteNode', nodeId: 'camera' },
+    {
+      op: 'createNode',
+      node: {
+        id: 'shot-camera',
+        kind: 'camera',
+        parent: null,
+      },
+    },
+    { op: 'setActiveCameraId', cameraId: 'shot-camera' },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes['shot-camera'].transform, {
+    x: 0,
+    y: 0,
+    z: 0,
+    rotation: 0,
+    rotationX: 0,
+    rotationY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    anchorX: 0.5,
+    anchorY: 0.5,
+    anchorZ: 0,
+    space: 'local',
+    renderMode: 'flat',
+  })
+  assert.equal(nodes['shot-camera'].focalLength, 1000)
+  assert.equal(nodes['shot-camera'].focusMode, 'screen')
+  assert.equal(nodes['shot-camera'].blurQuality, 8)
+  assert.equal(data.activeCameraId, 'shot-camera')
+})
+
 test('buildSceneBytes keys tracks by their declared ids', () => {
   const scene = sampleScene()
   const sceneTracks = scene.tracks ?? {}
