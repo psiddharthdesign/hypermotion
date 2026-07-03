@@ -17,7 +17,9 @@ test('render option guards accept supported values only', () => {
   assert.equal(isRenderFormat('mov'), false)
   assert.equal(isRenderFormat('MP4'), false)
   assert.equal(isRenderFormat(undefined), false)
+  assert.equal(isRenderFormat(null), false)
   assert.equal(isRenderFormat(60), false)
+  assert.equal(isRenderFormat({ format: 'mp4' }), false)
 
   for (const quality of RENDER_QUALITIES) {
     assert.equal(isRenderQuality(quality), true)
@@ -25,7 +27,9 @@ test('render option guards accept supported values only', () => {
   assert.equal(isRenderQuality('1080p'), false)
   assert.equal(isRenderQuality('4K'), false)
   assert.equal(isRenderQuality(undefined), false)
+  assert.equal(isRenderQuality(null), false)
   assert.equal(isRenderQuality(60), false)
+  assert.equal(isRenderQuality({ quality: '4k' }), false)
 })
 
 test('inferRenderFormatFromPath uses supported file extensions', () => {
