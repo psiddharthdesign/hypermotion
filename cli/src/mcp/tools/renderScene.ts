@@ -73,6 +73,7 @@ export const renderSceneTool: Tool = {
     properties: {
       output: {
         type: 'string',
+        minLength: 1,
         description: 'Absolute or relative output file path.',
       },
       format: {
@@ -93,6 +94,7 @@ export const renderSceneTool: Tool = {
       },
       scene: {
         type: 'string',
+        minLength: 1,
         description:
           'Path to a .hype scene file to render instead of the current desktop scene.',
       },
