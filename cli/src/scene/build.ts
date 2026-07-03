@@ -1073,7 +1073,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       if (nodes.has(op.node.id)) {
         throw new Error(`node already exists: ${op.node.id}`)
       }
-      const y = nodeToYMap(op.node)
+      const y = nodeToYMap(op.node, readSceneMeta(scene))
       nodes.set(op.node.id, y)
       if (op.node.parent) {
         const parent = nodes.get(op.node.parent)
@@ -1144,7 +1144,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
   }
 }
 
-function nodeToYMap(node: NodeJson): Y.Map<unknown> {
+function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unknown> {
   const y = new Y.Map<unknown>()
   const handledKeys = new Set([
     'id',
@@ -1267,11 +1267,89 @@ function nodeToYMap(node: NodeJson): Y.Map<unknown> {
     y.set('overrides', node.overrides ?? {})
     y.set('interactions', node.interactions ?? [])
   }
+  if (node.kind === 'camera') {
+    for (const key of [
+      'projection',
+      'enabled',
+      'background',
+      'focalLength',
+      'fieldOfView',
+      'pointOfInterestX',
+      'pointOfInterestY',
+      'pointOfInterestZ',
+      'nearClip',
+      'farClip',
+      'depthOfField',
+      'focusMode',
+      'focusX',
+      'focusY',
+      'focusWorldX',
+      'focusWorldY',
+      'focusWorldZ',
+      'focusTargetNodeId',
+      'focusDistance',
+      'focusRadius',
+      'focusFalloff',
+      'aperture',
+      'iso',
+      'blurLevel',
+      'blurQuality',
+      'showFocusPlane',
+    ]) {
+      handledKeys.add(key)
+    }
+    const centerX = meta.canvas.width / 2
+    const centerY = meta.canvas.height / 2
+    y.set('projection', node.projection ?? '2d')
+    y.set('enabled', node.enabled ?? true)
+    y.set('background', node.background ?? null)
+    y.set('focalLength', node.focalLength ?? 1000)
+    y.set('fieldOfView', node.fieldOfView ?? 35)
+    y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
+    y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
+    y.set('pointOfInterestZ', node.pointOfInterestZ ?? node.focusWorldZ ?? 0)
+    y.set('nearClip', node.nearClip ?? 1)
+    y.set('farClip', node.farClip ?? 100000)
+    y.set('depthOfField', node.depthOfField ?? false)
+    y.set('focusMode', node.focusMode ?? 'screen')
+    y.set('focusX', node.focusX ?? centerX)
+    y.set('focusY', node.focusY ?? centerY)
+    y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
+    y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
+    y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+    y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
+    y.set('focusDistance', node.focusDistance ?? 0)
+    y.set('focusRadius', node.focusRadius ?? 160)
+    y.set('focusFalloff', node.focusFalloff ?? 180)
+    y.set('aperture', node.aperture ?? 0)
+    y.set('iso', node.iso ?? 100)
+    y.set('blurLevel', node.blurLevel ?? 1)
+    y.set('blurQuality', node.blurQuality ?? 8)
+    y.set('showFocusPlane', node.showFocusPlane ?? false)
+  }
   for (const [k, v] of Object.entries(node)) {
     if (handledKeys.has(k)) continue
     y.set(k, v)
   }
   return y
+}
+
+function readSceneMeta(scene: Y.Map<unknown>): SceneMeta {
+  const meta = scene.get('meta')
+  if (!(meta instanceof Y.Map)) return DEFAULT_META
+  const canvas = meta.get('canvas')
+  const canvasPatch = canvas instanceof Y.Map
+    ? Object.fromEntries(canvas.entries())
+    : isPlainObject(canvas)
+      ? canvas
+      : undefined
+  return mergeWithDefaults(DEFAULT_META, {
+    id: meta.get('id'),
+    name: meta.get('name'),
+    duration: meta.get('duration'),
+    frameRate: meta.get('frameRate'),
+    canvas: canvasPatch,
+  })
 }
 
 function deleteNode(scene: Y.Map<unknown>, nodeId: string): void {
