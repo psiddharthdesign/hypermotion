@@ -32,7 +32,9 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
   }
 
   assert.deepEqual(getLayerTool.inputSchema.required, ['scene', 'nodeId'])
+  assert.deepEqual(listLayersTool.inputSchema.required, ['scene'])
   assert.deepEqual(listTracksTool.inputSchema.required, ['scene'])
+  assert.deepEqual(listCamerasTool.inputSchema.required, ['scene'])
 
   const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as
     | Record<string, unknown>
