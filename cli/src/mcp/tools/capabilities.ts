@@ -32,7 +32,7 @@ const QUERY_TOOLS = [
 
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
-  mcpTools: typeof MCP_TOOLS
+  mcpTools: readonly McpToolName[]
   nodeKinds: typeof NODE_KINDS
   patchOperations: typeof PATCH_OPERATION_TYPES
   validation: {
