@@ -69,7 +69,7 @@ export function createCommand(): Command {
         process.exit(2)
       }
 
-      const source = options.from ?? '-'
+      const source = options.from?.trim() || '-'
       let raw: string
       try {
         raw = source === '-' ? await readStdin() : fs.readFileSync(source, 'utf-8')
