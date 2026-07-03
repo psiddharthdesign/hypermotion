@@ -154,6 +154,47 @@ test('create command trims padded output paths', async () => {
   }
 })
 
+test('create command trims padded JSON source paths', async () => {
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'hypermotion-create-trimmed-source-'),
+  )
+  const sourcePath = path.join(dir, 'scene.json')
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        meta: {
+          name: 'Trimmed Source',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    await captureStdout(async () => {
+      await createCommand()
+        .exitOverride()
+        .parseAsync([scenePath, '--from', ` ${sourcePath} `], { from: 'user' })
+    })
+
+    const summary = readSceneSummary(fs.readFileSync(scenePath))
+
+    assert.equal(summary.meta.name, 'Trimmed Source')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('create command rejects blank output paths before reading input', async () => {
   const stderr = await withProcessExitThrow(async () => {
     return captureStderr(async () => {
