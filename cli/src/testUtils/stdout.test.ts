@@ -78,6 +78,32 @@ test('captureStderr invokes write callbacks', async () => {
   assert.equal(callbackCalled, true)
 })
 
+test('captureStdout invokes write callbacks passed after explicit encodings', async () => {
+  let callbackCalled = false
+
+  const output = await captureStdout(() => {
+    process.stdout.write('cmVuZGVyIGNvbXBsZXRl', 'base64', () => {
+      callbackCalled = true
+    })
+  })
+
+  assert.equal(output, 'render complete')
+  assert.equal(callbackCalled, true)
+})
+
+test('captureStderr invokes write callbacks passed after explicit encodings', async () => {
+  let callbackCalled = false
+
+  const output = await captureStderr(() => {
+    process.stderr.write('cmVuZGVyIGZhaWxlZA==', 'base64', () => {
+      callbackCalled = true
+    })
+  })
+
+  assert.equal(output, 'render failed')
+  assert.equal(callbackCalled, true)
+})
+
 test('captureStdout accepts callbacks that return values', async () => {
   const output = await captureStdout(() => {
     process.stdout.write('render complete')
