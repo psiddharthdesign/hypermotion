@@ -53,6 +53,11 @@ test('inferRenderFormatFromPath recognizes extension-only output filenames', () 
   assert.equal(inferRenderFormatFromPath('.mov'), 'mp4')
 })
 
+test('inferRenderFormatFromPath recognizes supported suffixes on hidden files', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/.preview.gif'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/.draft.WEBM'), 'webm')
+})
+
 test('inferRenderFormatFromPath trims surrounding whitespace', () => {
   assert.equal(inferRenderFormatFromPath(' /tmp/demo.gif '), 'gif')
 })
