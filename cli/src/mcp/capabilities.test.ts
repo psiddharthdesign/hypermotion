@@ -7,6 +7,7 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
   MCP_TOOLS,
+  type McpToolName,
 } from './tools/capabilities.js'
 import { TOOLS } from './server.js'
 import {
@@ -28,7 +29,7 @@ import { assertToolText } from '../testUtils/mcp.js'
 type GetCapabilitiesToolPayload = {
   keyframeableProperties: readonly PropertyIdJson[]
   sceneExtension: string
-  mcpTools: typeof MCP_TOOLS
+  mcpTools: readonly McpToolName[]
   validation: {
     structuralSceneValidation: boolean
   }
@@ -148,7 +149,7 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
   return {
     keyframeableProperties,
     sceneExtension,
-    mcpTools: requiredStringArray(parsedObject, 'mcpTools') as typeof MCP_TOOLS,
+    mcpTools: requiredStringArray(parsedObject, 'mcpTools') as readonly McpToolName[],
     validation,
     nodeKinds,
     patchOperations: requiredStringArray(parsedObject, 'patchOperations') as readonly PatchOperation['op'][],
