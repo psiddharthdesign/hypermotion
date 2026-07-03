@@ -5,7 +5,7 @@
 // `hypermotion serve --mcp` but is its own binary so AI agent configs can
 // reference it without `serve --mcp` plumbing:
 //
-//   claude mcp add hypermotion -- hypermotion-mcp
+//   claude mcp add -s user hypermotion -- hypermotion-mcp
 //
 // or in ~/.codex/config.toml:
 //
