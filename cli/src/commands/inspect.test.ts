@@ -224,6 +224,38 @@ test('inspect command reports resolved relative scene paths', async () => {
   }
 })
 
+test('inspect command reports stat failures as read errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-stat-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const originalStatSync = fs.statSync
+  try {
+    Object.defineProperty(fs, 'statSync', {
+      configurable: true,
+      value: ((statPath: fs.PathLike) => {
+        if (statPath === scenePath) throw new Error('stat failed')
+        return originalStatSync(statPath)
+      }) as typeof fs.statSync,
+    })
+
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          inspectCommand().parse([scenePath], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.equal(
+      stderr,
+      `[inspect] failed to read ${path.resolve(scenePath)}: stat failed\n`,
+    )
+  } finally {
+    Object.defineProperty(fs, 'statSync', { value: originalStatSync })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('inspect command reports read failures after stat succeeds', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-read-'))
   const scenePath = path.join(dir, 'scene.hype')
