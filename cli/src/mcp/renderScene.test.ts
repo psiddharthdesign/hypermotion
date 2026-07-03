@@ -12,6 +12,7 @@ import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 type JsonSchemaProperty = {
   type?: string
   enum?: string[]
+  minLength?: number
   minimum?: number
   maximum?: number
   description?: string
@@ -30,6 +31,7 @@ test('render_scene input schema documents relative output paths', () => {
   const outputProperty = schemaProperty('output')
 
   assert.equal(outputProperty?.type, 'string')
+  assert.equal(outputProperty?.minLength, 1)
   assert.match(String(outputProperty?.description), /relative output file path/)
 })
 
@@ -45,6 +47,7 @@ test('render_scene input schema exposes the optional scene path', () => {
   const sceneProperty = schemaProperty('scene')
 
   assert.equal(sceneProperty?.type, 'string')
+  assert.equal(sceneProperty?.minLength, 1)
   assert.match(String(sceneProperty?.description), /\.hype scene file/)
 })
 
