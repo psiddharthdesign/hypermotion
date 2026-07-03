@@ -4,8 +4,6 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
 import { RENDER_FORMATS, RENDER_QUALITIES } from '../../renderOptions.js'
 
-const VALIDATION_TOOLS = ['validate_scene'] as const
-const QUERY_TOOLS = ['list_layers', 'get_layer', 'list_tracks', 'list_cameras'] as const
 export const MCP_TOOLS = [
   'doctor',
   'get_capabilities',
@@ -22,6 +20,16 @@ export const MCP_TOOLS = [
   'render_scene',
   'list_keyframeable_properties',
 ] as const
+export type McpToolName = (typeof MCP_TOOLS)[number]
+
+const VALIDATION_TOOLS = ['validate_scene'] as const satisfies readonly McpToolName[]
+const QUERY_TOOLS = [
+  'list_layers',
+  'get_layer',
+  'list_tracks',
+  'list_cameras',
+] as const satisfies readonly McpToolName[]
+
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
   mcpTools: typeof MCP_TOOLS
