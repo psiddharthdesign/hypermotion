@@ -53,7 +53,7 @@ export const getLayerTool: Tool = {
     type: 'object',
     properties: {
       scene: SCENE_PATH_PROPERTY,
-      nodeId: { type: 'string', description: 'Stable layer/node id to return.' },
+      nodeId: { type: 'string', minLength: 1, description: 'Stable layer/node id to return.' },
     },
     required: ['scene', 'nodeId'],
   },
@@ -66,7 +66,11 @@ export const listTracksTool: Tool = {
     type: 'object',
     properties: {
       scene: SCENE_PATH_PROPERTY,
-      nodeId: { type: 'string', description: 'Optional stable layer/node id to filter by.' },
+      nodeId: {
+        type: 'string',
+        minLength: 1,
+        description: 'Optional stable layer/node id to filter by.',
+      },
     },
     required: ['scene'],
   },
