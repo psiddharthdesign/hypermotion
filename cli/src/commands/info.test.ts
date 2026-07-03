@@ -10,6 +10,9 @@ import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
+type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
+type PersistedSceneMeta = NonNullable<PersistedSceneInput['meta']>
+
 test('info command prints JSON scene summaries', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
@@ -388,7 +391,7 @@ test('info command replaces string canvas dimensions with placeholders', async (
       buildSceneBytes({
         meta: {
           name: 'String Canvas',
-          canvas: { width: 'wide' as never, height: 'tall' as never },
+          canvas: stringCanvas('wide', 'tall'),
         },
         nodes: {
           root: {
@@ -414,6 +417,10 @@ test('info command replaces string canvas dimensions with placeholders', async (
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function stringCanvas(width: string, height: string): PersistedSceneMeta['canvas'] {
+  return { width, height } as unknown as PersistedSceneMeta['canvas']
+}
 
 test('info command reports missing scene files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
