@@ -142,6 +142,50 @@ test('patch command trims padded scene paths before reading', async () => {
   }
 })
 
+test('patch command trims padded output paths before writing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-patch-trimmed-output-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const patchPath = path.join(dir, 'patch.json')
+  const outputPath = path.join(dir, 'patched.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Before',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+    fs.writeFileSync(
+      patchPath,
+      JSON.stringify({ ops: [{ op: 'setMeta', patch: { name: 'Trimmed output' } }] }),
+    )
+
+    await patchCommand()
+      .exitOverride()
+      .parseAsync([scenePath, '--from', patchPath, '--output', `  ${outputPath}\n`], {
+        from: 'user',
+      })
+
+    assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'Before')
+    assert.equal(readSceneSummary(fs.readFileSync(outputPath)).meta.name, 'Trimmed output')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('patch command rejects blank scene paths before reading patch JSON', async () => {
   const stderr = await withProcessExitThrow(() => captureStderr(() => {
     return assert.rejects(

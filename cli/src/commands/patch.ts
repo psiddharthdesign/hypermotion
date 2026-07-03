@@ -24,7 +24,8 @@ export function patchCommand(): Command {
       }
 
       const resolvedScenePath = path.resolve(trimmedScenePath)
-      const output = path.resolve(options.output ?? trimmedScenePath)
+      const trimmedOutputPath = options.output?.trim()
+      const output = path.resolve(trimmedOutputPath || trimmedScenePath)
       let sceneBytes: Buffer
       let stats: fs.Stats
       try {
