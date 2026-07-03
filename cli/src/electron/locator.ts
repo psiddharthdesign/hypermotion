@@ -7,8 +7,8 @@
  *
  *   macOS   — Check `/Applications/hyper-motion.app/Contents/MacOS/hyper-motion`
  *             then `~/Applications/...`. Future: query `mdfind`.
- *   Windows — Best-effort lookup for development builds; no public release yet.
- *   Linux   — Best-effort lookup for development builds; no public release yet.
+ *   Windows — Best-effort lookup for future or development builds.
+ *   Linux   — Best-effort lookup for future or development builds.
  *
  * Override path with `HYPERMOTION_APP_PATH` env var if installed somewhere
  * non-standard.
