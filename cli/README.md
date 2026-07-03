@@ -12,6 +12,8 @@ current desktop scene from the terminal, and let AI coding agents
 
 ## Install
 
+Requires Node 20+.
+
 ```sh
 pnpm add -g @psiddharthdesign/hypermotion
 # or
