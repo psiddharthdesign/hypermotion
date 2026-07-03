@@ -13,6 +13,7 @@ type JsonSchemaProperty = {
   type?: string
   enum?: string[]
   minLength?: number
+  pattern?: string
   minimum?: number
   maximum?: number
   description?: string
@@ -32,6 +33,7 @@ test('render_scene input schema documents relative output paths', () => {
 
   assert.equal(outputProperty?.type, 'string')
   assert.equal(outputProperty?.minLength, 1)
+  assert.equal(outputProperty?.pattern, '\\S')
   assert.match(String(outputProperty?.description), /relative output file path/)
 })
 
@@ -48,6 +50,7 @@ test('render_scene input schema exposes the optional scene path', () => {
 
   assert.equal(sceneProperty?.type, 'string')
   assert.equal(sceneProperty?.minLength, 1)
+  assert.equal(sceneProperty?.pattern, '\\S')
   assert.match(String(sceneProperty?.description), /\.hype scene file/)
 })
 
