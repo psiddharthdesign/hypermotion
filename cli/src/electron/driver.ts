@@ -30,13 +30,13 @@ import fs from 'node:fs'
 import type { RenderFormat, RenderQuality } from '../renderOptions.js'
 
 export interface HeadlessRenderRequest {
-  appPath: string
-  outputPath: string
-  format: RenderFormat
-  quality: RenderQuality
-  fps: number
+  readonly appPath: string
+  readonly outputPath: string
+  readonly format: RenderFormat
+  readonly quality: RenderQuality
+  readonly fps: number
   /** Optional .hype scene path to render instead of the current desktop scene. */
-  scenePath?: string
+  readonly scenePath?: string
 }
 
 // Maximum wait for a render to complete. Keep hung desktop handoffs
@@ -127,19 +127,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     if (fs.existsSync(errorPath)) {
       // Renderer reported an error. Surface it and bail — no point
       // continuing to poll, the render isn't going to finish.
-      let message = 'Render failed (no details available)'
-      try {
-        const raw = fs.readFileSync(errorPath, 'utf-8')
-        try {
-          const data = JSON.parse(raw)
-          if (hasErrorMessage(data)) message = data.message
-        } catch {
-          const text = raw.trim()
-          if (text) message = text
-        }
-      } catch {
-        /* best effort — fall through with the generic message */
-      }
+      const message = readRenderErrorMessage(errorPath)
       cleanFile(errorPath)
       throw new Error(message)
     }
@@ -165,6 +153,18 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     await sleep(POLL_INTERVAL_MS)
   }
 
+  // If the event loop was suspended or starved past the timeout boundary,
+  // a final sentinel may have landed after the last in-loop poll.
+  if (fs.existsSync(sentinelPath)) {
+    cleanFile(sentinelPath)
+    return
+  }
+  if (fs.existsSync(errorPath)) {
+    const message = readRenderErrorMessage(errorPath)
+    cleanFile(errorPath)
+    throw new Error(message)
+  }
+
   throw new Error(
     `Render timed out after ${RENDER_TIMEOUT_MS / 1000}s. ` +
       `Make sure the desktop app is responsive. Set HYPERMOTION_VERBOSE=1 ` +
@@ -178,6 +178,23 @@ function cleanFile(p: string): void {
   } catch {
     /* best-effort */
   }
+}
+
+function readRenderErrorMessage(errorPath: string): string {
+  let message = 'Render failed (no details available)'
+  try {
+    const raw = fs.readFileSync(errorPath, 'utf-8')
+    try {
+      const data = JSON.parse(raw)
+      if (hasErrorMessage(data)) message = data.message
+    } catch {
+      const text = raw.trim()
+      if (text) message = text
+    }
+  } catch {
+    /* best effort — fall through with the generic message */
+  }
+  return message
 }
 
 function hasErrorMessage(value: unknown): value is { message: string } {
