@@ -15,6 +15,7 @@ type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
 type StringSchemaProperty = {
   readonly type: 'string'
+  readonly minLength?: number
   readonly description: string
 }
 type QuerySceneSnapshot = {
@@ -37,6 +38,7 @@ type LayerSummary = {
 
 const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
+  minLength: 1,
   description: 'Path to a .hype scene file.',
 }
 
