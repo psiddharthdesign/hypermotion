@@ -3,7 +3,7 @@
 #
 # Hyper Motion — one-line installer.
 #
-# Pulls the latest signed-but-not-notarized DMG from GitHub Releases,
+# Pulls the latest unsigned/not-notarized DMG from GitHub Releases,
 # copies the .app into /Applications, strips macOS download quarantine,
 # re-applies a local ad-hoc signature, and opens the app. End result:
 # the app launches the same way a notarized App Store install would —
