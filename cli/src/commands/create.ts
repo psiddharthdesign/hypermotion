@@ -51,7 +51,17 @@ interface CreateCommandOptions {
   from?: string
 }
 
-export function createCommand(): Command {
+export interface CreateCommandDeps {
+  readFileSync?: typeof fs.readFileSync
+  mkdirSync?: typeof fs.mkdirSync
+  writeFileSync?: typeof fs.writeFileSync
+}
+
+export function createCommand(deps: CreateCommandDeps = {}): Command {
+  const readFileSync = deps.readFileSync ?? fs.readFileSync
+  const mkdirSync = deps.mkdirSync ?? fs.mkdirSync
+  const writeFileSync = deps.writeFileSync ?? fs.writeFileSync
+
   return new Command('create')
     .description(
       'Build a .hype scene file from a plain JSON description. The desktop ' +
@@ -72,7 +82,7 @@ export function createCommand(): Command {
       const source = options.from?.trim() || '-'
       let raw: string
       try {
-        raw = source === '-' ? await readStdin() : fs.readFileSync(source, 'utf-8')
+        raw = source === '-' ? await readStdin() : readFileSync(source, 'utf-8')
       } catch (err) {
         console.error(
           `[create] failed to read scene JSON from ${source === '-' ? 'stdin' : source}: ${
@@ -119,7 +129,7 @@ export function createCommand(): Command {
       const outputPath = path.resolve(trimmedOutput)
       const outDir = path.dirname(outputPath)
       try {
-        fs.mkdirSync(outDir, { recursive: true })
+        mkdirSync(outDir, { recursive: true })
       } catch (err) {
         console.error(
           `[create] failed to create output directory ${outDir}: ${
@@ -130,7 +140,7 @@ export function createCommand(): Command {
       }
 
       try {
-        fs.writeFileSync(outputPath, Buffer.from(bytes))
+        writeFileSync(outputPath, Buffer.from(bytes))
       } catch (err) {
         console.error(
           `[create] failed to write ${outputPath}: ${

@@ -195,6 +195,53 @@ test('create command trims padded JSON source paths', async () => {
   }
 })
 
+test('create command reports output directory creation failures', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-mkdir-fail-'))
+  const sourcePath = path.join(dir, 'scene.json')
+  const scenePath = path.join(dir, 'nested', 'scene.hype')
+  try {
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const stderr = await withProcessExitThrow(async () => {
+      return captureStderr(async () => {
+        await assert.rejects(
+          createCommand({
+            mkdirSync: () => {
+              throw new Error('permission denied')
+            },
+          }).parseAsync([scenePath, '--from', sourcePath], { from: 'user' }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.match(
+      stderr,
+      new RegExp(
+        `^\\[create\\] failed to create output directory ${escapeRegExp(path.dirname(scenePath))}: permission denied$`,
+        'm',
+      ),
+    )
+    assert.equal(fs.existsSync(scenePath), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('create command rejects blank output paths before reading input', async () => {
   const stderr = await withProcessExitThrow(async () => {
     return captureStderr(async () => {
