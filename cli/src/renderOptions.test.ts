@@ -44,6 +44,11 @@ test('inferRenderFormatFromPath ignores extensions in parent directories', () =>
   assert.equal(inferRenderFormatFromPath('C:\\tmp\\exports.webm\\demo'), 'mp4')
 })
 
+test('inferRenderFormatFromPath allows URL markers in parent directories', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/exports#draft/demo.gif'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/exports?draft/demo.webm'), 'webm')
+})
+
 test('inferRenderFormatFromPath normalizes extension casing', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.WEBM'), 'webm')
 })
