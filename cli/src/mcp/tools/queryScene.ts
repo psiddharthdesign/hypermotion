@@ -17,6 +17,7 @@ type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_ca
 type StringSchemaProperty = {
   readonly type: 'string'
   readonly minLength?: number
+  readonly pattern?: string
   readonly description: string
 }
 type QuerySceneSnapshot = {
@@ -40,6 +41,7 @@ type LayerSummary = {
 const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
   minLength: 1,
+  pattern: '\\S',
   description: 'Path to a .hype scene file.',
 }
 
