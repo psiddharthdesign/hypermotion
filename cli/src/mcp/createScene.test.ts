@@ -254,6 +254,17 @@ test('create_scene rejects blank output paths', async () => {
   assert.equal(text, 'create_scene: output path is required')
 })
 
+test('create_scene rejects empty output paths at schema validation', async () => {
+  const result = await handleCreateScene({
+    output: '',
+    scene: { nodes: {} },
+  })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^create_scene: invalid arguments/)
+})
+
 test('create_scene validates output paths before building scene bytes', async () => {
   const result = await handleCreateScene({
     output: 'relative-scene.hype',
