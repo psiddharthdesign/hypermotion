@@ -253,7 +253,7 @@ export interface TrackJson {
 export interface TextAnimationJson {
   id: string
   mode: 'in' | 'out'
-  applyTo: 'letters' | 'words' | 'lines'
+  applyTo: 'layer' | 'letters' | 'words' | 'lines'
   order: 'forward' | 'reverse' | 'random'
   delay: number
   smoothing: 'none' | 'soft' | 'smooth'
