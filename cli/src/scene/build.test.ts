@@ -15,10 +15,6 @@ import {
 
 type PlainSceneObject = Record<string, unknown>
 type PlainSceneMap = Record<string, PlainSceneObject>
-type InvalidTrackJson = Omit<TrackJson, 'propertyId'> & { propertyId: string }
-type InvalidSceneJson = Omit<SceneJson, 'tracks'> & {
-  tracks: Record<string, InvalidTrackJson>
-}
 
 function sampleScene(): SceneJson {
   return {
@@ -990,19 +986,19 @@ test('validateScene warns when no active camera is selected', () => {
 })
 
 test('validateScene rejects unsupported track property ids', () => {
-  const scene = {
-    ...sampleScene(),
-    tracks: {
-      invalid: {
-        id: 'invalid',
-        nodeId: 'title',
-        propertyId: 'appearance.missing',
-        keyframes: [],
-      } satisfies InvalidTrackJson,
-    },
-  } satisfies InvalidSceneJson
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>>
+  const invalid = new Y.Map<unknown>()
+  invalid.set('id', 'invalid')
+  invalid.set('nodeId', 'title')
+  invalid.set('propertyId', 'appearance.missing')
+  invalid.set('keyframes', new Y.Array<unknown>())
+  tracks.set('invalid', invalid)
+  tracks.delete('fade-title')
 
-  const result = validateScene(buildSceneBytes(scene as SceneJson))
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, [
@@ -1011,12 +1007,13 @@ test('validateScene rejects unsupported track property ids', () => {
 })
 
 test('validateScene rejects unsupported node positions', () => {
-  const scene = sampleScene()
-  const title = scene.nodes?.title
-  if (!title) throw new Error('missing sample title')
-  title.position = 'floating' as typeof title.position
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('title')?.set('position', 'floating')
 
-  const result = validateScene(buildSceneBytes(scene))
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, [
