@@ -203,6 +203,7 @@ test('captureStdout restores the writer when the callback throws', async () => {
 
   await assert.rejects(
     captureStdout(() => {
+      process.stdout.write('before failure')
       throw new Error('boom')
     }),
     /boom/,
@@ -230,6 +231,7 @@ test('captureStderr restores the writer when the callback throws', async () => {
 
   await assert.rejects(
     captureStderr(() => {
+      process.stderr.write('before failure')
       throw new Error('boom')
     }),
     /boom/,
