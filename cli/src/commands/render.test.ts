@@ -445,6 +445,10 @@ test('render command reports output parent files before launching the app', asyn
 test('render command reports output directory creation failures before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-mkdir-'))
   const outPath = path.join(dir, 'exports', 'out.mp4')
+  const mkdirSync: typeof fs.mkdirSync = (targetPath, options) => {
+    if (targetPath === path.dirname(outPath)) throw new Error('mkdir failed')
+    return fs.mkdirSync(targetPath, options)
+  }
   try {
     const stderr = await captureStderr(() => {
       return withProcessExitThrow(async () => {
@@ -454,10 +458,7 @@ test('render command reports output directory creation failures before launching
             driveRender: async () => {
               throw new Error('should not render')
             },
-            mkdirSync: ((targetPath: fs.PathLike) => {
-              if (targetPath === path.dirname(outPath)) throw new Error('mkdir failed')
-              return fs.mkdirSync(targetPath, { recursive: true })
-            }) as typeof fs.mkdirSync,
+            mkdirSync,
           }).parseAsync(['-o', outPath], {
             from: 'user',
           }),
