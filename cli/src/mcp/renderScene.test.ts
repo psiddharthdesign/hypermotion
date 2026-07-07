@@ -37,6 +37,10 @@ test('render_scene input schema documents relative output paths', () => {
   assert.match(String(outputProperty?.description), /relative output file path/)
 })
 
+test('render_scene input schema requires only the output path', () => {
+  assert.deepEqual(renderSceneTool.inputSchema.required, ['output'])
+})
+
 test('render_scene input schema exposes render preset enums', () => {
   const formatProperty = schemaProperty('format')
   const qualityProperty = schemaProperty('quality')
