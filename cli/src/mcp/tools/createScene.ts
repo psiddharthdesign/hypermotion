@@ -38,6 +38,7 @@ import { pushSceneToRunningApp } from '../../electron/live.js'
 const CreateInput = z.object({
   output: z
     .string()
+    .min(1)
     .describe('Absolute path to write the .hype file to. Parent dirs are created if missing.'),
   scene: z
     .union([
