@@ -120,18 +120,16 @@ test('get_capabilities description mentions agent-facing capability groups', () 
 
 function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPayload {
   const parsed: unknown = JSON.parse(assertToolText(result))
-  assert.equal(typeof parsed, 'object')
-  assert.notEqual(parsed, null)
-  const parsedObject = parsed as Record<string, unknown>
+  assertRecord(parsed)
+  const parsedObject = parsed
 
   const rawSceneExtension = parsedObject.sceneExtension
   assert.ok(typeof rawSceneExtension === 'string')
   const sceneExtension = rawSceneExtension
 
   const rawValidation = parsedObject.validation
-  assert.equal(typeof rawValidation, 'object')
-  assert.notEqual(rawValidation, null)
-  const validationObject = rawValidation as Record<string, unknown>
+  assertRecord(rawValidation)
+  const validationObject = rawValidation
   const structuralSceneValidation = validationObject.structuralSceneValidation
   assert.ok(typeof structuralSceneValidation === 'boolean')
   const validation = {
@@ -177,9 +175,8 @@ function parseKeyframeablePropertiesJson(
   result: CallToolResult,
 ): KeyframeablePropertiesToolPayload {
   const parsed: unknown = JSON.parse(assertToolText(result))
-  assert.equal(typeof parsed, 'object')
-  assert.notEqual(parsed, null)
-  const parsedObject = parsed as Record<string, unknown>
+  assertRecord(parsed)
+  const parsedObject = parsed
   const keyframeableProperties = requiredKnownStringArray(
     parsedObject,
     'keyframeableProperties',
@@ -213,6 +210,11 @@ function requiredBoolean(parsed: Record<string, unknown>, key: string): boolean 
   const value = parsed[key]
   assert.ok(typeof value === 'boolean')
   return value
+}
+
+function assertRecord(value: unknown): asserts value is Record<string, unknown> {
+  assert.equal(typeof value, 'object')
+  assert.notEqual(value, null)
 }
 
 function assertStringArray(value: unknown): asserts value is readonly string[] {
