@@ -39,6 +39,10 @@ export interface HeadlessRenderRequest {
   readonly scenePath?: string
 }
 
+type SuccessSentinel = {
+  readonly bytes: number
+}
+
 // Maximum wait for a render to complete. Keep hung desktop handoffs
 // bounded while still allowing high-quality renders to finish.
 const RENDER_TIMEOUT_MS = 5 * 60 * 1000
@@ -188,17 +192,21 @@ function hasCompleteSuccessSentinel(sentinelPath: string): boolean {
   try {
     const raw = fs.readFileSync(sentinelPath, 'utf-8')
     const data = JSON.parse(raw)
-    return (
-      typeof data === 'object' &&
-      data !== null &&
-      'bytes' in data &&
-      typeof data.bytes === 'number' &&
-      Number.isFinite(data.bytes) &&
-      data.bytes >= 0
-    )
+    return hasSuccessSentinelBytes(data)
   } catch {
     return false
   }
+}
+
+function hasSuccessSentinelBytes(value: unknown): value is SuccessSentinel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'bytes' in value &&
+    typeof value.bytes === 'number' &&
+    Number.isFinite(value.bytes) &&
+    value.bytes >= 0
+  )
 }
 
 function readRenderErrorMessage(errorPath: string): string | null {
