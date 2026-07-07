@@ -12,8 +12,18 @@ test('patch_scene input schema exposes required scene and patch', () => {
   assert.deepEqual(patchSceneTool.inputSchema, {
     type: 'object',
     properties: {
-      scene: { type: 'string', minLength: 1, description: 'Path to the input .hype scene file.' },
-      output: { type: 'string', description: 'Path to write. Defaults to overwriting scene.' },
+      scene: {
+        type: 'string',
+        minLength: 1,
+        pattern: '\\S',
+        description: 'Path to the input .hype scene file.',
+      },
+      output: {
+        type: 'string',
+        minLength: 1,
+        pattern: '\\S',
+        description: 'Path to write. Defaults to overwriting scene.',
+      },
       patch: { description: 'Patch as { ops: [...] }, an operation array, or a JSON string.' },
       applyLive: {
         type: 'boolean',
@@ -39,6 +49,15 @@ test('patch_scene rejects blank scene paths as MCP errors', async () => {
   const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
   assert.match(text, /^patch_scene: invalid arguments/)
   assert.match(text, /scene path is required/)
+})
+
+test('patch_scene rejects blank output paths as MCP errors', async () => {
+  const result = await handlePatchScene({ scene: 'scene.hype', output: '   ', patch: [] })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^patch_scene: invalid arguments/)
+  assert.match(text, /output path is required/)
 })
 
 test('patch_scene reports malformed JSON patches as MCP errors', async () => {
@@ -134,7 +153,7 @@ test('patch_scene writes alternate output without applying live', async () => {
 
     const result = await handlePatchScene({
       scene: scenePath,
-      output: outputPath,
+      output: ` ${outputPath} `,
       applyLive: false,
       patch: {
         ops: [{ op: 'setMeta', patch: { name: 'Patched' } }],
