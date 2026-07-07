@@ -8,6 +8,14 @@ import test from 'node:test'
 import { PROPERTY_IDS, readSceneSummary } from '../scene/build.js'
 import { createSceneTool, handleCreateScene } from './tools/createScene.js'
 
+test('create_scene input schema marks output as non-empty', () => {
+  assert.deepEqual(createSceneTool.inputSchema.properties?.output, {
+    type: 'string',
+    minLength: 1,
+    description: 'Absolute path to write the .hype file to.',
+  })
+})
+
 test('create_scene description lists supported appearance property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {
