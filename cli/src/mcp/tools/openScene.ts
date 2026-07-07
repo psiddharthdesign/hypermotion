@@ -7,7 +7,7 @@ import path from 'node:path'
 import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const OpenInput = z.object({
-  scene: z.string().describe('Path to a .hype scene file.'),
+  scene: z.string().min(1).describe('Path to a .hype scene file.'),
 })
 type OpenInputData = z.infer<typeof OpenInput>
 type OpenSceneDeps = {
