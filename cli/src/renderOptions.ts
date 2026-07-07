@@ -20,11 +20,12 @@ export function isRenderQuality(value: unknown): value is RenderQuality {
 }
 
 export function inferRenderFormatFromPath(filePath: string): RenderFormat {
-  const cleanPath = (filePath.split(/[?#]/, 1)[0] ?? filePath).trim()
-  const normalizedPath = cleanPath.replace(/\\/g, '/')
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
   const basename = path.basename(normalizedPath)
+  const cleanBasename = basename.split(/[?#]/, 1)[0] ?? basename
   const ext = (
-    path.extname(normalizedPath) || (basename.startsWith('.') ? basename : '')
+    path.extname(cleanBasename) ||
+    (cleanBasename.startsWith('.') ? cleanBasename : '')
   )
     .toLowerCase()
     .slice(1)
