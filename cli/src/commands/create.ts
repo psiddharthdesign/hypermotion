@@ -69,7 +69,13 @@ export function createCommand(): Command {
         process.exit(2)
       }
 
-      const source = options.from?.trim() || '-'
+      const source =
+        options.from === undefined ? '-' : options.from.trim()
+      if (!source) {
+        console.error('[create] scene JSON source path is required')
+        process.exit(2)
+      }
+
       let raw: string
       try {
         raw = source === '-' ? await readStdin() : fs.readFileSync(source, 'utf-8')

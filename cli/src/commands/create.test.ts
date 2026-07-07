@@ -209,6 +209,27 @@ test('create command rejects blank output paths before reading input', async () 
   assert.equal(stderr, '[create] output path is required\n')
 })
 
+test('create command rejects blank JSON source paths before reading stdin', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-blank-source-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  try {
+    const stderr = await withProcessExitThrow(async () => {
+      return captureStderr(async () => {
+        await assert.rejects(
+          createCommand()
+            .parseAsync([scenePath, '--from', '   '], { from: 'user' }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.equal(stderr, '[create] scene JSON source path is required\n')
+    assert.equal(fs.existsSync(scenePath), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
