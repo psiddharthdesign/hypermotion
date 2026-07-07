@@ -213,6 +213,7 @@ test('open command reports desktop launch failures', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-open-launch-'))
   const scenePath = path.join(dir, 'scene.hype')
   const appPath = path.join(dir, 'hyper-motion')
+  let spawnCalled = false
   fs.writeFileSync(scenePath, '')
   try {
     const stderr = await captureStderr(() => {
@@ -221,6 +222,7 @@ test('open command reports desktop launch failures', async () => {
           openCommand({
             locateApp: async () => appPath,
             spawnApp: () => {
+              spawnCalled = true
               throw new Error('launch failed')
             },
           }).parseAsync([scenePath], { from: 'user' }),
@@ -230,6 +232,7 @@ test('open command reports desktop launch failures', async () => {
     })
 
     assert.equal(stderr, `[open] failed to open ${scenePath}: launch failed\n`)
+    assert.equal(spawnCalled, true)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
