@@ -12,13 +12,13 @@ import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
 import type { RenderSceneDeps } from './tools/renderScene.js'
 
 type JsonSchemaProperty = {
-  type?: string
-  enum?: string[]
-  minLength?: number
-  pattern?: string
-  minimum?: number
-  maximum?: number
-  description?: string
+  readonly type?: string
+  readonly enum?: readonly string[]
+  readonly minLength?: number
+  readonly pattern?: string
+  readonly minimum?: number
+  readonly maximum?: number
+  readonly description?: string
 }
 
 test('render_scene input schema exposes fps bounds', () => {
