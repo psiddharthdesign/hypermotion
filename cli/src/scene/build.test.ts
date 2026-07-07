@@ -1064,6 +1064,17 @@ test('validateScene rejects non-string root ids', () => {
   assert.deepEqual(result.errors, ['scene.root must be a string'])
 })
 
+test('validateScene rejects non-object scene metadata', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  doc.getMap<unknown>('scene').set('meta', 'metadata')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, ['scene.meta must be an object'])
+})
+
 test('validateScene rejects non-object scene collections', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
