@@ -31,6 +31,7 @@ export const openSceneTool: Tool = {
       scene: {
         type: 'string',
         minLength: 1,
+        pattern: '\\S',
         description: 'Absolute or relative path to a .hype scene file.',
       },
     },
