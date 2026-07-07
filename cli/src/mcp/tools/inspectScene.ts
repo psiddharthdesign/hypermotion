@@ -7,7 +7,7 @@ import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
 
 const InspectInput = z.object({
-  scene: z.string().describe('Path to a .hype scene file.'),
+  scene: z.string().min(1).describe('Path to a .hype scene file.'),
 })
 type InspectInputData = z.infer<typeof InspectInput>
 
