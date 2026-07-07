@@ -34,12 +34,13 @@ test('validate_scene rejects blank schema scene paths as MCP errors', async () =
   assert.match(text, /^validate_scene: invalid arguments/)
 })
 
-test('validate_scene rejects empty scene paths as MCP errors', async () => {
+test('validate_scene rejects empty scene paths at schema validation', async () => {
   const result = await handleValidateScene({ scene: '   ' })
 
   assert.equal(result.isError, true)
   const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.equal(text, 'validate_scene: scene path is required')
+  assert.match(text, /^validate_scene: invalid arguments/)
+  assert.match(text, /scene path is required/)
 })
 
 test('validate_scene reports missing files as MCP errors', async () => {
