@@ -20,7 +20,7 @@ pnpm add -g @psiddharthdesign/hypermotion
 npm install -g @psiddharthdesign/hypermotion
 ```
 
-This installs two binaries on your PATH:
+This installs two binaries on your `$PATH`:
 
 - `hypermotion` — interactive CLI for humans.
 - `hypermotion-mcp` — Model Context Protocol server for AI agents.
