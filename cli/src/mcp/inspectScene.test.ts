@@ -26,6 +26,13 @@ test('inspect_scene reports invalid arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^inspect_scene: invalid arguments/)
 })
 
+test('inspect_scene rejects blank schema scene paths as MCP errors', async () => {
+  const result = await handleInspectScene({ scene: '' })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^inspect_scene: invalid arguments/)
+})
+
 test('inspect_scene rejects blank scene paths as MCP errors', async () => {
   const result = await handleInspectScene({ scene: '   ' })
 

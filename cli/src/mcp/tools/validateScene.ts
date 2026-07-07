@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import { validateScene, type SceneValidationResult } from '../../scene/build.js'
 
 const ValidateInput = z.object({
-  scene: z.string().describe('Path to a .hype scene file.'),
+  scene: z.string().min(1).describe('Path to a .hype scene file.'),
 })
 type ValidateInputData = z.infer<typeof ValidateInput>
 
