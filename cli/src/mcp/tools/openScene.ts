@@ -7,7 +7,7 @@ import path from 'node:path'
 import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const OpenInput = z.object({
-  scene: z.string().min(1).describe('Path to a .hype scene file.'),
+  scene: z.string().min(1).describe('Absolute or relative path to a .hype scene file.'),
 })
 type OpenInputData = z.infer<typeof OpenInput>
 type OpenSceneDeps = {
@@ -28,7 +28,11 @@ export const openSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      scene: { type: 'string', minLength: 1, description: 'Path to a .hype scene file.' },
+      scene: {
+        type: 'string',
+        minLength: 1,
+        description: 'Absolute or relative path to a .hype scene file.',
+      },
     },
     required: ['scene'],
   },
