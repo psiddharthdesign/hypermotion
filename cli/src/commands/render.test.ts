@@ -179,6 +179,23 @@ test('render command trims padded scene paths', async () => {
   }
 })
 
+test('render command rejects empty explicit scene paths before launching the app', async () => {
+  const stderr = await captureStderr(() => {
+    return withProcessExitThrow(async () => {
+      await assert.rejects(
+        renderCommand({
+          locateApp: async () => {
+            throw new Error('should not locate app')
+          },
+        }).parseAsync(['-o', 'out.mp4', '--scene', '   '], { from: 'user' }),
+        { exitCode: 2 },
+      )
+    })
+  })
+
+  assert.equal(stderr, '[render] scene path is required\n')
+})
+
 test('render command trims padded output paths', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-output-'))
   const outputPath = path.join(dir, 'out.mp4')
