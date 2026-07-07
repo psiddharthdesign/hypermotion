@@ -141,6 +141,10 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       }
 
       const sceneInput = opts.scene?.trim()
+      if (opts.scene !== undefined && !sceneInput) {
+        console.error('[render] scene path is required')
+        process.exit(2)
+      }
       const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
       if (scenePath && !existsSync(scenePath)) {
         console.error(`[render] scene file not found: ${scenePath}`)
