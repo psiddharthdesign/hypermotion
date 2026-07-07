@@ -128,8 +128,10 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       // Renderer reported an error. Surface it and bail — no point
       // continuing to poll, the render isn't going to finish.
       const message = readRenderErrorMessage(errorPath)
-      cleanFile(errorPath)
-      throw new Error(message)
+      if (message) {
+        cleanFile(errorPath)
+        throw new Error(message)
+      }
     }
     // If the child exited with a non-zero code AND no sentinel has
     // appeared after the grace window, the render failed.
@@ -161,8 +163,10 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   }
   if (fs.existsSync(errorPath)) {
     const message = readRenderErrorMessage(errorPath)
-    cleanFile(errorPath)
-    throw new Error(message)
+    if (message) {
+      cleanFile(errorPath)
+      throw new Error(message)
+    }
   }
 
   throw new Error(
@@ -197,10 +201,11 @@ function hasCompleteSuccessSentinel(sentinelPath: string): boolean {
   }
 }
 
-function readRenderErrorMessage(errorPath: string): string {
+function readRenderErrorMessage(errorPath: string): string | null {
   let message = 'Render failed (no details available)'
   try {
     const raw = fs.readFileSync(errorPath, 'utf-8')
+    if (raw.length === 0) return null
     try {
       const data = JSON.parse(raw)
       if (hasErrorMessage(data)) message = data.message
