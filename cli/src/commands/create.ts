@@ -13,6 +13,7 @@
  *
  *   {
  *     "meta": { "name": "My scene", "canvas": { "width": 1080, "height": 1920 } },
+ *     "activeCameraId": "camera",
  *     "nodes": {
  *       "root":   {
  *         "id": "root",
