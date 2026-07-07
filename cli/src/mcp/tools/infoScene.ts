@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
-  scene: z.string().describe('Path to a .hype scene file.'),
+  scene: z.string().min(1).describe('Path to a .hype scene file.'),
 })
 type InfoInputData = z.infer<typeof InfoInput>
 

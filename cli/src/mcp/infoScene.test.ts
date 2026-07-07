@@ -32,6 +32,13 @@ test('info_scene reports invalid arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^info_scene: invalid arguments/)
 })
 
+test('info_scene rejects blank schema scene paths as MCP errors', async () => {
+  const result = await handleInfoScene({ scene: '' })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^info_scene: invalid arguments/)
+})
+
 test('info_scene rejects empty scene paths as MCP errors', async () => {
   const result = await handleInfoScene({ scene: '   ' })
 
