@@ -877,6 +877,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
 
+  if (data.meta !== undefined && !isPlainObject(data.meta)) {
+    errors.push('scene.meta must be an object')
+  }
   if (data.nodes !== undefined && !isPlainObject(data.nodes)) {
     errors.push('scene.nodes must be an object')
   }
