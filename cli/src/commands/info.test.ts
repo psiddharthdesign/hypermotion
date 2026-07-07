@@ -12,6 +12,10 @@ import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
 type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
 type PersistedSceneMeta = NonNullable<PersistedSceneInput['meta']>
+type MalformedPersistedCanvas = Record<string, unknown> & {
+  width: string
+  height: string
+}
 
 function writeMinimalScene(
   scenePath: string,
@@ -399,7 +403,10 @@ test('info command replaces string canvas dimensions with placeholders', async (
 })
 
 function stringCanvas(width: string, height: string): PersistedSceneMeta['canvas'] {
-  return { width, height } as unknown as PersistedSceneMeta['canvas']
+  const canvas: MalformedPersistedCanvas = { width, height }
+  // Exercise the read path for malformed persisted scenes whose canvas
+  // dimensions are not valid authoring input.
+  return canvas as unknown as PersistedSceneMeta['canvas']
 }
 
 test('info command reports missing scene files', async () => {
