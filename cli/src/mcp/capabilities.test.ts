@@ -28,7 +28,7 @@ import { assertToolText } from '../testUtils/mcp.js'
 
 type GetCapabilitiesToolPayload = {
   keyframeableProperties: readonly PropertyIdJson[]
-  sceneExtension: string
+  sceneExtension: '.hype'
   mcpTools: readonly McpToolName[]
   validation: {
     structuralSceneValidation: boolean
@@ -124,7 +124,7 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
   const parsedObject = parsed
 
   const rawSceneExtension = parsedObject.sceneExtension
-  assert.ok(typeof rawSceneExtension === 'string')
+  assert.equal(rawSceneExtension, '.hype')
   const sceneExtension = rawSceneExtension
 
   const rawValidation = parsedObject.validation
