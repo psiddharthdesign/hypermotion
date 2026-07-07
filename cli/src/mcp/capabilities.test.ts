@@ -215,6 +215,7 @@ function requiredBoolean(parsed: Record<string, unknown>, key: string): boolean 
 function assertRecord(value: unknown): asserts value is Record<string, unknown> {
   assert.equal(typeof value, 'object')
   assert.notEqual(value, null)
+  assert.equal(Array.isArray(value), false)
 }
 
 function assertStringArray(value: unknown): asserts value is readonly string[] {
