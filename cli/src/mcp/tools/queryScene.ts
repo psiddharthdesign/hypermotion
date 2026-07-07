@@ -45,6 +45,13 @@ const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   description: 'Path to a .hype scene file.',
 }
 
+const NODE_ID_PROPERTY: StringSchemaProperty = {
+  type: 'string',
+  minLength: 1,
+  pattern: '\\S',
+  description: 'Stable layer/node id to return.',
+}
+
 export const listLayersTool: Tool = {
   name: 'list_layers',
   description: 'List all scene layers with id, name, kind, parent, and children.',
@@ -58,7 +65,7 @@ export const getLayerTool: Tool = {
     type: 'object',
     properties: {
       scene: SCENE_PATH_PROPERTY,
-      nodeId: { type: 'string', minLength: 1, description: 'Stable layer/node id to return.' },
+      nodeId: NODE_ID_PROPERTY,
     },
     required: ['scene', 'nodeId'],
   },
@@ -72,8 +79,7 @@ export const listTracksTool: Tool = {
     properties: {
       scene: SCENE_PATH_PROPERTY,
       nodeId: {
-        type: 'string',
-        minLength: 1,
+        ...NODE_ID_PROPERTY,
         description: 'Optional stable layer/node id to filter by.',
       },
     },

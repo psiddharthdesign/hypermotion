@@ -41,11 +41,13 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
   const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as ToolSchemaProperty
   assert.equal(getNodeIdProperty?.type, 'string')
   assert.equal(getNodeIdProperty?.minLength, 1)
+  assert.equal(getNodeIdProperty?.pattern, '\\S')
   assert.equal(getNodeIdProperty?.description, 'Stable layer/node id to return.')
 
   const filterNodeIdProperty = listTracksTool.inputSchema.properties?.nodeId as ToolSchemaProperty
   assert.equal(filterNodeIdProperty?.type, 'string')
   assert.equal(filterNodeIdProperty?.minLength, 1)
+  assert.equal(filterNodeIdProperty?.pattern, '\\S')
   assert.equal(filterNodeIdProperty?.description, 'Optional stable layer/node id to filter by.')
 })
 
