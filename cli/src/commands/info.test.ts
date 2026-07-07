@@ -13,6 +13,31 @@ import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
 type PersistedSceneMeta = NonNullable<PersistedSceneInput['meta']>
 
+function writeMinimalScene(
+  scenePath: string,
+  meta: Pick<PersistedSceneMeta, 'name' | 'canvas'>,
+): void {
+  fs.writeFileSync(
+    scenePath,
+    buildSceneBytes({
+      meta,
+      nodes: {
+        root: {
+          id: 'root',
+          kind: 'frame',
+          parent: null,
+          children: [],
+          size: {
+            width: meta.canvas?.width ?? 400,
+            height: meta.canvas?.height ?? 300,
+          },
+          layout: { mode: 'none' },
+        },
+      },
+    }),
+  )
+}
+
 test('info command prints JSON scene summaries', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
@@ -153,25 +178,10 @@ test('info command omits camera line when no active camera exists', async () => 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
   try {
-    fs.writeFileSync(
-      scenePath,
-      buildSceneBytes({
-        meta: {
-          name: 'No Camera',
-          canvas: { width: 400, height: 300 },
-        },
-        nodes: {
-          root: {
-            id: 'root',
-            kind: 'frame',
-            parent: null,
-            children: [],
-            size: { width: 400, height: 300 },
-            layout: { mode: 'none' },
-          },
-        },
-      }),
-    )
+    writeMinimalScene(scenePath, {
+      name: 'No Camera',
+      canvas: { width: 400, height: 300 },
+    })
 
     const stdout = await captureStdout(async () => {
       await infoCommand().exitOverride().parseAsync([scenePath], {
@@ -191,25 +201,10 @@ test('info command prints builder default timing when scene meta omits it', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
   try {
-    fs.writeFileSync(
-      scenePath,
-      buildSceneBytes({
-        meta: {
-          name: 'Default Timing',
-          canvas: { width: 400, height: 300 },
-        },
-        nodes: {
-          root: {
-            id: 'root',
-            kind: 'frame',
-            parent: null,
-            children: [],
-            size: { width: 400, height: 300 },
-            layout: { mode: 'none' },
-          },
-        },
-      }),
-    )
+    writeMinimalScene(scenePath, {
+      name: 'Default Timing',
+      canvas: { width: 400, height: 300 },
+    })
 
     const stdout = await captureStdout(async () => {
       await infoCommand().exitOverride().parseAsync([scenePath], {
@@ -227,25 +222,10 @@ test('info command falls back for blank scene names', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-'))
   const scenePath = path.join(dir, 'scene.hype')
   try {
-    fs.writeFileSync(
-      scenePath,
-      buildSceneBytes({
-        meta: {
-          name: '   ',
-          canvas: { width: 400, height: 300 },
-        },
-        nodes: {
-          root: {
-            id: 'root',
-            kind: 'frame',
-            parent: null,
-            children: [],
-            size: { width: 400, height: 300 },
-            layout: { mode: 'none' },
-          },
-        },
-      }),
-    )
+    writeMinimalScene(scenePath, {
+      name: '   ',
+      canvas: { width: 400, height: 300 },
+    })
 
     const stdout = await captureStdout(async () => {
       await infoCommand().exitOverride().parseAsync([scenePath], {
