@@ -17,7 +17,7 @@ export const inspectSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      scene: { type: 'string', description: 'Path to a .hype scene file.' },
+      scene: { type: 'string', minLength: 1, description: 'Path to a .hype scene file.' },
     },
     required: ['scene'],
   },
