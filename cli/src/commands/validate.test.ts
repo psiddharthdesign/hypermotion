@@ -10,6 +10,12 @@ import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { validateCommand } from './validate.js'
 
+type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
+
+function malformedSceneInput(value: Record<string, unknown>): PersistedSceneInput {
+  return value as unknown as PersistedSceneInput
+}
+
 test('validate command prints JSON validation results', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')
@@ -381,7 +387,7 @@ test('validate command rejects non-string child entries', async () => {
   try {
     fs.writeFileSync(
       scenePath,
-      buildSceneBytes({
+      buildSceneBytes(malformedSceneInput({
         meta: {
           name: 'Validate Child Type',
           canvas: { width: 320, height: 180 },
@@ -396,7 +402,7 @@ test('validate command rejects non-string child entries', async () => {
             layout: { mode: 'none' },
           },
         },
-      } as unknown as Parameters<typeof buildSceneBytes>[0]),
+      })),
     )
 
     const stdout = await captureStdout(async () => {
@@ -421,7 +427,7 @@ test('validate command rejects unsupported node kinds', async () => {
   try {
     fs.writeFileSync(
       scenePath,
-      buildSceneBytes({
+      buildSceneBytes(malformedSceneInput({
         meta: {
           name: 'Validate Unsupported Kind',
           canvas: { width: 320, height: 180 },
@@ -442,7 +448,7 @@ test('validate command rejects unsupported node kinds', async () => {
             children: [],
           },
         },
-      } as unknown as Parameters<typeof buildSceneBytes>[0]),
+      })),
     )
 
     const stdout = await captureStdout(async () => {
@@ -467,7 +473,7 @@ test('validate command rejects unsupported node positions', async () => {
   try {
     fs.writeFileSync(
       scenePath,
-      buildSceneBytes({
+      buildSceneBytes(malformedSceneInput({
         meta: {
           name: 'Validate Unsupported Position',
           canvas: { width: 320, height: 180 },
@@ -491,7 +497,7 @@ test('validate command rejects unsupported node positions', async () => {
             fontSize: 24,
           },
         },
-      } as unknown as Parameters<typeof buildSceneBytes>[0]),
+      })),
     )
 
     const stdout = await captureStdout(async () => {
