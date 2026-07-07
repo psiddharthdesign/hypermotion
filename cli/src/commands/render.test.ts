@@ -77,6 +77,25 @@ test('render command infers formats case-insensitively from output extensions', 
   }
 })
 
+test('render command ignores URL-style suffixes when inferring output formats', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-suffix-'))
+  const outputPath = path.join(dir, 'out.webm?download=1#preview')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', outputPath], { from: 'user' })
+
+    assert.equal(calls[0]?.format, 'webm')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command defaults to mp4 when output extension is unsupported', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-default-'))
   const outputPath = path.join(dir, 'out.mov')
