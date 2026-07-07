@@ -45,10 +45,10 @@ export function patchCommand(): Command {
         process.exit(2)
       }
 
-      let patch: ScenePatch | PatchOperation[]
+      let patch: unknown
       try {
         const raw = options.from === '-' ? await readStdin() : fs.readFileSync(options.from, 'utf-8')
-        patch = JSON.parse(raw) as ScenePatch | PatchOperation[]
+        patch = JSON.parse(raw)
       } catch (err) {
         console.error(`[patch] failed to read patch: ${err instanceof Error ? err.message : err}`)
         process.exit(2)
@@ -60,7 +60,7 @@ export function patchCommand(): Command {
 
       let next: Uint8Array
       try {
-        next = applyScenePatch(new Uint8Array(sceneBytes), patch)
+        next = applyScenePatch(new Uint8Array(sceneBytes), patch as ScenePatch | PatchOperation[])
       } catch (err) {
         console.error(`[patch] failed to apply patch: ${err instanceof Error ? err.message : err}`)
         process.exit(1)
