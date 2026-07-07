@@ -39,6 +39,23 @@ test('locator trims a valid HYPERMOTION_APP_PATH override', async () => {
   }
 })
 
+test('locator accepts a HYPERMOTION_APP_PATH symlink to the app binary', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-symlink-'))
+  const appPath = path.join(dir, 'hyper-motion')
+  const symlinkPath = path.join(dir, 'hyper-motion-link')
+
+  try {
+    fs.writeFileSync(appPath, '')
+    fs.symlinkSync(appPath, symlinkPath)
+
+    await withEnvVar('HYPERMOTION_APP_PATH', symlinkPath, async () => {
+      assert.equal(await locateDesktopApp(), symlinkPath)
+    })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('locator rejects a missing HYPERMOTION_APP_PATH override', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-missing-'))
   const missingPath = path.join(dir, 'hyper-motion')
