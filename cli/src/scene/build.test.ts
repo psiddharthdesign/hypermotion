@@ -163,6 +163,35 @@ test('buildSceneBytes accepts soft text animation smoothing', () => {
   assert.equal(textAnimation.smoothing, 'soft')
 })
 
+test('buildSceneBytes accepts layer-wide text animation targeting', () => {
+  const scene = sampleScene()
+  const track = scene.tracks?.['fade-title']
+  if (!track) throw new Error('missing sample track')
+  track.propertyId = 'text.progress'
+  track.textAnimation = {
+    id: 'layer-fade',
+    mode: 'in',
+    applyTo: 'layer',
+    order: 'forward',
+    delay: 0,
+    smoothing: 'none',
+    duration: 0.4,
+    startTime: 0,
+    acceleration: 'linear',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0,
+    blurRadius: 0,
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as PlainSceneMap
+  const textAnimation = tracks['fade-title']?.textAnimation as PlainSceneObject
+
+  assert.equal(textAnimation.applyTo, 'layer')
+})
+
 test('buildSceneBytes fills default metadata for minimal scenes', () => {
   const bytes = buildSceneBytes({
     nodes: {
