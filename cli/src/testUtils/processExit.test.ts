@@ -125,9 +125,7 @@ function assertProcessExitError(err: unknown): asserts err is ProcessExitError {
   assert.ok(err instanceof Error)
   assert.ok('exitCode' in err)
   assert.ok(
-    err.exitCode === undefined ||
-      err.exitCode === null ||
-      typeof err.exitCode === 'number' ||
+    typeof err.exitCode === 'number' ||
       typeof err.exitCode === 'string',
   )
 }
