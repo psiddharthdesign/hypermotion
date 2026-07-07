@@ -15,6 +15,7 @@ test('open_scene input schema exposes required scene path', () => {
       scene: {
         type: 'string',
         minLength: 1,
+        pattern: '\\S',
         description: 'Absolute or relative path to a .hype scene file.',
       },
     },
