@@ -10,7 +10,6 @@ import {
   validateScene,
   type SceneJson,
   type TextAnimationJson,
-  type TrackJson,
 } from './build.js'
 
 type PlainSceneObject = Record<string, unknown>
