@@ -42,7 +42,7 @@ const RenderInput = z.object({
     ),
 })
 type RenderInputData = z.infer<typeof RenderInput>
-type RenderSceneDeps = {
+export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: (path: fs.PathLike) => fs.Stats
   mkdirSync: (path: fs.PathLike, options: { recursive: true }) => string | undefined

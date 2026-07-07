@@ -8,6 +8,7 @@ import test from 'node:test'
 import { withEnvVar } from '../testUtils/env.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
+import type { RenderSceneDeps } from './tools/renderScene.js'
 
 type JsonSchemaProperty = {
   type?: string
@@ -18,7 +19,6 @@ type JsonSchemaProperty = {
   maximum?: number
   description?: string
 }
-type RenderSceneDeps = NonNullable<Parameters<typeof handleRenderScene>[1]>
 
 test('render_scene input schema exposes fps bounds', () => {
   const fpsProperty = schemaProperty('fps')
