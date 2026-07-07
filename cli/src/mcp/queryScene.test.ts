@@ -19,11 +19,11 @@ import {
   listTracksTool,
 } from './tools/queryScene.js'
 
+type ToolSchemaProperty = Record<string, unknown> | undefined
+
 test('query scene MCP tool schemas describe their path and node id inputs', () => {
   for (const tool of [listLayersTool, getLayerTool, listTracksTool, listCamerasTool]) {
-    const sceneProperty = tool.inputSchema.properties?.scene as
-      | Record<string, unknown>
-      | undefined
+    const sceneProperty = tool.inputSchema.properties?.scene as ToolSchemaProperty
 
     assert.equal(sceneProperty?.type, 'string')
     assert.equal(sceneProperty?.minLength, 1)
@@ -38,16 +38,12 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
   assert.deepEqual(listTracksTool.inputSchema.required, ['scene'])
   assert.deepEqual(listCamerasTool.inputSchema.required, ['scene'])
 
-  const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as
-    | Record<string, unknown>
-    | undefined
+  const getNodeIdProperty = getLayerTool.inputSchema.properties?.nodeId as ToolSchemaProperty
   assert.equal(getNodeIdProperty?.type, 'string')
   assert.equal(getNodeIdProperty?.minLength, 1)
   assert.equal(getNodeIdProperty?.description, 'Stable layer/node id to return.')
 
-  const filterNodeIdProperty = listTracksTool.inputSchema.properties?.nodeId as
-    | Record<string, unknown>
-    | undefined
+  const filterNodeIdProperty = listTracksTool.inputSchema.properties?.nodeId as ToolSchemaProperty
   assert.equal(filterNodeIdProperty?.type, 'string')
   assert.equal(filterNodeIdProperty?.minLength, 1)
   assert.equal(filterNodeIdProperty?.description, 'Optional stable layer/node id to filter by.')
