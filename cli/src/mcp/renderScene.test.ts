@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { RENDER_FORMATS, RENDER_QUALITIES } from '../renderOptions.js'
 import { withEnvVar } from '../testUtils/env.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
@@ -45,8 +46,8 @@ test('render_scene input schema exposes render preset enums', () => {
   const formatProperty = schemaProperty('format')
   const qualityProperty = schemaProperty('quality')
 
-  assert.deepEqual(formatProperty?.enum, ['mp4', 'webm', 'gif'])
-  assert.deepEqual(qualityProperty?.enum, ['comp', '720p', '2k', '4k'])
+  assert.deepEqual(formatProperty?.enum, [...RENDER_FORMATS])
+  assert.deepEqual(qualityProperty?.enum, [...RENDER_QUALITIES])
 })
 
 test('render_scene input schema exposes the optional scene path', () => {
