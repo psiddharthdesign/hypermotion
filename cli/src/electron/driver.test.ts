@@ -264,6 +264,44 @@ test('driveHeadlessRender waits for success sentinels with timestamps', async ()
   }
 })
 
+test('driveHeadlessRender ignores malformed success sentinels', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.mp4')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const out = outArg?.slice('--out='.length);",
+      "if (!out) process.exit(2);",
+      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: -1 }));",
+      "setTimeout(() => {",
+      "  fs.writeFileSync(out, 'fresh output');",
+      "  fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 12 }));",
+      '}, 100);',
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    await driveHeadlessRender({
+      appPath,
+      outputPath,
+      format: 'mp4',
+      quality: 'comp',
+      fps: 30,
+    })
+
+    assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
+    assert.equal(fs.existsSync(`${outputPath}.done`), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('driveHeadlessRender enables Electron logging when verbose mode is set', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
   const appPath = path.join(dir, 'fake-app.mjs')
