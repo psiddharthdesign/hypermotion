@@ -26,7 +26,12 @@ export const infoSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      scene: { type: 'string', minLength: 1, description: 'Path to a .hype scene file.' },
+      scene: {
+        type: 'string',
+        minLength: 1,
+        pattern: '\\S',
+        description: 'Path to a .hype scene file.',
+      },
     },
     required: ['scene'],
   },
