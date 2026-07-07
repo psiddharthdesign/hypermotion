@@ -93,6 +93,7 @@ export const createSceneTool: Tool = {
     properties: {
       output: {
         type: 'string',
+        minLength: 1,
         description: 'Absolute path to write the .hype file to.',
       },
       scene: {
