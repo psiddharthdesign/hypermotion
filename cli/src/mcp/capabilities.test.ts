@@ -138,25 +138,33 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
     structuralSceneValidation,
   }
 
-  const properties = parsedObject.keyframeableProperties
-  assertStringArray(properties)
-  const keyframeableProperties = properties as readonly PropertyIdJson[]
+  const keyframeableProperties = requiredKnownStringArray(
+    parsedObject,
+    'keyframeableProperties',
+    PROPERTY_IDS,
+  )
 
-  const rawNodeKinds = parsedObject.nodeKinds
-  assertStringArray(rawNodeKinds)
-  const nodeKinds = rawNodeKinds as readonly NodeKindJson[]
+  const nodeKinds = requiredKnownStringArray(parsedObject, 'nodeKinds', NODE_KINDS)
 
   return {
     keyframeableProperties,
     sceneExtension,
-    mcpTools: requiredStringArray(parsedObject, 'mcpTools') as readonly McpToolName[],
+    mcpTools: requiredKnownStringArray(parsedObject, 'mcpTools', MCP_TOOLS),
     validation,
     nodeKinds,
-    patchOperations: requiredStringArray(parsedObject, 'patchOperations') as readonly PatchOperation['op'][],
+    patchOperations: requiredKnownStringArray(
+      parsedObject,
+      'patchOperations',
+      PATCH_OPERATION_TYPES,
+    ),
     queryTools: requiredStringArray(parsedObject, 'queryTools'),
     validationTools: requiredStringArray(parsedObject, 'validationTools'),
-    renderFormats: requiredStringArray(parsedObject, 'renderFormats') as readonly RenderFormat[],
-    renderQualities: requiredStringArray(parsedObject, 'renderQualities') as readonly RenderQuality[],
+    renderFormats: requiredKnownStringArray(parsedObject, 'renderFormats', RENDER_FORMATS),
+    renderQualities: requiredKnownStringArray(
+      parsedObject,
+      'renderQualities',
+      RENDER_QUALITIES,
+    ),
     renderFileSceneInput: requiredBoolean(parsedObject, 'renderFileSceneInput'),
   }
 }
@@ -168,12 +176,27 @@ function parseKeyframeablePropertiesJson(
   assert.equal(typeof parsed, 'object')
   assert.notEqual(parsed, null)
   const parsedObject = parsed as Record<string, unknown>
-  const keyframeableProperties = requiredStringArray(
+  const keyframeableProperties = requiredKnownStringArray(
     parsedObject,
     'keyframeableProperties',
-  ) as readonly PropertyIdJson[]
+    PROPERTY_IDS,
+  )
 
   return { keyframeableProperties }
+}
+
+function requiredKnownStringArray<const Value extends string>(
+  parsed: Record<string, unknown>,
+  key: string,
+  knownValues: readonly Value[],
+): readonly Value[] {
+  const values = requiredStringArray(parsed, key)
+  const knownValueSet: ReadonlySet<string> = new Set(knownValues)
+  assert.ok(
+    values.every((value) => knownValueSet.has(value)),
+    `${key} includes an unknown value`,
+  )
+  return values as readonly Value[]
 }
 
 function requiredStringArray(parsed: Record<string, unknown>, key: string): readonly string[] {
