@@ -25,6 +25,8 @@ import {
   inferRenderFormatFromPath,
   isRenderFormat,
   isRenderQuality,
+  type RenderFormat,
+  type RenderQuality,
 } from '../renderOptions.js'
 
 const FORMAT_HELP = RENDER_FORMATS.join(' / ')
@@ -90,7 +92,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
         )
         process.exit(1)
       }
-      const format = requestedFormat
+      const format: RenderFormat = requestedFormat
 
       const requestedQuality = opts.quality?.trim().toLowerCase() ?? 'comp'
       if (!isRenderQuality(requestedQuality)) {
@@ -99,7 +101,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
         )
         process.exit(1)
       }
-      const quality = requestedQuality
+      const quality: RenderQuality = requestedQuality
 
       const fpsInput = opts.fps?.trim() ?? '30'
       const fps = Number(fpsInput)
