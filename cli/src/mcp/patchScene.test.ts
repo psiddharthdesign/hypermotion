@@ -32,6 +32,15 @@ test('patch_scene reports invalid arguments as MCP errors', async () => {
   assert.match(text, /^patch_scene: invalid arguments/)
 })
 
+test('patch_scene rejects blank scene paths as MCP errors', async () => {
+  const result = await handlePatchScene({ scene: '   ', patch: [] })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^patch_scene: invalid arguments/)
+  assert.match(text, /scene path is required/)
+})
+
 test('patch_scene reports malformed JSON patches as MCP errors', async () => {
   const result = await handlePatchScene({ scene: 'scene.hype', patch: '{bad json' })
 
