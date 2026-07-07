@@ -12,7 +12,11 @@ test('open_scene input schema exposes required scene path', () => {
   assert.deepEqual(openSceneTool.inputSchema, {
     type: 'object',
     properties: {
-      scene: { type: 'string', minLength: 1, description: 'Path to a .hype scene file.' },
+      scene: {
+        type: 'string',
+        minLength: 1,
+        description: 'Absolute or relative path to a .hype scene file.',
+      },
     },
     required: ['scene'],
   })
