@@ -65,7 +65,7 @@ function textToolResult(text: string, isError?: boolean): CallToolResult {
   }
 }
 
-export const TOOLS: Tool[] = [
+export const TOOLS = [
   doctorTool,
   getCapabilitiesTool,
   createSceneTool,
@@ -80,7 +80,7 @@ export const TOOLS: Tool[] = [
   openSceneTool,
   renderSceneTool,
   listKeyframeablePropertiesTool,
-]
+] as const satisfies readonly Tool[]
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
@@ -88,7 +88,7 @@ export async function startMcpServer(): Promise<void> {
     { capabilities: { tools: {} } },
   )
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOLS] }))
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args } = req.params
