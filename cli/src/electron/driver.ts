@@ -119,7 +119,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     if (errorRef.current) {
       throw new Error(`Failed to spawn desktop app: ${errorRef.current.message}`)
     }
-    if (fs.existsSync(sentinelPath)) {
+    if (hasCompleteSuccessSentinel(sentinelPath)) {
       // Render complete. Remove the sentinel so subsequent runs start clean.
       cleanFile(sentinelPath)
       return
@@ -155,7 +155,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
 
   // If the event loop was suspended or starved past the timeout boundary,
   // a final sentinel may have landed after the last in-loop poll.
-  if (fs.existsSync(sentinelPath)) {
+  if (hasCompleteSuccessSentinel(sentinelPath)) {
     cleanFile(sentinelPath)
     return
   }
@@ -177,6 +177,23 @@ function cleanFile(p: string): void {
     fs.rmSync(p, { force: true })
   } catch {
     /* best-effort */
+  }
+}
+
+function hasCompleteSuccessSentinel(sentinelPath: string): boolean {
+  try {
+    const raw = fs.readFileSync(sentinelPath, 'utf-8')
+    const data = JSON.parse(raw)
+    return (
+      typeof data === 'object' &&
+      data !== null &&
+      'bytes' in data &&
+      typeof data.bytes === 'number' &&
+      Number.isFinite(data.bytes) &&
+      data.bytes >= 0
+    )
+  } catch {
+    return false
   }
 }
 
