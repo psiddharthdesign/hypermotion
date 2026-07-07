@@ -2,9 +2,10 @@
 
 type ProcessExitCallback<T> = () => Promise<T> | T
 type ProcessExitCode = Parameters<typeof process.exit>[0]
+type NormalizedProcessExitCode = NonNullable<ProcessExitCode>
 
 export interface ProcessExitError extends Error {
-  exitCode: ProcessExitCode
+  exitCode: NormalizedProcessExitCode
 }
 
 export async function withProcessExitThrow<T>(
