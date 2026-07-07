@@ -35,8 +35,8 @@ type GetCapabilitiesToolPayload = {
   }
   nodeKinds: readonly NodeKindJson[]
   patchOperations: readonly PatchOperation['op'][]
-  queryTools: readonly string[]
-  validationTools: readonly string[]
+  queryTools: readonly McpToolName[]
+  validationTools: readonly McpToolName[]
   renderFormats: readonly RenderFormat[]
   renderQualities: readonly RenderQuality[]
   renderFileSceneInput: boolean
@@ -157,8 +157,12 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
       'patchOperations',
       PATCH_OPERATION_TYPES,
     ),
-    queryTools: requiredStringArray(parsedObject, 'queryTools'),
-    validationTools: requiredStringArray(parsedObject, 'validationTools'),
+    queryTools: requiredKnownStringArray(parsedObject, 'queryTools', MCP_TOOLS),
+    validationTools: requiredKnownStringArray(
+      parsedObject,
+      'validationTools',
+      MCP_TOOLS,
+    ),
     renderFormats: requiredKnownStringArray(parsedObject, 'renderFormats', RENDER_FORMATS),
     renderQualities: requiredKnownStringArray(
       parsedObject,
