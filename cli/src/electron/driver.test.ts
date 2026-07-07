@@ -371,6 +371,41 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
   }
 })
 
+test('driveHeadlessRender trims JSON error sentinel messages', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
+  const appPath = path.join(dir, 'fake-app.mjs')
+  const outputPath = path.join(dir, 'out.mp4')
+
+  fs.writeFileSync(
+    appPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
+      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
+      "const out = outArg?.slice('--out='.length);",
+      "if (!out) process.exit(2);",
+      "fs.writeFileSync(`${out}.error`, JSON.stringify({ message: '  encoder reported JSON failure  ' }));",
+    ].join('\n'),
+  )
+  fs.chmodSync(appPath, 0o755)
+
+  try {
+    await assert.rejects(
+      driveHeadlessRender({
+        appPath,
+        outputPath,
+        format: 'mp4',
+        quality: 'comp',
+        fps: 30,
+      }),
+      /^Error: encoder reported JSON failure$/,
+    )
+    assert.equal(fs.existsSync(`${outputPath}.error`), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('driveHeadlessRender falls back when JSON error sentinels omit messages', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
   const appPath = path.join(dir, 'fake-app.mjs')

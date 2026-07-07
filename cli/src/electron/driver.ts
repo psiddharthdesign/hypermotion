@@ -208,7 +208,7 @@ function readRenderErrorMessage(errorPath: string): string | null {
     if (raw.length === 0) return null
     try {
       const data = JSON.parse(raw)
-      if (hasErrorMessage(data)) message = data.message
+      if (hasErrorMessage(data)) message = data.message.trim()
     } catch {
       const text = raw.trim()
       if (text) message = text
