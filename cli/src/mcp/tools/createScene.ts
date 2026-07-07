@@ -166,6 +166,17 @@ export async function handleCreateScene(
   // specify deep paths and we don't want a simple ENOENT to obscure
   // the actual failure.
   const outputPath = input.output.trim()
+  if (!outputPath) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: 'create_scene: output path is required',
+        },
+      ],
+    }
+  }
   if (!path.isAbsolute(outputPath)) {
     return {
       isError: true,
