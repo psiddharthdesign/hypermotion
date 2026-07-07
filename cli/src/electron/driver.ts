@@ -210,6 +210,7 @@ function readRenderErrorMessage(errorPath: string): string | null {
       const data = JSON.parse(raw)
       if (hasErrorMessage(data)) message = data.message.trim()
     } catch {
+      if (raw.trimStart().startsWith('{')) return null
       const text = raw.trim()
       if (text) message = text
     }
