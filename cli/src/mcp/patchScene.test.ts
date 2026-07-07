@@ -12,7 +12,7 @@ test('patch_scene input schema exposes required scene and patch', () => {
   assert.deepEqual(patchSceneTool.inputSchema, {
     type: 'object',
     properties: {
-      scene: { type: 'string', description: 'Path to the input .hype scene file.' },
+      scene: { type: 'string', minLength: 1, description: 'Path to the input .hype scene file.' },
       output: { type: 'string', description: 'Path to write. Defaults to overwriting scene.' },
       patch: { description: 'Patch as { ops: [...] }, an operation array, or a JSON string.' },
       applyLive: {
