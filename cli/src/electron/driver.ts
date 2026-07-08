@@ -210,6 +210,8 @@ function hasSuccessSentinelBytes(value: unknown): value is SuccessSentinel {
     typeof value.bytes === 'number' &&
     Number.isFinite(value.ts) &&
     Number.isFinite(value.bytes) &&
+    Number.isInteger(value.ts) &&
+    Number.isInteger(value.bytes) &&
     value.ts >= 0 &&
     value.bytes >= 0
   )
