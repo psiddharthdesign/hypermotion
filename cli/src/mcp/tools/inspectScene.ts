@@ -46,15 +46,7 @@ export async function handleInspectScene(
   }
 
   const input: InspectInputData = parsed.data
-  const trimmedScene = input.scene.trim()
-  if (!trimmedScene) {
-    return {
-      isError: true,
-      content: [{ type: 'text' as const, text: 'inspect_scene: scene path is required' }],
-    }
-  }
-
-  const scenePath = path.resolve(trimmedScene)
+  const scenePath = path.resolve(input.scene)
   let bytes: Buffer
   let stat: fs.Stats
   try {
