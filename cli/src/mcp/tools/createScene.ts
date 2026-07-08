@@ -133,12 +133,12 @@ export async function handleCreateScene(
   // Most MCP clients send objects, but some agents and scripts find
   // string-encoded JSON easier to construct and pass through stdio.
   const input: CreateInputData = parsed.data
-  let scene: SceneJson
+  let scene: unknown
   try {
     scene =
       typeof input.scene === 'string'
-        ? (JSON.parse(input.scene) as SceneJson)
-        : (input.scene as SceneJson)
+        ? JSON.parse(input.scene)
+        : input.scene
   } catch (err) {
     return {
       isError: true,
@@ -195,7 +195,7 @@ export async function handleCreateScene(
   // Build the Y.Doc bytes.
   let bytes: Uint8Array
   try {
-    bytes = buildSceneBytes(scene)
+    bytes = buildSceneBytes(scene as SceneJson)
   } catch (err) {
     return {
       isError: true,
