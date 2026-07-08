@@ -17,6 +17,10 @@ test('create_scene input schema marks output as non-empty', () => {
   })
 })
 
+test('create_scene input schema requires output and scene', () => {
+  assert.deepEqual(createSceneTool.inputSchema.required, ['output', 'scene'])
+})
+
 test('create_scene description lists supported appearance property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {
