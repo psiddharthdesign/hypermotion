@@ -5,6 +5,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pushSceneToRunningApp } from '../../electron/live.js'
+import type { McpToolArgs } from './schema.js'
 
 const OpenInput = z.object({
   scene: z
@@ -45,7 +46,7 @@ export const openSceneTool: Tool = {
 }
 
 export async function handleOpenScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
   deps: OpenSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = OpenInput.safeParse(args)

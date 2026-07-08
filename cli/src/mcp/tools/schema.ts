@@ -2,6 +2,8 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
+export type McpToolArgs = Record<string, unknown>
+
 export const EMPTY_OBJECT_INPUT_SCHEMA = {
   type: 'object',
   properties: {},
