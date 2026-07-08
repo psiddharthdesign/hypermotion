@@ -259,7 +259,7 @@ export interface TextAnimationJson {
   smoothing: 'none' | 'soft' | 'smooth'
   duration: number
   startTime: number
-  acceleration: 'linear' | 'speed-up' | 'slow-down'
+  acceleration: 'linear' | 'speed-up' | 'slow-down' | 'smooth' | 'spring'
   easingPresetId: string
   easingStrength: number
   direction: 'up' | 'down' | 'left' | 'right'
