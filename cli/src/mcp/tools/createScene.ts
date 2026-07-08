@@ -109,6 +109,7 @@ export const createSceneTool: Tool = {
       },
     },
     required: ['output', 'scene'],
+    additionalProperties: false,
   },
 }
 
