@@ -111,6 +111,26 @@ test('validate command rejects blank scene paths after trimming', async () => {
   assert.equal(stderr, '[validate] scene path is required\n')
 })
 
+test('validate command reports directory inputs', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-dir-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.mkdirSync(scenePath)
+  try {
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          validateCommand().parse([scenePath], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[validate\] scene path is not a file: .*scene\.hype$/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command prints human-readable validation errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')
