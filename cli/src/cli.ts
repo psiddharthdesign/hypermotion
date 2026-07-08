@@ -15,7 +15,7 @@
  * The renderer itself lives in the Electron desktop app. The CLI's `render`
  * command shells out to the installed hyper-motion app with the `--render`
  * flag, which the desktop app handles in `electron/main.ts`. See
- * `electron/driver.ts` for the spawn glue.
+ * `cli/src/electron/driver.ts` for the spawn glue.
  */
 
 import { Command } from 'commander'
