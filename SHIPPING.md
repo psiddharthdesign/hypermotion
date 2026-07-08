@@ -347,7 +347,7 @@ When you're ready to declare v0.1.0 done:
 - `src/commands/serve.ts` — starts MCP server
 - `src/mcp/server.ts` — MCP stdio server with `render_scene` + `info_scene` tools
 - `src/electron/locator.ts` — finds installed desktop app cross-platform
-- `src/electron/driver.ts` — spawns it with headless flags
+- `cli/src/electron/driver.ts` — spawns it with headless flags
 - README, LICENSE, NOTICE
 
 **Landing site (`hyper-motion-landing-site/`):**
