@@ -40,6 +40,7 @@ test('render_scene input schema documents relative output paths', () => {
 
 test('render_scene input schema requires only the output path', () => {
   assert.deepEqual(renderSceneTool.inputSchema.required, ['output'])
+  assert.equal(renderSceneTool.inputSchema.additionalProperties, false)
 })
 
 test('render_scene input schema exposes render preset enums', () => {
