@@ -186,6 +186,17 @@ test('create_scene reports invalid arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^create_scene: invalid arguments/)
 })
 
+test('create_scene rejects unknown arguments as MCP errors', async () => {
+  const result = await handleCreateScene({
+    output: '/tmp/scene.hype',
+    scene: {},
+    unexpected: true,
+  })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^create_scene: invalid arguments/)
+})
+
 test('create_scene rejects array scene JSON', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-array-scene-'))
 
