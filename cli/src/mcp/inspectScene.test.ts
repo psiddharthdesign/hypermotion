@@ -21,11 +21,19 @@ test('inspect_scene input schema exposes required scene path', () => {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   })
 })
 
 test('inspect_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleInspectScene({ scene: 42 })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^inspect_scene: invalid arguments/)
+})
+
+test('inspect_scene rejects unknown arguments as MCP errors', async () => {
+  const result = await handleInspectScene({ scene: '/tmp/scene.hype', extra: true })
 
   assert.equal(result.isError, true)
   assert.match(assertToolText(result), /^inspect_scene: invalid arguments/)
