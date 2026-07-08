@@ -192,7 +192,7 @@ function cleanFile(p: string): void {
 function hasCompleteSuccessSentinel(sentinelPath: string): boolean {
   try {
     const raw = fs.readFileSync(sentinelPath, 'utf-8')
-    const data = JSON.parse(raw)
+    const data: unknown = JSON.parse(raw)
     return hasSuccessSentinelBytes(data)
   } catch {
     return false
@@ -220,7 +220,7 @@ function readRenderErrorMessage(errorPath: string): string | null {
     const raw = fs.readFileSync(errorPath, 'utf-8')
     if (raw.length === 0) return null
     try {
-      const data = JSON.parse(raw)
+      const data: unknown = JSON.parse(raw)
       if (hasErrorMessage(data)) message = data.message.trim()
     } catch {
       if (raw.trimStart().startsWith('{')) return null
