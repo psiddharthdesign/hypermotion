@@ -36,6 +36,7 @@ test('render option guards accept supported values only', () => {
 
 test('inferRenderFormatFromPath uses supported file extensions', () => {
   assert.equal(inferRenderFormatFromPath('/tmp/demo.mp4'), 'mp4')
+  assert.equal(inferRenderFormatFromPath('C:\\tmp\\demo.mp4'), 'mp4')
   assert.equal(inferRenderFormatFromPath('/tmp/demo.webm'), 'webm')
   assert.equal(inferRenderFormatFromPath('/tmp/demo.gif'), 'gif')
   assert.equal(inferRenderFormatFromPath('/tmp/demo.final.mp4'), 'mp4')
