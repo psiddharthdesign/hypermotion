@@ -35,6 +35,27 @@ test('withEnvVar restores values after callback mutations', async () => {
   }
 })
 
+test('withEnvVar restores nested values in order', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_NESTED'
+  process.env[name] = 'before'
+
+  try {
+    await withEnvVar(name, 'outer', async () => {
+      assert.equal(process.env[name], 'outer')
+
+      await withEnvVar(name, 'inner', () => {
+        assert.equal(process.env[name], 'inner')
+      })
+
+      assert.equal(process.env[name], 'outer')
+    })
+
+    assert.equal(process.env[name], 'before')
+  } finally {
+    delete process.env[name]
+  }
+})
+
 test('withEnvVar restores existing empty string values', async () => {
   const name = 'HYPERMOTION_TEST_ENV_EMPTY'
   process.env[name] = ''
