@@ -17,7 +17,7 @@ test('inspect_scene input schema exposes required scene path', () => {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to a .hype scene file.',
+        description: 'Absolute or relative path to a .hype scene file.',
       },
     },
     required: ['scene'],
