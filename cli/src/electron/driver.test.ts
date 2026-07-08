@@ -67,7 +67,8 @@ test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "await import('node:fs').then((fs) => fs.writeFileSync(`${out}.error`, 'encoder failed before JSON'))",
+      "const fs = await import('node:fs');",
+      "fs.writeFileSync(`${out}.error`, 'encoder failed before JSON');",
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
