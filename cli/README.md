@@ -113,8 +113,9 @@ hyper-motion desktop app and spawns it with command-line flags that put
 it into a headless render mode. The desktop app boots a hidden render
 window, the renderer waits for the scene to hydrate, the export pipeline
 captures frames and encodes them for the requested format, and the
-desktop app writes the output file directly. The CLI waits for the
-matching completion sentinel before reporting success.
+desktop app writes the output file directly. The CLI waits for a
+complete success sentinel before reporting success, or surfaces the
+renderer's error sentinel if the desktop app reports a failure.
 
 Locations checked, in order:
 
