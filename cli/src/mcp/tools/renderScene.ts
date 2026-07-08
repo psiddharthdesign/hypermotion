@@ -105,6 +105,7 @@ export const renderSceneTool: Tool = {
       },
     },
     required: ['output'],
+    additionalProperties: false,
   },
 }
 
