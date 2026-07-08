@@ -7,7 +7,11 @@ import path from 'node:path'
 import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const OpenInput = z.object({
-  scene: z.string().min(1).describe('Absolute or relative path to a .hype scene file.'),
+  scene: z
+    .string()
+    .trim()
+    .min(1, 'scene path is required')
+    .describe('Absolute or relative path to a .hype scene file.'),
 }).strict()
 type OpenInputData = z.infer<typeof OpenInput>
 type OpenSceneDeps = {
@@ -58,15 +62,7 @@ export async function handleOpenScene(
   }
 
   const input: OpenInputData = parsed.data
-  const trimmedScene = input.scene.trim()
-  if (!trimmedScene) {
-    return {
-      isError: true,
-      content: [{ type: 'text' as const, text: 'open_scene: scene path is required' }],
-    }
-  }
-
-  const scenePath = path.resolve(trimmedScene)
+  const scenePath = path.resolve(input.scene)
   if (!deps.existsSync(scenePath)) {
     return {
       isError: true,
