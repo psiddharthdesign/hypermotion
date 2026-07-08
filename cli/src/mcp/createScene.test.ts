@@ -13,6 +13,7 @@ test('create_scene input schema marks output as non-empty', () => {
   assert.deepEqual(createSceneTool.inputSchema.properties?.output, {
     type: 'string',
     minLength: 1,
+    pattern: '\\S',
     description: 'Absolute, non-blank path to write the .hype file to.',
   })
 })
