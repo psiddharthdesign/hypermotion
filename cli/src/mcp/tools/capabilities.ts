@@ -30,6 +30,7 @@ const QUERY_TOOLS = [
   'list_tracks',
   'list_cameras',
 ] as const satisfies readonly McpToolName[]
+export type QueryToolName = (typeof QUERY_TOOLS)[number]
 
 type CapabilitiesPayload = {
   sceneExtension: '.hype'
