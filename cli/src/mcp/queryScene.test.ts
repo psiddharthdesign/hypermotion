@@ -401,6 +401,45 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
   }
 })
 
+test('list_cameras returns an empty list when the scene has no camera nodes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-no-camera-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'No Camera Query',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleListCameras({ scene: scenePath })
+    const payload = JSON.parse(assertToolText(result)) as {
+      activeCameraId: string | null
+      cameras: unknown[]
+    }
+
+    assert.equal(result.isError, undefined)
+    assert.equal(payload.activeCameraId, null)
+    assert.deepEqual(payload.cameras, [])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
