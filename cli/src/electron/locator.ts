@@ -23,8 +23,9 @@ import fs from 'node:fs'
 export async function locateDesktopApp(): Promise<string | null> {
   const override = process.env.HYPERMOTION_APP_PATH?.trim()
   if (override) {
-    if (isFile(override)) {
-      return override
+    const overrideBinary = resolveOverrideBinary(override)
+    if (overrideBinary) {
+      return overrideBinary
     }
     // Loud failure — silently falling through when the user set an
     // explicit override usually means a typo or a build that hasn't
@@ -47,6 +48,17 @@ export async function locateDesktopApp(): Promise<string | null> {
     default:
       return null
   }
+}
+
+function resolveOverrideBinary(override: string): string | null {
+  if (isFile(override)) return override
+
+  if (path.basename(override).toLowerCase().endsWith('.app')) {
+    const bundleBinary = path.join(override, 'Contents', 'MacOS', 'hyper-motion')
+    if (isFile(bundleBinary)) return bundleBinary
+  }
+
+  return null
 }
 
 function locateMac(): string | null {
