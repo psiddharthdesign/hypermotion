@@ -15,7 +15,7 @@ const OpenInput = z.object({
     .describe('Absolute or relative path to a .hype scene file.'),
 }).strict()
 type OpenInputData = z.infer<typeof OpenInput>
-type OpenSceneDeps = {
+export type OpenSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: typeof fs.statSync
   openScene: typeof pushSceneToRunningApp
