@@ -1363,8 +1363,7 @@ function deleteNode(scene: Y.Map<unknown>, nodeId: string): void {
   collectNodeSubtree(nodes, nodeId, deletedNodeIds)
   const parent = node.get('parent') as string | null
   detachFromParent(nodes, nodeId, parent)
-  const children = node.get('children')
-  const childIds = children instanceof Y.Array ? children.toArray() as string[] : []
+  const childIds = stringIdsFromYArray(node.get('children'))
   for (const childId of childIds) deleteNode(scene, childId)
   nodes.delete(nodeId)
   deleteTracksForNodes(scene, deletedNodeIds)
@@ -1380,8 +1379,7 @@ function collectNodeSubtree(
   const node = nodes.get(nodeId)
   if (!node || out.has(nodeId)) return
   out.add(nodeId)
-  const children = node.get('children')
-  const childIds = children instanceof Y.Array ? children.toArray() as string[] : []
+  const childIds = stringIdsFromYArray(node.get('children'))
   for (const childId of childIds) collectNodeSubtree(nodes, childId, out)
 }
 
@@ -1405,6 +1403,11 @@ function detachFromParent(nodes: Y.Map<Y.Map<unknown>>, nodeId: string, parentId
   if (!(arr instanceof Y.Array)) return
   const idx = arr.toArray().indexOf(nodeId)
   if (idx >= 0) arr.delete(idx, 1)
+}
+
+function stringIdsFromYArray(value: unknown): string[] {
+  if (!(value instanceof Y.Array)) return []
+  return value.toArray().filter((entry): entry is string => typeof entry === 'string')
 }
 
 function getNodesMap(scene: Y.Map<unknown>): Y.Map<Y.Map<unknown>> {
