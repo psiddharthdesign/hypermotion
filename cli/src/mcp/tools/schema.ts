@@ -6,4 +6,5 @@ export const EMPTY_OBJECT_INPUT_SCHEMA = {
   type: 'object',
   properties: {},
   required: [],
+  additionalProperties: false,
 } as const satisfies Tool['inputSchema']

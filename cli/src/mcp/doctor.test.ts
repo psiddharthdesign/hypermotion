@@ -16,6 +16,7 @@ test('doctor input schema accepts no arguments', () => {
     type: 'object',
     properties: {},
     required: [],
+    additionalProperties: false,
   })
 })
 
