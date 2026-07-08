@@ -13,7 +13,12 @@ test('inspect_scene input schema exposes required scene path', () => {
   assert.deepEqual(inspectSceneTool.inputSchema, {
     type: 'object',
     properties: {
-      scene: { type: 'string', minLength: 1, description: 'Path to a .hype scene file.' },
+      scene: {
+        type: 'string',
+        minLength: 1,
+        pattern: '\\S',
+        description: 'Path to a .hype scene file.',
+      },
     },
     required: ['scene'],
   })
@@ -37,7 +42,7 @@ test('inspect_scene rejects blank scene paths as MCP errors', async () => {
   const result = await handleInspectScene({ scene: '   ' })
 
   assert.equal(result.isError, true)
-  assert.equal(assertToolText(result), 'inspect_scene: scene path is required')
+  assert.match(assertToolText(result), /^inspect_scene: invalid arguments/)
 })
 
 test('inspect_scene reports missing files as MCP errors', async () => {
