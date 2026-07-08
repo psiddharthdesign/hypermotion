@@ -5,12 +5,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { inspectScene } from '../scene/build.js'
 
+type InspectCommandOptions = {
+  json?: boolean
+}
+
 export function inspectCommand(): Command {
   return new Command('inspect')
     .description('Print the full editable scene graph for a .hype file.')
     .argument('<scene>', 'Path to a .hype scene file')
     .option('--json', 'Output JSON (default)', true)
-    .action((scenePath: string) => {
+    .action((scenePath: string, _options: InspectCommandOptions) => {
       const trimmedScenePath = scenePath.trim()
       if (!trimmedScenePath) {
         console.error('[inspect] scene path is required')
