@@ -14,6 +14,7 @@ type SceneInputData = z.infer<typeof SceneInput>
 type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
+type QuerySceneRecord = Record<string, unknown>
 type StringSchemaProperty = {
   readonly type: 'string'
   readonly minLength?: number
@@ -106,7 +107,7 @@ export const listCamerasTool: Tool = {
 }
 
 export async function handleListLayers(
-  args: Record<string, unknown>,
+  args: QuerySceneRecord,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
@@ -133,7 +134,7 @@ export async function handleListLayers(
 }
 
 export async function handleGetLayer(
-  args: Record<string, unknown>,
+  args: QuerySceneRecord,
 ): Promise<CallToolResult> {
   const parsed = LayerInput.safeParse(args)
   if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
@@ -148,7 +149,7 @@ export async function handleGetLayer(
 }
 
 export async function handleListTracks(
-  args: Record<string, unknown>,
+  args: QuerySceneRecord,
 ): Promise<CallToolResult> {
   const parsed = TrackInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
@@ -165,7 +166,7 @@ export async function handleListTracks(
 }
 
 export async function handleListCameras(
-  args: Record<string, unknown>,
+  args: QuerySceneRecord,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
@@ -223,9 +224,9 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
   }
 }
 
-function record(value: unknown): Record<string, unknown> {
+function record(value: unknown): QuerySceneRecord {
   return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
+    ? (value as QuerySceneRecord)
     : {}
 }
 
