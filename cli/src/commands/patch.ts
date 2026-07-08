@@ -30,6 +30,11 @@ export function patchCommand(): Command {
         process.exit(2)
       }
       const output = path.resolve(trimmedOutputPath || trimmedScenePath)
+      const trimmedPatchPath = options.from.trim()
+      if (!trimmedPatchPath) {
+        console.error('[patch] patch path is required')
+        process.exit(2)
+      }
       let sceneBytes: Buffer
       let stats: fs.Stats
       try {
@@ -51,7 +56,7 @@ export function patchCommand(): Command {
 
       let patch: unknown
       try {
-        const raw = options.from === '-' ? await readStdin() : fs.readFileSync(options.from, 'utf-8')
+        const raw = trimmedPatchPath === '-' ? await readStdin() : fs.readFileSync(trimmedPatchPath, 'utf-8')
         patch = JSON.parse(raw)
       } catch (err) {
         console.error(`[patch] failed to read patch: ${err instanceof Error ? err.message : err}`)
