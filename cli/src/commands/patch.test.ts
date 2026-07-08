@@ -199,6 +199,17 @@ test('patch command rejects blank output paths', async () => {
   assert.equal(stderr, '[patch] output path is required\n')
 })
 
+test('patch command rejects blank patch paths before reading scene bytes', async () => {
+  const stderr = await withProcessExitThrow(() => captureStderr(() => {
+    return assert.rejects(
+      patchCommand().parseAsync(['scene.hype', '--from', '   '], { from: 'user' }),
+      { exitCode: 2 },
+    )
+  }))
+
+  assert.equal(stderr, '[patch] patch path is required\n')
+})
+
 test('patch command rejects blank scene paths before reading patch JSON', async () => {
   const stderr = await withProcessExitThrow(() => captureStderr(() => {
     return assert.rejects(
