@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
+import { assertToolText } from '../testUtils/mcp.js'
 import { handleValidateScene, validateSceneTool } from './tools/validateScene.js'
 
 test('validate_scene input schema exposes required scene path', () => {
@@ -34,31 +35,28 @@ test('validate_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleValidateScene({ scene: 42 })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^validate_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^validate_scene: invalid arguments/)
 })
 
 test('validate_scene rejects unknown arguments as MCP errors', async () => {
   const result = await handleValidateScene({ scene: 'demo.hype', output: 'demo.json' })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^validate_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^validate_scene: invalid arguments/)
 })
 
 test('validate_scene rejects blank schema scene paths as MCP errors', async () => {
   const result = await handleValidateScene({ scene: '' })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^validate_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^validate_scene: invalid arguments/)
 })
 
 test('validate_scene rejects empty scene paths at schema validation', async () => {
   const result = await handleValidateScene({ scene: '   ' })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  const text = assertToolText(result)
   assert.match(text, /^validate_scene: invalid arguments/)
   assert.match(text, /scene path is required/)
 })
@@ -71,8 +69,7 @@ test('validate_scene reports missing files as MCP errors', async () => {
     const result = await handleValidateScene({ scene: missingScene })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, /^validate_scene: failed to read /)
+    assert.match(assertToolText(result), /^validate_scene: failed to read /)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -85,8 +82,7 @@ test('validate_scene rejects directory inputs as MCP errors', async () => {
     const result = await handleValidateScene({ scene: dir })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `validate_scene: scene path is not a file: ${dir}`)
+    assert.equal(assertToolText(result), `validate_scene: scene path is not a file: ${dir}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -109,8 +105,10 @@ test('validate_scene reports stat failures as read errors', async () => {
     const result = await handleValidateScene({ scene: scenePath })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `validate_scene: failed to read ${scenePath}: stat failed`)
+    assert.equal(
+      assertToolText(result),
+      `validate_scene: failed to read ${scenePath}: stat failed`,
+    )
   } finally {
     Object.defineProperty(fs, 'statSync', {
       configurable: true,
@@ -137,8 +135,10 @@ test('validate_scene reports read failures after stat succeeds', async () => {
     const result = await handleValidateScene({ scene: scenePath })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.equal(text, `validate_scene: failed to read ${scenePath}: read failed`)
+    assert.equal(
+      assertToolText(result),
+      `validate_scene: failed to read ${scenePath}: read failed`,
+    )
   } finally {
     Object.defineProperty(fs, 'readFileSync', {
       configurable: true,
@@ -158,8 +158,10 @@ test('validate_scene reports malformed scene files as MCP errors', async () => {
     const result = await handleValidateScene({ scene: scenePath })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, /^validate_scene: .*malformed\.hype doesn't look like a valid \.hype file:/)
+    assert.match(
+      assertToolText(result),
+      /^validate_scene: .*malformed\.hype doesn't look like a valid \.hype file:/,
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -190,10 +192,9 @@ test('validate_scene returns validation JSON for readable scenes', async () => {
     )
 
     const result = await handleValidateScene({ scene: scenePath })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
 
     assert.equal(result.isError, undefined)
-    assert.deepEqual(JSON.parse(text), {
+    assert.deepEqual(JSON.parse(assertToolText(result)), {
       ok: true,
       errors: [],
       warnings: ['scene.activeCameraId is missing'],
@@ -229,10 +230,9 @@ test('validate_scene trims padded scene paths before reading', async () => {
     )
 
     const result = await handleValidateScene({ scene: `  ${scenePath}\n` })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
 
     assert.equal(result.isError, undefined)
-    assert.equal(JSON.parse(text).ok, true)
+    assert.equal(JSON.parse(assertToolText(result)).ok, true)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -263,10 +263,9 @@ test('validate_scene marks structurally invalid scenes as MCP errors', async () 
     )
 
     const result = await handleValidateScene({ scene: scenePath })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
 
     assert.equal(result.isError, true)
-    assert.deepEqual(JSON.parse(text), {
+    assert.deepEqual(JSON.parse(assertToolText(result)), {
       ok: false,
       errors: ['node root has missing child: missing-child'],
       warnings: ['scene.activeCameraId is missing'],
@@ -308,10 +307,9 @@ test('validate_scene rejects nested camera nodes as MCP errors', async () => {
     )
 
     const result = await handleValidateScene({ scene: scenePath })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
 
     assert.equal(result.isError, true)
-    assert.deepEqual(JSON.parse(text), {
+    assert.deepEqual(JSON.parse(assertToolText(result)), {
       ok: false,
       errors: ['camera node camera must be scene-level with parent: null'],
       warnings: [],
