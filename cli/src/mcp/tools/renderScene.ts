@@ -25,7 +25,11 @@ import {
 import type { RenderFormat, RenderQuality } from '../../renderOptions.js'
 
 const RenderInput = z.object({
-  output: z.string().describe('Absolute or relative path where the rendered file should be written'),
+  output: z
+    .string()
+    .trim()
+    .min(1, 'output path is required')
+    .describe('Absolute or relative path where the rendered file should be written'),
   format: z
     .preprocess(normalizeStringOption, z.enum(RENDER_FORMATS))
     .optional()
@@ -37,6 +41,8 @@ const RenderInput = z.object({
   fps: z.number().int().positive().max(120).optional().describe('Frame rate. Default: 30.'),
   scene: z
     .string()
+    .trim()
+    .min(1, 'scene path is required')
     .optional()
     .describe(
       'Path to a .hype scene file to render instead of the current desktop scene.',
@@ -153,31 +159,8 @@ export async function handleRenderScene(
   }
 
   const input: RenderInputData = parsed.data
-  const outputInput = input.output.trim()
-  if (!outputInput) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: 'render_scene: output path is required',
-        },
-      ],
-    }
-  }
-  const outputPath = path.resolve(outputInput)
-  const sceneInput = input.scene?.trim()
-  if (input.scene !== undefined && !sceneInput) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: 'render_scene: scene path is required',
-        },
-      ],
-    }
-  }
+  const outputPath = path.resolve(input.output)
+  const sceneInput = input.scene
   const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
   const format = input.format ?? inferRenderFormatFromPath(outputPath)
   const quality = input.quality ?? 'comp'
