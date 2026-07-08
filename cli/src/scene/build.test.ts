@@ -158,6 +158,35 @@ test('buildSceneBytes accepts soft text animation smoothing', () => {
   assert.equal(textAnimation.smoothing, 'soft')
 })
 
+test('buildSceneBytes accepts spring text animation acceleration', () => {
+  const scene = sampleScene()
+  const track = scene.tracks?.['fade-title']
+  if (!track) throw new Error('missing sample track')
+  track.propertyId = 'text.progress'
+  track.textAnimation = {
+    id: 'character-wave',
+    mode: 'in',
+    applyTo: 'letters',
+    order: 'forward',
+    delay: 0.06,
+    smoothing: 'soft',
+    duration: 0.9,
+    startTime: 0,
+    acceleration: 'spring',
+    easingPresetId: 'smooth',
+    easingStrength: 50,
+    direction: 'up',
+    travelDistance: 0.5,
+    blurRadius: 20,
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const tracks = data.tracks as PlainSceneMap
+  const textAnimation = tracks['fade-title']?.textAnimation as PlainSceneObject
+
+  assert.equal(textAnimation.acceleration, 'spring')
+})
+
 test('buildSceneBytes accepts layer-wide text animation targeting', () => {
   const scene = sampleScene()
   const track = scene.tracks?.['fade-title']
