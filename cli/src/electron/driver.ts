@@ -118,7 +118,8 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     exitedAt = Date.now()
   })
 
-  // Poll for the sentinel. The render is complete when it appears.
+  // Poll until the success sentinel is fully written. Empty, partial, or
+  // malformed sentinel files are ignored and retried.
   const start = Date.now()
   while (Date.now() - start < RENDER_TIMEOUT_MS) {
     if (errorRef.current) {
