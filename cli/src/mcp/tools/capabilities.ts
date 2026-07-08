@@ -3,6 +3,7 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
 import { RENDER_FORMATS, RENDER_QUALITIES } from '../../renderOptions.js'
+import { EMPTY_OBJECT_INPUT_SCHEMA } from './schema.js'
 
 export const MCP_TOOLS = [
   'doctor',
@@ -56,13 +57,13 @@ export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description:
     'Return supported scene node kinds, patch operations, render formats/qualities, saved-scene render support, validation/query tools, and keyframeable properties.',
-  inputSchema: { type: 'object', properties: {}, required: [] },
+  inputSchema: EMPTY_OBJECT_INPUT_SCHEMA,
 }
 
 export const listKeyframeablePropertiesTool: Tool = {
   name: 'list_keyframeable_properties',
   description: 'Return property ids that can be animated with tracks/keyframes.',
-  inputSchema: { type: 'object', properties: {}, required: [] },
+  inputSchema: EMPTY_OBJECT_INPUT_SCHEMA,
 }
 
 export async function handleGetCapabilities(): Promise<CallToolResult> {
