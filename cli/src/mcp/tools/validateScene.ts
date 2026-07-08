@@ -12,7 +12,8 @@ type ValidateInputData = z.infer<typeof ValidateInput>
 
 export const validateSceneTool: Tool = {
   name: 'validate_scene',
-  description: 'Validate a .hype scene for structural consistency after agent edits.',
+  description:
+    'Validate a .hype scene for structural consistency after agent edits. Pass the path to the .hype file.',
   inputSchema: {
     type: 'object',
     properties: {
