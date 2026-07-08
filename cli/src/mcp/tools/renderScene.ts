@@ -22,6 +22,7 @@ import {
   RENDER_QUALITIES,
   inferRenderFormatFromPath,
 } from '../../renderOptions.js'
+import type { RenderFormat, RenderQuality } from '../../renderOptions.js'
 
 const RenderInput = z.object({
   output: z.string().describe('Absolute or relative path where the rendered file should be written'),
@@ -42,6 +43,21 @@ const RenderInput = z.object({
     ),
 }).strict()
 type RenderInputData = z.infer<typeof RenderInput>
+type StringSchemaProperty = {
+  readonly type: 'string'
+  readonly minLength?: number
+  readonly pattern?: string
+  readonly description: string
+}
+type EnumStringSchemaProperty<Value extends string> = StringSchemaProperty & {
+  readonly enum: readonly Value[]
+}
+type IntegerSchemaProperty = {
+  readonly type: 'integer'
+  readonly minimum: number
+  readonly maximum: number
+  readonly description: string
+}
 export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: (path: fs.PathLike) => fs.Stats
@@ -61,6 +77,40 @@ const defaultDeps: RenderSceneDeps = {
   render: driveHeadlessRender,
 }
 
+const OUTPUT_PATH_PROPERTY: StringSchemaProperty = {
+  type: 'string',
+  minLength: 1,
+  pattern: '\\S',
+  description: 'Absolute or relative output file path.',
+}
+
+const FORMAT_PROPERTY: EnumStringSchemaProperty<RenderFormat> = {
+  type: 'string',
+  enum: RENDER_FORMATS,
+  description: 'Output format. Defaults to inferred from the output extension.',
+}
+
+const QUALITY_PROPERTY: EnumStringSchemaProperty<RenderQuality> = {
+  type: 'string',
+  enum: RENDER_QUALITIES,
+  description: 'Resolution preset. `comp` matches scene canvas size. Default: comp.',
+}
+
+const FPS_PROPERTY: IntegerSchemaProperty = {
+  type: 'integer',
+  minimum: 1,
+  maximum: 120,
+  description: 'Frame rate (1–120). Default: 30.',
+}
+
+const SCENE_PATH_PROPERTY: StringSchemaProperty = {
+  type: 'string',
+  minLength: 1,
+  pattern: '\\S',
+  description:
+    'Absolute or relative path to a .hype scene file to render instead of the current desktop scene.',
+}
+
 function normalizeStringOption(value: unknown): unknown {
   return typeof value === 'string' ? value.trim().toLowerCase() : value
 }
@@ -74,35 +124,11 @@ export const renderSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      output: {
-        type: 'string',
-        minLength: 1,
-        pattern: '\\S',
-        description: 'Absolute or relative output file path.',
-      },
-      format: {
-        type: 'string',
-        enum: [...RENDER_FORMATS],
-        description: 'Output format. Defaults to inferred from the output extension.',
-      },
-      quality: {
-        type: 'string',
-        enum: [...RENDER_QUALITIES],
-        description: 'Resolution preset. `comp` matches scene canvas size. Default: comp.',
-      },
-      fps: {
-        type: 'integer',
-        minimum: 1,
-        maximum: 120,
-        description: 'Frame rate (1–120). Default: 30.',
-      },
-      scene: {
-        type: 'string',
-        minLength: 1,
-        pattern: '\\S',
-        description:
-          'Absolute or relative path to a .hype scene file to render instead of the current desktop scene.',
-      },
+      output: OUTPUT_PATH_PROPERTY,
+      format: FORMAT_PROPERTY,
+      quality: QUALITY_PROPERTY,
+      fps: FPS_PROPERTY,
+      scene: SCENE_PATH_PROPERTY,
     },
     required: ['output'],
     additionalProperties: false,
