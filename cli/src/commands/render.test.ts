@@ -459,6 +459,43 @@ test('render command reports scene directories before launching the app', async 
   }
 })
 
+test('render command reports scene stat races before launching the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-scene-race-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const outPath = path.join(dir, 'out.mp4')
+  fs.writeFileSync(scenePath, '')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => {
+              throw new Error('should not locate app')
+            },
+            statSync: (targetPath: fs.PathLike) => {
+              if (targetPath === scenePath) {
+                fs.rmSync(scenePath)
+                throw new Error('ENOENT: no such file or directory')
+              }
+              return fs.statSync(targetPath)
+            },
+          }).parseAsync(['--scene', scenePath, '-o', outPath], {
+            from: 'user',
+          }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.equal(
+      stderr,
+      `[render] failed to read ${scenePath}: ENOENT: no such file or directory\n`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports output parent files before launching the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-parent-'))
   const parentPath = path.join(dir, 'exports')
