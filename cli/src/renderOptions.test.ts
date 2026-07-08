@@ -73,6 +73,11 @@ test('inferRenderFormatFromPath recognizes supported suffixes on hidden files', 
   assert.equal(inferRenderFormatFromPath('/tmp/.draft.WEBM'), 'webm')
 })
 
+test('inferRenderFormatFromPath ignores URL-style suffixes on hidden files', () => {
+  assert.equal(inferRenderFormatFromPath('/tmp/.preview.gif?download=1'), 'gif')
+  assert.equal(inferRenderFormatFromPath('/tmp/.draft.WEBM#preview'), 'webm')
+})
+
 test('inferRenderFormatFromPath trims surrounding whitespace', () => {
   assert.equal(inferRenderFormatFromPath(' /tmp/demo.gif '), 'gif')
 })
