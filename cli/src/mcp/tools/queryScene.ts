@@ -35,7 +35,7 @@ type LayerSummary = {
   name: unknown
   kind: unknown
   parent: unknown
-  children: unknown[]
+  children: string[]
 }
 
 const SCENE_PATH_PROPERTY: StringSchemaProperty = {
@@ -114,7 +114,7 @@ export async function handleListLayers(
         name: n.name,
         kind: n.kind,
         parent: n.parent,
-        children: Array.isArray(n.children) ? n.children : [],
+        children: stringArray(n.children),
       }
     }),
   })
@@ -215,6 +215,12 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 function text(value: unknown): CallToolResult {

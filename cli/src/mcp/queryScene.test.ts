@@ -245,7 +245,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
             name: 'Root frame',
             kind: 'frame',
             parent: null,
-            children: ['title', 'title.*'],
+            children: ['title', 'title.*', 42] as unknown as string[],
             size: { width: 320, height: 180 },
             layout: { mode: 'none' },
           },
