@@ -128,7 +128,8 @@ test('query scene MCP handlers reject empty scene paths clearly', async () => {
   for (const entry of cases) {
     const result = await entry.run()
     assert.equal(result.isError, true)
-    assert.equal(assertToolText(result), `${entry.name}: scene path is required`)
+    assert.match(assertToolText(result), new RegExp(`^${entry.name}: invalid arguments`))
+    assert.match(assertToolText(result), /scene path is required/)
   }
 })
 
