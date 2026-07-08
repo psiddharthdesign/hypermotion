@@ -52,7 +52,7 @@ const CreateInput = z.object({
     .boolean()
     .default(true)
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
-})
+}).strict()
 type CreateInputData = z.infer<typeof CreateInput>
 
 const KEYFRAMEABLE_PROPERTY_DESCRIPTION = PROPERTY_IDS.join(', ')
