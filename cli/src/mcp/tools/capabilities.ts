@@ -23,8 +23,8 @@ export const MCP_TOOLS = [
 ] as const
 export type McpToolName = (typeof MCP_TOOLS)[number]
 
-const VALIDATION_TOOLS = ['validate_scene'] as const satisfies readonly McpToolName[]
-const QUERY_TOOLS = [
+export const VALIDATION_TOOLS = ['validate_scene'] as const satisfies readonly McpToolName[]
+export const QUERY_TOOLS = [
   'list_layers',
   'get_layer',
   'list_tracks',
