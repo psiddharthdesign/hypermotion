@@ -7,6 +7,16 @@ import path from 'node:path'
 import test from 'node:test'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleOpenScene, openSceneTool } from './tools/openScene.js'
+import type { OpenSceneDeps } from './tools/openScene.js'
+
+function testDeps(overrides: Partial<OpenSceneDeps>): OpenSceneDeps {
+  return {
+    existsSync: fs.existsSync,
+    statSync: fs.statSync,
+    openScene: async () => true,
+    ...overrides,
+  }
+}
 
 test('open_scene input schema exposes required scene path', () => {
   assert.deepEqual(openSceneTool.inputSchema, {
@@ -90,13 +100,11 @@ test('open_scene reports stat failures as MCP errors', async () => {
   try {
     const result = await handleOpenScene(
       { scene: scenePath },
-      {
-        existsSync: fs.existsSync,
+      testDeps({
         statSync: () => {
           throw new Error('stat failed')
         },
-        openScene: async () => true,
-      },
+      }),
     )
 
     assert.equal(result.isError, true)
@@ -114,13 +122,11 @@ test('open_scene reports desktop launch failures as MCP errors', async () => {
   try {
     const result = await handleOpenScene(
       { scene: scenePath },
-      {
-        existsSync: fs.existsSync,
-        statSync: fs.statSync,
+      testDeps({
         openScene: async () => {
           throw new Error('launch failed')
         },
-      },
+      }),
     )
 
     assert.equal(result.isError, true)
@@ -138,11 +144,9 @@ test('open_scene reports missing desktop apps as MCP errors', async () => {
   try {
     const result = await handleOpenScene(
       { scene: scenePath },
-      {
-        existsSync: fs.existsSync,
-        statSync: fs.statSync,
+      testDeps({
         openScene: async () => false,
-      },
+      }),
     )
 
     assert.equal(result.isError, true)
@@ -160,11 +164,7 @@ test('open_scene reports opened scene paths', async () => {
   try {
     const result = await handleOpenScene(
       { scene: scenePath },
-      {
-        existsSync: fs.existsSync,
-        statSync: fs.statSync,
-        openScene: async () => true,
-      },
+      testDeps({}),
     )
 
     assert.equal(result.isError, undefined)
@@ -183,14 +183,12 @@ test('open_scene trims padded scene paths before opening', async () => {
   try {
     const result = await handleOpenScene(
       { scene: ` ${scenePath} ` },
-      {
-        existsSync: fs.existsSync,
-        statSync: fs.statSync,
+      testDeps({
         openScene: async (pathToOpen) => {
           openedPaths.push(pathToOpen)
           return true
         },
-      },
+      }),
     )
 
     assert.equal(result.isError, undefined)
@@ -211,14 +209,12 @@ test('open_scene resolves relative scene paths before opening', async () => {
   try {
     const result = await handleOpenScene(
       { scene: relativeScenePath },
-      {
-        existsSync: fs.existsSync,
-        statSync: fs.statSync,
+      testDeps({
         openScene: async (pathToOpen) => {
           openedPaths.push(pathToOpen)
           return true
         },
-      },
+      }),
     )
 
     assert.equal(result.isError, undefined)
