@@ -28,7 +28,7 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
     assert.equal(sceneProperty?.type, 'string')
     assert.equal(sceneProperty?.minLength, 1)
     assert.equal(sceneProperty?.pattern, '\\S')
-    assert.equal(sceneProperty?.description, 'Path to a .hype scene file.')
+    assert.equal(sceneProperty?.description, 'Absolute or relative path to a .hype scene file.')
     assert.ok(Array.isArray(tool.inputSchema.required))
     assert.ok(tool.inputSchema.required.includes('scene'))
     assert.equal(tool.inputSchema.additionalProperties, false)

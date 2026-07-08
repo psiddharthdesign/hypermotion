@@ -16,7 +16,7 @@ test('validate_scene input schema exposes required scene path', () => {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to a .hype scene file.',
+        description: 'Absolute or relative path to a .hype scene file.',
       },
     },
     required: ['scene'],
@@ -27,7 +27,7 @@ test('validate_scene input schema exposes required scene path', () => {
 test('validate_scene description does not require absolute paths', () => {
   const description = validateSceneTool.description ?? ''
   assert.match(description, /Pass the path to the \.hype file\./)
-  assert.doesNotMatch(description, /absolute path/i)
+  assert.doesNotMatch(description, /absolute path only/i)
 })
 
 test('validate_scene reports invalid arguments as MCP errors', async () => {

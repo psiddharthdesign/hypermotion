@@ -44,7 +44,7 @@ const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
   minLength: 1,
   pattern: '\\S',
-  description: 'Path to a .hype scene file.',
+  description: 'Absolute or relative path to a .hype scene file.',
 }
 
 const NODE_ID_PROPERTY: StringSchemaProperty = {
