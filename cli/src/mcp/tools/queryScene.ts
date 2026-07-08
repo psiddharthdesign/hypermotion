@@ -5,7 +5,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { inspectScene } from '../../scene/build.js'
 
-const ScenePathInput = z.string().trim()
+const ScenePathInput = z.string().trim().min(1, 'scene path is required')
 const SceneInput = z.object({ scene: ScenePathInput })
 const NodeIdInput = z.string().trim().min(1, 'nodeId is required')
 const LayerInput = z.object({ scene: ScenePathInput, nodeId: NodeIdInput })
