@@ -7,6 +7,8 @@ import {
   handleGetCapabilities,
   handleListKeyframeableProperties,
   MCP_TOOLS,
+  QUERY_TOOLS,
+  VALIDATION_TOOLS,
   type McpToolName,
 } from './tools/capabilities.js'
 import { TOOLS } from './server.js'
@@ -157,11 +159,11 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
       'patchOperations',
       PATCH_OPERATION_TYPES,
     ),
-    queryTools: requiredKnownStringArray(parsedObject, 'queryTools', MCP_TOOLS),
+    queryTools: requiredKnownStringArray(parsedObject, 'queryTools', QUERY_TOOLS),
     validationTools: requiredKnownStringArray(
       parsedObject,
       'validationTools',
-      MCP_TOOLS,
+      VALIDATION_TOOLS,
     ),
     renderFormats: requiredKnownStringArray(parsedObject, 'renderFormats', RENDER_FORMATS),
     renderQualities: requiredKnownStringArray(
