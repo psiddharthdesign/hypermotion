@@ -369,6 +369,36 @@ test('render command reports unsupported formats before launching the app', asyn
   assert.match(stderr, /^\[render\] unsupported format: mov \(use mp4 \/ webm \/ gif\)$/m)
 })
 
+test('render command rejects unsupported formats before creating output directories', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-first-'))
+  const outputDir = path.join(dir, 'exports')
+  const outputPath = path.join(outputDir, 'out.mov')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => {
+              throw new Error('should not locate app')
+            },
+            mkdirSync: () => {
+              throw new Error('should not create output directory')
+            },
+          }).parseAsync(['-o', outputPath, '--format', 'mov'], {
+            from: 'user',
+          }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[render\] unsupported format: mov \(use mp4 \/ webm \/ gif\)$/m)
+    assert.equal(fs.existsSync(outputDir), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports empty explicit formats clearly', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
