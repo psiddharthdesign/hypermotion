@@ -40,7 +40,7 @@ const RenderInput = z.object({
     .describe(
       'Path to a .hype scene file to render instead of the current desktop scene.',
     ),
-})
+}).strict()
 type RenderInputData = z.infer<typeof RenderInput>
 export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
