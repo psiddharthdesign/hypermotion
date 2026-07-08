@@ -25,6 +25,10 @@ export function patchCommand(): Command {
 
       const resolvedScenePath = path.resolve(trimmedScenePath)
       const trimmedOutputPath = options.output?.trim()
+      if (options.output !== undefined && !trimmedOutputPath) {
+        console.error('[patch] output path is required')
+        process.exit(2)
+      }
       const output = path.resolve(trimmedOutputPath || trimmedScenePath)
       let sceneBytes: Buffer
       let stats: fs.Stats
