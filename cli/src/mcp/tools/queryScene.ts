@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
 
 const ScenePathInput = z.string().trim().min(1, 'scene path is required')
@@ -180,13 +181,14 @@ export async function handleListCameras(
 }
 
 function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult {
-  const normalizedScenePath = scenePath.trim()
-  if (!normalizedScenePath) {
+  const trimmedScenePath = scenePath.trim()
+  if (!trimmedScenePath) {
     return {
       ok: false,
       result: errorText(`${toolName}: scene path is required`),
     }
   }
+  const normalizedScenePath = path.resolve(trimmedScenePath)
 
   let bytes: Buffer
   try {
