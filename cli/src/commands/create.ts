@@ -136,6 +136,24 @@ export function createCommand(): Command {
         process.exit(1)
       }
 
+      let outputStats: fs.Stats | undefined
+      try {
+        outputStats = fs.statSync(outputPath)
+      } catch (err) {
+        if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error(
+            `[create] failed to inspect output path ${outputPath}: ${
+              err instanceof Error ? err.message : err
+            }`,
+          )
+          process.exit(1)
+        }
+      }
+      if (outputStats?.isDirectory()) {
+        console.error(`[create] output path is a directory: ${outputPath}`)
+        process.exit(2)
+      }
+
       try {
         fs.writeFileSync(outputPath, Buffer.from(bytes))
       } catch (err) {
