@@ -45,7 +45,10 @@ type RenderInputData = z.infer<typeof RenderInput>
 export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: (path: fs.PathLike) => fs.Stats
-  mkdirSync: (path: fs.PathLike, options: { recursive: true }) => string | undefined
+  mkdirSync: (
+    path: fs.PathLike,
+    options?: fs.MakeDirectoryOptions,
+  ) => string | undefined | void
   locateApp: typeof locateDesktopApp
   render: typeof driveHeadlessRender
 }
