@@ -957,6 +957,7 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
         break
       }
       seenParents.add(current)
+      if (!nodes[current]) break
       current = asRecord(nodes[current]).parent
     }
   }

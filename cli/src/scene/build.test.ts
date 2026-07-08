@@ -1039,6 +1039,21 @@ test('validateScene rejects tracks targeting missing nodes', () => {
   ])
 })
 
+test('validateScene rejects missing parents without throwing', () => {
+  const scene = sampleScene()
+  const title = scene.nodes?.title
+  if (!title) throw new Error('missing sample title')
+  title.parent = 'missing-parent'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    "node root lists child title, but child's parent is missing-parent",
+    'node title has missing parent: missing-parent',
+  ])
+})
+
 test('validateScene rejects non-frame root nodes', () => {
   const scene = sampleScene()
   scene.root = 'title'
