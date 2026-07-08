@@ -174,7 +174,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       if (!appPath) {
         console.error(
           '[render] hyper-motion desktop app not found.\n' +
-            '         Install from https://hypermotion.app, then retry.',
+            '         Install from https://github.com/psiddharthdesign/hypermotion/releases, then retry.',
         )
         process.exit(1)
       }

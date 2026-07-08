@@ -382,6 +382,31 @@ test('render_scene reports desktop driver failures as MCP errors', async () => {
   }
 })
 
+test('render_scene reports the releases page when the desktop app is missing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-missing-app-'))
+
+  try {
+    const result = await handleRenderScene(
+      {
+        output: path.join(dir, 'out.mp4'),
+      },
+      testDeps({ locateApp: async () => null }),
+    )
+
+    assert.equal(result.isError, true)
+    assert.match(
+      assertToolText(result),
+      /^hyper-motion desktop app not found\. Install it from /,
+    )
+    assert.match(
+      assertToolText(result),
+      /https:\/\/github\.com\/psiddharthdesign\/hypermotion\/releases/,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function schemaProperty(name: string): JsonSchemaProperty | undefined {
   return renderSceneTool.inputSchema.properties?.[name] as
     | JsonSchemaProperty

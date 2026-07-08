@@ -556,3 +556,33 @@ test('render command reports scene stat failures before launching the app', asyn
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('render command reports the releases page when the desktop app is missing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-missing-app-'))
+  const outPath = path.join(dir, 'out.mp4')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => null,
+            driveRender: async () => {
+              throw new Error('should not render')
+            },
+          }).parseAsync(['-o', outPath], {
+            from: 'user',
+          }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[render\] hyper-motion desktop app not found\.$/m)
+    assert.match(
+      stderr,
+      /https:\/\/github\.com\/psiddharthdesign\/hypermotion\/releases/,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
