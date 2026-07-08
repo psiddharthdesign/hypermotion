@@ -70,6 +70,17 @@ test('render_scene reports invalid arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^render_scene: invalid arguments/)
 })
 
+test('render_scene rejects unknown arguments as MCP errors', async () => {
+  const result = await handleRenderScene({
+    output: 'demo.mp4',
+    chapter: 1,
+  })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^render_scene: invalid arguments/)
+  assert.match(assertToolText(result), /Unrecognized key/)
+})
+
 test('render_scene rejects empty output paths as MCP errors', async () => {
   const result = await handleRenderScene({
     output: '   ',
