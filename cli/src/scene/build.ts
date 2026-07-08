@@ -6,8 +6,8 @@
  * The CLI is standalone — it doesn't import the desktop app's
  * SceneAPI. To produce a `.hype` we mirror the SceneAPI's Y.Doc
  * layout directly: a top-level `scene` Y.Map carrying `nodes`,
- * `tracks`, `meta`, `sections`, plus the scalar `root` and
- * `activeCameraId`. The encoded update bytes are byte-identical
+ * `tracks`, `meta`, `sections`, and `uiState`, plus the scalar
+ * `root` and `activeCameraId`. The encoded update bytes are byte-identical
  * (mod CRDT history details) to what the desktop app's
  * `sceneToBytes` produces, so the desktop app reads our output
  * back without any special handling.
