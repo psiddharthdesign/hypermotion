@@ -142,6 +142,26 @@ test('captureStderr restores the writer after sync callbacks', async () => {
   assert.equal(process.stderr.write, originalWrite)
 })
 
+test('captureStdout restores the writer after callback mutations', async () => {
+  const originalWrite = process.stdout.write
+
+  await captureStdout(() => {
+    process.stdout.write = (() => true) as typeof process.stdout.write
+  })
+
+  assert.equal(process.stdout.write, originalWrite)
+})
+
+test('captureStderr restores the writer after callback mutations', async () => {
+  const originalWrite = process.stderr.write
+
+  await captureStderr(() => {
+    process.stderr.write = (() => true) as typeof process.stderr.write
+  })
+
+  assert.equal(process.stderr.write, originalWrite)
+})
+
 test('captureStdout restores the writer after async callbacks', async () => {
   const originalWrite = process.stdout.write
 
