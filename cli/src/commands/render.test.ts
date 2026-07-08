@@ -58,6 +58,27 @@ test('render command forwards saved scene paths to the driver', async () => {
   }
 })
 
+test('render command accepts equals-form saved scene paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-scene-equals-'))
+  const scenePath = path.join(dir, 'scene with spaces.hype')
+  const outputPath = path.join(dir, 'out.mp4')
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  fs.writeFileSync(scenePath, 'fake scene')
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync([`--scene=${scenePath}`, '-o', outputPath], { from: 'user' })
+
+    assert.equal(calls[0]?.scenePath, scenePath)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command infers formats case-insensitively from output extensions', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-'))
   const outputPath = path.join(dir, 'out.GIF')
