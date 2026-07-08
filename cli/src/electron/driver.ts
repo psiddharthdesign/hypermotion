@@ -40,6 +40,7 @@ export interface HeadlessRenderRequest {
 }
 
 type SuccessSentinel = {
+  readonly ts: number
   readonly bytes: number
 }
 
@@ -202,9 +203,13 @@ function hasSuccessSentinelBytes(value: unknown): value is SuccessSentinel {
   return (
     typeof value === 'object' &&
     value !== null &&
+    'ts' in value &&
     'bytes' in value &&
+    typeof value.ts === 'number' &&
     typeof value.bytes === 'number' &&
+    Number.isFinite(value.ts) &&
     Number.isFinite(value.bytes) &&
+    value.ts >= 0 &&
     value.bytes >= 0
   )
 }
