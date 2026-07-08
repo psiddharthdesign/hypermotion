@@ -16,6 +16,7 @@ test('render option guards accept supported values only', () => {
   }
   assert.equal(isRenderFormat('mov'), false)
   assert.equal(isRenderFormat('MP4'), false)
+  assert.equal(isRenderFormat(''), false)
   assert.equal(isRenderFormat(undefined), false)
   assert.equal(isRenderFormat(null), false)
   assert.equal(isRenderFormat(60), false)
@@ -26,6 +27,7 @@ test('render option guards accept supported values only', () => {
   }
   assert.equal(isRenderQuality('1080p'), false)
   assert.equal(isRenderQuality('4K'), false)
+  assert.equal(isRenderQuality(''), false)
   assert.equal(isRenderQuality(undefined), false)
   assert.equal(isRenderQuality(null), false)
   assert.equal(isRenderQuality(60), false)
