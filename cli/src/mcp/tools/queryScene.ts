@@ -6,10 +6,10 @@ import fs from 'node:fs'
 import { inspectScene } from '../../scene/build.js'
 
 const ScenePathInput = z.string().trim().min(1, 'scene path is required')
-const SceneInput = z.object({ scene: ScenePathInput })
+const SceneInput = z.object({ scene: ScenePathInput }).strict()
 const NodeIdInput = z.string().trim().min(1, 'nodeId is required')
-const LayerInput = z.object({ scene: ScenePathInput, nodeId: NodeIdInput })
-const TrackInput = z.object({ scene: ScenePathInput, nodeId: NodeIdInput.optional() })
+const LayerInput = z.object({ scene: ScenePathInput, nodeId: NodeIdInput }).strict()
+const TrackInput = z.object({ scene: ScenePathInput, nodeId: NodeIdInput.optional() }).strict()
 type SceneInputData = z.infer<typeof SceneInput>
 type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>

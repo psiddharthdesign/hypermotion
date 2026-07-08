@@ -70,6 +70,40 @@ test('query scene MCP handlers report invalid arguments as MCP errors', async ()
   }
 })
 
+test('query scene MCP handlers reject unknown arguments as MCP errors', async () => {
+  const cases: Array<{
+    name: string
+    run: () => Promise<CallToolResult>
+  }> = [
+    {
+      name: 'list_layers',
+      run: () => handleListLayers({ scene: '/tmp/scene.hype', output: 'out.json' }),
+    },
+    {
+      name: 'get_layer',
+      run: () => handleGetLayer({
+        scene: '/tmp/scene.hype',
+        nodeId: 'title',
+        output: 'out.json',
+      }),
+    },
+    {
+      name: 'list_tracks',
+      run: () => handleListTracks({ scene: '/tmp/scene.hype', output: 'out.json' }),
+    },
+    {
+      name: 'list_cameras',
+      run: () => handleListCameras({ scene: '/tmp/scene.hype', output: 'out.json' }),
+    },
+  ]
+
+  for (const entry of cases) {
+    const result = await entry.run()
+    assert.equal(result.isError, true)
+    assert.match(assertToolText(result), new RegExp(`^${entry.name}: invalid arguments`))
+  }
+})
+
 test('query scene MCP handlers reject blank node ids clearly', async () => {
   const cases: Array<{
     name: string
