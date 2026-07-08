@@ -226,6 +226,36 @@ export async function handleCreateScene(
     }
   }
 
+  let outputStats: fs.Stats | undefined
+  try {
+    outputStats = fs.statSync(outputPath)
+  } catch (err) {
+    if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `create_scene: failed to inspect output path ${outputPath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      }
+    }
+  }
+  if (outputStats?.isDirectory()) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `create_scene: output path is a directory: ${outputPath}`,
+        },
+      ],
+    }
+  }
+
   try {
     fs.writeFileSync(outputPath, Buffer.from(bytes))
   } catch (err) {

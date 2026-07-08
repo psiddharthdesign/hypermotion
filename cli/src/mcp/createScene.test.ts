@@ -301,6 +301,29 @@ test('create_scene trims output paths before writing', async () => {
   }
 })
 
+test('create_scene rejects directory output paths', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-dir-'))
+  const outputPath = path.join(dir, 'existing-output')
+
+  try {
+    fs.mkdirSync(outputPath)
+
+    const result = await handleCreateScene({
+      output: outputPath,
+      open: false,
+      scene: { nodes: {} },
+    })
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      `create_scene: output path is a directory: ${outputPath}`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('create_scene reports persisted layer and track counts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-create-'))
   const scenePath = path.join(dir, 'scene.hype')
