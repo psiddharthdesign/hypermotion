@@ -45,11 +45,12 @@ test('open_scene rejects unknown arguments as MCP errors', async () => {
   assert.match(assertToolText(result), /^open_scene: invalid arguments/)
 })
 
-test('open_scene rejects empty scene paths as MCP errors', async () => {
+test('open_scene rejects whitespace-only scene paths as MCP argument errors', async () => {
   const result = await handleOpenScene({ scene: '   ' })
 
   assert.equal(result.isError, true)
-  assert.equal(assertToolText(result), 'open_scene: scene path is required')
+  assert.match(assertToolText(result), /^open_scene: invalid arguments/)
+  assert.match(assertToolText(result), /scene path is required/)
 })
 
 test('open_scene reports missing files as MCP errors', async () => {
