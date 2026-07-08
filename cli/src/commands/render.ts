@@ -42,11 +42,14 @@ interface RenderOptions {
 }
 
 export interface RenderCommandDeps {
-  locateApp?: () => Promise<string | null>
-  driveRender?: (req: HeadlessRenderRequest) => Promise<void>
-  existsSync?: typeof fs.existsSync
-  mkdirSync?: (path: fs.PathLike, options?: fs.MakeDirectoryOptions) => string | undefined | void
-  statSync?: (path: fs.PathLike) => fs.Stats
+  readonly locateApp?: () => Promise<string | null>
+  readonly driveRender?: (req: HeadlessRenderRequest) => Promise<void>
+  readonly existsSync?: typeof fs.existsSync
+  readonly mkdirSync?: (
+    path: fs.PathLike,
+    options?: fs.MakeDirectoryOptions,
+  ) => string | undefined | void
+  readonly statSync?: (path: fs.PathLike) => fs.Stats
 }
 
 export function renderCommand(deps: RenderCommandDeps = {}): Command {
