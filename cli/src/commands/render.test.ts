@@ -528,10 +528,10 @@ test('render command reports output directory stat failures before launching the
             driveRender: async () => {
               throw new Error('should not render')
             },
-            statSync: ((targetPath: fs.PathLike) => {
+            statSync: (targetPath: fs.PathLike) => {
               if (targetPath === dir) throw new Error('stat failed')
               return fs.statSync(targetPath)
-            }) as typeof fs.statSync,
+            },
           }).parseAsync(['-o', outPath], {
             from: 'user',
           }),
@@ -560,10 +560,10 @@ test('render command reports scene stat failures before launching the app', asyn
             driveRender: async () => {
               throw new Error('should not render')
             },
-            statSync: ((targetPath: fs.PathLike) => {
+            statSync: (targetPath: fs.PathLike) => {
               if (targetPath === scenePath) throw new Error('stat failed')
               return fs.statSync(targetPath)
-            }) as typeof fs.statSync,
+            },
           }).parseAsync(['--scene', scenePath, '-o', outPath], {
             from: 'user',
           }),

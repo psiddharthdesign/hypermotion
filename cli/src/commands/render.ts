@@ -45,8 +45,8 @@ export interface RenderCommandDeps {
   locateApp?: () => Promise<string | null>
   driveRender?: (req: HeadlessRenderRequest) => Promise<void>
   existsSync?: typeof fs.existsSync
-  mkdirSync?: typeof fs.mkdirSync
-  statSync?: typeof fs.statSync
+  mkdirSync?: (path: fs.PathLike, options?: fs.MakeDirectoryOptions) => string | undefined | void
+  statSync?: (path: fs.PathLike) => fs.Stats
 }
 
 export function renderCommand(deps: RenderCommandDeps = {}): Command {
