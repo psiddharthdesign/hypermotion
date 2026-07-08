@@ -20,6 +20,7 @@ test('open_scene input schema exposes required scene path', () => {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   })
 })
 
@@ -32,6 +33,13 @@ test('open_scene reports invalid arguments as MCP errors', async () => {
 
 test('open_scene rejects empty schema scene paths as MCP errors', async () => {
   const result = await handleOpenScene({ scene: '' })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^open_scene: invalid arguments/)
+})
+
+test('open_scene rejects unknown arguments as MCP errors', async () => {
+  const result = await handleOpenScene({ scene: 'demo.hype', output: 'demo.mp4' })
 
   assert.equal(result.isError, true)
   assert.match(assertToolText(result), /^open_scene: invalid arguments/)
