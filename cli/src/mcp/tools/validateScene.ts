@@ -7,7 +7,7 @@ import { validateScene, type SceneValidationResult } from '../../scene/build.js'
 
 const ValidateInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe('Path to a .hype scene file.'),
-})
+}).strict()
 type ValidateInputData = z.infer<typeof ValidateInput>
 
 export const validateSceneTool: Tool = {
@@ -24,6 +24,7 @@ export const validateSceneTool: Tool = {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   },
 }
 

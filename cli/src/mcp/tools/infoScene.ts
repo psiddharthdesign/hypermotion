@@ -14,7 +14,7 @@ import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe('Path to a .hype scene file.'),
-})
+}).strict()
 type InfoInputData = z.infer<typeof InfoInput>
 
 export const infoSceneTool: Tool = {
@@ -34,6 +34,7 @@ export const infoSceneTool: Tool = {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   },
 }
 

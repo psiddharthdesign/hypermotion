@@ -20,11 +20,20 @@ test('validate_scene input schema exposes required scene path', () => {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   })
 })
 
 test('validate_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleValidateScene({ scene: 42 })
+
+  assert.equal(result.isError, true)
+  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  assert.match(text, /^validate_scene: invalid arguments/)
+})
+
+test('validate_scene rejects unknown arguments as MCP errors', async () => {
+  const result = await handleValidateScene({ scene: 'demo.hype', output: 'demo.json' })
 
   assert.equal(result.isError, true)
   const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
