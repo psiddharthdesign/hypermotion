@@ -263,6 +263,48 @@ test('query scene MCP handlers trim padded scene paths before reading', async ()
   }
 })
 
+test('query scene MCP handlers resolve padded relative scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-relative-query-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousCwd = process.cwd()
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: { name: 'Relative Query', canvas: { width: 320, height: 180 } },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+    process.chdir(dir)
+
+    const result = await handleListLayers({ scene: ' ./scene.hype ' })
+    const payload = JSON.parse(assertToolText(result)) as {
+      root: string
+      layers: Array<{ id: string }>
+    }
+
+    assert.equal(result.isError, undefined)
+    assert.equal(payload.root, 'root')
+    assert.deepEqual(
+      payload.layers.map((layer) => layer.id),
+      ['root'],
+    )
+  } finally {
+    process.chdir(previousCwd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('query scene MCP handlers return layers, tracks, and cameras', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mcp-'))
   const scenePath = path.join(dir, 'scene.hype')
