@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildSceneBytes, readSceneSummary } from '../scene/build.js'
+import { assertToolText } from '../testUtils/mcp.js'
 import { handlePatchScene, patchSceneTool } from './tools/patchScene.js'
 
 test('patch_scene input schema exposes required scene and patch', () => {
@@ -38,15 +39,14 @@ test('patch_scene reports invalid arguments as MCP errors', async () => {
   const result = await handlePatchScene({ scene: 42, patch: [] })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^patch_scene: invalid arguments/)
+  assert.match(assertToolText(result), /^patch_scene: invalid arguments/)
 })
 
 test('patch_scene rejects blank scene paths as MCP errors', async () => {
   const result = await handlePatchScene({ scene: '   ', patch: [] })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  const text = assertToolText(result)
   assert.match(text, /^patch_scene: invalid arguments/)
   assert.match(text, /scene path is required/)
 })
@@ -55,7 +55,7 @@ test('patch_scene rejects blank output paths as MCP errors', async () => {
   const result = await handlePatchScene({ scene: 'scene.hype', output: '   ', patch: [] })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+  const text = assertToolText(result)
   assert.match(text, /^patch_scene: invalid arguments/)
   assert.match(text, /output path is required/)
 })
@@ -64,8 +64,7 @@ test('patch_scene reports malformed JSON patches as MCP errors', async () => {
   const result = await handlePatchScene({ scene: 'scene.hype', patch: '{bad json' })
 
   assert.equal(result.isError, true)
-  const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-  assert.match(text, /^patch_scene: failed to parse patch JSON:/)
+  assert.match(assertToolText(result), /^patch_scene: failed to parse patch JSON:/)
 })
 
 test('patch_scene reports missing files as MCP errors', async () => {
@@ -79,8 +78,10 @@ test('patch_scene reports missing files as MCP errors', async () => {
     })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, new RegExp(`^patch_scene: failed to read ${escapeRegExp(missingScene)}:`))
+    assert.match(
+      assertToolText(result),
+      new RegExp(`^patch_scene: failed to read ${escapeRegExp(missingScene)}:`),
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -118,8 +119,10 @@ test('patch_scene reports invalid patch operations as MCP errors', async () => {
     })
 
     assert.equal(result.isError, true)
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
-    assert.match(text, /^patch_scene: failed to apply patch: node does not exist: missing$/)
+    assert.match(
+      assertToolText(result),
+      /^patch_scene: failed to apply patch: node does not exist: missing$/,
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -160,7 +163,7 @@ test('patch_scene writes alternate output without applying live', async () => {
       },
     })
 
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const text = assertToolText(result)
     assert.match(text, new RegExp(`^Patched ${escapeRegExp(scenePath)} → ${escapeRegExp(outputPath)}$`))
     assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'Original')
     assert.equal(readSceneSummary(fs.readFileSync(outputPath)).meta.name, 'Patched')
@@ -202,7 +205,7 @@ test('patch_scene overwrites the input scene by default without applying live', 
       },
     })
 
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const text = assertToolText(result)
     assert.match(text, new RegExp(`^Patched ${escapeRegExp(scenePath)} → ${escapeRegExp(scenePath)}$`))
     assert.equal(readSceneSummary(fs.readFileSync(scenePath)).meta.name, 'After')
   } finally {
