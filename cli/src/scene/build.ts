@@ -73,8 +73,8 @@ export const NODE_POSITIONS = [
   'absolute',
 ] as const satisfies readonly NodePositionJson[]
 
-const NODE_KIND_SET: ReadonlySet<string> = new Set(NODE_KINDS)
-const NODE_POSITION_SET: ReadonlySet<string> = new Set(NODE_POSITIONS)
+const NODE_KIND_SET: ReadonlySet<NodeKindJson> = new Set(NODE_KINDS)
+const NODE_POSITION_SET: ReadonlySet<NodePositionJson> = new Set(NODE_POSITIONS)
 
 export interface SizeJson extends Record<string, unknown> {
   width?: number | 'hug' | 'fill'
@@ -335,7 +335,7 @@ export const PROPERTY_IDS = [
 
 export type PropertyIdJson = (typeof PROPERTY_IDS)[number]
 
-const PROPERTY_ID_SET: ReadonlySet<string> = new Set(PROPERTY_IDS)
+const PROPERTY_ID_SET: ReadonlySet<PropertyIdJson> = new Set(PROPERTY_IDS)
 
 export type EasingJson =
   | 'linear'
@@ -1023,15 +1023,15 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 }
 
 function isNodeKind(value: string): value is NodeKindJson {
-  return NODE_KIND_SET.has(value)
+  return NODE_KIND_SET.has(value as NodeKindJson)
 }
 
 function isNodePosition(value: string): value is NodePositionJson {
-  return NODE_POSITION_SET.has(value)
+  return NODE_POSITION_SET.has(value as NodePositionJson)
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
-  return PROPERTY_ID_SET.has(value)
+  return PROPERTY_ID_SET.has(value as PropertyIdJson)
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
