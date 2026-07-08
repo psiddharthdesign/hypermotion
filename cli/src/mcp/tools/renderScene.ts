@@ -252,7 +252,7 @@ export async function handleRenderScene(
           type: 'text' as const,
           text:
             'hyper-motion desktop app not found. Install it from ' +
-            'https://hypermotion.app and try again.',
+            'https://github.com/psiddharthdesign/hypermotion/releases and try again.',
         },
       ],
     }
