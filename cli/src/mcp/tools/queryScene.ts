@@ -55,7 +55,12 @@ const NODE_ID_PROPERTY: StringSchemaProperty = {
 export const listLayersTool: Tool = {
   name: 'list_layers',
   description: 'List all scene layers with id, name, kind, parent, and children.',
-  inputSchema: { type: 'object', properties: { scene: SCENE_PATH_PROPERTY }, required: ['scene'] },
+  inputSchema: {
+    type: 'object',
+    properties: { scene: SCENE_PATH_PROPERTY },
+    required: ['scene'],
+    additionalProperties: false,
+  },
 }
 
 export const getLayerTool: Tool = {
@@ -68,6 +73,7 @@ export const getLayerTool: Tool = {
       nodeId: NODE_ID_PROPERTY,
     },
     required: ['scene', 'nodeId'],
+    additionalProperties: false,
   },
 }
 
@@ -84,13 +90,19 @@ export const listTracksTool: Tool = {
       },
     },
     required: ['scene'],
+    additionalProperties: false,
   },
 }
 
 export const listCamerasTool: Tool = {
   name: 'list_cameras',
   description: 'List camera nodes and the active camera id.',
-  inputSchema: { type: 'object', properties: { scene: SCENE_PATH_PROPERTY }, required: ['scene'] },
+  inputSchema: {
+    type: 'object',
+    properties: { scene: SCENE_PATH_PROPERTY },
+    required: ['scene'],
+    additionalProperties: false,
+  },
 }
 
 export async function handleListLayers(

@@ -31,6 +31,7 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
     assert.equal(sceneProperty?.description, 'Path to a .hype scene file.')
     assert.ok(Array.isArray(tool.inputSchema.required))
     assert.ok(tool.inputSchema.required.includes('scene'))
+    assert.equal(tool.inputSchema.additionalProperties, false)
   }
 
   assert.deepEqual(getLayerTool.inputSchema.required, ['scene', 'nodeId'])
