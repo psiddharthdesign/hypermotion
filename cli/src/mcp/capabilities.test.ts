@@ -100,11 +100,13 @@ test('capability tool schemas accept no arguments', () => {
     type: 'object',
     properties: {},
     required: [],
+    additionalProperties: false,
   })
   assert.deepEqual(listKeyframeableProperties?.inputSchema, {
     type: 'object',
     properties: {},
     required: [],
+    additionalProperties: false,
   })
 })
 
