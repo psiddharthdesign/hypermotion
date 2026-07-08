@@ -10,7 +10,7 @@
  *   Windows — Best-effort lookup for development builds; no public release yet.
  *   Linux   — Best-effort lookup for development builds; no public release yet.
  *
- * Override path with `HYPERMOTION_APP_PATH` env var if installed somewhere
+ * Override path with the `HYPERMOTION_APP_PATH` environment variable if installed somewhere
  * non-standard.
  *
  * Returns `null` if not found — callers surface a clean install hint.
