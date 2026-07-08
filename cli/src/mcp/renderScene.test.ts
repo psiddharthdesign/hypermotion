@@ -58,6 +58,7 @@ test('render_scene input schema exposes the optional scene path', () => {
   assert.equal(sceneProperty?.minLength, 1)
   assert.equal(sceneProperty?.pattern, '\\S')
   assert.match(String(sceneProperty?.description), /\.hype scene file/)
+  assert.match(String(sceneProperty?.description), /relative path/)
 })
 
 test('render_scene reports invalid arguments as MCP errors', async () => {

@@ -101,7 +101,7 @@ export const renderSceneTool: Tool = {
         minLength: 1,
         pattern: '\\S',
         description:
-          'Path to a .hype scene file to render instead of the current desktop scene.',
+          'Absolute or relative path to a .hype scene file to render instead of the current desktop scene.',
       },
     },
     required: ['output'],
