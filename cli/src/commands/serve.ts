@@ -17,11 +17,11 @@ import { Command } from 'commander'
 import { startMcpServer } from '../mcp/server.js'
 
 interface ServeCommandDeps {
-  startServer?: () => Promise<void>
+  readonly startServer?: () => Promise<void>
 }
 
 type ServeCommandOptions = {
-  mcp?: boolean
+  readonly mcp?: boolean
 }
 
 export function serveCommand(deps: ServeCommandDeps = {}): Command {
