@@ -215,6 +215,7 @@ function requiredKnownStringArray<const Value extends string>(
     values.every((value) => knownValueSet.has(value)),
     `${key} includes an unknown value`,
   )
+  assert.deepEqual(values, knownValues)
   return values as readonly Value[]
 }
 
