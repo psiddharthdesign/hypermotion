@@ -2,7 +2,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
-export type McpToolArgs = Record<string, unknown>
+export type McpToolArgs = Readonly<Record<string, unknown>>
 export const EMPTY_ARGS_TOOL_NAMES = [
   'doctor',
   'get_capabilities',
