@@ -10,3 +10,12 @@ export const EMPTY_OBJECT_INPUT_SCHEMA = {
   required: [],
   additionalProperties: false,
 } as const satisfies Tool['inputSchema']
+
+export function rejectUnexpectedEmptyArgs(
+  toolName: string,
+  args: McpToolArgs,
+): string | null {
+  const keys = Object.keys(args)
+  if (keys.length === 0) return null
+  return `${toolName}: invalid arguments — Unrecognized key(s): ${keys.join(', ')}`
+}
