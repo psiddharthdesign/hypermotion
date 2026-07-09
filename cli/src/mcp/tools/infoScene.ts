@@ -10,6 +10,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
 
 const InfoInput = z.object({
@@ -55,13 +56,14 @@ export async function handleInfoScene(
   }
 
   const input: InfoInputData = parsed.data
-  const scenePath = input.scene.trim()
-  if (!scenePath) {
+  const trimmedScenePath = input.scene.trim()
+  if (!trimmedScenePath) {
     return {
       isError: true,
       content: [{ type: 'text' as const, text: 'info_scene: scene path is required' }],
     }
   }
+  const scenePath = path.resolve(trimmedScenePath)
   let bytes: Buffer
   try {
     const stats = fs.statSync(scenePath)
