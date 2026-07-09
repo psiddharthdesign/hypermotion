@@ -429,6 +429,36 @@ test('render command reports unsupported quality before launching the app', asyn
   assert.match(stderr, /^\[render\] unsupported quality: draft \(use comp \/ 720p \/ 2k \/ 4k\)$/m)
 })
 
+test('render command rejects unsupported quality before creating output directories', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-quality-first-'))
+  const outputDir = path.join(dir, 'exports')
+  const outputPath = path.join(outputDir, 'out.mp4')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => {
+              throw new Error('should not locate app')
+            },
+            mkdirSync: () => {
+              throw new Error('should not create output directory')
+            },
+          }).parseAsync(['-o', outputPath, '--quality', 'draft'], {
+            from: 'user',
+          }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.match(stderr, /^\[render\] unsupported quality: draft \(use comp \/ 720p \/ 2k \/ 4k\)$/m)
+    assert.equal(fs.existsSync(outputDir), false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command reports empty explicit quality presets clearly', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
