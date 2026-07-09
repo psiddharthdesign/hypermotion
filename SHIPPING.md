@@ -142,9 +142,9 @@ pnpm link --global                  # exposes hypermotion + hypermotion-mcp on P
 claude mcp add hypermotion -- hypermotion-mcp
 ```
 
-In Claude Code, the agent now has access to `render_scene` (works) and
-`info_scene` (returns clean v0.1.1 stub). Ask the agent to render the
-current scene to `~/Desktop/test.mp4`.
+In Claude Code, the agent now has access to `render_scene` and
+`info_scene`. Ask the agent to inspect a saved `.hype` file or render
+the current scene to `~/Desktop/test.mp4`.
 
 For Codex CLI, add to `~/.codex/config.toml`:
 
@@ -343,7 +343,7 @@ When you're ready to declare v0.1.0 done:
 - `bin/hypermotion.mjs` + `bin/hypermotion-mcp.mjs`
 - `src/cli.ts` — commander-based CLI entry
 - `src/commands/render.ts` — renders current scene
-- `src/commands/info.ts` — v0.1.1 stub with clear message
+- `src/commands/info.ts` — reads a `.hype` scene file and prints a summary
 - `src/commands/serve.ts` — starts MCP server
 - `src/mcp/server.ts` — MCP stdio server with `render_scene` + `info_scene` tools
 - `src/electron/locator.ts` — finds installed desktop app cross-platform
