@@ -208,3 +208,41 @@ test('info_scene trims padded scene paths before reading', async () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('info_scene resolves padded relative scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-relative-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const previousCwd = process.cwd()
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Relative Info MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+    process.chdir(dir)
+
+    const result = await handleInfoScene({ scene: ' ./scene.hype ' })
+    const summary = JSON.parse(assertToolText(result)) as SceneSummary
+
+    assert.equal(result.isError, undefined)
+    assert.equal(summary.meta.name, 'Relative Info MCP')
+  } finally {
+    process.chdir(previousCwd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
