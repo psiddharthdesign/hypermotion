@@ -12,7 +12,11 @@ import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
 type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
 type PersistedSceneMeta = NonNullable<PersistedSceneInput['meta']>
-type MalformedPersistedCanvas = Record<string, unknown> & {
+type PersistedSceneCanvas = PersistedSceneMeta['canvas']
+type MalformedPersistedCanvas = Omit<
+  NonNullable<PersistedSceneCanvas>,
+  'width' | 'height'
+> & {
   width: string
   height: string
 }
@@ -402,11 +406,11 @@ test('info command replaces string canvas dimensions with placeholders', async (
   }
 })
 
-function stringCanvas(width: string, height: string): PersistedSceneMeta['canvas'] {
+function stringCanvas(width: string, height: string): PersistedSceneCanvas {
   const canvas: MalformedPersistedCanvas = { width, height }
   // Exercise the read path for malformed persisted scenes whose canvas
   // dimensions are not valid authoring input.
-  return canvas as unknown as PersistedSceneMeta['canvas']
+  return canvas as unknown as PersistedSceneCanvas
 }
 
 test('info command reports missing scene files', async () => {
