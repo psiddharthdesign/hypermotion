@@ -105,6 +105,18 @@ test('render_scene rejects empty scene paths as MCP errors', async () => {
   assert.match(assertToolText(result), /scene path is required/)
 })
 
+test('render_scene rejects empty format and quality values as MCP errors', async () => {
+  const result = await handleRenderScene({
+    output: 'demo.mp4',
+    format: '   ',
+    quality: '   ',
+  })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^render_scene: invalid arguments/)
+  assert.match(assertToolText(result), /Invalid enum value/)
+})
+
 test('render_scene rejects fractional fps values as MCP errors', async () => {
   const result = await handleRenderScene({
     output: 'demo.mp4',
