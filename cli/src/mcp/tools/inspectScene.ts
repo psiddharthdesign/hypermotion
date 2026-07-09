@@ -7,12 +7,20 @@ import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
 import type { McpToolArgs } from './schema.js'
 
+const SCENE_PATH_DESCRIPTION = 'Absolute or relative path to a .hype scene file.'
+const SCENE_PATH_PROPERTY = {
+  type: 'string',
+  minLength: 1,
+  pattern: '\\S',
+  description: SCENE_PATH_DESCRIPTION,
+} as const
+
 const InspectInput = z.object({
   scene: z
     .string()
     .trim()
     .min(1, 'scene path is required')
-    .describe('Absolute or relative path to a .hype scene file.'),
+    .describe(SCENE_PATH_DESCRIPTION),
 }).strict()
 type InspectInputData = z.infer<typeof InspectInput>
 
@@ -22,12 +30,7 @@ export const inspectSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      scene: {
-        type: 'string',
-        minLength: 1,
-        pattern: '\\S',
-        description: 'Absolute or relative path to a .hype scene file.',
-      },
+      scene: SCENE_PATH_PROPERTY,
     },
     required: ['scene'],
     additionalProperties: false,
