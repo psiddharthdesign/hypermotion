@@ -146,7 +146,7 @@ export async function handleGetLayer(
   if (!loaded.ok) return loaded.result
 
   const node = record(record(loaded.scene.nodes)[input.nodeId])
-  if (!node.id) return errorText(`Layer not found: ${input.nodeId}`)
+  if (node.id !== input.nodeId) return errorText(`Layer not found: ${input.nodeId}`)
   return text(node)
 }
 
