@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import { validateScene, type SceneValidationResult } from '../../scene/build.js'
 import type { McpToolArgs } from './schema.js'
 
@@ -62,13 +63,14 @@ export async function handleValidateScene(
   }
 
   const input: ValidateInputData = parsed.data
-  const scenePath = input.scene.trim()
-  if (!scenePath) {
+  const trimmedScenePath = input.scene.trim()
+  if (!trimmedScenePath) {
     return {
       isError: true,
       content: [{ type: 'text' as const, text: 'validate_scene: scene path is required' }],
     }
   }
+  const scenePath = path.resolve(trimmedScenePath)
   let bytes: Buffer
   let stat: fs.Stats
   try {

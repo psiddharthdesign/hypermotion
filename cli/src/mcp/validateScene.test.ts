@@ -238,6 +238,51 @@ test('validate_scene trims padded scene paths before reading', async () => {
   }
 })
 
+test('validate_scene resolves relative scene paths before reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-relative-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  const relativeScenePath = path.relative(process.cwd(), scenePath)
+  const statPaths: string[] = []
+
+  try {
+    fs.writeFileSync(
+      scenePath,
+      buildSceneBytes({
+        meta: {
+          name: 'Validate Relative MCP',
+          canvas: { width: 320, height: 180 },
+        },
+        nodes: {
+          root: {
+            id: 'root',
+            kind: 'frame',
+            parent: null,
+            children: [],
+            size: { width: 320, height: 180 },
+            layout: { mode: 'none' },
+          },
+        },
+      }),
+    )
+
+    const result = await handleValidateScene(
+      { scene: relativeScenePath },
+      testDeps({
+        statSync: (statPath) => {
+          statPaths.push(String(statPath))
+          return fs.statSync(statPath)
+        },
+      }),
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.deepEqual(statPaths, [scenePath])
+    assert.equal(JSON.parse(assertToolText(result)).ok, true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate_scene marks structurally invalid scenes as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-invalid-'))
   const scenePath = path.join(dir, 'invalid.hype')
