@@ -32,6 +32,7 @@ type ReadSceneResult =
   | { ok: true; scene: QuerySceneSnapshot }
   | { ok: false; result: CallToolResult }
 type QuerySceneErrorMessage = `${QuerySceneToolName}: ${string}` | `Layer not found: ${string}`
+type ToolInputSchema = Tool['inputSchema']
 type LayerSummary = {
   id: unknown
   name: unknown
@@ -62,7 +63,7 @@ export const listLayersTool: Tool = {
     properties: { scene: SCENE_PATH_PROPERTY },
     required: ['scene'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export const getLayerTool: Tool = {
@@ -76,7 +77,7 @@ export const getLayerTool: Tool = {
     },
     required: ['scene', 'nodeId'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export const listTracksTool: Tool = {
@@ -93,7 +94,7 @@ export const listTracksTool: Tool = {
     },
     required: ['scene'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export const listCamerasTool: Tool = {
@@ -104,7 +105,7 @@ export const listCamerasTool: Tool = {
     properties: { scene: SCENE_PATH_PROPERTY },
     required: ['scene'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export async function handleListLayers(
