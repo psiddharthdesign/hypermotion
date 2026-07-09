@@ -18,8 +18,8 @@ type InfoCommandOptions = {
 }
 
 type PrintableCanvas = {
-  width: number | '?'
-  height: number | '?'
+  readonly width: number | '?'
+  readonly height: number | '?'
 }
 
 export function infoCommand(): Command {
