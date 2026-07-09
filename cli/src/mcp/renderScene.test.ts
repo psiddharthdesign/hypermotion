@@ -272,6 +272,26 @@ test('render_scene reports output directory creation failures as MCP errors', as
   }
 })
 
+test('render_scene reports directory output paths before locating the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-dir-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  fs.mkdirSync(outputPath)
+
+  try {
+    const result = await handleRenderScene({
+      output: outputPath,
+    })
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: output path is a directory: ${outputPath}`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene creates missing output directories before rendering', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-create-'))
   const outDir = path.join(dir, 'exports', 'nested')
