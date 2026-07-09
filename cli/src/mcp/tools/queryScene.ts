@@ -192,6 +192,13 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
 
   let bytes: Buffer
   try {
+    if (!fs.existsSync(normalizedScenePath)) {
+      return {
+        ok: false,
+        result: errorText(`${toolName}: scene file not found: ${normalizedScenePath}`),
+      }
+    }
+
     const stats = fs.statSync(normalizedScenePath)
     if (!stats.isFile()) {
       return {
