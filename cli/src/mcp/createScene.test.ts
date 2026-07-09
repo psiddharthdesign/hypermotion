@@ -9,7 +9,7 @@ import { PROPERTY_IDS, readSceneSummary } from '../scene/build.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { createSceneTool, handleCreateScene } from './tools/createScene.js'
 
-test('create_scene input schema marks output as non-empty', () => {
+test('create_scene input schema marks output as absolute and non-empty', () => {
   assert.deepEqual(createSceneTool.inputSchema.properties?.output, {
     type: 'string',
     minLength: 1,
