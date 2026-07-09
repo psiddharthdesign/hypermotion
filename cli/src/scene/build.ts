@@ -876,6 +876,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const tracks = asRecord(data.tracks)
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
+  const cameraIds = Object.entries(nodes)
+    .filter(([, raw]) => asRecord(raw).kind === 'camera')
+    .map(([id]) => id)
 
   if (data.meta !== undefined && !isPlainObject(data.meta)) {
     errors.push('scene.meta must be an object')
@@ -902,9 +905,9 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 
   if (data.activeCameraId !== undefined && data.activeCameraId !== null && typeof data.activeCameraId !== 'string') {
     errors.push('scene.activeCameraId must be a string')
-  } else if (!activeCameraId) warnings.push('scene.activeCameraId is missing')
-  else if (!nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
-  else if (asRecord(nodes[activeCameraId]).kind !== 'camera') {
+  } else if (!activeCameraId && cameraIds.length > 0) warnings.push('scene.activeCameraId is missing')
+  else if (activeCameraId && !nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
+  else if (activeCameraId && asRecord(nodes[activeCameraId]).kind !== 'camera') {
     errors.push(`scene.activeCameraId is not a camera node: ${activeCameraId}`)
   }
 
@@ -962,9 +965,6 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
   }
 
-  const cameraIds = Object.entries(nodes)
-    .filter(([, raw]) => asRecord(raw).kind === 'camera')
-    .map(([id]) => id)
   if (cameraIds.length > 1) {
     errors.push(`scene has multiple camera nodes: ${cameraIds.join(', ')}`)
   }
