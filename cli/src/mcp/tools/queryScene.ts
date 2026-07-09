@@ -122,16 +122,15 @@ export async function handleListLayers(
   return text({
     root: loaded.scene.root ?? null,
     activeCameraId: loaded.scene.activeCameraId ?? null,
-    layers: Object.values(nodes).map((raw): LayerSummary => {
-      const n = record(raw)
-      return {
+    layers: Object.values(nodes)
+      .filter(isRecord)
+      .map((n): LayerSummary => ({
         id: n.id,
         name: n.name,
         kind: n.kind,
         parent: n.parent,
         children: stringArray(n.children),
-      }
-    }),
+      })),
   })
 }
 
