@@ -2,7 +2,15 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { rejectUnexpectedEmptyArgs } from './schema.js'
+import { EMPTY_ARGS_TOOL_NAMES, rejectUnexpectedEmptyArgs } from './schema.js'
+
+test('EMPTY_ARGS_TOOL_NAMES lists tools handled by the empty-args helper', () => {
+  assert.deepEqual(EMPTY_ARGS_TOOL_NAMES, [
+    'doctor',
+    'get_capabilities',
+    'list_keyframeable_properties',
+  ])
+})
 
 test('rejectUnexpectedEmptyArgs allows empty argument objects', () => {
   assert.equal(rejectUnexpectedEmptyArgs('doctor', {}), null)

@@ -3,10 +3,12 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
 export type McpToolArgs = Record<string, unknown>
-export type EmptyArgsToolName =
-  | 'doctor'
-  | 'get_capabilities'
-  | 'list_keyframeable_properties'
+export const EMPTY_ARGS_TOOL_NAMES = [
+  'doctor',
+  'get_capabilities',
+  'list_keyframeable_properties',
+] as const
+export type EmptyArgsToolName = (typeof EMPTY_ARGS_TOOL_NAMES)[number]
 
 export const EMPTY_OBJECT_INPUT_SCHEMA = {
   type: 'object',
