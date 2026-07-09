@@ -674,3 +674,29 @@ test('render command reports the releases page when the desktop app is missing',
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('render command reports driver failures', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-driver-fail-'))
+  const outPath = path.join(dir, 'out.mp4')
+  try {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => path.join(dir, 'hyper-motion'),
+            driveRender: async () => {
+              throw new Error('renderer crashed')
+            },
+          }).parseAsync(['-o', outPath], {
+            from: 'user',
+          }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.equal(stderr, '[render] failed: renderer crashed\n')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
