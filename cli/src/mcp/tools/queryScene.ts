@@ -117,11 +117,11 @@ export async function handleListLayers(
   const loaded = read('list_layers', input.scene)
   if (!loaded.ok) return loaded.result
 
-  const nodes = record(loaded.scene.nodes)
+  const nodes = Object.values(record(loaded.scene.nodes)).filter(isRecord)
   return text({
     root: loaded.scene.root ?? null,
     activeCameraId: loaded.scene.activeCameraId ?? null,
-    layers: Object.values(nodes).map((raw): LayerSummary => {
+    layers: nodes.map((raw): LayerSummary => {
       const n = record(raw)
       return {
         id: n.id,

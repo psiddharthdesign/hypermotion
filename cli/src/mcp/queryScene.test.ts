@@ -408,6 +408,8 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     const doc = new Y.Doc()
     Y.applyUpdate(doc, bytes)
     const scene = doc.getMap('scene')
+    const nodes = scene.get('nodes') as Y.Map<unknown>
+    nodes.set('staleNodeEntry', 'not a node')
     const tracks = scene.get('tracks') as Y.Map<unknown>
     tracks.set('staleTrackEntry', 'not a track')
     fs.writeFileSync(scenePath, Y.encodeStateAsUpdate(doc))
