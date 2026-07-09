@@ -36,12 +36,15 @@ import {
 import { pushSceneToRunningApp } from '../../electron/live.js'
 import type { McpToolArgs } from './schema.js'
 
+const OUTPUT_PATH_DESCRIPTION =
+  'Absolute, non-blank path to write the .hype file to. Parent dirs are created if missing.'
+
 const CreateInput = z.object({
   output: z
     .string()
     .trim()
     .min(1, 'output path is required')
-    .describe('Absolute path to write the .hype file to. Parent dirs are created if missing.'),
+    .describe(OUTPUT_PATH_DESCRIPTION),
   scene: z
     .union([
       z.string().describe('A JSON string containing the SceneJson'),
@@ -98,7 +101,7 @@ export const createSceneTool: Tool = {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Absolute, non-blank path to write the .hype file to.',
+        description: OUTPUT_PATH_DESCRIPTION,
       },
       scene: {
         anyOf: [{ type: 'string' }, { type: 'object' }],
