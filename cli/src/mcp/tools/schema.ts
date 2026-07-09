@@ -40,7 +40,7 @@ export const EMPTY_OBJECT_INPUT_SCHEMA = {
 
 export function rejectUnexpectedEmptyArgs(
   toolName: EmptyArgsToolName,
-  args: McpToolArgs,
+  args: unknown,
 ): string | null {
   if (!isPlainObject(args)) {
     return `${toolName}: invalid arguments — Expected an object`

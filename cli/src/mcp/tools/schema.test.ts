@@ -6,7 +6,6 @@ import {
   EMPTY_ARGS_TOOL_NAMES,
   EMPTY_OBJECT_INPUT_SCHEMA,
   rejectUnexpectedEmptyArgs,
-  type McpToolArgs,
 } from './schema.js'
 
 test('EMPTY_ARGS_TOOL_NAMES lists tools handled by the empty-args helper', () => {
@@ -31,21 +30,21 @@ test('rejectUnexpectedEmptyArgs allows empty argument objects', () => {
 })
 
 test('rejectUnexpectedEmptyArgs allows null-prototype argument records', () => {
-  const args = Object.create(null) as McpToolArgs
+  const args = Object.create(null)
   assert.equal(rejectUnexpectedEmptyArgs('doctor', args), null)
 })
 
 test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
   assert.equal(
-    rejectUnexpectedEmptyArgs('doctor', [] as unknown as McpToolArgs),
+    rejectUnexpectedEmptyArgs('doctor', []),
     'doctor: invalid arguments — Expected an object',
   )
   assert.equal(
-    rejectUnexpectedEmptyArgs('doctor', null as unknown as McpToolArgs),
+    rejectUnexpectedEmptyArgs('doctor', null),
     'doctor: invalid arguments — Expected an object',
   )
   assert.equal(
-    rejectUnexpectedEmptyArgs('doctor', new Date() as unknown as McpToolArgs),
+    rejectUnexpectedEmptyArgs('doctor', new Date()),
     'doctor: invalid arguments — Expected an object',
   )
 })
