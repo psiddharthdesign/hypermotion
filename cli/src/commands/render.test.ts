@@ -21,6 +21,12 @@ test('render command quality help describes comp output size', () => {
   assert.equal(qualityOption?.description, 'Quality: comp (match scene canvas) | 720p | 2k | 4k')
 })
 
+test('render command scene help describes saved scene input', () => {
+  const sceneOption = renderCommand().options.find((option) => option.long === '--scene')
+
+  assert.match(sceneOption?.description ?? '', /\.hype scene file/)
+})
+
 test('render command forwards saved scene paths to the driver', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-ok-'))
   const scenePath = path.join(dir, 'scene with spaces.hype')
