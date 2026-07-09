@@ -37,7 +37,7 @@ test('assertToolText reports missing text content clearly', () => {
 })
 
 test('assertToolText rejects missing content arrays clearly', () => {
-  const result = {} as unknown as CallToolResult
+  const result = {}
 
   assert.throws(
     () => assertToolText(result),
@@ -48,7 +48,7 @@ test('assertToolText rejects missing content arrays clearly', () => {
 test('assertToolText rejects undefined content items', () => {
   const result = {
     content: [undefined],
-  } as unknown as CallToolResult
+  }
 
   assert.throws(
     () => assertToolText(result),
@@ -70,7 +70,7 @@ test('assertToolText rejects non-text first content items', () => {
 test('assertToolText rejects malformed text payloads', () => {
   const result = {
     content: [{ type: 'text', text: undefined }],
-  } as unknown as CallToolResult
+  }
 
   assert.throws(
     () => assertToolText(result),
