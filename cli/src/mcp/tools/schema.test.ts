@@ -30,6 +30,11 @@ test('rejectUnexpectedEmptyArgs allows empty argument objects', () => {
   assert.equal(rejectUnexpectedEmptyArgs('doctor', {}), null)
 })
 
+test('rejectUnexpectedEmptyArgs allows null-prototype argument records', () => {
+  const args = Object.create(null) as McpToolArgs
+  assert.equal(rejectUnexpectedEmptyArgs('doctor', args), null)
+})
+
 test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
   assert.equal(
     rejectUnexpectedEmptyArgs('doctor', [] as unknown as McpToolArgs),
@@ -37,6 +42,10 @@ test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
   )
   assert.equal(
     rejectUnexpectedEmptyArgs('doctor', null as unknown as McpToolArgs),
+    'doctor: invalid arguments — Expected an object',
+  )
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', new Date() as unknown as McpToolArgs),
     'doctor: invalid arguments — Expected an object',
   )
 })
