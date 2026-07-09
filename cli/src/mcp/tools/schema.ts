@@ -19,7 +19,7 @@ export function rejectUnexpectedEmptyArgs(
   toolName: EmptyArgsToolName,
   args: McpToolArgs,
 ): string | null {
-  const keys = Object.keys(args)
+  const keys = Object.keys(args).sort()
   if (keys.length === 0) return null
   return `${toolName}: invalid arguments — Unrecognized key(s): ${keys.join(', ')}`
 }
