@@ -5,13 +5,24 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
 type ToolTextContent = Extract<CallToolResult['content'][number], { type: 'text' }>
 
-export function assertToolText(result: CallToolResult): string {
-  assert.ok(Array.isArray(result.content), 'expected MCP content to be an array')
+export function assertToolText(result: unknown): string {
+  assert.ok(isCallToolResultLike(result), 'expected MCP content to be an array')
   assert.equal(result.content.length, 1, 'expected exactly one MCP content item')
   const item = result.content[0]
   assert.ok(isToolTextContent(item), 'expected first MCP content item to be text')
   assert.equal(typeof item.text, 'string', 'expected MCP text content to be a string')
   return item.text
+}
+
+function isCallToolResultLike(
+  result: unknown,
+): result is { content: CallToolResult['content'] } {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'content' in result &&
+    Array.isArray(result.content)
+  )
 }
 
 function isToolTextContent(
