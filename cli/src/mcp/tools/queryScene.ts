@@ -5,6 +5,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
+import type { McpToolArgs } from './schema.js'
 
 const ScenePathInput = z.string().trim().min(1, 'scene path is required')
 const SceneInput = z.object({ scene: ScenePathInput }).strict()
@@ -15,7 +16,6 @@ type SceneInputData = z.infer<typeof SceneInput>
 type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
-type QuerySceneRecord = Record<string, unknown>
 type StringSchemaProperty = {
   readonly type: 'string'
   readonly minLength?: number
@@ -108,7 +108,7 @@ export const listCamerasTool: Tool = {
 }
 
 export async function handleListLayers(
-  args: QuerySceneRecord,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
@@ -135,7 +135,7 @@ export async function handleListLayers(
 }
 
 export async function handleGetLayer(
-  args: QuerySceneRecord,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = LayerInput.safeParse(args)
   if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
@@ -150,7 +150,7 @@ export async function handleGetLayer(
 }
 
 export async function handleListTracks(
-  args: QuerySceneRecord,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = TrackInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
@@ -167,7 +167,7 @@ export async function handleListTracks(
 }
 
 export async function handleListCameras(
-  args: QuerySceneRecord,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
@@ -233,9 +233,9 @@ function read(toolName: QuerySceneToolName, scenePath: string): ReadSceneResult 
   }
 }
 
-function record(value: unknown): QuerySceneRecord {
+function record(value: unknown): McpToolArgs {
   return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as QuerySceneRecord)
+    ? (value as McpToolArgs)
     : {}
 }
 
