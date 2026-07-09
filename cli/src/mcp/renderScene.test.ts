@@ -272,6 +272,37 @@ test('render_scene reports output directory creation failures as MCP errors', as
   }
 })
 
+test('render_scene creates missing output directories before rendering', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-create-'))
+  const outDir = path.join(dir, 'exports', 'nested')
+  const outputPath = path.join(outDir, 'out.gif')
+  let renderedOutputPath: string | null = null
+
+  try {
+    const result = await handleRenderScene(
+      {
+        output: outputPath,
+      },
+      testDeps({
+        locateApp: async () => '/tmp/hyper-motion',
+        render: async (req) => {
+          renderedOutputPath = req.outputPath
+        },
+      }),
+    )
+
+    assert.equal(result.isError, undefined)
+    assert.equal(fs.statSync(outDir).isDirectory(), true)
+    assert.equal(renderedOutputPath, outputPath)
+    assert.equal(
+      assertToolText(result),
+      `Rendered current desktop scene → ${outputPath} (gif · comp · 30fps)`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene normalizes padded format and quality values', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-normalize-'))
   const appPath = path.join(dir, 'fake-app.mjs')
