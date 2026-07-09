@@ -11,6 +11,16 @@ const ValidateInput = z.object({
 }).strict()
 type ValidateInputData = z.infer<typeof ValidateInput>
 
+export type ValidateSceneDeps = {
+  statSync: (path: fs.PathLike) => fs.Stats
+  readFileSync: (path: fs.PathOrFileDescriptor) => Buffer
+}
+
+const defaultDeps: ValidateSceneDeps = {
+  statSync: fs.statSync,
+  readFileSync: fs.readFileSync,
+}
+
 export const validateSceneTool: Tool = {
   name: 'validate_scene',
   description:
@@ -32,6 +42,7 @@ export const validateSceneTool: Tool = {
 
 export async function handleValidateScene(
   args: McpToolArgs,
+  deps: ValidateSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = ValidateInput.safeParse(args)
   if (!parsed.success) {
@@ -57,7 +68,7 @@ export async function handleValidateScene(
   let bytes: Buffer
   let stat: fs.Stats
   try {
-    stat = fs.statSync(scenePath)
+    stat = deps.statSync(scenePath)
   } catch (err) {
     return {
       isError: true,
@@ -83,7 +94,7 @@ export async function handleValidateScene(
     }
   }
   try {
-    bytes = fs.readFileSync(scenePath)
+    bytes = deps.readFileSync(scenePath)
   } catch (err) {
     return {
       isError: true,
