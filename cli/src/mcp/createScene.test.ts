@@ -265,14 +265,15 @@ test('create_scene rejects relative output paths', async () => {
   assert.equal(assertToolText(result), 'create_scene: output must be an absolute path.')
 })
 
-test('create_scene rejects blank output paths', async () => {
+test('create_scene rejects blank output paths at schema validation', async () => {
   const result = await handleCreateScene({
     output: '   ',
     scene: { nodes: {} },
   })
 
   assert.equal(result.isError, true)
-  assert.equal(assertToolText(result), 'create_scene: output path is required')
+  assert.match(assertToolText(result), /^create_scene: invalid arguments/)
+  assert.match(assertToolText(result), /output path is required/)
 })
 
 test('create_scene rejects empty output paths at schema validation', async () => {
