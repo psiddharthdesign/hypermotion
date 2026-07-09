@@ -49,7 +49,7 @@ import path from 'node:path'
 import { buildSceneBytes, readSceneSummary, type SceneJson } from '../scene/build.js'
 
 interface CreateCommandOptions {
-  from?: string
+  readonly from?: string
 }
 
 export function createCommand(): Command {

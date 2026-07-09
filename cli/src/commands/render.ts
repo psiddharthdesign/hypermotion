@@ -34,11 +34,11 @@ const QUALITY_HELP = RENDER_QUALITIES.join(' / ')
 const EMPTY_OPTION_LABEL = '<empty>'
 
 interface RenderOptions {
-  output: string
-  format?: string
-  quality?: string
-  fps?: string
-  scene?: string
+  readonly output: string
+  readonly format?: string
+  readonly quality?: string
+  readonly fps?: string
+  readonly scene?: string
 }
 
 export interface RenderCommandDeps {
