@@ -3,7 +3,11 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { NODE_KINDS, PATCH_OPERATION_TYPES, PROPERTY_IDS } from '../../scene/build.js'
 import { RENDER_FORMATS, RENDER_QUALITIES } from '../../renderOptions.js'
-import { EMPTY_OBJECT_INPUT_SCHEMA } from './schema.js'
+import {
+  EMPTY_OBJECT_INPUT_SCHEMA,
+  rejectUnexpectedEmptyArgs,
+  type McpToolArgs,
+} from './schema.js'
 
 export const MCP_TOOLS = [
   'doctor',
@@ -67,7 +71,10 @@ export const listKeyframeablePropertiesTool: Tool = {
   inputSchema: EMPTY_OBJECT_INPUT_SCHEMA,
 }
 
-export async function handleGetCapabilities(): Promise<CallToolResult> {
+export async function handleGetCapabilities(args: McpToolArgs = {}): Promise<CallToolResult> {
+  const invalidArgsMessage = rejectUnexpectedEmptyArgs('get_capabilities', args)
+  if (invalidArgsMessage !== null) return text(invalidArgsMessage, true)
+
   const payload: CapabilitiesPayload = {
     sceneExtension: '.hype',
     mcpTools: MCP_TOOLS,
@@ -87,7 +94,12 @@ export async function handleGetCapabilities(): Promise<CallToolResult> {
   return text(payload)
 }
 
-export async function handleListKeyframeableProperties(): Promise<CallToolResult> {
+export async function handleListKeyframeableProperties(
+  args: McpToolArgs = {},
+): Promise<CallToolResult> {
+  const invalidArgsMessage = rejectUnexpectedEmptyArgs('list_keyframeable_properties', args)
+  if (invalidArgsMessage !== null) return text(invalidArgsMessage, true)
+
   const payload: KeyframeablePropertiesPayload = {
     keyframeableProperties: PROPERTY_IDS,
   }
@@ -95,8 +107,14 @@ export async function handleListKeyframeableProperties(): Promise<CallToolResult
   return text(payload)
 }
 
-function text(value: CapabilityToolPayload): CallToolResult {
+function text(value: CapabilityToolPayload | string, isError?: boolean): CallToolResult {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
+    isError,
+    content: [
+      {
+        type: 'text' as const,
+        text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+      },
+    ],
   }
 }

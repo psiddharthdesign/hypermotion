@@ -95,9 +95,9 @@ export async function startMcpServer(): Promise<void> {
     try {
       switch (name) {
         case 'doctor':
-          return await handleDoctor()
+          return await handleDoctor(args ?? {})
         case 'get_capabilities':
-          return await handleGetCapabilities()
+          return await handleGetCapabilities(args ?? {})
         case 'render_scene':
           return await handleRenderScene(args ?? {})
         case 'info_scene':
@@ -121,7 +121,7 @@ export async function startMcpServer(): Promise<void> {
         case 'open_scene':
           return await handleOpenScene(args ?? {})
         case 'list_keyframeable_properties':
-          return await handleListKeyframeableProperties()
+          return await handleListKeyframeableProperties(args ?? {})
         default:
           return textToolResult(`Unknown tool: ${name}`, true)
       }
