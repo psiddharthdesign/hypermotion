@@ -209,6 +209,36 @@ export async function handleRenderScene(
   }
 
   const outDir = path.dirname(outputPath)
+  if (deps.existsSync(outputPath)) {
+    let stats: fs.Stats
+    try {
+      stats = deps.statSync(outputPath)
+    } catch (err) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: failed to inspect output path ${outputPath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        ],
+      }
+    }
+    if (stats.isDirectory()) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `render_scene: output path is a directory: ${outputPath}`,
+          },
+        ],
+      }
+    }
+  }
+
   if (deps.existsSync(outDir)) {
     let stats: fs.Stats
     try {
