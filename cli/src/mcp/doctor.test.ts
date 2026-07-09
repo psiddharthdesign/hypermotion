@@ -20,6 +20,14 @@ test('doctor input schema accepts no arguments', () => {
   })
 })
 
+test('doctor rejects unknown arguments as MCP errors', async () => {
+  const result = await handleDoctor({ verbose: true })
+
+  assert.equal(result.isError, true)
+  assert.match(assertToolText(result), /^doctor: invalid arguments/)
+  assert.match(assertToolText(result), /Unrecognized key/)
+})
+
 test('doctor returns the report as MCP JSON content', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-mcp-doctor-missing-'))
   try {
