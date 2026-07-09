@@ -16,10 +16,16 @@
  *
  *   claude mcp add -s user hypermotion -- hypermotion-mcp
  *
+ * If the desktop app is installed somewhere non-standard, include
+ * HYPERMOTION_APP_PATH in the registration environment.
+ *
  * To wire into Codex CLI, they add to ~/.codex/config.toml:
  *
  *   [mcp_servers.hypermotion]
  *   command = "hypermotion-mcp"
+ *
+ *   [mcp_servers.hypermotion.env]
+ *   HYPERMOTION_APP_PATH = "/Applications/hyper-motion.app/Contents/MacOS/hyper-motion"
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
