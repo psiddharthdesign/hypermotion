@@ -63,6 +63,8 @@ test('inferRenderFormatFromPath normalizes extension casing', () => {
 
 test('inferRenderFormatFromPath recognizes extension-only output filenames', () => {
   assert.equal(inferRenderFormatFromPath('.gif'), 'gif')
+  assert.equal(inferRenderFormatFromPath('.gif?download=1'), 'gif')
+  assert.equal(inferRenderFormatFromPath('.WEBM#preview'), 'webm')
   assert.equal(inferRenderFormatFromPath('/tmp/.WEBM'), 'webm')
   assert.equal(inferRenderFormatFromPath('C:\\tmp\\.WEBM'), 'webm')
   assert.equal(inferRenderFormatFromPath('.mov'), 'mp4')
