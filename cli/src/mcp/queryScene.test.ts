@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { buildSceneBytes } from '../scene/build.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import {
@@ -35,7 +35,7 @@ function malformedChildren(children: unknown[]): PersistedNodeChildren {
 }
 
 function inputProperty(
-  tool: typeof listLayersTool,
+  tool: Pick<Tool, 'inputSchema'>,
   name: string,
 ): ToolSchemaProperty {
   const property = tool.inputSchema.properties?.[name]
