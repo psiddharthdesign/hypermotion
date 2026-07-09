@@ -48,7 +48,7 @@ test('validate command prints JSON validation results', async () => {
     assert.deepEqual(JSON.parse(stdout), {
       ok: true,
       errors: [],
-      warnings: ['scene.activeCameraId is missing'],
+      warnings: [],
     })
     assert.equal(process.exitCode, previousExitCode)
   } finally {
@@ -162,7 +162,7 @@ test('validate command prints human-readable validation errors', async () => {
 
     assert.match(stdout, /^Scene is invalid$/m)
     assert.match(stdout, /^error: node root has missing child: missing-child$/m)
-    assert.match(stdout, /^warning: scene\.activeCameraId is missing$/m)
+    assert.doesNotMatch(stdout, /^warning: scene\.activeCameraId is missing$/m)
     assert.equal(process.exitCode, 1)
   } finally {
     process.exitCode = previousExitCode
@@ -204,7 +204,7 @@ test('validate command prints JSON validation errors', async () => {
     assert.deepEqual(JSON.parse(stdout), {
       ok: false,
       errors: ['node root has missing child: missing-child'],
-      warnings: ['scene.activeCameraId is missing'],
+      warnings: [],
     })
     assert.equal(process.exitCode, 1)
   } finally {
