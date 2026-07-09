@@ -9,7 +9,7 @@ import { locateDesktopApp } from '../electron/locator.js'
 
 type OpenSpawnOptions = Readonly<Pick<SpawnOptions, 'detached' | 'stdio'>>
 
-interface OpenCommandDeps {
+export interface OpenCommandDeps {
   readonly locateApp: typeof locateDesktopApp
   readonly existsSync: typeof fs.existsSync
   readonly statSync: typeof fs.statSync
