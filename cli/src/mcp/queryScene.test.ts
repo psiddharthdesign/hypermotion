@@ -20,6 +20,14 @@ import {
 } from './tools/queryScene.js'
 
 type ToolSchemaProperty = Record<string, unknown> | undefined
+type PersistedNodeChildren = NonNullable<
+  NonNullable<Parameters<typeof buildSceneBytes>[0]['nodes']>[string]['children']
+>
+
+function malformedChildren(children: unknown[]): PersistedNodeChildren {
+  // Exercise persisted scenes whose child lists contain stale non-string entries.
+  return children as PersistedNodeChildren
+}
 
 test('query scene MCP tool schemas describe their path and node id inputs', () => {
   for (const tool of [listLayersTool, getLayerTool, listTracksTool, listCamerasTool]) {
@@ -323,7 +331,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
             name: 'Root frame',
             kind: 'frame',
             parent: null,
-            children: ['title', 'title.*', 42] as unknown as string[],
+            children: malformedChildren(['title', 'title.*', 42]),
             size: { width: 320, height: 180 },
             layout: { mode: 'none' },
           },
