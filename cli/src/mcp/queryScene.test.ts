@@ -159,10 +159,7 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
     for (const entry of cases) {
       const result = await entry.run()
       assert.equal(result.isError, true)
-      assert.match(
-        assertToolText(result),
-        new RegExp(`^${entry.name}: failed to read ${escapeRegExp(missingScene)}:`),
-      )
+      assert.equal(assertToolText(result), `${entry.name}: scene file not found: ${missingScene}`)
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
