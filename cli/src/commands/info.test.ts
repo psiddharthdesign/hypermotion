@@ -6,13 +6,15 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { infoCommand } from './info.js'
-import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
+import {
+  buildSceneBytes,
+  type SceneMetaJson,
+  type SceneSummary,
+} from '../scene/build.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 
-type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
-type PersistedSceneMeta = NonNullable<PersistedSceneInput['meta']>
-type PersistedSceneCanvas = PersistedSceneMeta['canvas']
+type PersistedSceneCanvas = SceneMetaJson['canvas']
 type MalformedPersistedCanvas = Omit<
   NonNullable<PersistedSceneCanvas>,
   'width' | 'height'
@@ -23,7 +25,7 @@ type MalformedPersistedCanvas = Omit<
 
 function writeMinimalScene(
   scenePath: string,
-  meta: Pick<PersistedSceneMeta, 'name' | 'canvas'>,
+  meta: Pick<SceneMetaJson, 'name' | 'canvas'>,
 ): void {
   fs.writeFileSync(
     scenePath,
