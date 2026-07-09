@@ -198,8 +198,8 @@ test('withEnvVar returns async callback values', async () => {
   }
 })
 
-test('withEnvVar restores values after async callback failures', async () => {
-  const name = 'HYPERMOTION_TEST_ENV_ASYNC_THROW'
+test('withEnvVar restores values after async callback rejection', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_ASYNC_REJECT'
   process.env[name] = 'before'
 
   try {
