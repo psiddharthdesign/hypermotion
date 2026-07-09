@@ -47,6 +47,8 @@ test('render_scene input schema exposes render preset enums', () => {
   const formatProperty = schemaProperty('format')
   const qualityProperty = schemaProperty('quality')
 
+  assert.equal(formatProperty?.type, 'string')
+  assert.equal(qualityProperty?.type, 'string')
   assert.deepEqual(formatProperty?.enum, [...RENDER_FORMATS])
   assert.deepEqual(qualityProperty?.enum, [...RENDER_QUALITIES])
 })
