@@ -26,18 +26,20 @@ import * as Y from 'yjs'
 // the schema below is the same shape the agent produces.
 
 export interface SceneJson {
-  meta?: {
-    id?: string
-    name?: string
-    duration?: number
-    frameRate?: number
-    canvas?: Partial<SceneCanvas>
-  }
+  meta?: SceneMetaJson
   root?: string
   activeCameraId?: string | null
   nodes?: Record<string, NodeJson>
   tracks?: Record<string, TrackJson>
   sections?: Record<string, SectionJson>
+}
+
+export interface SceneMetaJson {
+  id?: string
+  name?: string
+  duration?: number
+  frameRate?: number
+  canvas?: Partial<SceneCanvas>
 }
 
 export type TextAlignJson = 'start' | 'center' | 'end'
