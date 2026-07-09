@@ -59,8 +59,42 @@ const CreateInput = z.object({
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 }).strict()
 type CreateInputData = z.infer<typeof CreateInput>
+type StringSchemaProperty = {
+  readonly type: 'string'
+  readonly minLength?: number
+  readonly pattern?: string
+  readonly description: string
+}
+type BooleanSchemaProperty = {
+  readonly type: 'boolean'
+  readonly description: string
+  readonly default: boolean
+}
+type SceneSchemaProperty = {
+  readonly anyOf: readonly [{ readonly type: 'string' }, { readonly type: 'object' }]
+  readonly description: string
+}
 
 const KEYFRAMEABLE_PROPERTY_DESCRIPTION = PROPERTY_IDS.join(', ')
+
+const OUTPUT_PATH_PROPERTY: StringSchemaProperty = {
+  type: 'string',
+  minLength: 1,
+  pattern: '\\S',
+  description: OUTPUT_PATH_DESCRIPTION,
+}
+
+const SCENE_PROPERTY: SceneSchemaProperty = {
+  anyOf: [{ type: 'string' }, { type: 'object' }],
+  description:
+    'The scene to build. Either a JSON string or an inline object matching SceneJson.',
+}
+
+const OPEN_PROPERTY: BooleanSchemaProperty = {
+  type: 'boolean',
+  description: 'Open the newly-created scene in the desktop app. Defaults to true.',
+  default: true,
+}
 
 export const createSceneTool: Tool = {
   name: 'create_scene',
@@ -97,22 +131,9 @@ export const createSceneTool: Tool = {
   inputSchema: {
     type: 'object',
     properties: {
-      output: {
-        type: 'string',
-        minLength: 1,
-        pattern: '\\S',
-        description: OUTPUT_PATH_DESCRIPTION,
-      },
-      scene: {
-        anyOf: [{ type: 'string' }, { type: 'object' }],
-        description:
-          'The scene to build. Either a JSON string or an inline object matching SceneJson.',
-      },
-      open: {
-        type: 'boolean',
-        description: 'Open the newly-created scene in the desktop app. Defaults to true.',
-        default: true,
-      },
+      output: OUTPUT_PATH_PROPERTY,
+      scene: SCENE_PROPERTY,
+      open: OPEN_PROPERTY,
     },
     required: ['output', 'scene'],
     additionalProperties: false,
