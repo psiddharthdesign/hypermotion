@@ -57,3 +57,14 @@ test('assertToolText rejects non-text first content items', () => {
     /expected first MCP content item to be text/,
   )
 })
+
+test('assertToolText rejects malformed text payloads', () => {
+  const result = {
+    content: [{ type: 'text', text: undefined }],
+  } as unknown as CallToolResult
+
+  assert.throws(
+    () => assertToolText(result),
+    /expected MCP text content to be a string/,
+  )
+})

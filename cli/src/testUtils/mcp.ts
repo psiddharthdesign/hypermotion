@@ -9,6 +9,7 @@ export function assertToolText(result: CallToolResult): string {
   assert.equal(result.content.length, 1, 'expected exactly one MCP content item')
   const item = result.content[0]
   assert.ok(isToolTextContent(item), 'expected first MCP content item to be text')
+  assert.equal(typeof item.text, 'string', 'expected MCP text content to be a string')
   return item.text
 }
 
