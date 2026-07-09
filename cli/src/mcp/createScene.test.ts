@@ -14,7 +14,8 @@ test('create_scene input schema marks output as non-empty', () => {
     type: 'string',
     minLength: 1,
     pattern: '\\S',
-    description: 'Absolute, non-blank path to write the .hype file to.',
+    description:
+      'Absolute, non-blank path to write the .hype file to. Parent dirs are created if missing.',
   })
 })
 
