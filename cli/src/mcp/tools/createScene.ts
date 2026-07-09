@@ -39,7 +39,8 @@ import type { McpToolArgs } from './schema.js'
 const CreateInput = z.object({
   output: z
     .string()
-    .min(1)
+    .trim()
+    .min(1, 'output path is required')
     .describe('Absolute path to write the .hype file to. Parent dirs are created if missing.'),
   scene: z
     .union([
@@ -170,18 +171,7 @@ export async function handleCreateScene(
   // Make sure the output's parent directory exists. Agents tend to
   // specify deep paths and we don't want a simple ENOENT to obscure
   // the actual failure.
-  const outputPath = input.output.trim()
-  if (!outputPath) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: 'create_scene: output path is required',
-        },
-      ],
-    }
-  }
+  const outputPath = input.output
   if (!path.isAbsolute(outputPath)) {
     return {
       isError: true,
