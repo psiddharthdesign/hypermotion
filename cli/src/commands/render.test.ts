@@ -98,6 +98,24 @@ test('render command infers formats case-insensitively from output extensions', 
   }
 })
 
+test('render command infers formats from extension-only output filenames', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-extension-only-'))
+  const appPath = path.join(dir, 'hyper-motion')
+  const calls: HeadlessRenderRequest[] = []
+  try {
+    await renderCommand({
+      locateApp: async () => appPath,
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', path.join(dir, '.WEBM')], { from: 'user' })
+
+    assert.equal(calls[0]?.format, 'webm')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render command ignores URL-style suffixes when inferring output formats', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-suffix-'))
   const outputPath = path.join(dir, 'out.webm?download=1#preview')
