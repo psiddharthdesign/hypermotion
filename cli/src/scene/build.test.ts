@@ -762,6 +762,25 @@ test('applyScenePatch fills workspaceOnly default for created nodes', () => {
   assert.equal(nodes.badge.workspaceOnly, false)
 })
 
+test('applyScenePatch links created nodes into their parent children list', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'badge',
+        kind: 'rect',
+        parent: 'root',
+      },
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes.root.children, ['title', 'badge'])
+  assert.equal(validateScene(patched).ok, true)
+})
+
 test('applyScenePatch fills text defaults for created nodes', () => {
   const bytes = buildSceneBytes(sampleScene())
   const patched = applyScenePatch(bytes, [
