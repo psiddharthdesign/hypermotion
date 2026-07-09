@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { readSceneSummary, type SceneSummary } from '../../scene/build.js'
+import type { McpToolArgs } from './schema.js'
 
 const InfoInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe('Absolute or relative path to a .hype scene file.'),
@@ -39,7 +40,7 @@ export const infoSceneTool: Tool = {
 }
 
 export async function handleInfoScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = InfoInput.safeParse(args)
   if (!parsed.success) {

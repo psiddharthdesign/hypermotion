@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import { validateScene, type SceneValidationResult } from '../../scene/build.js'
+import type { McpToolArgs } from './schema.js'
 
 const ValidateInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe('Absolute or relative path to a .hype scene file.'),
@@ -30,7 +31,7 @@ export const validateSceneTool: Tool = {
 }
 
 export async function handleValidateScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = ValidateInput.safeParse(args)
   if (!parsed.success) {
