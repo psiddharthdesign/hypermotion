@@ -25,6 +25,7 @@ const InfoInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe(SCENE_PATH_DESCRIPTION),
 }).strict()
 type InfoInputData = z.infer<typeof InfoInput>
+type ToolInputSchema = Tool['inputSchema']
 
 export const infoSceneTool: Tool = {
   name: 'info_scene',
@@ -39,7 +40,7 @@ export const infoSceneTool: Tool = {
     },
     required: ['scene'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export async function handleInfoScene(

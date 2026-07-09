@@ -18,6 +18,7 @@ const ValidateInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe(SCENE_PATH_DESCRIPTION),
 }).strict()
 type ValidateInputData = z.infer<typeof ValidateInput>
+type ToolInputSchema = Tool['inputSchema']
 
 export type ValidateSceneDeps = {
   statSync: (path: fs.PathLike) => fs.Stats
@@ -40,7 +41,7 @@ export const validateSceneTool: Tool = {
     },
     required: ['scene'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export async function handleValidateScene(
