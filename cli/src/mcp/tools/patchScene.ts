@@ -8,8 +8,8 @@ import { applyScenePatch, type PatchOperation, type ScenePatch } from '../../sce
 import { pushSceneToRunningApp } from '../../electron/live.js'
 
 const PatchInput = z.object({
-  scene: z.string().trim().min(1, 'scene path is required').describe('Path to the input .hype scene file.'),
-  output: z.string().trim().min(1, 'output path is required').optional().describe('Path to write. Defaults to overwriting scene.'),
+  scene: z.string().trim().min(1, 'scene path is required').describe('Absolute or relative path to the input .hype scene file.'),
+  output: z.string().trim().min(1, 'output path is required').optional().describe('Absolute or relative path to write. Defaults to overwriting scene.'),
   patch: z.union([z.string(), z.record(z.unknown()), z.array(z.record(z.unknown()))]),
   applyLive: z.boolean().optional().describe('Push the patched scene into the running desktop app. Defaults to true.'),
 })
@@ -26,13 +26,13 @@ export const patchSceneTool: Tool = {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to the input .hype scene file.',
+        description: 'Absolute or relative path to the input .hype scene file.',
       },
       output: {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to write. Defaults to overwriting scene.',
+        description: 'Absolute or relative path to write. Defaults to overwriting scene.',
       },
       patch: { description: 'Patch as { ops: [...] }, an operation array, or a JSON string.' },
       applyLive: {
