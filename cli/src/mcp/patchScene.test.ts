@@ -17,13 +17,13 @@ test('patch_scene input schema exposes required scene and patch', () => {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to the input .hype scene file.',
+        description: 'Absolute or relative path to the input .hype scene file.',
       },
       output: {
         type: 'string',
         minLength: 1,
         pattern: '\\S',
-        description: 'Path to write. Defaults to overwriting scene.',
+        description: 'Absolute or relative path to write. Defaults to overwriting scene.',
       },
       patch: { description: 'Patch as { ops: [...] }, an operation array, or a JSON string.' },
       applyLive: {
