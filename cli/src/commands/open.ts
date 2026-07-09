@@ -2,19 +2,21 @@
 
 import { Command } from 'commander'
 import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { locateDesktopApp } from '../electron/locator.js'
 
+type OpenSpawnOptions = Readonly<Pick<SpawnOptions, 'detached' | 'stdio'>>
+
 interface OpenCommandDeps {
-  locateApp: typeof locateDesktopApp
-  existsSync: typeof fs.existsSync
-  statSync: typeof fs.statSync
-  spawnApp: (
+  readonly locateApp: typeof locateDesktopApp
+  readonly existsSync: typeof fs.existsSync
+  readonly statSync: typeof fs.statSync
+  readonly spawnApp: (
     command: string,
     args: string[],
-    options: { detached: true; stdio: 'ignore' },
+    options: OpenSpawnOptions,
   ) => Pick<ChildProcess, 'unref'>
 }
 
