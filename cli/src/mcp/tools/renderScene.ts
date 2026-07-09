@@ -23,7 +23,12 @@ import {
   inferRenderFormatFromPath,
 } from '../../renderOptions.js'
 import type { RenderFormat, RenderQuality } from '../../renderOptions.js'
-import type { McpToolArgs } from './schema.js'
+import type {
+  EnumStringSchemaProperty,
+  IntegerSchemaProperty,
+  McpToolArgs,
+  StringSchemaProperty,
+} from './schema.js'
 
 const RenderInput = z.object({
   output: z
@@ -50,21 +55,6 @@ const RenderInput = z.object({
     ),
 }).strict()
 type RenderInputData = z.infer<typeof RenderInput>
-type StringSchemaProperty = {
-  readonly type: 'string'
-  readonly minLength?: number
-  readonly pattern?: string
-  readonly description: string
-}
-type EnumStringSchemaProperty<Value extends string> = StringSchemaProperty & {
-  readonly enum: readonly Value[]
-}
-type IntegerSchemaProperty = {
-  readonly type: 'integer'
-  readonly minimum: number
-  readonly maximum: number
-  readonly description: string
-}
 export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: (path: fs.PathLike) => fs.Stats

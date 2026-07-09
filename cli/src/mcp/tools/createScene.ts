@@ -34,7 +34,7 @@ import {
   type SceneJson,
 } from '../../scene/build.js'
 import { pushSceneToRunningApp } from '../../electron/live.js'
-import type { McpToolArgs } from './schema.js'
+import type { BooleanSchemaProperty, McpToolArgs, StringSchemaProperty } from './schema.js'
 
 const OUTPUT_PATH_DESCRIPTION =
   'Absolute, non-blank path to write the .hype file to. Parent dirs are created if missing.'
@@ -59,17 +59,6 @@ const CreateInput = z.object({
     .describe('Open the newly-created scene in the desktop app. Defaults to true.'),
 }).strict()
 type CreateInputData = z.infer<typeof CreateInput>
-type StringSchemaProperty = {
-  readonly type: 'string'
-  readonly minLength?: number
-  readonly pattern?: string
-  readonly description: string
-}
-type BooleanSchemaProperty = {
-  readonly type: 'boolean'
-  readonly description: string
-  readonly default: boolean
-}
 type SceneSchemaProperty = {
   readonly anyOf: readonly [{ readonly type: 'string' }, { readonly type: 'object' }]
   readonly description: string
