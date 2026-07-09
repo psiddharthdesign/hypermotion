@@ -29,7 +29,7 @@ export interface DoctorReport {
 }
 
 type DoctorCommandOptions = {
-  json?: boolean
+  readonly json?: boolean
 }
 
 export async function getDoctorReport(): Promise<DoctorReport> {
