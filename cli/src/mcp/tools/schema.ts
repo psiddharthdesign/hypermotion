@@ -21,7 +21,14 @@ export function rejectUnexpectedEmptyArgs(
   toolName: EmptyArgsToolName,
   args: McpToolArgs,
 ): string | null {
+  if (!isPlainObject(args)) {
+    return `${toolName}: invalid arguments — Expected an object`
+  }
   const keys = Object.keys(args).sort()
   if (keys.length === 0) return null
   return `${toolName}: invalid arguments — Unrecognized key(s): ${keys.join(', ')}`
+}
+
+function isPlainObject(value: unknown): value is McpToolArgs {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
