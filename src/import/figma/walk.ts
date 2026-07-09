@@ -405,13 +405,6 @@ function createFrame(
   // case the heuristic gets wrong.
   const corner = maxCornerRadius(appearance)
   const importedClips = node.clipsContent && corner > 0
-  console.log(
-    `[figma-import]   frame "${node.name}" → ${size.width}×${size.height} ` +
-      `layout=${layout.mode}/${layout.direction} gap=${layout.gap} ` +
-      `padding=${layout.padding.top}/${layout.padding.right}/` +
-      `${layout.padding.bottom}/${layout.padding.left} ` +
-      `clip=${importedClips}(figma=${node.clipsContent},corner=${corner})`,
-  )
   const id = api.createNode('frame', parentId, {
     name: node.name || 'Frame',
     visible: node.visible,
