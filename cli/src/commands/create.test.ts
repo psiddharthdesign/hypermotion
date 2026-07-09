@@ -233,6 +233,37 @@ test('create command rejects directory output paths', async () => {
   }
 })
 
+test('create command rejects directory output paths before building scenes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-create-dir-output-'))
+  const sourcePath = path.join(dir, 'scene.json')
+  const outputPath = path.join(dir, 'existing-output')
+  try {
+    fs.mkdirSync(outputPath)
+    fs.writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        nodes: {
+          broken: null,
+        },
+      }),
+    )
+
+    const stderr = await withProcessExitThrow(async () => {
+      return captureStderr(async () => {
+        await assert.rejects(
+          createCommand()
+            .parseAsync([outputPath, '--from', sourcePath], { from: 'user' }),
+          { exitCode: 2 },
+        )
+      })
+    })
+
+    assert.equal(stderr, `[create] output path is a directory: ${outputPath}\n`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('create command rejects blank output paths before reading input', async () => {
   const stderr = await withProcessExitThrow(async () => {
     return captureStderr(async () => {
