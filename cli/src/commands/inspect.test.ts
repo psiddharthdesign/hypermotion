@@ -228,6 +228,7 @@ test('inspect command reports stat failures as read errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-stat-'))
   const scenePath = path.join(dir, 'scene.hype')
   const originalStatSync = fs.statSync
+  const originalStatSyncDescriptor = Object.getOwnPropertyDescriptor(fs, 'statSync')
   try {
     Object.defineProperty(fs, 'statSync', {
       configurable: true,
@@ -251,7 +252,11 @@ test('inspect command reports stat failures as read errors', async () => {
       `[inspect] failed to read ${path.resolve(scenePath)}: stat failed\n`,
     )
   } finally {
-    Object.defineProperty(fs, 'statSync', { value: originalStatSync })
+    if (originalStatSyncDescriptor) {
+      Object.defineProperty(fs, 'statSync', originalStatSyncDescriptor)
+    } else {
+      Object.defineProperty(fs, 'statSync', { value: originalStatSync })
+    }
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -260,6 +265,10 @@ test('inspect command reports read failures after stat succeeds', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-inspect-read-'))
   const scenePath = path.join(dir, 'scene.hype')
   const originalReadFileSync = fs.readFileSync
+  const originalReadFileSyncDescriptor = Object.getOwnPropertyDescriptor(
+    fs,
+    'readFileSync',
+  )
   try {
     fs.writeFileSync(scenePath, '')
     Object.defineProperty(fs, 'readFileSync', {
@@ -284,7 +293,11 @@ test('inspect command reports read failures after stat succeeds', async () => {
       `[inspect] failed to read ${path.resolve(scenePath)}: read failed\n`,
     )
   } finally {
-    Object.defineProperty(fs, 'readFileSync', { value: originalReadFileSync })
+    if (originalReadFileSyncDescriptor) {
+      Object.defineProperty(fs, 'readFileSync', originalReadFileSyncDescriptor)
+    } else {
+      Object.defineProperty(fs, 'readFileSync', { value: originalReadFileSync })
+    }
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
