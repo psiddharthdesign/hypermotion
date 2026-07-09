@@ -19,7 +19,12 @@ import {
   listTracksTool,
 } from './tools/queryScene.js'
 
-type ToolSchemaProperty = Record<string, unknown> | undefined
+type ToolSchemaProperty = {
+  readonly type?: string
+  readonly minLength?: number
+  readonly pattern?: string
+  readonly description?: string
+} | undefined
 type PersistedNodeChildren = NonNullable<
   NonNullable<Parameters<typeof buildSceneBytes>[0]['nodes']>[string]['children']
 >
