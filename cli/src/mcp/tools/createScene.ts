@@ -34,6 +34,7 @@ import {
   type SceneJson,
 } from '../../scene/build.js'
 import { pushSceneToRunningApp } from '../../electron/live.js'
+import type { McpToolArgs } from './schema.js'
 
 const CreateInput = z.object({
   output: z
@@ -115,7 +116,7 @@ export const createSceneTool: Tool = {
 }
 
 export async function handleCreateScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = CreateInput.safeParse(args)
   if (!parsed.success) {
