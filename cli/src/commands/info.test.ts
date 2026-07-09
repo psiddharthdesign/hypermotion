@@ -462,6 +462,7 @@ test('info command reports stat failures as read errors', async () => {
   const originalStatSync = fs.statSync
   try {
     Object.defineProperty(fs, 'statSync', {
+      configurable: true,
       value: ((statPath: fs.PathLike) => {
         if (statPath === scenePath) throw new Error('stat failed')
         return originalStatSync(statPath)
