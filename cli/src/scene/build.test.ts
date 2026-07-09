@@ -1013,6 +1013,18 @@ test('validateScene warns when no active camera is selected', () => {
   assert.deepEqual(result.warnings, ['scene.activeCameraId is missing'])
 })
 
+test('validateScene accepts scenes without cameras', () => {
+  const scene = sampleScene()
+  delete scene.nodes?.camera
+  scene.activeCameraId = null
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
 test('validateScene rejects unsupported track property ids', () => {
   const doc = new Y.Doc()
   Y.applyUpdate(doc, buildSceneBytes(sampleScene()))

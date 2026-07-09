@@ -197,7 +197,7 @@ test('validate_scene returns validation JSON for readable scenes', async () => {
     assert.deepEqual(JSON.parse(assertToolText(result)), {
       ok: true,
       errors: [],
-      warnings: ['scene.activeCameraId is missing'],
+      warnings: [],
     })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -268,7 +268,7 @@ test('validate_scene marks structurally invalid scenes as MCP errors', async () 
     assert.deepEqual(JSON.parse(assertToolText(result)), {
       ok: false,
       errors: ['node root has missing child: missing-child'],
-      warnings: ['scene.activeCameraId is missing'],
+      warnings: [],
     })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
