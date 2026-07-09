@@ -12,6 +12,7 @@ import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type {
   Appearance,
+  BlendMode,
   CameraNode,
   ComponentPropertyDefinition,
   CornerRadii,
@@ -36,6 +37,16 @@ import type {
   VariantTransition,
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
+import {
+  captureVideoPoster,
+  decodeAudioMeta,
+  decodeVideoMeta,
+  isAudioFile,
+  isVideoFile,
+  normalizeVideoFileForBrowser,
+  readMediaFileAsDataUrl,
+  VIDEO_PLAYBACK_PROXY_WARNING,
+} from '@/ui/importMedia'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import type { SceneAPI } from '@/scene/doc'
@@ -99,6 +110,25 @@ import {
   subscribeLibrary,
   type CustomFont,
 } from '@/fonts'
+
+const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'multiply', label: 'Multiply' },
+  { value: 'screen', label: 'Screen' },
+  { value: 'overlay', label: 'Overlay' },
+  { value: 'darken', label: 'Darken' },
+  { value: 'lighten', label: 'Lighten' },
+  { value: 'color-dodge', label: 'Color Dodge' },
+  { value: 'color-burn', label: 'Color Burn' },
+  { value: 'hard-light', label: 'Hard Light' },
+  { value: 'soft-light', label: 'Soft Light' },
+  { value: 'difference', label: 'Difference' },
+  { value: 'exclusion', label: 'Exclusion' },
+  { value: 'hue', label: 'Hue' },
+  { value: 'saturation', label: 'Saturation' },
+  { value: 'color', label: 'Color' },
+  { value: 'luminosity', label: 'Luminosity' },
+]
 
 /**
  * Right sidebar: two modes.
@@ -542,6 +572,10 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     : null
 
   const cOpacity = common(nodes, (n) => n.appearance.opacity)
+  const cBlendMode = common(
+    nodes,
+    (n) => n.appearance.blendMode ?? 'normal',
+  )
   // Fill reads the full Fill shape — solid, linear, or radial. common()
   // does structural JSON equality so two nodes with the same gradient
   // stops + angle still resolve to a non-mixed value.
@@ -715,6 +749,16 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               min={0}
               max={1}
               step={0.05}
+            />
+          </MixedCell>
+        </FieldRow>
+        <FieldRow label="Blend">
+          <MixedCell mixed={cBlendMode.mixed}>
+            <SelectField<BlendMode>
+              value={cBlendMode.value}
+              options={BLEND_MODE_OPTIONS}
+              onCommit={(blendMode) => patchAppearanceAll({ blendMode })}
+              width="w-full"
             />
           </MixedCell>
         </FieldRow>
@@ -1794,6 +1838,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               min={0}
               max={1}
               step={0.05}
+            />
+          </FieldRow>
+          <FieldRow label="Blend">
+            <SelectField<BlendMode>
+              value={node.appearance.blendMode ?? 'normal'}
+              options={BLEND_MODE_OPTIONS}
+              onCommit={(blendMode) => patchAppearance({ blendMode })}
+              width="w-full"
             />
           </FieldRow>
           <FillField
@@ -3485,10 +3537,9 @@ function SpringControls({
 
 // ---------------------------------------------------------------------------
 // Position — flow vs absolute. Mirrors Figma's "Absolute position" toggle.
-// Only meaningful inside an auto-layout (flex / grid) parent — for nodes
-// whose parent is mode='none', every child is already free-positioned, so
-// the toggle would be a no-op. We hide it in that case to keep the panel
-// honest.
+// Even when a parent is free-positioned (`layout.mode = none`), keep the
+// control visible so media/image layers can be explicitly pinned or put
+// back into parent layout without hunting for a hidden state.
 // ---------------------------------------------------------------------------
 
 function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
@@ -3496,11 +3547,8 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
   // meaningless. Guard early so the section disappears for the Scene.
   if (!node.parent) return null
   const parent = api.getNode(node.parent)
-  if (!parent || !('layout' in parent)) return null
-  const parentMode = parent.layout.mode
-  // Only show in flex / grid parents. mode='none' means every child is
-  // already absolute-ish and the toggle has no effect.
-  if (parentMode !== 'flex' && parentMode !== 'grid') return null
+  if (!parent) return null
+  const parentMode = 'layout' in parent ? parent.layout.mode : 'none'
 
   const onChange = (next: Position) => {
     if (next === node.position) return
@@ -3513,7 +3561,7 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
       const solved = getLastSolvedLayout()
       const childRect = solved?.[node.id]
       const parentRect = solved?.[parent.id]
-      if (childRect && parentRect) {
+      if (childRect && parentRect && 'layout' in parent) {
         const ox =
           childRect.x - parentRect.x - parent.layout.padding.left
         const oy =
@@ -3536,7 +3584,7 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
         <SelectField<Position>
           value={node.position}
           options={[
-            { value: 'flow', label: 'In layout' },
+            { value: 'flow', label: 'Relative / in layout' },
             { value: 'absolute', label: 'Absolute' },
           ]}
           onCommit={onChange}
@@ -3545,7 +3593,11 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
       </FieldRow>
       <p className="px-2 pt-0.5 text-[10.5px] leading-snug text-text-dim">
         {node.position === 'flow'
-          ? `Following parent ${parentMode === 'flex' ? 'auto layout' : 'grid'}.`
+          ? parentMode === 'flex'
+            ? 'Following parent auto layout.'
+            : parentMode === 'grid'
+              ? 'Following parent grid.'
+              : 'Relative to the parent layer.'
           : 'Pinned by Transform — siblings ignore it.'}
       </p>
       {/* When this node is in flow under an auto-layout parent and
@@ -4020,19 +4072,27 @@ function TypographySection({
       </FieldRow>
       <FieldRow label="Line height">
         <NumberField
-          value={node.lineHeight}
+          value={Math.round(node.fontSize * node.lineHeight * 100) / 100}
           onCommit={(v) =>
-            api.setNodeProperty(node.id, 'lineHeight', Math.max(0.5, v))
+            api.setNodeProperty(
+              node.id,
+              'lineHeight',
+              Math.max(0.5, v / Math.max(1, node.fontSize)),
+            )
           }
-          min={0.5}
-          step={0.05}
+          min={1}
+          step={1}
+          suffix="px"
         />
       </FieldRow>
-      <FieldRow label="Letter spacing">
+      <FieldRow label="Tracking">
         <NumberField
           value={node.letterSpacing}
           onCommit={(v) => api.setNodeProperty(node.id, 'letterSpacing', v)}
+          min={-100}
+          max={100}
           step={0.1}
+          suffix="px"
         />
       </FieldRow>
       <FieldRow label="Align">
@@ -4165,12 +4225,192 @@ function MediaSection({
   node: Extract<Node, { kind: 'audio' | 'video' }>
   api: SceneAPI
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const setPlayhead = useUI((s) => s.setPlayhead)
+  const setPlaying = useUI((s) => s.setPlaying)
+  const playing = useUI((s) => s.playing)
   const duration = Math.max(0, node.duration || 0)
   const trimStart = Math.max(0, Math.min(duration, node.trimStart || 0))
   const trimEnd = Math.max(trimStart, Math.min(duration, node.trimEnd || duration))
+  const clipLength = Math.max(0, trimEnd - trimStart)
+  const playbackRate = Math.max(0.05, Math.min(16, node.playbackRate ?? 1))
+
+  const onReplace = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const file = Array.from(files).find((candidate) =>
+      node.kind === 'video' ? isVideoFile(candidate) : isAudioFile(candidate),
+    )
+    if (!file) return
+    const normalized =
+      node.kind === 'video'
+        ? await normalizeVideoFileForBrowser(file)
+        : { file, normalized: false }
+    const sourceFile = normalized.file
+    const src = await readMediaFileAsDataUrl(sourceFile)
+    const meta =
+      node.kind === 'video' ? await decodeVideoMeta(src) : await decodeAudioMeta(src)
+    const poster =
+      node.kind === 'video'
+        ? await captureVideoPoster(src, meta.duration).catch(() => '')
+        : ''
+    api.doc.transact(() => {
+      api.setNodeProperty(
+        node.id,
+        'name',
+        sourceFile.name.replace(/\.[^.]+$/, '') || node.name,
+      )
+      api.setNodeProperty(node.id, 'src', src)
+      api.setNodeProperty(node.id, 'duration', meta.duration)
+      api.setNodeProperty(node.id, 'trimStart', 0)
+      api.setNodeProperty(node.id, 'trimEnd', meta.duration)
+      if (node.kind === 'video') {
+        api.setNodeProperty(node.id, 'poster', poster)
+        api.setNodeProperty(
+          node.id,
+          'importWarning',
+          normalized.normalized ? VIDEO_PLAYBACK_PROXY_WARNING : '',
+        )
+        const videoMeta = meta as { width: number; height: number; duration: number }
+        const currentW = typeof node.size.width === 'number' ? node.size.width : videoMeta.width
+        const ratio = videoMeta.width > 0 ? currentW / videoMeta.width : 1
+        api.setNodeProperty(node.id, 'size', {
+          width: Math.max(1, Math.round(videoMeta.width * ratio)),
+          height: Math.max(1, Math.round(videoMeta.height * ratio)),
+        })
+      }
+    }, 'media-replace')
+  }
 
   return (
-    <Section title={node.kind === 'audio' ? 'Audio' : 'Media'}>
+    <Section title={node.kind === 'audio' ? 'Audio' : 'Video'}>
+      <FieldRow label="Source">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          {node.kind === 'video' && node.src ? (
+            <video
+              src={node.src}
+              muted
+              className="h-10 w-14 shrink-0 rounded border border-border object-cover"
+            />
+          ) : (
+            <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded border border-dashed border-border text-[10px] text-text-dim">
+              {node.kind}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+          >
+            Replace…
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={
+              node.kind === 'video'
+                ? 'video/*,.mp4,.webm,.mov,.m4v,.ogv,.ogg'
+                : 'audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus'
+            }
+            hidden
+            onChange={(e) => {
+              void onReplace(e.target.files)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      </FieldRow>
+      <FieldRow label="Controls">
+        <div className="flex min-w-0 flex-1 justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setPlayhead(node.startTime)
+              setPlaying(false)
+            }}
+            className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+          >
+            Cue
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPlayhead(node.startTime)
+              setPlaying(true)
+            }}
+            className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+          >
+            Play clip
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlaying(!playing)}
+            className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+          >
+            {playing ? 'Pause' : 'Play'}
+          </button>
+        </div>
+      </FieldRow>
+      <FieldRow label="Duration">
+        <div className="min-w-0 flex-1 text-right font-mono text-[11px] text-text-muted">
+          {formatSeconds(duration)} · clip {formatSeconds(clipLength)} · plays{' '}
+          {formatSeconds(clipLength / playbackRate)}
+        </div>
+      </FieldRow>
+      {node.kind === 'video' ? (
+        <>
+          <FieldRow label="Fit">
+            <SelectField<Extract<Node, { kind: 'video' }>['fit']>
+              value={node.fit}
+              options={[
+                { value: 'cover', label: 'Cover' },
+                { value: 'contain', label: 'Contain' },
+                { value: 'fill', label: 'Fill' },
+                { value: 'none', label: 'None' },
+              ]}
+              onCommit={(fit) => api.setNodeProperty(node.id, 'fit', fit)}
+              width="w-full"
+            />
+          </FieldRow>
+          <FieldRow label="Size">
+            <div className="flex min-w-0 flex-1 justify-end gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const canvas = api.getMeta().canvas
+                  const w = Math.round(canvas.width * 0.5)
+                  const ratio =
+                    typeof node.size.width === 'number' &&
+                    typeof node.size.height === 'number' &&
+                    node.size.width > 0
+                      ? node.size.height / node.size.width
+                      : 9 / 16
+                  api.setNodeProperty(node.id, 'size', {
+                    width: w,
+                    height: Math.round(w * ratio),
+                  })
+                }}
+                className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+              >
+                50%
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const canvas = api.getMeta().canvas
+                  api.setNodeProperty(node.id, 'size', {
+                    width: canvas.width,
+                    height: canvas.height,
+                  })
+                  api.setNodeProperty(node.id, 'fit', 'cover')
+                }}
+                className="rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-panel-raised hover:text-text"
+              >
+                Fill scene
+              </button>
+            </div>
+          </FieldRow>
+        </>
+      ) : null}
       <FieldRow label="Mute">
         <CheckboxField
           value={node.muted}
@@ -4188,6 +4428,33 @@ function MediaSection({
           step={5}
           suffix="%"
         />
+      </FieldRow>
+      <FieldRow label="Speed">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+          <SelectField<string>
+            value={String(playbackRate)}
+            options={[
+              { value: '0.25', label: '0.25×' },
+              { value: '0.5', label: '0.5×' },
+              { value: '1', label: '1×' },
+              { value: '1.5', label: '1.5×' },
+              { value: '2', label: '2×' },
+              { value: '4', label: '4×' },
+            ]}
+            onCommit={(v) => api.setNodeProperty(node.id, 'playbackRate', Number(v))}
+            width="w-24"
+          />
+          <NumberField
+            value={playbackRate}
+            onCommit={(v) =>
+              api.setNodeProperty(node.id, 'playbackRate', Math.max(0.05, Math.min(16, v)))
+            }
+            min={0.05}
+            max={16}
+            step={0.05}
+            suffix="×"
+          />
+        </div>
       </FieldRow>
       <FieldRow label="Start">
         <NumberField
@@ -4234,6 +4501,11 @@ function MediaSection({
       </FieldRow>
     </Section>
   )
+}
+
+function formatSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '0.00s'
+  return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`
 }
 
 /**

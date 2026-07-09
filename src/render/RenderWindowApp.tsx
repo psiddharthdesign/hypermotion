@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SceneProvider,
   fillToCss,
-  imageBackgroundStyle,
   loadSceneIntoDoc,
   useSceneAPI,
   useSceneVersion,
@@ -18,6 +17,7 @@ import {
   ScenePostProcessLayer,
   composeInheritedAnim,
   computeCameraDepthOfField,
+  fillBackgroundStyle,
   resolveCameraFocusTargetPoint,
 } from '@/ui/Canvas'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
@@ -257,6 +257,8 @@ function RenderRunner({ requestId }: { requestId: string }) {
 function RenderCanvas({ job }: { job: RenderJob }) {
   const api = useSceneAPI()
   const version = useSceneVersion()
+  const playhead = useUI((s) => s.playhead)
+  const playing = useUI((s) => s.playing)
   const meta = api.getMeta()
   const canvasWidth = meta.canvas?.width ?? 960
   const canvasHeight = meta.canvas?.height ?? 540
@@ -301,8 +303,8 @@ function RenderCanvas({ job }: { job: RenderJob }) {
   const cameraBackgroundFill =
     camera && camera.kind === 'camera' ? camera.background ?? null : null
   const cameraBackgroundCss = fillToCss(cameraBackgroundFill ?? null) ?? null
-  const cameraBackgroundImageStyle = cameraBackgroundFill
-    ? imageBackgroundStyle(cameraBackgroundFill)
+  const cameraBackgroundStyle = cameraBackgroundFill
+    ? fillBackgroundStyle(cameraBackgroundFill)
     : null
 
   const cameraFocalLength =
@@ -421,15 +423,11 @@ function RenderCanvas({ job }: { job: RenderJob }) {
         }}
       >
         {/* Camera viewport background, if any. */}
-        {cameraBackgroundImageStyle ? (
+        {cameraBackgroundStyle ? (
           <div
+            key="camera-background"
             className="pointer-events-none absolute inset-0"
-            style={cameraBackgroundImageStyle}
-          />
-        ) : cameraBackgroundCss ? (
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{ background: cameraBackgroundCss }}
+            style={cameraBackgroundStyle}
           />
         ) : null}
         {!solved ? (
@@ -486,6 +484,8 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               showHelpers={false}
               showPlanes
               exportable
+              playing={playing}
+              playhead={playhead}
               onAvailabilityChange={setThreeCameraAvailable}
             />
           </div>
@@ -648,6 +648,7 @@ async function runExportLoop(
         // the editor's orchestrator uses — proven against React 19
         // concurrent renderer's late-commit behavior.
         await waitForFrames(isFirstFrameOverall ? 5 : 3)
+        await waitForRender3dVideosReady()
         isFirstFrameOverall = false
 
         let canvasEl: HTMLCanvasElement
@@ -986,6 +987,27 @@ function waitForFrames(n: number): Promise<void> {
     }
     requestAnimationFrame(tick)
   })
+}
+
+async function waitForRender3dVideosReady(timeoutMs = 900): Promise<void> {
+  const start = performance.now()
+  while (performance.now() - start < timeoutMs) {
+    const videos = (
+      window as Window & { __hypermotionRender3dVideos?: HTMLVideoElement[] }
+    ).__hypermotionRender3dVideos ?? []
+    if (
+      videos.length === 0 ||
+      videos.every(
+        (video) =>
+          video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+          !video.seeking,
+      )
+    ) {
+      await waitForFrames(1)
+      return
+    }
+    await waitForFrames(1)
+  }
 }
 
 /**

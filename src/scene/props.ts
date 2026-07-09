@@ -179,6 +179,10 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'appearance.fill', group: 'appearance', label: 'Fill',
     layoutAffecting: false, interpolation: 'color', defaultValue: 'oklch(0.8 0.05 250)',
   },
+  'appearance.blendMode': {
+    id: 'appearance.blendMode', group: 'appearance', label: 'Blend Mode',
+    layoutAffecting: false, interpolation: 'discrete', defaultValue: 'normal',
+  },
 
   // text effect group — post-layout; controls text-specific reveal progress
   'text.progress': {

@@ -29,6 +29,13 @@ import {
 } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
+import { spawn, spawnSync } from 'node:child_process'
+
+// Hyper Motion is a desktop editor: pressing Play in our own timeline should
+// always be allowed to start timeline audio, even if React applies the state
+// change just after Chromium's narrow "user gesture" window.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 /**
  * Single-instance lock.
@@ -183,6 +190,36 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 let mainWindow: BrowserWindow | null = null
 const RECENT_PROJECTS_LIMIT = 10
 let recentProjects: string[] = []
+
+interface LocalToolStatus {
+  available: boolean
+  path: string | null
+}
+
+function findExecutable(name: string): LocalToolStatus {
+  const pathDirs = [
+    ...new Set(
+      [
+        ...(process.env.PATH ?? '').split(path.delimiter),
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+      ].filter(Boolean),
+    ),
+  ]
+
+  for (const dir of pathDirs) {
+    const candidate = path.join(dir, name)
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK)
+      return { available: true, path: candidate }
+    } catch {
+      // Keep scanning PATH candidates.
+    }
+  }
+  return { available: false, path: null }
+}
 
 function recentProjectsStorePath(): string {
   return path.join(app.getPath('userData'), 'recent-projects.json')
@@ -618,6 +655,19 @@ function createMainWindow() {
     // window/screen to record (e.g. to record an external preview).
   )
 
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const prefix = ['[renderer:log]', '[renderer:warn]', '[renderer:error]'][level] ?? '[renderer]'
+    if (
+      message.includes('[audio]') ||
+      message.includes('[media]') ||
+      message.includes('NotAllowedError') ||
+      message.includes('NotSupportedError')
+    ) {
+      // eslint-disable-next-line no-console
+      console.log(`${prefix} ${message} (${sourceId}:${line})`)
+    }
+  })
+
   if (VITE_DEV_SERVER_URL) {
     // Dev: hot-reload from the Vite server. DevTools is opt-in via
     // `OPEN_DEVTOOLS=1 pnpm dev` (or Cmd+Opt+I / View → Toggle Developer
@@ -675,6 +725,308 @@ ipcMain.handle('clipboard:readText', () => clipboard.readText())
 ipcMain.handle('clipboard:writeText', (_e, text: string) => {
   clipboard.writeText(text)
 })
+ipcMain.handle('clipboard:readFiles', () => {
+  const paths = readClipboardFilePaths()
+  return paths
+    .filter((filePath) => {
+      try {
+        return fs.statSync(filePath).isFile() && mimeForClipboardFile(filePath) !== ''
+      } catch {
+        return false
+      }
+    })
+    .map((filePath) => ({
+      name: path.basename(filePath),
+      type: mimeForClipboardFile(filePath),
+      bytes: fs.readFileSync(filePath),
+    }))
+})
+
+ipcMain.handle(
+  'media:normalize-video',
+  async (
+    _e,
+    payload: { name: string; type: string; bytes: Uint8Array },
+  ) => normalizeVideoForBrowser(payload),
+)
+
+async function normalizeVideoForBrowser(payload: {
+  name: string
+  type: string
+  bytes: Uint8Array
+}): Promise<{ name: string; type: string; bytes: Buffer; normalized: boolean }> {
+  const ffmpeg = findFfmpegBinary()
+  const avconvert = '/usr/bin/avconvert'
+  if (!ffmpeg && (process.platform !== 'darwin' || !fs.existsSync(avconvert))) {
+    return {
+      ...payload,
+      bytes: Buffer.from(payload.bytes),
+      normalized: false,
+    }
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-video-normalize-'))
+  const inputExt = path.extname(payload.name) || '.mp4'
+  const inputPath = path.join(dir, `input${inputExt}`)
+  const outputPath = path.join(dir, ffmpeg ? 'output.webm' : 'output.mp4')
+  try {
+    fs.writeFileSync(inputPath, Buffer.from(payload.bytes))
+    if (ffmpeg) {
+      await runFfmpegNormalize(ffmpeg, inputPath, outputPath)
+    } else {
+      await runAvconvert(avconvert, inputPath, outputPath)
+    }
+    const bytes = fs.readFileSync(outputPath)
+    console.log(
+      `[media] normalized video ${payload.name} (${payload.bytes.byteLength} bytes) -> ${path.basename(outputPath)} (${bytes.byteLength} bytes)`,
+    )
+    const isWebm = path.extname(outputPath).toLowerCase() === '.webm'
+    return {
+      name: `${path.basename(payload.name, path.extname(payload.name))}-compatible.${isWebm ? 'webm' : 'mp4'}`,
+      type: isWebm ? 'video/webm' : 'video/mp4',
+      bytes,
+      normalized: true,
+    }
+  } catch (err) {
+    console.warn(
+      '[media] video normalization failed, using original:',
+      err instanceof Error ? err.message : err,
+    )
+    return {
+      ...payload,
+      bytes: Buffer.from(payload.bytes),
+      normalized: false,
+    }
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+function findFfmpegBinary(): string | null {
+  const local = path.join(process.cwd(), '.hypermotion-bin', 'ffmpeg')
+  if (fs.existsSync(local)) return local
+  const system = findExecutable('ffmpeg')
+  return system.available ? system.path : null
+}
+
+function runFfmpegNormalize(
+  ffmpeg: string,
+  inputPath: string,
+  outputPath: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpeg, [
+      '-y',
+      '-i',
+      inputPath,
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a?',
+      '-vf',
+      "scale='min(1080,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30,format=yuv420p",
+      '-c:v',
+      'libvpx',
+      '-deadline',
+      'good',
+      '-cpu-used',
+      '4',
+      '-crf',
+      '10',
+      '-b:v',
+      '0',
+      '-c:a',
+      'libvorbis',
+      '-b:a',
+      '160k',
+      outputPath,
+    ])
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath)) {
+        resolve()
+        return
+      }
+      reject(
+        new Error(
+          `ffmpeg exited with code ${code ?? 'unknown'}${stderr ? `: ${stderr.slice(-1600)}` : ''}`,
+        ),
+      )
+    })
+  })
+}
+
+function runAvconvert(
+  avconvert: string,
+  inputPath: string,
+  outputPath: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(avconvert, [
+      '--source',
+      inputPath,
+      '--preset',
+      'PresetAppleM4V1080pHD',
+      '--output',
+      outputPath,
+      '--replace',
+    ])
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath)) {
+        resolve()
+        return
+      }
+      reject(
+        new Error(
+          `avconvert exited with code ${code ?? 'unknown'}${stderr ? `: ${stderr.slice(-1000)}` : ''}`,
+        ),
+      )
+    })
+  })
+}
+
+function readClipboardFilePaths(): string[] {
+  const paths = new Set<string>()
+
+  for (const uri of [
+    clipboard.read('public.file-url'),
+    clipboard.read('text/uri-list'),
+  ]) {
+    for (const filePath of parseFileUris(uri)) paths.add(filePath)
+  }
+
+  const nsFilenames = clipboard.readBuffer('NSFilenamesPboardType')
+  for (const filePath of parseMacFilenamesPboard(nsFilenames)) {
+    paths.add(filePath)
+  }
+
+  return [...paths]
+}
+
+function parseFileUris(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('file://'))
+    .map((line) => {
+      try {
+        return decodeURIComponent(new URL(line).pathname)
+      } catch {
+        return ''
+      }
+    })
+    .filter(Boolean)
+}
+
+function parseMacFilenamesPboard(buffer: Buffer): string[] {
+  if (buffer.length === 0) return []
+  const text = buffer.toString('utf8')
+  const xmlMatches = [...text.matchAll(/<string>(.*?)<\/string>/g)]
+    .map((match) => decodeXml(match[1] ?? ''))
+    .filter(Boolean)
+  if (xmlMatches.length > 0) return xmlMatches
+
+  const quotedMatches = [...text.matchAll(/"((?:\\"|[^"])*)"/g)]
+    .map((match) => (match[1] ?? '').replace(/\\"/g, '"'))
+    .filter((value) => value.startsWith('/'))
+  if (quotedMatches.length > 0) return quotedMatches
+
+  if (text.startsWith('bplist')) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-clipboard-'))
+    const file = path.join(dir, 'files.plist')
+    try {
+      fs.writeFileSync(file, buffer)
+      const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', file], {
+        encoding: 'utf8',
+      })
+      if (result.status === 0 && result.stdout) {
+        const parsed = JSON.parse(result.stdout) as unknown
+        if (Array.isArray(parsed)) {
+          return parsed.filter((item): item is string => typeof item === 'string')
+        }
+      }
+    } catch {
+      return []
+    } finally {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+
+  return []
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+}
+
+function mimeForClipboardFile(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case '.png':
+      return 'image/png'
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.webp':
+      return 'image/webp'
+    case '.gif':
+      return 'image/gif'
+    case '.svg':
+      return 'image/svg+xml'
+    case '.avif':
+      return 'image/avif'
+    case '.bmp':
+      return 'image/bmp'
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mov':
+      return 'video/quicktime'
+    case '.ogv':
+      return 'video/ogg'
+    case '.ogg':
+      return 'video/ogg'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.wav':
+      return 'audio/wav'
+    case '.m4a':
+      return 'audio/mp4'
+    case '.aac':
+      return 'audio/aac'
+    case '.flac':
+      return 'audio/flac'
+    case '.oga':
+      return 'audio/ogg'
+    case '.opus':
+      return 'audio/opus'
+    default:
+      return ''
+  }
+}
 
 ipcMain.handle('updates:check', () => checkForUpdates())
 ipcMain.handle('updates:get-status', () => lastUpdateInfo)

@@ -136,10 +136,15 @@ function sizeAxisFromFrame(
  * Build a Transform for a captured node.
  *
  * CRITICAL: under an auto-layout parent (parent.layoutMode !== 'NONE')
- * the transform must be IDENTITY. Yoga will recompute the position from
- * the layout properties; storing both Yoga's solved position and a
- * captured x/y produces a ghost-position bug — the node renders
- * doubled-up because it gets the layout slot AND the transform offset.
+ * the transform must be IDENTITY for normal flow children. Yoga will
+ * recompute the position from the layout properties; storing both
+ * Yoga's solved position and a captured x/y produces a ghost-position
+ * bug — the node renders doubled-up because it gets the layout slot AND
+ * the transform offset.
+ *
+ * Exception: Figma also has a per-child "Absolute position" flag
+ * (`layoutPositioning === 'ABSOLUTE'`). Those children opt out of the
+ * parent's layout and their captured x/y is the source of truth.
  *
  * Under a free-canvas parent (layoutMode === 'NONE'), the captured
  * x/y/rotation become the transform.
@@ -149,7 +154,8 @@ export function figmaToTransform(
   parentLayoutMode: 'NONE' | 'HORIZONTAL' | 'VERTICAL' | 'GRID' | null,
 ): Transform {
   const inAutoLayout = parentLayoutMode !== null && parentLayoutMode !== 'NONE'
-  if (inAutoLayout) {
+  const absoluteInParent = node.layoutPositioning === 'ABSOLUTE'
+  if (inAutoLayout && !absoluteInParent) {
     return {
       x: 0,
       y: 0,

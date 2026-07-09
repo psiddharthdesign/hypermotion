@@ -2,6 +2,7 @@
 
 import type {
   Appearance,
+  BlendMode,
   CornerRadii,
   Effect as SceneEffect,
   NodeId,
@@ -16,6 +17,7 @@ import type {
   FigmaCapturedFrame,
   FigmaCapturedNode,
   FigmaCapturedEffect,
+  FigmaBlendMode,
   FigmaCapturedText,
   FigmaCapturedVector,
   FigmaPayload,
@@ -281,6 +283,7 @@ function walk(
       node.strokeWidths,
     ),
     cornerRadius: averageCornerRadius(node.cornerRadius),
+    blendMode: figmaToBlendMode(node.blendMode),
     // Preserve Figma's per-corner radii when they're non-uniform. The
     // uniform `cornerRadius` above stays populated as the fallback so
     // any code path that hasn't been per-corner-aware yet still gets a
@@ -288,17 +291,13 @@ function walk(
     ...(cornerRadii ? { cornerRadii } : {}),
     effects: figmaToEffects(node.effects ?? []),
   }
-  // Free-canvas children should NOT participate in the parent's flex/
-  // grid solve. Auto-layout children DO. Set `position` accordingly so
-  // the Yoga adapter knows which path to take.
+  // Figma's per-child "Absolute position" flag means this layer opts
+  // out of its parent's layout even when the parent itself is a flow /
+  // auto-layout container. Preserve that as our Position='absolute' so
+  // Yoga pins the slot at the parent origin and the renderer composes
+  // the captured transform.x/y on top.
   const position: Position =
-    parentLayoutMode === null || parentLayoutMode === 'NONE'
-      ? 'flow'
-      : 'flow'
-  // (Both branches currently use 'flow' — we may flip free-canvas
-  // children to 'absolute' once the canvas's free-position semantics
-  // need it. Keeping the branch in place so the call site documents
-  // the decision point.)
+    node.layoutPositioning === 'ABSOLUTE' ? 'absolute' : 'flow'
 
   switch (kind) {
     case 'frame':
@@ -453,12 +452,19 @@ function createText(
   position: Position,
 ): NodeId {
   const text = figmaToText(node, assets)
+  const textAppearance: Appearance = {
+    ...appearance,
+    fill: null,
+    stroke: null,
+    cornerRadius: 0,
+    cornerRadii: undefined,
+  }
   return api.createNode('text', parentId, {
     name: node.name || 'Text',
     visible: node.visible,
     locked: node.locked,
     transform,
-    appearance,
+    appearance: textAppearance,
     position,
     ...text,
   })
@@ -479,7 +485,7 @@ function createVectorAsImage(
   const svg = node.svg.trim()
   const shouldUseRasterFallback =
     !!node.rasterPng &&
-    (!!node.rasterReason || !svg || node.width < 1 || node.height < 1)
+    (!svg || node.width < 1 || node.height < 1)
   if (!svg && !node.rasterPng) return null
   const intrinsicSize = readSvgIntrinsicSize(svg)
   const size = {
@@ -606,6 +612,44 @@ function figmaToEffects(effects: FigmaCapturedEffect[]): SceneEffect[] {
       amount: effect.radius,
     }
   })
+}
+
+function figmaToBlendMode(mode: FigmaBlendMode | undefined): BlendMode {
+  switch (mode) {
+    case 'DARKEN':
+      return 'darken'
+    case 'MULTIPLY':
+      return 'multiply'
+    case 'COLOR_BURN':
+      return 'color-burn'
+    case 'LIGHTEN':
+      return 'lighten'
+    case 'SCREEN':
+      return 'screen'
+    case 'COLOR_DODGE':
+    case 'LINEAR_DODGE':
+      return 'color-dodge'
+    case 'OVERLAY':
+      return 'overlay'
+    case 'SOFT_LIGHT':
+      return 'soft-light'
+    case 'HARD_LIGHT':
+      return 'hard-light'
+    case 'DIFFERENCE':
+      return 'difference'
+    case 'EXCLUSION':
+      return 'exclusion'
+    case 'HUE':
+      return 'hue'
+    case 'SATURATION':
+      return 'saturation'
+    case 'COLOR':
+      return 'color'
+    case 'LUMINOSITY':
+      return 'luminosity'
+    default:
+      return 'normal'
+  }
 }
 
 function figmaColorToRgba(color: {

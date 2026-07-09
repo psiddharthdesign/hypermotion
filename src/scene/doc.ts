@@ -5,6 +5,7 @@ import type {
   Appearance,
   CameraNode,
   Fill,
+  BlendMode,
   FrameNode,
   ImageNode,
   Keyframe,
@@ -180,6 +181,13 @@ export interface NodeBaseMutable {
   position: import('@/scene/types').Position
   isMask: boolean
   text: string
+  fontFamily: string
+  fontSize: number
+  fontWeight: number
+  lineHeight: number
+  letterSpacing: number
+  textAlign: 'start' | 'center' | 'end'
+  color: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
   // image-kind fields — settable via Inspector on ImageNode. The scene
   // API doesn't (yet) enforce that these keys only land on an image
@@ -189,7 +197,10 @@ export interface NodeBaseMutable {
   fit: 'cover' | 'contain' | 'fill' | 'none'
   importWarning: string
   // media-kind fields — used by audio/video layers.
+  poster: string
+  duration: number
   volume: number
+  playbackRate: number
   muted: boolean
   startTime: number
   trimStart: number
@@ -261,6 +272,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   fill: { kind: 'solid', color: 'oklch(0.62 0.21 250)' },
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
 }
 
@@ -278,7 +290,72 @@ const TEXT_DEFAULT_APPEARANCE: Appearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
+}
+
+const MEDIA_DEFAULT_APPEARANCE: Appearance = {
+  opacity: 1,
+  fill: null,
+  stroke: null,
+  cornerRadius: 0,
+  blendMode: 'normal',
+  effects: [],
+}
+
+function defaultAppearanceForKind(kind: NodeKind): Appearance {
+  if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
+  if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
+  return DEFAULT_APPEARANCE
+}
+
+function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
+  const appearance = (raw as Appearance | undefined) ?? defaultAppearanceForKind(kind)
+  const normalized: Appearance = {
+    ...appearance,
+    blendMode: normalizeBlendMode(appearance.blendMode),
+    effects: appearance.effects ?? [],
+  }
+  if (kind === 'video' || kind === 'audio') {
+    return {
+      ...normalized,
+      fill: null,
+      stroke: null,
+    }
+  }
+  if (kind === 'text') {
+    return {
+      ...normalized,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      cornerRadii: undefined,
+    }
+  }
+  return normalized
+}
+
+function normalizeBlendMode(value: unknown): BlendMode {
+  switch (value) {
+    case 'multiply':
+    case 'screen':
+    case 'overlay':
+    case 'darken':
+    case 'lighten':
+    case 'color-dodge':
+    case 'color-burn':
+    case 'hard-light':
+    case 'soft-light':
+    case 'difference':
+    case 'exclusion':
+    case 'hue':
+    case 'saturation':
+    case 'color':
+    case 'luminosity':
+      return value
+    default:
+      return 'normal'
+  }
 }
 
 const DEFAULT_LAYOUT: Layout = {
@@ -396,6 +473,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   }
 
   const yNodeToNode = (y: Y.Map<unknown>): Node => {
+    const kind = y.get('kind') as NodeKind
     const childrenValue = y.get('children') as
       | Y.Array<NodeId>
       | NodeId[]
@@ -408,7 +486,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     const base = {
       id: y.get('id') as NodeId,
       name: (y.get('name') as string) ?? 'Layer',
-      kind: y.get('kind') as NodeKind,
+      kind,
       parent: (y.get('parent') as NodeId | null) ?? null,
       children,
       // Ensure `z` exists on every read — older docs predate the
@@ -419,7 +497,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         ...DEFAULT_TRANSFORM,
         ...((y.get('transform') as Partial<Transform>) ?? {}),
       },
-      appearance: (y.get('appearance') as Appearance) ?? DEFAULT_APPEARANCE,
+      appearance: normalizeAppearanceForKind(kind, y.get('appearance')),
       visible: (y.get('visible') as boolean) ?? true,
       locked: (y.get('locked') as boolean) ?? false,
       // Default to 'flow' for legacy documents predating the field. New
@@ -433,7 +511,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
     }
-    const kind = base.kind
     switch (kind) {
       case 'frame':
         return {
@@ -476,6 +553,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           src: (y.get('src') as string) ?? '',
           duration: (y.get('duration') as number) ?? 0,
           volume: (y.get('volume') as number) ?? 1,
+          playbackRate: (y.get('playbackRate') as number) ?? 1,
           startTime: (y.get('startTime') as number) ?? 0,
           trimStart: (y.get('trimStart') as number) ?? 0,
           trimEnd:
@@ -487,7 +565,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (kind === 'video' ? true : false),
           ...(kind === 'video'
             ? {
+                poster: (y.get('poster') as string | undefined) ?? '',
                 fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
+                importWarning:
+                  (y.get('importWarning') as string | undefined) ?? undefined,
               }
             : {}),
         } as Node
@@ -716,10 +797,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('parent', parent)
         y.set('children', new Y.Array<NodeId>())
         y.set('transform', (props as Partial<FrameNode>)?.transform ?? DEFAULT_TRANSFORM)
-        // Text picks a fill-less default; every other kind falls through
-        // to DEFAULT_APPEARANCE. Any caller-supplied appearance wins.
-        const defaultAppearance =
-          kind === 'text' ? TEXT_DEFAULT_APPEARANCE : DEFAULT_APPEARANCE
+        // Text and media paint through their own content, not through a
+        // colored wrapper box. Any caller-supplied appearance wins.
+        const defaultAppearance = defaultAppearanceForKind(kind)
         y.set('appearance', (props as Partial<FrameNode>)?.appearance ?? defaultAppearance)
         y.set('visible', props?.visible ?? true)
         y.set('locked', props?.locked ?? false)
@@ -765,17 +845,21 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // speaker-chip footprint (audio doesn't paint anything, it's
           // just a handle on the canvas + a row in the layers panel).
           type MediaProps = Partial<{
-            size: Size; src: string; duration: number; volume: number;
+            size: Size; src: string; poster: string; duration: number; volume: number;
+            playbackRate: number;
             startTime: number; trimStart: number; trimEnd: number; loop: boolean;
             fit: 'cover' | 'contain' | 'fill' | 'none'; muted: boolean;
+            importWarning: string;
           }>
           const mp = (props ?? {}) as MediaProps
           const defaultSize: Size =
             kind === 'audio' ? { width: 120, height: 40 } : DEFAULT_SIZE
           y.set('size', mp.size ?? defaultSize)
           y.set('src', mp.src ?? '')
+          if (kind === 'video') y.set('poster', mp.poster ?? '')
           y.set('duration', mp.duration ?? 0)
           y.set('volume', mp.volume ?? 1)
+          y.set('playbackRate', mp.playbackRate ?? 1)
           y.set('startTime', mp.startTime ?? 0)
           y.set('trimStart', mp.trimStart ?? 0)
           y.set('trimEnd', mp.trimEnd ?? mp.duration ?? 0)
@@ -783,6 +867,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('muted', mp.muted ?? (kind === 'video'))
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
+            if (mp.importWarning) y.set('importWarning', mp.importWarning)
             // Motion tools are primarily visual — default to muted so
             // a dropped MP4 doesn't surprise the user with audio.
           }
@@ -988,7 +1073,18 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     getSections: () => {
       const out: Section[] = []
       sections.forEach((s) => {
-        if (s && typeof s.id === 'string') out.push(s)
+        if (!s || typeof s.id !== 'string') return
+        const raw = s as Section & { duration?: number }
+        const start = Number.isFinite(raw.start) ? raw.start : 0
+        const end = Number.isFinite(raw.end)
+          ? raw.end
+          : start + (Number.isFinite(raw.duration) ? raw.duration : 0)
+        out.push({
+          ...raw,
+          start,
+          end: Math.max(start, end),
+          color: raw.color ?? 'oklch(0.55 0.2 260)',
+        })
       })
       out.sort((a, b) => a.start - b.start)
       return out
@@ -1091,7 +1187,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   // users get "rotation spins around the middle of the scene" out of
   // the box — the natural expectation.
   {
-    const existingId = scene.get('activeCameraId') as NodeId | undefined
+    const existingRaw = scene.get('activeCameraId') as NodeId | null | undefined
+    // Explicit null means the scene intentionally has no active camera
+    // and should render through the flat 2D path. Undefined is the
+    // legacy/missing value that still gets backfilled below.
+    if (existingRaw === null) {
+      return api
+    }
+    const existingId = existingRaw as NodeId | undefined
     const existingOk = existingId && nodes.has(existingId)
     // Don't seed if the stored id is valid AND still refers to a camera.
     const existingKind = existingOk

@@ -42,6 +42,18 @@ import { loadSceneIntoDoc } from '@/scene/file'
 declare global {
   interface Window {
     hypermotion?: {
+      clipboard?: {
+        readText: () => Promise<string>
+        writeText: (text: string) => Promise<void>
+        readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+      }
+      media?: {
+        normalizeVideo?: (payload: {
+          name: string
+          type: string
+          bytes: Uint8Array
+        }) => Promise<{ name: string; type: string; bytes: Uint8Array; normalized: boolean }>
+      }
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
       on?: (
         channel: string,
