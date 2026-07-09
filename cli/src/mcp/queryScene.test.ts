@@ -503,6 +503,44 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
   }
 })
 
+test('get_layer rejects malformed node entries whose id does not match the lookup key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-mismatched-id-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    const bytes = buildSceneBytes({
+      meta: { name: 'Mismatched Node Id', canvas: { width: 320, height: 180 } },
+      nodes: {
+        root: {
+          id: 'root',
+          kind: 'frame',
+          parent: null,
+          children: [],
+          size: { width: 320, height: 180 },
+          layout: { mode: 'none' },
+        },
+      },
+    })
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, bytes)
+    const scene = doc.getMap('scene')
+    const nodes = scene.get('nodes') as Y.Map<unknown>
+    nodes.set('stale', { id: 'different', kind: 'text', text: 'stale' })
+    nodes.set('numeric', { id: 42, kind: 'text', text: 'numeric' })
+    fs.writeFileSync(scenePath, Y.encodeStateAsUpdate(doc))
+
+    const mismatchedResult = await handleGetLayer({ scene: scenePath, nodeId: 'stale' })
+    assert.equal(mismatchedResult.isError, true)
+    assert.equal(assertToolText(mismatchedResult), 'Layer not found: stale')
+
+    const numericResult = await handleGetLayer({ scene: scenePath, nodeId: 'numeric' })
+    assert.equal(numericResult.isError, true)
+    assert.equal(assertToolText(numericResult), 'Layer not found: numeric')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('list_cameras returns an empty list when the scene has no camera nodes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-no-camera-'))
   const scenePath = path.join(dir, 'scene.hype')
