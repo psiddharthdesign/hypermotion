@@ -8,6 +8,15 @@ import test from 'node:test'
 import { buildSceneBytes } from '../scene/build.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleValidateScene, validateSceneTool } from './tools/validateScene.js'
+import type { ValidateSceneDeps } from './tools/validateScene.js'
+
+function testDeps(overrides: Partial<ValidateSceneDeps>): ValidateSceneDeps {
+  return {
+    statSync: fs.statSync,
+    readFileSync: fs.readFileSync,
+    ...overrides,
+  }
+}
 
 test('validate_scene input schema exposes required scene path', () => {
   assert.deepEqual(validateSceneTool.inputSchema, {
@@ -91,18 +100,17 @@ test('validate_scene rejects directory inputs as MCP errors', async () => {
 test('validate_scene reports stat failures as read errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-stat-'))
   const scenePath = path.join(dir, 'scene.hype')
-  const previousStatSync = fs.statSync
 
   try {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: ((statPath: fs.PathLike) => {
-        if (statPath === scenePath) throw new Error('stat failed')
-        return previousStatSync(statPath)
-      }) as typeof fs.statSync,
-    })
-
-    const result = await handleValidateScene({ scene: scenePath })
+    const result = await handleValidateScene(
+      { scene: scenePath },
+      testDeps({
+        statSync: (statPath: fs.PathLike) => {
+          if (statPath === scenePath) throw new Error('stat failed')
+          return fs.statSync(statPath)
+        },
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.equal(
@@ -110,10 +118,6 @@ test('validate_scene reports stat failures as read errors', async () => {
       `validate_scene: failed to read ${scenePath}: stat failed`,
     )
   } finally {
-    Object.defineProperty(fs, 'statSync', {
-      configurable: true,
-      value: previousStatSync,
-    })
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -121,18 +125,18 @@ test('validate_scene reports stat failures as read errors', async () => {
 test('validate_scene reports read failures after stat succeeds', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-read-'))
   const scenePath = path.join(dir, 'scene.hype')
-  const previousReadFileSync = fs.readFileSync
 
   try {
     fs.writeFileSync(scenePath, '')
-    Object.defineProperty(fs, 'readFileSync', {
-      configurable: true,
-      value: () => {
-        throw new Error('read failed')
-      },
-    })
 
-    const result = await handleValidateScene({ scene: scenePath })
+    const result = await handleValidateScene(
+      { scene: scenePath },
+      testDeps({
+        readFileSync: () => {
+          throw new Error('read failed')
+        },
+      }),
+    )
 
     assert.equal(result.isError, true)
     assert.equal(
@@ -140,10 +144,6 @@ test('validate_scene reports read failures after stat succeeds', async () => {
       `validate_scene: failed to read ${scenePath}: read failed`,
     )
   } finally {
-    Object.defineProperty(fs, 'readFileSync', {
-      configurable: true,
-      value: previousReadFileSync,
-    })
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
