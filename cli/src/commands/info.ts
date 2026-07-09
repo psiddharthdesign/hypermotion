@@ -14,7 +14,7 @@ import path from 'node:path'
 import { readSceneSummary, type SceneSummary } from '../scene/build.js'
 
 type InfoCommandOptions = {
-  json?: boolean
+  readonly json?: boolean
 }
 
 type PrintableCanvas = {
