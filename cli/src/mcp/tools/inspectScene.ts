@@ -5,6 +5,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
+import type { McpToolArgs } from './schema.js'
 
 const InspectInput = z.object({
   scene: z
@@ -34,7 +35,7 @@ export const inspectSceneTool: Tool = {
 }
 
 export async function handleInspectScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = InspectInput.safeParse(args)
   if (!parsed.success) {

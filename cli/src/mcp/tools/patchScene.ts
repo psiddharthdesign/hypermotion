@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { applyScenePatch, type PatchOperation, type ScenePatch } from '../../scene/build.js'
 import { pushSceneToRunningApp } from '../../electron/live.js'
+import type { McpToolArgs } from './schema.js'
 
 const PatchInput = z.object({
   scene: z.string().trim().min(1, 'scene path is required').describe('Path to the input .hype scene file.'),
@@ -45,7 +46,7 @@ export const patchSceneTool: Tool = {
 }
 
 export async function handlePatchScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
 ): Promise<CallToolResult> {
   const parsed = PatchInput.safeParse(args)
   if (!parsed.success) {
