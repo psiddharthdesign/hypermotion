@@ -6,7 +6,7 @@ import path from 'node:path'
 import { validateScene, type SceneValidationResult } from '../scene/build.js'
 
 type ValidateCommandOptions = {
-  json?: boolean
+  readonly json?: boolean
 }
 
 export function validateCommand(): Command {
