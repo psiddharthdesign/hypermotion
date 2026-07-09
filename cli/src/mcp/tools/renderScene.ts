@@ -23,6 +23,7 @@ import {
   inferRenderFormatFromPath,
 } from '../../renderOptions.js'
 import type { RenderFormat, RenderQuality } from '../../renderOptions.js'
+import type { McpToolArgs } from './schema.js'
 
 const RenderInput = z.object({
   output: z
@@ -142,7 +143,7 @@ export const renderSceneTool: Tool = {
 }
 
 export async function handleRenderScene(
-  args: Record<string, unknown>,
+  args: McpToolArgs,
   deps: RenderSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = RenderInput.safeParse(args)
