@@ -106,20 +106,6 @@ export function createCommand(): Command {
         process.exit(2)
       }
 
-      // Build the Y.Doc bytes. This is pure data work — no desktop app
-      // needed, no IndexedDB, no React. Just JSON → Y.Doc → bytes.
-      let bytes: Uint8Array
-      try {
-        bytes = buildSceneBytes(json)
-      } catch (err) {
-        console.error(
-          `[create] failed to build scene: ${
-            err instanceof Error ? err.message : err
-          }`,
-        )
-        process.exit(1)
-      }
-
       // Make sure the output's parent directory exists. Tools and
       // agents tend to specify deeply-nested paths; we don't want a
       // simple ENOENT to obscure the real error.
@@ -152,6 +138,20 @@ export function createCommand(): Command {
       if (outputStats?.isDirectory()) {
         console.error(`[create] output path is a directory: ${outputPath}`)
         process.exit(2)
+      }
+
+      // Build the Y.Doc bytes. This is pure data work — no desktop app
+      // needed, no IndexedDB, no React. Just JSON → Y.Doc → bytes.
+      let bytes: Uint8Array
+      try {
+        bytes = buildSceneBytes(json)
+      } catch (err) {
+        console.error(
+          `[create] failed to build scene: ${
+            err instanceof Error ? err.message : err
+          }`,
+        )
+        process.exit(1)
       }
 
       try {
