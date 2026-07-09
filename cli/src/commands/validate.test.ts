@@ -5,15 +5,13 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { buildSceneBytes } from '../scene/build.js'
+import { buildSceneBytes, type SceneJson } from '../scene/build.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { validateCommand } from './validate.js'
 
-type PersistedSceneInput = Parameters<typeof buildSceneBytes>[0]
-
-function malformedSceneInput(value: Record<string, unknown>): PersistedSceneInput {
-  return value as unknown as PersistedSceneInput
+function malformedSceneInput(value: Record<string, unknown>): SceneJson {
+  return value as unknown as SceneJson
 }
 
 test('validate command prints JSON validation results', async () => {
