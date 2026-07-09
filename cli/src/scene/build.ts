@@ -457,7 +457,7 @@ export interface JsonObject {
 export type KeyframeValueJson = JsonValue
 
 type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends unknown[]
+  [K in keyof T]?: T[K] extends readonly unknown[]
     ? T[K]
     : T[K] extends object
       ? DeepPartial<T[K]>
