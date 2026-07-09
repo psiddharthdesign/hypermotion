@@ -6,8 +6,8 @@ import path from 'node:path'
 import { applyScenePatch, type ScenePatch, type PatchOperation } from '../scene/build.js'
 
 interface PatchCommandOptions {
-  from: string
-  output?: string
+  readonly from: string
+  readonly output?: string
 }
 
 export function patchCommand(): Command {
