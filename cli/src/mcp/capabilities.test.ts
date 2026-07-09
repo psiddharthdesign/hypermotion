@@ -11,6 +11,7 @@ import {
   VALIDATION_TOOLS,
   type McpToolName,
   type QueryToolName,
+  type ValidationToolName,
 } from './tools/capabilities.js'
 import { TOOLS } from './server.js'
 import {
@@ -39,7 +40,7 @@ type GetCapabilitiesToolPayload = {
   nodeKinds: readonly NodeKindJson[]
   patchOperations: readonly PatchOperation['op'][]
   queryTools: readonly QueryToolName[]
-  validationTools: readonly (typeof VALIDATION_TOOLS)[number][]
+  validationTools: readonly ValidationToolName[]
   renderFormats: readonly RenderFormat[]
   renderQualities: readonly RenderQuality[]
   renderFileSceneInput: boolean

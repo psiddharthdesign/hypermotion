@@ -24,6 +24,7 @@ export const MCP_TOOLS = [
 export type McpToolName = (typeof MCP_TOOLS)[number]
 
 export const VALIDATION_TOOLS = ['validate_scene'] as const satisfies readonly McpToolName[]
+export type ValidationToolName = (typeof VALIDATION_TOOLS)[number]
 export const QUERY_TOOLS = [
   'list_layers',
   'get_layer',
