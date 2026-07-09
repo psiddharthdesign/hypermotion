@@ -113,6 +113,24 @@ export type FillJson =
       fit: ImageFillFitJson
     }
 
+export type BlendModeJson =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
+
 export type StrokeStyleJson = 'solid' | 'dashed' | 'dotted'
 
 export type MediaFitJson = 'cover' | 'contain' | 'fill' | 'none'
@@ -210,6 +228,7 @@ export interface NodeJson {
   importWarning?: string
   duration?: number
   volume?: number
+  playbackRate?: number
   startTime?: number
   trimStart?: number
   trimEnd?: number
@@ -275,6 +294,7 @@ export interface AppearanceJson {
   fill?: FillJson | null
   stroke?: StrokeJson | null
   cornerRadius?: number
+  blendMode?: BlendModeJson
   cornerRadii?: {
     tl: number
     tr: number
@@ -323,6 +343,7 @@ export const PROPERTY_IDS = [
   'appearance.cornerRadii.br',
   'appearance.cornerRadii.bl',
   'appearance.fill',
+  'appearance.blendMode',
   'text.progress',
   'layout.gap',
   'layout.padding.top',
@@ -560,6 +581,7 @@ interface SceneAppearance {
   fill: unknown | null
   stroke: unknown | null
   cornerRadius: number
+  blendMode: BlendModeJson
   cornerRadii?: AppearanceJson['cornerRadii']
   effects: unknown[]
 }
@@ -600,6 +622,7 @@ const DEFAULT_APPEARANCE: SceneAppearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
 }
 
@@ -743,6 +766,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('src', node.src ?? '')
       y.set('duration', node.duration ?? 0)
       y.set('volume', node.volume ?? 1)
+      y.set('playbackRate', node.playbackRate ?? 1)
       y.set('startTime', node.startTime ?? 0)
       y.set('trimStart', node.trimStart ?? 0)
       y.set('trimEnd', node.trimEnd ?? node.duration ?? 0)
@@ -1591,8 +1615,8 @@ function defaultName(kind: NodeKindJson): string {
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
-  if (kind === 'text') {
-    return { ...DEFAULT_APPEARANCE, fill: null }
+  if (kind === 'text' || kind === 'video' || kind === 'audio') {
+    return { ...DEFAULT_APPEARANCE, fill: null, stroke: null }
   }
   return { ...DEFAULT_APPEARANCE }
 }

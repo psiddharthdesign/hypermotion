@@ -18,6 +18,10 @@ import {
   wrapInAutoLayout,
 } from '@/ui/actions'
 import { addKeyframe, removeTrack, type TextAnimationConfig } from '@/anim'
+import {
+  importClipboardFiles,
+  readElectronClipboardFiles,
+} from '@/ui/importClipboardFiles'
 
 /**
  * Global keyboard shortcuts.
@@ -265,19 +269,35 @@ export function useKeyboardShortcuts() {
         // payloads from the Figma plugin can be read by useFigmaPaste().
         if (clipboard.length === 0) return
         e.preventDefault()
-        const sel = useUI.getState().selection
-        const root = api.getRoot()
-        let targetParent: NodeId | null = root || null
-        if (sel.length === 1) {
-          const only = api.getNode(sel[0]!)
-          if (only && (only.kind === 'frame' || only.kind === 'component')) {
-            targetParent = only.id
+        void (async () => {
+          const externalFiles = await readElectronClipboardFiles().catch((err) => {
+            console.warn('[clipboard-file-paste] failed:', err)
+            return []
+          })
+          if (externalFiles.length > 0) {
+            const ids = await importClipboardFiles(externalFiles, api, api.getRoot() || null, {
+              workspaceOnly: false,
+            })
+            if (ids.length > 0) {
+              setSelection(ids)
+              return
+            }
           }
-        }
-        const newIds = clipboard
-          .map((item) => pasteClipboardItem(api, item, targetParent))
-          .filter((id): id is NodeId => id !== null)
-        if (newIds.length > 0) setSelection(newIds)
+
+          const sel = useUI.getState().selection
+          const root = api.getRoot()
+          let targetParent: NodeId | null = root || null
+          if (sel.length === 1) {
+            const only = api.getNode(sel[0]!)
+            if (only && (only.kind === 'frame' || only.kind === 'component')) {
+              targetParent = only.id
+            }
+          }
+          const newIds = clipboard
+            .map((item) => pasteClipboardItem(api, item, targetParent))
+            .filter((id): id is NodeId => id !== null)
+          if (newIds.length > 0) setSelection(newIds)
+        })()
         return
       }
 

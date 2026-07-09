@@ -21,6 +21,8 @@ import type { NodeId, Transform } from '@/scene'
  */
 
 const DATA_URL_SOFT_CEILING_MB = 25
+export const VIDEO_PLAYBACK_PROXY_WARNING =
+  'Video was converted to a Hyper Motion WebM playback proxy for browser-safe playback.'
 
 export async function importVideoFile(
   file: File,
@@ -28,8 +30,10 @@ export async function importVideoFile(
   parent: NodeId | null,
   opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
-  const dataUrl = await readFileAsDataUrl(file)
+  const normalized = await normalizeVideoFileForBrowser(file)
+  const dataUrl = await readMediaFileAsDataUrl(normalized.file)
   const { width: natW, height: natH, duration } = await decodeVideoMeta(dataUrl)
+  const poster = await captureVideoPoster(dataUrl, duration).catch(() => '')
 
   // Clamp initial size the same way image import does — the phone-video
   // case (1080×1920) would otherwise dwarf a normal artboard.
@@ -60,18 +64,29 @@ export async function importVideoFile(
   warnIfLarge(file)
 
   const id = api.createNode('video', parent, {
-    name: file.name.replace(/\.[^.]+$/, '') || 'Video',
+    name: normalized.file.name.replace(/\.[^.]+$/, '') || 'Video',
     size: { width: w, height: h },
+    position: 'absolute',
     transform,
+    appearance: {
+      opacity: 1,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      effects: [],
+    },
     src: dataUrl,
+    poster,
     fit: 'cover',
     duration,
     trimEnd: duration,
     muted: true,
     volume: 1,
+    playbackRate: 1,
     startTime: 0,
     trimStart: 0,
     loop: false,
+    importWarning: normalized.normalized ? VIDEO_PLAYBACK_PROXY_WARNING : undefined,
     workspaceOnly: opts?.workspaceOnly ?? false,
   } as Parameters<SceneAPI['createNode']>[2])
 
@@ -84,7 +99,7 @@ export async function importAudioFile(
   _parent: NodeId | null,
   _opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
 ): Promise<NodeId> {
-  const dataUrl = await readFileAsDataUrl(file)
+  const dataUrl = await readMediaFileAsDataUrl(file)
   const { duration } = await decodeAudioMeta(dataUrl)
 
   const transform: Transform = {
@@ -107,10 +122,18 @@ export async function importAudioFile(
     name: file.name.replace(/\.[^.]+$/, '') || 'Audio',
     size: { width: 1, height: 1 },
     transform,
+    appearance: {
+      opacity: 1,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      effects: [],
+    },
     src: dataUrl,
     duration,
     trimEnd: duration,
     volume: 1,
+    playbackRate: 1,
     muted: false,
     startTime: 0,
     trimStart: 0,
@@ -165,7 +188,7 @@ export function isMediaFile(file: File): boolean {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function readFileAsDataUrl(file: File): Promise<string> {
+export function readMediaFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
@@ -176,6 +199,49 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error('read failed'))
     reader.readAsDataURL(file)
   })
+}
+
+export async function normalizeVideoFileForBrowser(
+  file: File,
+): Promise<{ file: File; normalized: boolean }> {
+  const bridge = window.hypermotion?.media
+  if (!bridge?.normalizeVideo) {
+    console.warn('[importMedia] video normalization bridge unavailable')
+    return { file, normalized: false }
+  }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    console.info(
+      `[importMedia] normalizing video ${file.name} (${file.size} bytes)`,
+    )
+    const result = await bridge.normalizeVideo({
+      name: file.name,
+      type: file.type,
+      bytes,
+    })
+    if (!result.normalized) {
+      console.warn('[importMedia] video normalization returned original file')
+      return { file, normalized: false }
+    }
+    const normalizedBytes =
+      result.bytes instanceof Uint8Array
+        ? result.bytes
+        : new Uint8Array(result.bytes)
+    const copy = normalizedBytes.buffer.slice(
+      normalizedBytes.byteOffset,
+      normalizedBytes.byteOffset + normalizedBytes.byteLength,
+    ) as ArrayBuffer
+    const normalizedFile = new File([copy], result.name, {
+      type: result.type || 'video/mp4',
+    })
+    console.info(
+      `[importMedia] normalized video ready ${normalizedFile.name} (${normalizedFile.size} bytes)`,
+    )
+    return { file: normalizedFile, normalized: true }
+  } catch (err) {
+    console.warn('[importMedia] video normalization failed', err)
+    return { file, normalized: false }
+  }
 }
 
 /**
@@ -190,7 +256,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
  * on some streaming containers — we clamp to a reasonable 0 in that
  * case so downstream playback code doesn't divide by Infinity.
  */
-function decodeVideoMeta(
+export function decodeVideoMeta(
   dataUrl: string,
 ): Promise<{ width: number; height: number; duration: number }> {
   return new Promise((resolve, reject) => {
@@ -208,7 +274,7 @@ function decodeVideoMeta(
   })
 }
 
-function decodeAudioMeta(dataUrl: string): Promise<{ duration: number }> {
+export function decodeAudioMeta(dataUrl: string): Promise<{ duration: number }> {
   return new Promise((resolve, reject) => {
     const audio = document.createElement('audio')
     audio.preload = 'metadata'
@@ -219,6 +285,56 @@ function decodeAudioMeta(dataUrl: string): Promise<{ duration: number }> {
     audio.onerror = () => reject(new Error('audio decode failed'))
     audio.src = dataUrl
   })
+}
+
+export function captureVideoPoster(
+  dataUrl: string,
+  duration: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    video.preload = 'auto'
+    video.muted = true
+    video.playsInline = true
+    const cleanup = () => {
+      video.onloadedmetadata = null
+      video.onseeked = null
+      video.onerror = null
+    }
+    video.onloadedmetadata = () => {
+      try {
+        video.currentTime = previewTimeForDuration(duration)
+      } catch {
+        // A few containers reject early seeks until data arrives; the
+        // canvas renderer still has a live video element as fallback.
+      }
+    }
+    video.onseeked = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth || 640
+        canvas.height = video.videoHeight || 360
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('2d context unavailable')
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        cleanup()
+        resolve(canvas.toDataURL('image/jpeg', 0.86))
+      } catch (err) {
+        cleanup()
+        reject(err)
+      }
+    }
+    video.onerror = () => {
+      cleanup()
+      reject(new Error('video poster decode failed'))
+    }
+    video.src = dataUrl
+  })
+}
+
+function previewTimeForDuration(duration: number): number {
+  if (!Number.isFinite(duration) || duration <= 0.12) return 0
+  return Math.min(0.12, duration / 2)
 }
 
 function warnIfLarge(file: File): void {

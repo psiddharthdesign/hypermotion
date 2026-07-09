@@ -19,6 +19,7 @@ interface MediaAudioNode {
   src: string
   duration: number
   volume: number
+  playbackRate: number
   muted: boolean
   startTime: number
   trimStart: number
@@ -87,6 +88,7 @@ function collectAudibleMediaNodes(api: SceneAPI): MediaAudioNode[] {
       src: media.src,
       duration: media.duration || 0,
       volume: media.volume ?? 1,
+      playbackRate: media.playbackRate ?? 1,
       muted,
       startTime: media.startTime ?? 0,
       trimStart: media.trimStart ?? 0,
@@ -138,6 +140,7 @@ function mixNodeIntoOutput(opts: {
         buffer,
         output,
         volume: node.volume,
+        playbackRate: node.playbackRate,
         mediaStartSec: local,
         outSampleStart,
         outSampleEnd,
@@ -156,28 +159,30 @@ function sceneTimeToMediaLocal(
 ): number | null {
   const rel = sceneT - node.startTime
   if (rel < 0) return null
-  if (node.loop) return clipStart + (rel % clipLen)
-  if (rel >= clipLen) return null
-  return clipStart + rel
+  const sourceRel = rel * Math.max(0.05, node.playbackRate || 1)
+  if (node.loop) return clipStart + (sourceRel % clipLen)
+  if (sourceRel >= clipLen) return null
+  return clipStart + sourceRel
 }
 
 function mixSampleSpan(opts: {
   buffer: AudioBuffer
   output: Float32Array[]
   volume: number
+  playbackRate: number
   mediaStartSec: number
   outSampleStart: number
   outSampleEnd: number
   sampleRate: number
 }) {
-  const { buffer, output, volume, mediaStartSec, outSampleStart, outSampleEnd, sampleRate } = opts
+  const { buffer, output, volume, playbackRate, mediaStartSec, outSampleStart, outSampleEnd, sampleRate } = opts
   const sourceRate = buffer.sampleRate
   const sourceChannels = Array.from({ length: buffer.numberOfChannels }, (_, i) =>
     buffer.getChannelData(i),
   )
   for (let out = outSampleStart; out < outSampleEnd && out < output[0].length; out++) {
     const elapsed = (out - outSampleStart) / sampleRate
-    const sourceIndex = Math.floor((mediaStartSec + elapsed) * sourceRate)
+    const sourceIndex = Math.floor((mediaStartSec + elapsed * Math.max(0.05, playbackRate || 1)) * sourceRate)
     if (sourceIndex < 0 || sourceIndex >= buffer.length) break
     for (let ch = 0; ch < output.length; ch++) {
       const source = sourceChannels[Math.min(ch, sourceChannels.length - 1)]

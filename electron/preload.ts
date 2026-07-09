@@ -25,6 +25,24 @@ const clipboard = {
     ipcRenderer.invoke('clipboard:readText') as Promise<string>,
   writeText: (text: string): Promise<void> =>
     ipcRenderer.invoke('clipboard:writeText', text) as Promise<void>,
+  readFiles: (): Promise<Array<{ name: string; type: string; bytes: Uint8Array }>> =>
+    ipcRenderer.invoke('clipboard:readFiles') as Promise<
+      Array<{ name: string; type: string; bytes: Uint8Array }>
+    >,
+}
+
+const media = {
+  normalizeVideo: (payload: {
+    name: string
+    type: string
+    bytes: Uint8Array
+  }): Promise<{ name: string; type: string; bytes: Uint8Array; normalized: boolean }> =>
+    ipcRenderer.invoke('media:normalize-video', payload) as Promise<{
+      name: string
+      type: string
+      bytes: Uint8Array
+      normalized: boolean
+    }>,
 }
 
 contextBridge.exposeInMainWorld('hypermotion', {
@@ -36,6 +54,7 @@ contextBridge.exposeInMainWorld('hypermotion', {
     node: process.versions.node,
   },
   clipboard,
+  media,
   // Generic IPC pinhole. Renderer code calls
   // `window.hypermotion.invoke('channel', payload)` and main can register
   // a single ipcMain.handle. Keeps preload from growing one method per
@@ -70,6 +89,14 @@ declare global {
       clipboard: {
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
+        readFiles: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+      }
+      media: {
+        normalizeVideo: (payload: {
+          name: string
+          type: string
+          bytes: Uint8Array
+        }) => Promise<{ name: string; type: string; bytes: Uint8Array; normalized: boolean }>
       }
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
       on: (

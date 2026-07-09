@@ -282,7 +282,7 @@ function applyTrack(
   into: AnimatedValue,
   cache: Map<string, EasingEvaluator>,
 ): void {
-  const kfs = track.keyframes
+  const kfs = [...track.keyframes].sort((a, b) => a.time - b.time)
   if (kfs.length === 0) return
   if (track.propertyId === 'text.progress') {
     applyTextProgressTrack(track, t, into, cache)
@@ -356,14 +356,14 @@ function applyTextProgressTrack(
   const last = kfs[kfs.length - 1]!
   const mode = track.textAnimation?.mode
   if (t < first.time) {
-    if (mode === 'in' && typeof first.value === 'number') {
+    if ((mode === 'in' || mode === 'out') && typeof first.value === 'number') {
       into.textProgress = first.value
       into.textAnimation = track.textAnimation
     }
     return
   }
   if (t > last.time) {
-    if (mode === 'out' && typeof last.value === 'number') {
+    if ((mode === 'in' || mode === 'out') && typeof last.value === 'number') {
       into.textProgress = last.value
       into.textAnimation = track.textAnimation
     }

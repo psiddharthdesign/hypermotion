@@ -28,7 +28,20 @@ import { useAnimatedValues, type AnimatedValue } from '@/ui/hooks/useAnimatedVal
 import { useDragToMove } from '@/ui/hooks/useDragToMove'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
-import { importMediaFiles, isMediaFile } from '@/ui/importMedia'
+import {
+  captureVideoPoster,
+  decodeVideoMeta,
+  importMediaFiles,
+  isMediaFile,
+  normalizeVideoFileForBrowser,
+  readMediaFileAsDataUrl,
+  VIDEO_PLAYBACK_PROXY_WARNING,
+} from '@/ui/importMedia'
+import {
+  filesFromClipboardEvent,
+  importClipboardFiles,
+  readElectronClipboardFiles,
+} from '@/ui/importClipboardFiles'
 import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
@@ -91,6 +104,16 @@ interface Matrix2D {
   d: number
   e: number
   f: number
+}
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  return !!(
+    el &&
+    (el.tagName === 'INPUT' ||
+      el.tagName === 'TEXTAREA' ||
+      el.isContentEditable)
+  )
 }
 
 const IDENTITY_MATRIX_2D: Matrix2D = {
@@ -226,7 +249,7 @@ function maxCornerRadius(cornerRadius: number, cornerRadii?: CornerRadii): numbe
     : cornerRadius
 }
 
-function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSProperties {
+export function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSProperties {
   if (!fill) return {}
   if (fill.kind === 'solid') {
     return { backgroundColor: fill.color }
@@ -589,6 +612,8 @@ export function Canvas() {
   const clearSelection = useUI((s) => s.clearSelection)
   const selection = useUI((s) => s.selection)
   const tool = useUI((s) => s.tool)
+  const playing = useUI((s) => s.playing)
+  const playhead = useUI((s) => s.playhead)
   const setTool = useUI((s) => s.setTool)
   const view = useUI((s) => s.view)
   const setView = useUI((s) => s.setView)
@@ -615,7 +640,10 @@ export function Canvas() {
     const out: NodeId[] = []
     const visit = (id: NodeId) => {
       out.push(id)
-      for (const c of api.getChildren(id)) visit(c.id)
+      const children = api.getChildren(id)
+      for (let i = children.length - 1; i >= 0; i--) {
+        visit(children[i]!.id)
+      }
     }
     visit(rootId)
     return out
@@ -665,8 +693,8 @@ export function Canvas() {
   // For image fills, the renderer needs the full background-* bundle
   // (image url + size + repeat). For solid/gradient, we just paint
   // `background: <css>`. Branch here so the JSX stays simple.
-  const cameraBackgroundImageStyle = cameraBackgroundFill
-    ? imageBackgroundStyle(cameraBackgroundFill)
+  const cameraBackgroundStyle = cameraBackgroundFill
+    ? fillBackgroundStyle(cameraBackgroundFill)
     : null
   const [cameraPreview, setCameraPreview] = useState<{
     cameraId: NodeId
@@ -2067,6 +2095,44 @@ export function Canvas() {
     [api, rootId, clientToCanvas, clientToViewport, isInsideArtboard, setSelection, setTool],
   )
 
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditablePasteTarget(e.target)) return
+
+      const importFiles = async (files: File[]) => {
+        const ids = await importClipboardFiles(files, api, rootId, {
+          workspaceOnly: false,
+        })
+        if (ids.length > 0) {
+          setSelection(ids)
+          setTool('select')
+        }
+        return ids.length > 0
+      }
+
+      const eventFiles = filesFromClipboardEvent(e)
+      if (eventFiles.length > 0) {
+        e.preventDefault()
+        void importFiles(eventFiles)
+        return
+      }
+
+      const bridge = window.hypermotion?.clipboard
+      if (!bridge?.readFiles) return
+      void readElectronClipboardFiles()
+        .then(async (files) => {
+          if (files.length === 0) return
+          await importFiles(files)
+        })
+        .catch((err) => {
+          console.warn('[clipboard-file-paste] failed:', err)
+        })
+    }
+
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [api, rootId, setSelection, setTool])
+
   return (
     <main
       ref={workspaceRef}
@@ -2137,15 +2203,11 @@ export function Canvas() {
               back, see your scene shrink, see the backdrop framing it.
               Image fills get the full background-* bundle so `cover` /
               `contain` / `tile` all work. */}
-          {cameraBackgroundImageStyle ? (
+          {cameraBackgroundStyle ? (
             <div
+              key="camera-background"
               className="pointer-events-none absolute inset-0"
-              style={cameraBackgroundImageStyle}
-            />
-          ) : cameraBackgroundCss ? (
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{ background: cameraBackgroundCss }}
+              style={cameraBackgroundStyle}
             />
           ) : null}
           {/* Checkerboard sits on the OUTER canvas-root, anchored to the
@@ -2192,7 +2254,9 @@ export function Canvas() {
                       order={renderOrder}
                       animated={animated}
                       inherited={inherited}
-                      cameraDepthOfField={threeCameraAvailable ? null : previewCameraDepthOfField}
+                      cameraDepthOfField={
+                        threeCameraAvailable ? null : previewCameraDepthOfField
+                      }
                       sceneFill={sceneFill}
                       canvasWidth={canvasWidth}
                       canvasHeight={canvasHeight}
@@ -2226,6 +2290,9 @@ export function Canvas() {
                     showHelpers={false}
                     showPlanes
                     exportable
+                    playing={playing}
+                    playhead={playhead}
+                    sceneVersion={version}
                     onAvailabilityChange={setThreeCameraAvailable}
                   />
                   {selection.includes(camera.id) ||
@@ -2243,6 +2310,9 @@ export function Canvas() {
                       selectedIds={selection}
                       showHelpers={focusPickingCameraId === camera.id}
                       showPlanes={false}
+                      playing={playing}
+                      playhead={playhead}
+                      sceneVersion={version}
                       focusWorldPoint={
                         focusTargetWorld ??
 	                        (previewCameraDepthOfField
@@ -3700,7 +3770,7 @@ function NodeView({
   //
   // When there's no clipping ancestor, render the styled box directly
   // (no wrapper) so unrelated nodes pay no DOM cost.
-  const effectiveAncestorClip = hasProjected3D ? undefined : ancestorClip
+  const effectiveAncestorClip = ancestorClip
   const clipWrapperStyle =
     effectiveAncestorClip && !isRoot
       ? ({
@@ -3785,6 +3855,15 @@ function NodeView({
         transform,
         transformOrigin,
         transformStyle: 'preserve-3d',
+        // Frames act as design-tool compositing groups. Without isolation,
+        // a child using mix-blend-mode can blend against unrelated canvas
+        // content instead of the frame's own fill/backdrop, which makes
+        // imported Figma blend modes look broken.
+        isolation: node.kind === 'frame' ? 'isolate' : undefined,
+        mixBlendMode:
+          node.appearance.blendMode && node.appearance.blendMode !== 'normal'
+            ? node.appearance.blendMode
+            : undefined,
         filter: effectFilterCss || undefined,
         overflow: clips ? 'hidden' : undefined,
         cursor: isRoot ? 'default' : 'move',
@@ -4217,13 +4296,6 @@ function renderTextAnimationSegments(
   sharedStyle: CSSProperties,
   progress?: number,
 ) {
-  if (config.id === 'tracking') {
-    return (
-      <span style={trackingTextStyle(config, playhead, progress, sharedStyle)}>
-        {text}
-      </span>
-    )
-  }
   const segments = splitTextAnimationSegments(text, config.applyTo)
   const orderedCount = Math.max(1, segments.filter((s) => s.animate).length)
   let animateIndex = 0
@@ -4242,6 +4314,7 @@ function renderTextAnimationSegments(
       orderedCount,
       sharedStyle,
       segment.kind,
+      segment.isLast ?? false,
     )
     return (
       <span key={`${index}-${segment.text}`} style={style}>
@@ -4258,60 +4331,35 @@ function renderTextAnimationSegments(
   })
 }
 
-function trackingTextStyle(
-  config: TextAnimationConfig,
-  playhead: number,
-  progress: number | undefined,
-  sharedStyle: CSSProperties,
-): CSSProperties {
-  const timelineProgress =
-    progress === undefined ? undefined : Math.max(0, Math.min(1, progress))
-  const globalElapsed =
-    timelineProgress === undefined
-      ? playhead - config.startTime
-      : timelineProgress * config.duration
-  const raw = globalElapsed / Math.max(0.05, config.duration)
-  const u = Math.max(0, Math.min(1, raw))
-  const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
-  const exit = config.mode === 'out'
-  const amount = exit ? eased : 1 - eased
-  const extraTrackingPx = amount * 10
-  const authoredTracking =
-    typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
-
-  return {
-    display: 'inline',
-    whiteSpace: 'inherit',
-    letterSpacing: authoredTracking + extraTrackingPx,
-    opacity: 1 - amount,
-    willChange: 'letter-spacing, opacity',
-  }
-}
-
 function splitTextAnimationSegments(
   text: string,
   applyTo: TextAnimationConfig['applyTo'],
-): Array<{ text: string; animate: boolean; kind: 'inline' | 'line' }> {
+): Array<{ text: string; animate: boolean; kind: 'inline' | 'line'; isLast?: boolean }> {
   if (applyTo === 'layer') return [{ text, animate: true, kind: 'inline' }]
   if (applyTo === 'lines') {
     const lines = text.split(/(\n)/)
-    return lines.map((part) => ({
+    return lines.map((part, index) => ({
       text: part,
       animate: part !== '\n' && part.length > 0,
       kind: part === '\n' ? 'inline' : 'line',
+      isLast: index === lines.length - 1,
     }))
   }
   if (applyTo === 'words') {
-    return text.split(/(\s+)/).map((part) => ({
+    const parts = text.split(/(\s+)/)
+    return parts.map((part, index) => ({
       text: part,
       animate: !/^\s+$/.test(part) && part.length > 0,
       kind: 'inline',
+      isLast: index === parts.length - 1,
     }))
   }
-  return Array.from(text).map((char) => ({
+  const chars = Array.from(text)
+  return chars.map((char, index) => ({
     text: char,
     animate: char !== '\n' && char !== ' ',
     kind: 'inline',
+    isLast: index === chars.length - 1,
   }))
 }
 
@@ -4323,6 +4371,7 @@ function textAnimationSegmentStyle(
   count: number,
   sharedStyle: CSSProperties,
   kind: 'inline' | 'line',
+  isLast: boolean,
 ): CSSProperties {
   const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
   const timelineProgress = progress === undefined
@@ -4347,6 +4396,9 @@ function textAnimationSegmentStyle(
   let filter: string | undefined
   let clipPath: string | undefined
   let color: string | undefined
+  const authoredTracking =
+    typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
+  let effectiveTracking = authoredTracking
 
   if (
     config.id === 'fade' ||
@@ -4402,9 +4454,11 @@ function textAnimationSegmentStyle(
         backgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         color: 'transparent',
+        letterSpacing: effectiveTracking,
+        marginRight: kind === 'inline' && !isLast && effectiveTracking !== 0 ? effectiveTracking : undefined,
         transform: transforms.length > 0 ? transforms.join(' ') : undefined,
         transformOrigin: '50% 50%',
-        willChange: 'transform, opacity, filter, clip-path',
+        willChange: 'transform, opacity, filter, clip-path, letter-spacing',
       }
     }
   }
@@ -4418,7 +4472,7 @@ function textAnimationSegmentStyle(
     opacity = 1 - amount * 0.35
   }
   if (config.id === 'tracking') {
-    transforms.push(`translateX(${amount * 10}px)`)
+    effectiveTracking = authoredTracking + amount * 10
     opacity = 1 - amount
   }
   if (config.id === 'skew') {
@@ -4438,9 +4492,11 @@ function textAnimationSegmentStyle(
     filter,
     clipPath,
     color,
+    letterSpacing: effectiveTracking,
+    marginRight: kind === 'inline' && !isLast && effectiveTracking !== 0 ? effectiveTracking : undefined,
     transform: transforms.length > 0 ? transforms.join(' ') : undefined,
     transformOrigin: '50% 50%',
-    willChange: 'transform, opacity, filter, clip-path',
+    willChange: 'transform, opacity, filter, clip-path, letter-spacing',
   }
 }
 
@@ -4507,11 +4563,44 @@ function MediaVideo({
 }: {
   node: Extract<SceneNode, { kind: 'video' }>
 }) {
+  const api = useSceneAPI()
   const ref = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const repairAttemptedRef = useRef<string>('')
+  const [mediaReadyTick, setMediaReadyTick] = useState(0)
+  const [localPoster, setLocalPoster] = useState('')
+  const [decodeError, setDecodeError] = useState('')
+  const [hasCanvasFrame, setHasCanvasFrame] = useState(false)
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
-  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
-  const local = clampLocal(playhead - node.startTime + node.trimStart, node)
+  const rate = clampPlaybackRate(node.playbackRate)
+  const sourceClipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
+  const sceneClipLen = sourceClipLen / rate
+  const local = clampLocal((playhead - node.startTime) * rate + node.trimStart, node)
+
+  useEffect(() => {
+    setHasCanvasFrame(false)
+    setDecodeError('')
+  }, [node.src])
+
+  useEffect(() => {
+    if (!node.src.startsWith('data:video/')) return
+    if (node.importWarning === VIDEO_PLAYBACK_PROXY_WARNING) return
+    if (repairAttemptedRef.current === node.src) return
+    repairAttemptedRef.current = node.src
+
+    let cancelled = false
+    void repairVideoNodeSource(node, api)
+      .catch((err) => {
+        console.warn('[media] video self-repair failed', err)
+      })
+      .finally(() => {
+        if (!cancelled) setMediaReadyTick((tick) => tick + 1)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, node])
 
   useEffect(() => {
     const el = ref.current
@@ -4519,17 +4608,22 @@ function MediaVideo({
     // Reflect muted + volume every render. These are cheap.
     el.muted = node.muted
     el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.muted, node.volume])
+    el.playbackRate = rate
+  }, [node.muted, node.volume, rate])
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
+    const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      el.load()
+      return
+    }
     if (playing && inRange) {
+      if (el.paused || Math.abs(el.currentTime - local) > 0.35) {
+        seekMediaElement(el, local, 0.2)
+      }
       if (el.paused) {
-        // Seek once on transition-into-playback so we start at the right
-        // frame; thereafter let the element's own clock drive the tick.
-        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
         el.play().catch(() => {
           // Autoplay policies may reject — user interaction is required.
           // We pause silently; the user can click play again after
@@ -4539,29 +4633,177 @@ function MediaVideo({
     } else {
       if (!el.paused) el.pause()
       // While paused / out-of-range, pin the element to the scrubbed time.
-      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
+      const pausedPreviewLocal = previewLocalForPausedVideo(local, node)
+      seekMediaElement(el, pausedPreviewLocal, 0.05)
     }
-  }, [playing, playhead, local, clipLen, node.startTime])
+  }, [playing, playhead, local, sceneClipLen, node, rate, mediaReadyTick])
+
+  useEffect(() => {
+    const video = ref.current
+    const canvas = canvasRef.current
+    if (!video || !canvas) return
+    let raf = 0
+    const draw = () => {
+      if (drawVideoToCanvas(video, canvas)) {
+        setHasCanvasFrame(true)
+      }
+      if (playing && !video.paused && !video.ended) {
+        raf = requestAnimationFrame(draw)
+      }
+    }
+    draw()
+    if (playing) raf = requestAnimationFrame(draw)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [playing, mediaReadyTick, playhead, node.src])
 
   if (!node.src) return null
+  const poster = node.poster || localPoster || undefined
+  const markVideoReady = () => {
+    setDecodeError('')
+    setMediaReadyTick((tick) => tick + 1)
+    const el = ref.current
+    const canvas = canvasRef.current
+    if (el && canvas && drawVideoToCanvas(el, canvas)) {
+      setHasCanvasFrame(true)
+    }
+    if (!el || node.poster || localPoster) return
+    const frame = capturePosterFromVideoElement(el)
+    if (frame) setLocalPoster(frame)
+  }
 
   return (
-    <video
-      ref={ref}
-      src={node.src}
-      draggable={false}
-      playsInline
-      preload="auto"
-      style={{
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        objectFit: node.fit,
-        borderRadius: 'inherit',
-        pointerEvents: 'none',
-      }}
-    />
+    <>
+      {poster ? (
+        <img
+          src={poster}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: node.fit,
+            borderRadius: 'inherit',
+            pointerEvents: 'none',
+            zIndex: hasCanvasFrame ? 1 : 3,
+          }}
+        />
+      ) : null}
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: node.fit,
+          borderRadius: 'inherit',
+          pointerEvents: 'none',
+          zIndex: 2,
+        }}
+      />
+      <video
+        ref={ref}
+        src={node.src}
+        poster={poster}
+        draggable={false}
+        playsInline
+        preload="auto"
+        onLoadedMetadata={markVideoReady}
+        onLoadedData={markVideoReady}
+        onCanPlay={markVideoReady}
+        onSeeked={markVideoReady}
+        onTimeUpdate={markVideoReady}
+        onError={() => {
+          const el = ref.current
+          setDecodeError(el?.error?.message || 'Video decode failed')
+        }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: node.fit,
+          opacity: 0,
+          zIndex: 0,
+          pointerEvents: 'none',
+        }}
+      />
+      {decodeError ? (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-red-500/10 px-3 text-center font-mono text-[10px] text-red-700"
+          style={{ zIndex: 3, borderRadius: 'inherit', pointerEvents: 'none' }}
+        >
+          {decodeError}
+        </div>
+      ) : null}
+    </>
   )
+}
+
+async function repairVideoNodeSource(
+  node: Extract<SceneNode, { kind: 'video' }>,
+  api: SceneAPI,
+) {
+  const file = await dataUrlToFile(
+    node.src,
+    `${node.name || 'video'}.mp4`,
+  )
+  const normalized = await normalizeVideoFileForBrowser(file)
+  if (!normalized.normalized) return
+
+  const dataUrl = await readMediaFileAsDataUrl(normalized.file)
+  const meta = await decodeVideoMeta(dataUrl).catch(() => ({
+    width: typeof node.size.width === 'number' ? node.size.width : 1,
+    height: typeof node.size.height === 'number' ? node.size.height : 1,
+    duration: node.duration,
+  }))
+  const poster = await captureVideoPoster(dataUrl, meta.duration).catch(() => '')
+
+  api.doc.transact(() => {
+    api.setNodeProperty(node.id, 'src', dataUrl)
+    api.setNodeProperty(node.id, 'duration', meta.duration)
+    api.setNodeProperty(node.id, 'trimEnd', Math.min(node.trimEnd || meta.duration, meta.duration))
+    api.setNodeProperty(node.id, 'poster', poster)
+    api.setNodeProperty(
+      node.id,
+      'importWarning',
+      VIDEO_PLAYBACK_PROXY_WARNING,
+    )
+  }, 'video-self-repair')
+}
+
+async function dataUrlToFile(dataUrl: string, fallbackName: string): Promise<File> {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  const mime = blob.type || dataUrl.match(/^data:([^;,]+)/)?.[1] || 'video/mp4'
+  const ext = mime.includes('quicktime') ? 'mov' : mime.includes('webm') ? 'webm' : 'mp4'
+  const name = /\.[a-z0-9]+$/i.test(fallbackName)
+    ? fallbackName
+    : `${fallbackName}.${ext}`
+  return new File([blob], name, { type: mime })
+}
+
+function seekMediaElement(
+  el: HTMLMediaElement,
+  localTime: number,
+  tolerance: number,
+) {
+  if (!Number.isFinite(localTime)) return
+  const duration = Number.isFinite(el.duration) && el.duration > 0
+    ? el.duration
+    : Number.POSITIVE_INFINITY
+  const next = Math.max(0, Math.min(duration, localTime))
+  if (Math.abs(el.currentTime - next) <= tolerance) return
+  try {
+    el.currentTime = next
+  } catch {
+    // Some codecs reject early seeks until data is decoded. The
+    // loadedmetadata/loadeddata handlers above re-run the sync pass.
+  }
 }
 
 function clampLocal(
@@ -4574,45 +4816,70 @@ function clampLocal(
   return t
 }
 
+function clampPlaybackRate(rate: number | undefined): number {
+  return Math.max(0.05, Math.min(16, Number.isFinite(rate) ? rate! : 1))
+}
+
+function previewLocalForPausedVideo(
+  local: number,
+  node: Extract<SceneNode, { kind: 'video' }>,
+): number {
+  const trimStart = node.trimStart ?? 0
+  const trimEnd = node.trimEnd || node.duration || trimStart
+  if (local > trimStart + 0.001) return local
+  if (trimEnd <= trimStart + 0.12) return local
+  return Math.min(trimEnd, trimStart + 0.12)
+}
+
+function capturePosterFromVideoElement(el: HTMLVideoElement): string {
+  if (el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return ''
+  const width = el.videoWidth || 0
+  const height = el.videoHeight || 0
+  if (width <= 0 || height <= 0) return ''
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return ''
+    ctx.drawImage(el, 0, 0, width, height)
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } catch {
+    return ''
+  }
+}
+
+function drawVideoToCanvas(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+): boolean {
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false
+  const width = video.videoWidth || 0
+  const height = video.videoHeight || 0
+  if (width <= 0 || height <= 0) return false
+  if (canvas.width !== width) canvas.width = width
+  if (canvas.height !== height) canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return false
+  try {
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(video, 0, 0, width, height)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Audio "chip" — a non-visual node gets a small card on the artboard
- * so the user has something to click, drag, and inspect. The playback
- * is driven by a headless `<audio>` element mounted alongside the
- * chip; visuals are a speaker glyph + the node's name.
+ * so the user has something to click, drag, and inspect. Playback is
+ * handled once by `AudioPlaybackHost`; this component is visual only.
  */
 function AudioChip({
   node,
 }: {
   node: Extract<SceneNode, { kind: 'audio' }>
 }) {
-  const ref = useRef<HTMLAudioElement | null>(null)
-  const playing = useUI((s) => s.playing)
-  const playhead = useUI((s) => s.playhead)
-  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
-  const local = clampLocal(playhead - node.startTime + node.trimStart, node)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.muted = node.muted
-    el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.muted, node.volume])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
-    if (playing && inRange) {
-      if (el.paused) {
-        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
-        el.play().catch(() => {})
-      }
-    } else {
-      if (!el.paused) el.pause()
-      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
-    }
-  }, [playing, playhead, local, clipLen, node.startTime])
-
   return (
     <div
       style={{
@@ -4643,14 +4910,6 @@ function AudioChip({
       >
         {node.name}
       </span>
-      {node.src ? (
-        <audio
-          ref={ref}
-          src={node.src}
-          preload="auto"
-          muted={node.muted}
-        />
-      ) : null}
     </div>
   )
 }

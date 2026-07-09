@@ -4,6 +4,7 @@ import { useRef, type ReactNode } from 'react'
 import { useUI, type Tool } from '@/state/ui'
 import { useSceneAPI } from '@/scene'
 import { importImageFiles } from '@/ui/importImage'
+import { importMediaFiles } from '@/ui/importMedia'
 
 /**
  * FloatingDock — the tool palette as a floating pill at the bottom of
@@ -46,16 +47,23 @@ export function FloatingDock() {
   const setSelection = useUI((s) => s.setSelection)
   const api = useSceneAPI()
 
-  // Hidden file input for the dock's place-image button. Same pattern
-  // the old TopBar used — we keep it here so the dock is fully
-  // self-contained instead of reaching back up into App for image
-  // import.
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
   const onImageFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const rootId = api.getRoot()
     if (!rootId) return
     const ids = await importImageFiles(files, api, rootId)
+    if (ids.length > 0) {
+      setSelection(ids)
+      setTool('select')
+    }
+  }
+  const onMediaFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const rootId = api.getRoot()
+    if (!rootId) return
+    const ids = await importMediaFiles(files, api, rootId)
     if (ids.length > 0) {
       setSelection(ids)
       setTool('select')
@@ -131,19 +139,38 @@ export function FloatingDock() {
       <button
         type="button"
         title="Place image…"
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => imageInputRef.current?.click()}
         className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
       >
         <ImageIcon />
       </button>
       <input
-        ref={fileInputRef}
+        ref={imageInputRef}
         type="file"
         accept="image/*"
         multiple
         hidden
         onChange={(e) => {
           void onImageFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      <button
+        type="button"
+        title="Place video or audio…"
+        onClick={() => mediaInputRef.current?.click()}
+        className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
+      >
+        <VideoIcon />
+      </button>
+      <input
+        ref={mediaInputRef}
+        type="file"
+        accept="video/*,audio/*,.mp4,.webm,.mov,.m4v,.ogv,.ogg,.mp3,.wav,.m4a,.aac,.flac,.oga,.opus"
+        multiple
+        hidden
+        onChange={(e) => {
+          void onMediaFiles(e.target.files)
           e.target.value = ''
         }}
       />
@@ -224,6 +251,16 @@ function ImageIcon() {
       <rect x="2" y="3" width="12" height="10" rx="1" />
       <circle cx="6" cy="6.5" r="1" />
       <path d="M2.5 11.5l3-3 2.5 2.5 2-2 3.5 3.5" />
+    </svg>
+  )
+}
+
+function VideoIcon() {
+  return (
+    <svg {...svgProps()}>
+      <rect x="2" y="3.5" width="9" height="9" rx="1" />
+      <path d="M11 6.2l3-1.7v7l-3-1.7z" />
+      <path d="M5.5 6.3v3.4L8.4 8z" fill="currentColor" stroke="none" />
     </svg>
   )
 }

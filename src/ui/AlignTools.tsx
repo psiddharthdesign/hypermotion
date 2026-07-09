@@ -16,6 +16,8 @@ import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
  * Behavior:
  *   - Single selection (non-root): align to the parent's content box
  *     (the parent's solved rect minus its padding).
+ *   - Single selection (root/scene): align the scene's immediate child
+ *     content inside the artboard.
  *   - Multi-select: align inside the union bounding box of the
  *     selection. The leftmost / topmost item stays put when "Align
  *     left" / "Align top" are clicked, etc. — same as Figma.
@@ -55,14 +57,14 @@ export function AlignTools({
 }) {
   if (selection.length === 0) return null
 
-  // Detect the "in a stack" case: single selection whose parent is a
-  // flex / grid container. That's where alignment-by-transform is a
-  // visual lie — Yoga still owns the position. Greys the whole bar
-  // and surfaces a tooltip explaining why.
+  // Detect the "in a stack" case: single flow selection whose parent is
+  // a flex / grid container. Absolute children are explicitly opting out
+  // of parent layout, so alignment-by-transform is meaningful for them.
   const inStack = (() => {
     if (selection.length !== 1) return false
     const node = api.getNode(selection[0]!)
     if (!node || !node.parent) return false
+    if (node.position === 'absolute') return false
     const parent = api.getNode(node.parent)
     if (!parent || !('layout' in parent)) return false
     return parent.layout.mode === 'flex' || parent.layout.mode === 'grid'
@@ -78,7 +80,7 @@ export function AlignTools({
   }
 
   const stackTitle =
-    'Alignment is owned by the parent stack. Switch the parent to Layout: None or move this layer out of the stack to align it manually.'
+    'Alignment is owned by the parent stack. Switch this layer to Absolute, switch the parent to Layout: None, or move this layer out of the stack to align it manually.'
 
   return (
     <div
@@ -234,9 +236,15 @@ function alignNodes(
 ): void {
   const solved = getLastSolvedLayout()
   if (!solved) return
+  const rootId = api.getRoot()
+
+  const rootSelected = selection.length === 1 && selection[0] === rootId
+  const targetIds = rootSelected
+    ? api.getChildren(rootId).map((child) => child.id)
+    : selection
 
   const nodes: Array<{ node: Node; rect: { x: number; y: number; w: number; h: number } }> = []
-  for (const id of selection) {
+  for (const id of targetIds) {
     const n = api.getNode(id)
     const r = solved[id]
     if (!n || !r) continue
@@ -257,12 +265,21 @@ function alignNodes(
   }
 
   // Reference box: union for multi-select, parent's solved rect for
-  // single. Single-with-no-parent (root) is a no-op.
+  // single. When the scene/root itself is selected, align its immediate
+  // child content inside the root artboard instead of no-oping.
   let refX: number
   let refY: number
   let refW: number
   let refH: number
-  if (nodes.length === 1) {
+  if (rootSelected) {
+    const root = api.getNode(rootId)
+    const rootRect = root ? renderedRectForNode(api, solved, root) : null
+    if (!rootRect) return
+    refX = rootRect.x
+    refY = rootRect.y
+    refW = rootRect.w
+    refH = rootRect.h
+  } else if (nodes.length === 1) {
     const only = nodes[0]!
     if (!only.node.parent) return
     const parent = api.getNode(only.node.parent)

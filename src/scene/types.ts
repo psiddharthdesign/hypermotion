@@ -393,8 +393,28 @@ export interface Appearance {
   cornerRadius: number
   /** Per-corner override of `cornerRadius`. See {@link CornerRadii}. */
   cornerRadii?: CornerRadii
+  /** CSS-compatible compositing mode for this layer. */
+  blendMode?: BlendMode
   effects: Effect[]
 }
+
+export type BlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
 
 // ---------------------------------------------------------------------------
 // Node base + variants
@@ -536,11 +556,17 @@ export interface VideoNode extends NodeBase {
   kind: 'video'
   size: Size
   src: string
+  /** Still preview frame used before the video element has painted. */
+  poster?: string
+  /** Optional user-facing note about import conversion or fallback behavior. */
+  importWarning?: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
   /** Length of the source media in seconds (decoded on import). */
   duration: number
   /** 0..1 volume multiplier for the video's audio track. */
   volume: number
+  /** Source playback speed, where 1 is normal speed. */
+  playbackRate: number
   /** Whether the video's audio is muted. Default true. */
   muted: boolean
   /** When in the scene timeline playback begins, in seconds. */
@@ -567,6 +593,7 @@ export interface AudioNode extends NodeBase {
   src: string
   duration: number
   volume: number
+  playbackRate: number
   muted: boolean
   startTime: number
   trimStart: number
@@ -896,6 +923,7 @@ export type PropertyId =
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
   | 'appearance.fill'
+  | 'appearance.blendMode'
   // text effect group — drives text-specific reveal effects
   | 'text.progress'
   // layout group — triggers relayout + FLIP

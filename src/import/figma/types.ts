@@ -31,9 +31,9 @@ export interface FigmaPayload {
   /** Root nodes from the user's selection. May be one or many. */
   nodes: FigmaCapturedNode[]
   /**
-   * Image-fill assets, keyed by image hash. Values are base64 PNG
-   * payloads (without the `data:` prefix — the importer adds it).
-   * Empty when the selection had no image fills.
+   * Image-fill assets, keyed by image hash. Newer plugin payloads store
+   * complete data URLs so JPEG/WebP/GIF bytes keep their real MIME type.
+   * Older payloads stored raw base64 and are still treated as PNG.
    */
   assets: Record<string, string>
 }
@@ -63,6 +63,11 @@ interface FigmaCapturedNodeBase {
   height: number
   /** Degrees, CSS convention (0 = up, increasing clockwise). */
   rotation: number
+  /**
+   * Figma's per-child "Absolute position" flag inside auto-layout /
+   * flow parents. Missing on older plugin payloads.
+   */
+  layoutPositioning?: 'AUTO' | 'ABSOLUTE'
   /** Per-corner radii [tl, tr, br, bl]. */
   cornerRadius: [number, number, number, number]
   fills: FigmaCapturedFill[]
@@ -77,8 +82,31 @@ interface FigmaCapturedNodeBase {
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   /** Empty array means solid; presence means dashed. */
   strokeDashes: number[]
+  /** Figma layer blend mode. Missing on older plugin payloads. */
+  blendMode?: FigmaBlendMode
   effects?: FigmaCapturedEffect[]
 }
+
+export type FigmaBlendMode =
+  | 'PASS_THROUGH'
+  | 'NORMAL'
+  | 'DARKEN'
+  | 'MULTIPLY'
+  | 'LINEAR_BURN'
+  | 'COLOR_BURN'
+  | 'LIGHTEN'
+  | 'SCREEN'
+  | 'LINEAR_DODGE'
+  | 'COLOR_DODGE'
+  | 'OVERLAY'
+  | 'SOFT_LIGHT'
+  | 'HARD_LIGHT'
+  | 'DIFFERENCE'
+  | 'EXCLUSION'
+  | 'HUE'
+  | 'SATURATION'
+  | 'COLOR'
+  | 'LUMINOSITY'
 
 export interface FigmaCapturedFrame extends FigmaCapturedNodeBase {
   type: 'FRAME' | 'GROUP' | 'COMPONENT' | 'INSTANCE'
