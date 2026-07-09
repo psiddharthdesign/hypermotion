@@ -3,6 +3,27 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
 export type McpToolArgs = Readonly<Record<string, unknown>>
+export type StringSchemaProperty = {
+  readonly type: 'string'
+  readonly minLength?: number
+  readonly pattern?: string
+  readonly description: string
+}
+export type BooleanSchemaProperty = {
+  readonly type: 'boolean'
+  readonly description: string
+  readonly default: boolean
+}
+export type EnumStringSchemaProperty<Value extends string> = StringSchemaProperty & {
+  readonly enum: readonly Value[]
+}
+export type IntegerSchemaProperty = {
+  readonly type: 'integer'
+  readonly minimum: number
+  readonly maximum: number
+  readonly description: string
+}
+
 export const EMPTY_ARGS_TOOL_NAMES = [
   'doctor',
   'get_capabilities',
