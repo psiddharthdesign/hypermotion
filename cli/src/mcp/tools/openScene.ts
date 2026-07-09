@@ -111,7 +111,7 @@ export async function handleOpenScene(
   if (!opened) {
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: 'hyper-motion desktop app not found.' }],
+      content: [{ type: 'text' as const, text: 'open_scene: hyper-motion desktop app not found.' }],
     }
   }
   return {

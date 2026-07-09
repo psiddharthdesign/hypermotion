@@ -150,7 +150,7 @@ test('open_scene reports missing desktop apps as MCP errors', async () => {
     )
 
     assert.equal(result.isError, true)
-    assert.equal(assertToolText(result), 'hyper-motion desktop app not found.')
+    assert.equal(assertToolText(result), 'open_scene: hyper-motion desktop app not found.')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
