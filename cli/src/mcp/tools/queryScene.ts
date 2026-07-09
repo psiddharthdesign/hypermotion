@@ -160,6 +160,7 @@ export async function handleListTracks(
   if (!loaded.ok) return loaded.result
 
   const tracks = Object.values(record(loaded.scene.tracks)).filter((raw) => {
+    if (!isRecord(raw)) return false
     const t = record(raw)
     return input.nodeId ? t.nodeId === input.nodeId : true
   })
@@ -237,6 +238,10 @@ function record(value: unknown): McpToolArgs {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as McpToolArgs)
     : {}
+}
+
+function isRecord(value: unknown): value is McpToolArgs {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function stringArray(value: unknown): string[] {

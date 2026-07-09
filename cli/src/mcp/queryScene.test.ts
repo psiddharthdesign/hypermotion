@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import * as Y from 'yjs'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { buildSceneBytes } from '../scene/build.js'
 import { assertToolText } from '../testUtils/mcp.js'
@@ -332,81 +333,84 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
   const scenePath = path.join(dir, 'scene.hype')
 
   try {
-    fs.writeFileSync(
-      scenePath,
-      buildSceneBytes({
-        meta: {
-          name: 'Query MCP',
-          canvas: { width: 320, height: 180 },
+    const bytes = buildSceneBytes({
+      meta: {
+        name: 'Query MCP',
+        canvas: { width: 320, height: 180 },
+      },
+      nodes: {
+        root: {
+          id: 'root',
+          name: 'Root frame',
+          kind: 'frame',
+          parent: null,
+          children: malformedChildren(['title', 'title.*', 42]),
+          size: { width: 320, height: 180 },
+          layout: { mode: 'none' },
         },
-        nodes: {
-          root: {
-            id: 'root',
-            name: 'Root frame',
-            kind: 'frame',
-            parent: null,
-            children: malformedChildren(['title', 'title.*', 42]),
-            size: { width: 320, height: 180 },
-            layout: { mode: 'none' },
-          },
-          title: {
-            id: 'title',
-            name: 'Title',
-            kind: 'text',
-            parent: 'root',
-            text: 'Queryable',
-            fontFamily: 'Inter',
-            fontSize: 24,
-          },
-          'title.*': {
-            id: 'title.*',
-            name: 'Literal title glob',
-            kind: 'text',
-            parent: 'root',
-            text: 'Literal query id',
-            fontFamily: 'Inter',
-            fontSize: 20,
-          },
-          camera: {
-            id: 'camera',
-            name: 'Camera',
-            kind: 'camera',
-            parent: null,
-            transform: { x: 160, y: 90, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-          },
+        title: {
+          id: 'title',
+          name: 'Title',
+          kind: 'text',
+          parent: 'root',
+          text: 'Queryable',
+          fontFamily: 'Inter',
+          fontSize: 24,
         },
-        activeCameraId: 'camera',
-        tracks: {
-          fadeTitle: {
-            id: 'fade-title',
-            nodeId: 'title',
-            propertyId: 'appearance.opacity',
-            keyframes: [
-              { id: 'fade-start', time: 0, value: 0 },
-              { id: 'fade-end', time: 0.3, value: 1 },
-            ],
-          },
-          fadeLiteralTitle: {
-            id: 'fade-literal-title',
-            nodeId: 'title.*',
-            propertyId: 'appearance.opacity',
-            keyframes: [
-              { id: 'literal-fade-start', time: 0, value: 0 },
-              { id: 'literal-fade-end', time: 0.3, value: 1 },
-            ],
-          },
-          moveRoot: {
-            id: 'move-root',
-            nodeId: 'root',
-            propertyId: 'transform.x',
-            keyframes: [
-              { id: 'move-start', time: 0, value: 0 },
-              { id: 'move-end', time: 0.3, value: 12 },
-            ],
-          },
+        'title.*': {
+          id: 'title.*',
+          name: 'Literal title glob',
+          kind: 'text',
+          parent: 'root',
+          text: 'Literal query id',
+          fontFamily: 'Inter',
+          fontSize: 20,
         },
-      }),
-    )
+        camera: {
+          id: 'camera',
+          name: 'Camera',
+          kind: 'camera',
+          parent: null,
+          transform: { x: 160, y: 90, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        },
+      },
+      activeCameraId: 'camera',
+      tracks: {
+        fadeTitle: {
+          id: 'fade-title',
+          nodeId: 'title',
+          propertyId: 'appearance.opacity',
+          keyframes: [
+            { id: 'fade-start', time: 0, value: 0 },
+            { id: 'fade-end', time: 0.3, value: 1 },
+          ],
+        },
+        fadeLiteralTitle: {
+          id: 'fade-literal-title',
+          nodeId: 'title.*',
+          propertyId: 'appearance.opacity',
+          keyframes: [
+            { id: 'literal-fade-start', time: 0, value: 0 },
+            { id: 'literal-fade-end', time: 0.3, value: 1 },
+          ],
+        },
+        moveRoot: {
+          id: 'move-root',
+          nodeId: 'root',
+          propertyId: 'transform.x',
+          keyframes: [
+            { id: 'move-start', time: 0, value: 0 },
+            { id: 'move-end', time: 0.3, value: 12 },
+          ],
+        },
+      },
+    })
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, bytes)
+    const scene = doc.getMap('scene')
+    const tracks = scene.get('tracks') as Y.Map<unknown>
+    tracks.set('staleTrackEntry', 'not a track')
+    fs.writeFileSync(scenePath, Y.encodeStateAsUpdate(doc))
 
     const layersResult = await handleListLayers({ scene: scenePath })
     const layersPayload = JSON.parse(assertToolText(layersResult)) as {
