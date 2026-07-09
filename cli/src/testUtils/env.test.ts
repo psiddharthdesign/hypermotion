@@ -35,6 +35,26 @@ test('withEnvVar restores values after callback mutations', async () => {
   }
 })
 
+test('withEnvVar restores existing values after async callback failures', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_ASYNC_THROW'
+  process.env[name] = 'before'
+
+  try {
+    await assert.rejects(
+      withEnvVar(name, 'during', async () => {
+        await Promise.resolve()
+        assert.equal(process.env[name], 'during')
+        throw new Error('callback failed')
+      }),
+      /callback failed/,
+    )
+
+    assert.equal(process.env[name], 'before')
+  } finally {
+    delete process.env[name]
+  }
+})
+
 test('withEnvVar restores nested values in order', async () => {
   const name = 'HYPERMOTION_TEST_ENV_NESTED'
   process.env[name] = 'before'
