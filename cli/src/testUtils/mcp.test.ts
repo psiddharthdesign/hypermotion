@@ -36,6 +36,15 @@ test('assertToolText reports missing text content clearly', () => {
   )
 })
 
+test('assertToolText rejects missing content arrays clearly', () => {
+  const result = {} as unknown as CallToolResult
+
+  assert.throws(
+    () => assertToolText(result),
+    /expected MCP content to be an array/,
+  )
+})
+
 test('assertToolText rejects undefined content items', () => {
   const result = {
     content: [undefined],
