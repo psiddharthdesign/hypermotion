@@ -92,9 +92,10 @@ test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
 
 test('driveHeadlessRender removes stale files before spawn failures', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'missing-app')
+  const appPath = path.join(dir, 'not-executable-app')
   const outputPath = path.join(dir, 'out.mp4')
 
+  fs.writeFileSync(appPath, 'not executable')
   fs.writeFileSync(outputPath, 'stale output')
   fs.writeFileSync(`${outputPath}.done`, 'stale sentinel')
   fs.writeFileSync(`${outputPath}.error`, 'stale failure')
