@@ -129,6 +129,26 @@ test('validate command reports directory inputs', async () => {
   }
 })
 
+test('validate command reports corrupt scene files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-corrupt-'))
+  const scenePath = path.join(dir, 'scene.hype')
+  fs.writeFileSync(scenePath, 'not a yjs update')
+  try {
+    const stderr = await captureStderr(async () => {
+      await assert.rejects(
+        withProcessExitThrow(async () => {
+          validateCommand().parse([scenePath], { from: 'user' })
+        }),
+        { exitCode: 2 },
+      )
+    })
+
+    assert.match(stderr, /^\[validate\] .*scene\.hype doesn't look like a valid \.hype file:/m)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('validate command prints human-readable validation errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-validate-'))
   const scenePath = path.join(dir, 'scene.hype')
