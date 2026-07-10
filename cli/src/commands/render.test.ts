@@ -378,6 +378,27 @@ test('render command rejects fractional fps before launching the app', async () 
   assert.match(stderr, /^\[render\] invalid fps: 30\.5$/m)
 })
 
+test('render command rejects JavaScript numeric fps notation before launching the app', async () => {
+  for (const fpsInput of ['1e2', '0x10']) {
+    const stderr = await captureStderr(() => {
+      return withProcessExitThrow(async () => {
+        await assert.rejects(
+          renderCommand({
+            locateApp: async () => {
+              throw new Error('should not locate app')
+            },
+          }).parseAsync(['-o', 'out.mp4', '--fps', fpsInput], {
+            from: 'user',
+          }),
+          { exitCode: 1 },
+        )
+      })
+    })
+
+    assert.match(stderr, new RegExp(`^\\[render\\] invalid fps: ${fpsInput}$`, 'm'))
+  }
+})
+
 test('render command reports unsupported formats before launching the app', async () => {
   const stderr = await captureStderr(() => {
     return withProcessExitThrow(async () => {
