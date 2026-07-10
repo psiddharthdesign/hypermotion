@@ -42,6 +42,18 @@ test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
   class CustomArgs {}
 
   assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', 'unexpected'),
+    'doctor: invalid arguments — Expected an object',
+  )
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', 1),
+    'doctor: invalid arguments — Expected an object',
+  )
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', true),
+    'doctor: invalid arguments — Expected an object',
+  )
+  assert.equal(
     rejectUnexpectedEmptyArgs('doctor', []),
     'doctor: invalid arguments — Expected an object',
   )
