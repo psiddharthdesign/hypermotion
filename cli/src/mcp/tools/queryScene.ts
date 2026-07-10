@@ -40,6 +40,10 @@ type LayerSummary = {
   parent: unknown
   children: string[]
 }
+type CameraSummary = McpToolArgs & {
+  id: string
+  kind: 'camera'
+}
 
 const SCENE_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
@@ -177,7 +181,7 @@ export async function handleListCameras(
   const loaded = read('list_cameras', input.scene)
   if (!loaded.ok) return loaded.result
 
-  const cameras = Object.values(record(loaded.scene.nodes)).filter((raw) => record(raw).kind === 'camera')
+  const cameras = Object.values(record(loaded.scene.nodes)).filter(isCameraNode)
   return text({ activeCameraId: loaded.scene.activeCameraId ?? null, cameras })
 }
 
@@ -242,6 +246,10 @@ function record(value: unknown): McpToolArgs {
 
 function isRecord(value: unknown): value is McpToolArgs {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isCameraNode(value: unknown): value is CameraSummary {
+  return isRecord(value) && value.kind === 'camera' && typeof value.id === 'string'
 }
 
 function stringArray(value: unknown): string[] {
