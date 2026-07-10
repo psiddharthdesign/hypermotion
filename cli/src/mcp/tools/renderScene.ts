@@ -55,6 +55,7 @@ const RenderInput = z.object({
     ),
 }).strict()
 type RenderInputData = z.infer<typeof RenderInput>
+type ToolInputSchema = Tool['inputSchema']
 export type RenderSceneDeps = {
   existsSync: typeof fs.existsSync
   statSync: (path: fs.PathLike) => fs.Stats
@@ -129,7 +130,7 @@ export const renderSceneTool: Tool = {
     },
     required: ['output'],
     additionalProperties: false,
-  },
+  } satisfies ToolInputSchema,
 }
 
 export async function handleRenderScene(
