@@ -32,7 +32,7 @@ test('render command forwards saved scene paths to the driver', async () => {
   const scenePath = path.join(dir, 'scene with spaces.hype')
   const outputPath = path.join(dir, 'exports', 'out.webm')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   fs.writeFileSync(scenePath, 'fake scene')
   try {
     const stdout = await captureStdout(async () => {
@@ -69,7 +69,7 @@ test('render command accepts equals-form saved scene paths', async () => {
   const scenePath = path.join(dir, 'scene with spaces.hype')
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   fs.writeFileSync(scenePath, 'fake scene')
   try {
     await renderCommand({
@@ -89,7 +89,7 @@ test('render command infers formats case-insensitively from output extensions', 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-'))
   const outputPath = path.join(dir, 'out.GIF')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -107,7 +107,7 @@ test('render command infers formats case-insensitively from output extensions', 
 test('render command infers formats from extension-only output filenames', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-extension-only-'))
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -126,7 +126,7 @@ test('render command ignores URL-style suffixes when inferring output formats', 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-suffix-'))
   const outputPath = path.join(dir, 'out.webm?download=1#preview')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -145,7 +145,7 @@ test('render command defaults to mp4 when output extension is unsupported', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-format-default-'))
   const outputPath = path.join(dir, 'out.mov')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -164,7 +164,7 @@ test('render command accepts explicit formats case-insensitively', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-explicit-format-'))
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -183,7 +183,7 @@ test('render command accepts explicit quality presets case-insensitively', async
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-explicit-quality-'))
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -202,7 +202,7 @@ test('render command trims padded format, quality, and fps values', async () => 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-options-'))
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
@@ -227,7 +227,7 @@ test('render command trims padded scene paths', async () => {
   const scenePath = path.join(dir, 'scene.hype')
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   fs.writeFileSync(scenePath, 'fake scene')
   try {
     await renderCommand({
@@ -264,7 +264,7 @@ test('render command trims padded output paths', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-trimmed-output-'))
   const outputPath = path.join(dir, 'out.mp4')
   const appPath = path.join(dir, 'hyper-motion')
-  const calls: HeadlessRenderRequest[] = []
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
   try {
     await renderCommand({
       locateApp: async () => appPath,
