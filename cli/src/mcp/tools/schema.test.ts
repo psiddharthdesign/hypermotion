@@ -29,6 +29,10 @@ test('rejectUnexpectedEmptyArgs allows empty argument objects', () => {
   assert.equal(rejectUnexpectedEmptyArgs('doctor', {}), null)
 })
 
+test('rejectUnexpectedEmptyArgs allows omitted arguments for empty tools', () => {
+  assert.equal(rejectUnexpectedEmptyArgs('doctor', undefined), null)
+})
+
 test('rejectUnexpectedEmptyArgs allows null-prototype argument records', () => {
   const args = Object.create(null)
   assert.equal(rejectUnexpectedEmptyArgs('doctor', args), null)
