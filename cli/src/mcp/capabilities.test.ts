@@ -126,6 +126,18 @@ test('capability tools reject unknown arguments as MCP errors', async () => {
   assert.match(assertToolText(keyframeable), /Unrecognized key/)
 })
 
+test('capability tools reject non-record arguments as MCP errors', async () => {
+  const capabilities = await handleGetCapabilities(null as never)
+  const keyframeable = await handleListKeyframeableProperties([] as never)
+
+  assert.equal(capabilities.isError, true)
+  assert.match(assertToolText(capabilities), /^get_capabilities: invalid arguments/)
+  assert.match(assertToolText(capabilities), /Expected an object/)
+  assert.equal(keyframeable.isError, true)
+  assert.match(assertToolText(keyframeable), /^list_keyframeable_properties: invalid arguments/)
+  assert.match(assertToolText(keyframeable), /Expected an object/)
+})
+
 test('get_capabilities description mentions agent-facing capability groups', () => {
   const getCapabilities = TOOLS.find((tool) => tool.name === 'get_capabilities')
   const description = getCapabilities?.description ?? ''
