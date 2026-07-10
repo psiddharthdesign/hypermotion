@@ -28,5 +28,5 @@ function isCallToolResultLike(
 function isToolTextContent(
   item: CallToolResult['content'][number] | undefined,
 ): item is ToolTextContent {
-  return item?.type === 'text'
+  return item?.type === 'text' && typeof item.text === 'string'
 }
