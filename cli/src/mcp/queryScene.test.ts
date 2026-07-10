@@ -582,6 +582,48 @@ test('list_cameras returns an empty list when the scene has no camera nodes', as
   }
 })
 
+test('list_cameras ignores malformed camera-shaped node entries', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-query-malformed-camera-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    const bytes = buildSceneBytes({
+      meta: {
+        name: 'Malformed Camera Query',
+        canvas: { width: 320, height: 180 },
+      },
+      nodes: {
+        root: {
+          id: 'root',
+          kind: 'frame',
+          parent: null,
+          children: [],
+          size: { width: 320, height: 180 },
+          layout: { mode: 'none' },
+        },
+      },
+    })
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, bytes)
+    const scene = doc.getMap('scene')
+    const nodes = scene.get('nodes') as Y.Map<unknown>
+    nodes.set('malformedCameraEntry', { id: 42, kind: 'camera' })
+    fs.writeFileSync(scenePath, Y.encodeStateAsUpdate(doc))
+
+    const result = await handleListCameras({ scene: scenePath })
+    const payload = JSON.parse(assertToolText(result)) as {
+      activeCameraId: string | null
+      cameras: unknown[]
+    }
+
+    assert.equal(result.isError, undefined)
+    assert.equal(payload.activeCameraId, null)
+    assert.deepEqual(payload.cameras, [])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
