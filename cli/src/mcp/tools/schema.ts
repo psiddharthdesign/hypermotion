@@ -42,6 +42,7 @@ export function rejectUnexpectedEmptyArgs(
   toolName: EmptyArgsToolName,
   args: unknown,
 ): string | null {
+  if (args === undefined) return null
   if (!isPlainObject(args)) {
     return `${toolName}: invalid arguments — Expected an object`
   }
