@@ -5,7 +5,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { inspectScene } from '../../scene/build.js'
-import type { McpToolArgs } from './schema.js'
+import type { McpToolArgs, StringSchemaProperty } from './schema.js'
 
 const ScenePathInput = z.string().trim().min(1, 'scene path is required')
 const SceneInput = z.object({ scene: ScenePathInput }).strict()
@@ -16,12 +16,6 @@ type SceneInputData = z.infer<typeof SceneInput>
 type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
-type StringSchemaProperty = {
-  readonly type: 'string'
-  readonly minLength?: number
-  readonly pattern?: string
-  readonly description: string
-}
 type QuerySceneSnapshot = {
   root?: unknown
   activeCameraId?: unknown
