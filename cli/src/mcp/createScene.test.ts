@@ -178,6 +178,20 @@ test('create_scene input schema exposes string and object scene inputs', () => {
   assert.deepEqual(sceneProperty?.anyOf, [{ type: 'string' }, { type: 'object' }])
 })
 
+test('create_scene description documents auto-layout authoring defaults', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /Design scenes with auto-layout by default/)
+  assert.match(description, /Prefer layout\.mode: 'flex'/)
+  assert.match(description, /layout\.mode: 'grid'/)
+  assert.match(description, /prefer height: 'hug'/)
+  assert.match(description, /width: 'fill'/)
+  assert.match(description, /4-point or 8-point grid/)
+})
+
 test('create_scene reports invalid arguments as MCP errors', async () => {
   const result = await handleCreateScene({
     output: 42,
