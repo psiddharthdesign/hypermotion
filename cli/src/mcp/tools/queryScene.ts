@@ -107,7 +107,7 @@ export const listCamerasTool: Tool = {
 }
 
 export async function handleListLayers(
-  args: McpToolArgs,
+  args: unknown,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_layers', parsed.error.message)
@@ -133,7 +133,7 @@ export async function handleListLayers(
 }
 
 export async function handleGetLayer(
-  args: McpToolArgs,
+  args: unknown,
 ): Promise<CallToolResult> {
   const parsed = LayerInput.safeParse(args)
   if (!parsed.success) return invalidArgs('get_layer', parsed.error.message)
@@ -148,7 +148,7 @@ export async function handleGetLayer(
 }
 
 export async function handleListTracks(
-  args: McpToolArgs,
+  args: unknown,
 ): Promise<CallToolResult> {
   const parsed = TrackInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_tracks', parsed.error.message)
@@ -166,7 +166,7 @@ export async function handleListTracks(
 }
 
 export async function handleListCameras(
-  args: McpToolArgs,
+  args: unknown,
 ): Promise<CallToolResult> {
   const parsed = SceneInput.safeParse(args)
   if (!parsed.success) return invalidArgs('list_cameras', parsed.error.message)
