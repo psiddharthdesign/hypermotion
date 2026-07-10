@@ -74,6 +74,6 @@ test('assertToolText rejects malformed text payloads', () => {
 
   assert.throws(
     () => assertToolText(result),
-    /expected MCP text content to be a string/,
+    /expected first MCP content item to be text/,
   )
 })
