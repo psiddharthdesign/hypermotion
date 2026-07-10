@@ -250,7 +250,7 @@ function readRenderErrorMessage(errorPath: string): string | null {
   return message
 }
 
-function hasErrorMessage(value: unknown): value is { message: string } {
+function hasErrorMessage(value: unknown): value is Readonly<{ message: string }> {
   return (
     typeof value === 'object' &&
     value !== null &&
