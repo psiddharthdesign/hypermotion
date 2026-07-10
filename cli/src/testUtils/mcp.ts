@@ -16,7 +16,7 @@ export function assertToolText(result: unknown): string {
 
 function isCallToolResultLike(
   result: unknown,
-): result is { content: CallToolResult['content'] } {
+): result is { readonly content: readonly CallToolResult['content'][number][] } {
   return (
     typeof result === 'object' &&
     result !== null &&
