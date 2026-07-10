@@ -35,6 +35,8 @@ test('rejectUnexpectedEmptyArgs allows null-prototype argument records', () => {
 })
 
 test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
+  class CustomArgs {}
+
   assert.equal(
     rejectUnexpectedEmptyArgs('doctor', []),
     'doctor: invalid arguments — Expected an object',
@@ -45,6 +47,10 @@ test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
   )
   assert.equal(
     rejectUnexpectedEmptyArgs('doctor', new Date()),
+    'doctor: invalid arguments — Expected an object',
+  )
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', new CustomArgs()),
     'doctor: invalid arguments — Expected an object',
   )
 })
