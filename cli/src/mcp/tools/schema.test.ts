@@ -58,3 +58,15 @@ test('rejectUnexpectedEmptyArgs reports unexpected keys deterministically', () =
     'get_capabilities: invalid arguments — Unrecognized key(s): alpha, zeta',
   )
 })
+
+test('rejectUnexpectedEmptyArgs reports unexpected null-prototype keys', () => {
+  const args = Object.assign(Object.create(null), {
+    zeta: true,
+    alpha: true,
+  }) as Record<string, unknown>
+
+  assert.equal(
+    rejectUnexpectedEmptyArgs('list_keyframeable_properties', args),
+    'list_keyframeable_properties: invalid arguments — Unrecognized key(s): alpha, zeta',
+  )
+})
