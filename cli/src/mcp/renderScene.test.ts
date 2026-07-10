@@ -401,36 +401,28 @@ test('render_scene normalizes padded output paths', async () => {
 
 test('render_scene normalizes padded scene paths', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-scene-normalize-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
   const outputPath = path.join(dir, 'out.mp4')
   const scenePath = path.join(dir, 'scene.hype')
+  let renderedScenePath: string | undefined
 
   fs.writeFileSync(scenePath, '')
-  fs.writeFileSync(
-    appPath,
-    [
-      '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
-      "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
-      "const sceneArg = process.argv.find((arg) => arg.startsWith('--scene='));",
-      "const out = outArg?.slice('--out='.length);",
-      "const scene = sceneArg?.slice('--scene='.length);",
-      `if (!out || scene !== ${JSON.stringify(scenePath)}) process.exit(2);`,
-      "fs.writeFileSync(out, 'ok');",
-      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 2 }));",
-    ].join('\n'),
-  )
-  fs.chmodSync(appPath, 0o755)
 
   try {
-    const result = await withEnvVar('HYPERMOTION_APP_PATH', appPath, () =>
-      handleRenderScene({
+    const result = await handleRenderScene(
+      {
         output: outputPath,
         scene: ` ${scenePath} `,
+      },
+      testDeps({
+        locateApp: async () => '/tmp/hyper-motion',
+        render: async (req) => {
+          renderedScenePath = req.scenePath
+        },
       }),
     )
 
     assert.equal(result.isError, undefined)
+    assert.equal(renderedScenePath, scenePath)
     assert.equal(
       assertToolText(result),
       `Rendered ${scenePath} → ${outputPath} (mp4 · comp · 30fps)`,
