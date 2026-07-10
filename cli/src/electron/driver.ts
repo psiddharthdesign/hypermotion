@@ -64,6 +64,13 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   cleanFile(sentinelPath)
   cleanFile(errorPath)
 
+  try {
+    fs.accessSync(req.appPath, fs.constants.X_OK)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`Failed to spawn desktop app: ${message}`)
+  }
+
   // Use `--key=value` form (not `--key value`) for every value flag.
   // Electron's `second-instance` event delivers argv pre-processed by
   // Chromium's CommandLine class, which drops bare values between
@@ -137,6 +144,10 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       if (message) {
         cleanFile(errorPath)
         throw new Error(message)
+      }
+      if (exitedAt > 0 && Date.now() - exitedAt > POST_EXIT_GRACE_MS) {
+        cleanFile(errorPath)
+        throw new Error('Render failed (no details available)')
       }
     }
     // If the child exited with a non-zero code AND no sentinel has

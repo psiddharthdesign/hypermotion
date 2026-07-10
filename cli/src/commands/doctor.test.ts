@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { RENDER_FORMATS, RENDER_QUALITIES } from '../renderOptions.js'
 import { withEnvVar } from '../testUtils/env.js'
 import { captureStderr } from '../testUtils/stdout.js'
 import { getDoctorReport } from './doctor.js'
@@ -30,6 +31,8 @@ test('doctor report lists supported commands and MCP tools once', async () => {
     assert.ok(report.mcpTools.includes('doctor'))
     assert.ok(report.mcpTools.includes('get_capabilities'))
     assert.ok(report.mcpTools.includes('render_scene'))
+    assert.deepEqual(report.render.formats, RENDER_FORMATS)
+    assert.deepEqual(report.render.qualities, RENDER_QUALITIES)
     assert.equal(report.render.fileSceneInput, true)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
