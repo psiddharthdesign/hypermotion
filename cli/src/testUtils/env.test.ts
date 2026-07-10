@@ -35,6 +35,22 @@ test('withEnvVar restores values after callback mutations', async () => {
   }
 })
 
+test('withEnvVar restores values after callback deletions', async () => {
+  const name = 'HYPERMOTION_TEST_ENV_DELETED'
+  process.env[name] = 'before'
+
+  try {
+    await withEnvVar(name, 'during', () => {
+      delete process.env[name]
+      assert.equal(process.env[name], undefined)
+    })
+
+    assert.equal(process.env[name], 'before')
+  } finally {
+    delete process.env[name]
+  }
+})
+
 test('withEnvVar restores existing values after async callback failures', async () => {
   const name = 'HYPERMOTION_TEST_ENV_ASYNC_THROW'
   process.env[name] = 'before'
