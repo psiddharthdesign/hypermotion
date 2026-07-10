@@ -128,10 +128,12 @@ test('driveHeadlessRender falls back for blank plain-text error sentinels', asyn
     appPath,
     [
       '#!/usr/bin/env node',
+      "const fs = await import('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "await import('node:fs').then((fs) => fs.writeFileSync(`${out}.error`, '   \\n\\t  '))",
+      "fs.writeFileSync(`${out}.error`, '   \\n\\t  ');",
+      'await new Promise((resolve) => setTimeout(resolve, 100));',
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
@@ -205,10 +207,9 @@ test('driveHeadlessRender waits for complete success sentinels', async () => {
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
       "fs.writeFileSync(`${out}.done`, '');",
-      "setTimeout(() => {",
-      "  fs.writeFileSync(out, 'fresh output');",
-      "  fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 12 }));",
-      '}, 100);',
+      'await new Promise((resolve) => setTimeout(resolve, 100));',
+      "fs.writeFileSync(out, 'fresh output');",
+      "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 12 }));",
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
