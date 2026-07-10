@@ -5,7 +5,7 @@ type ProcessExitCode = Parameters<typeof process.exit>[0]
 type NormalizedProcessExitCode = NonNullable<ProcessExitCode>
 
 export interface ProcessExitError extends Error {
-  exitCode: NormalizedProcessExitCode
+  readonly exitCode: NormalizedProcessExitCode
 }
 
 export async function withProcessExitThrow<T>(
