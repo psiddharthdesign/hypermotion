@@ -32,6 +32,7 @@ import {
 const FORMAT_HELP = RENDER_FORMATS.join(' / ')
 const QUALITY_HELP = RENDER_QUALITIES.join(' / ')
 const EMPTY_OPTION_LABEL = '<empty>'
+const FPS_INPUT_RE = /^\d+$/
 
 interface RenderOptions {
   readonly output: string
@@ -108,7 +109,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
 
       const fpsInput = opts.fps?.trim() ?? '30'
       const fps = Number(fpsInput)
-      if (!Number.isInteger(fps) || fps <= 0 || fps > 120) {
+      if (!FPS_INPUT_RE.test(fpsInput) || fps <= 0 || fps > 120) {
         console.error(`[render] invalid fps: ${fpsInput}`)
         process.exit(1)
       }
