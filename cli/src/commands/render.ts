@@ -36,8 +36,8 @@ const EMPTY_OPTION_LABEL = '<empty>'
 interface RenderOptions {
   readonly output: string
   readonly format?: string
-  readonly quality?: string
-  readonly fps?: string
+  readonly quality: string
+  readonly fps: string
   readonly scene?: string
 }
 
