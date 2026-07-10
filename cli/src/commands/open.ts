@@ -15,7 +15,7 @@ export interface OpenCommandDeps {
   readonly statSync: typeof fs.statSync
   readonly spawnApp: (
     command: string,
-    args: string[],
+    args: readonly string[],
     options: OpenSpawnOptions,
   ) => Pick<ChildProcess, 'unref'>
 }
