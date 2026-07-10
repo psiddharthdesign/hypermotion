@@ -99,9 +99,9 @@ export function infoCommand(): Command {
 }
 
 function printableCanvas(canvas: unknown): PrintableCanvas {
-  if (canvas && typeof canvas === 'object') {
-    const width = 'width' in canvas ? canvas.width : '?'
-    const height = 'height' in canvas ? canvas.height : '?'
+  if (isRecord(canvas)) {
+    const width = canvas.width ?? '?'
+    const height = canvas.height ?? '?'
 
     return {
       width: printableCanvasValue(width),
@@ -110,6 +110,10 @@ function printableCanvas(canvas: unknown): PrintableCanvas {
   }
 
   return { width: '?', height: '?' }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
 }
 
 function printableCanvasValue(value: unknown): number | '?' {
