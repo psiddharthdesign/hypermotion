@@ -46,9 +46,18 @@ export function rejectUnexpectedEmptyArgs(
   if (!isPlainObject(args)) {
     return `${toolName}: invalid arguments — Expected an object`
   }
-  const keys = Object.keys(args).sort()
+  const keys = ownEnumerableKeyNames(args).sort()
   if (keys.length === 0) return null
   return `${toolName}: invalid arguments — Unrecognized key(s): ${keys.join(', ')}`
+}
+
+function ownEnumerableKeyNames(value: McpToolArgs): string[] {
+  return [
+    ...Object.keys(value),
+    ...Object.getOwnPropertySymbols(value)
+      .filter((symbol) => Object.prototype.propertyIsEnumerable.call(value, symbol))
+      .map(String),
+  ]
 }
 
 function isPlainObject(value: unknown): value is McpToolArgs {
