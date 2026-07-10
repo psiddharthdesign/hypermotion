@@ -144,6 +144,23 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
           process.exit(2)
         }
       }
+      if (existsSync(outputPath)) {
+        let outputStats: fs.Stats
+        try {
+          outputStats = statSync(outputPath)
+        } catch (err) {
+          console.error(
+            `[render] failed to inspect output path ${outputPath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+          process.exit(2)
+        }
+        if (outputStats.isDirectory()) {
+          console.error(`[render] output path is a directory: ${outputPath}`)
+          process.exit(2)
+        }
+      }
 
       const sceneInput = opts.scene?.trim()
       if (opts.scene !== undefined && !sceneInput) {
