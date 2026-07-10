@@ -92,3 +92,14 @@ test('rejectUnexpectedEmptyArgs reports unexpected null-prototype keys', () => {
     'list_keyframeable_properties: invalid arguments — Unrecognized key(s): alpha, zeta',
   )
 })
+
+test('rejectUnexpectedEmptyArgs reports unexpected symbol keys', () => {
+  const internal = Symbol('internal')
+
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', {
+      [internal]: true,
+    }),
+    'doctor: invalid arguments — Unrecognized key(s): Symbol(internal)',
+  )
+})
