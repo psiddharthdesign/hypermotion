@@ -28,6 +28,16 @@ const InfoInput = z.object({
 type InfoInputData = z.infer<typeof InfoInput>
 type ToolInputSchema = Tool['inputSchema']
 
+export type InfoSceneDeps = {
+  statSync: (path: fs.PathLike) => fs.Stats
+  readFileSync: (path: fs.PathOrFileDescriptor) => Buffer
+}
+
+const defaultDeps: InfoSceneDeps = {
+  statSync: fs.statSync,
+  readFileSync: fs.readFileSync,
+}
+
 export const infoSceneTool: Tool = {
   name: 'info_scene',
   description:
@@ -46,6 +56,7 @@ export const infoSceneTool: Tool = {
 
 export async function handleInfoScene(
   args: McpToolArgs,
+  deps: InfoSceneDeps = defaultDeps,
 ): Promise<CallToolResult> {
   const parsed = InfoInput.safeParse(args)
   if (!parsed.success) {
@@ -63,21 +74,35 @@ export async function handleInfoScene(
   const input: InfoInputData = parsed.data
   const scenePath = path.resolve(input.scene)
   let bytes: Buffer
+  let stats: fs.Stats
   try {
-    const stats = fs.statSync(scenePath)
-    if (!stats.isFile()) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text' as const,
-            text: `info_scene: scene path is not a file: ${scenePath}`,
-          },
-        ],
-      }
+    stats = deps.statSync(scenePath)
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `info_scene: failed to read ${scenePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        },
+      ],
     }
-
-    bytes = fs.readFileSync(scenePath)
+  }
+  if (!stats.isFile()) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `info_scene: scene path is not a file: ${scenePath}`,
+        },
+      ],
+    }
+  }
+  try {
+    bytes = deps.readFileSync(scenePath)
   } catch (err) {
     return {
       isError: true,

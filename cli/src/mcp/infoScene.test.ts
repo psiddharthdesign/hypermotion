@@ -8,6 +8,15 @@ import test from 'node:test'
 import { buildSceneBytes, type SceneSummary } from '../scene/build.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleInfoScene, infoSceneTool } from './tools/infoScene.js'
+import type { InfoSceneDeps } from './tools/infoScene.js'
+
+function testDeps(overrides: Partial<InfoSceneDeps>): InfoSceneDeps {
+  return {
+    statSync: fs.statSync,
+    readFileSync: fs.readFileSync,
+    ...overrides,
+  }
+}
 
 test('info_scene input schema exposes required scene path', () => {
   assert.deepEqual(infoSceneTool.inputSchema, {
@@ -135,6 +144,51 @@ test('info_scene reports missing files as MCP errors', async () => {
     const text = assertToolText(result)
     assert.match(text, /^info_scene: failed to read /)
     assert.match(text, /hypermotion-missing-/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('info_scene reports stat failures as read errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-stat-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    const result = await handleInfoScene(
+      { scene: scenePath },
+      testDeps({
+        statSync: (statPath: fs.PathLike) => {
+          if (statPath === scenePath) throw new Error('stat failed')
+          return fs.statSync(statPath)
+        },
+      }),
+    )
+
+    assert.equal(result.isError, true)
+    assert.equal(assertToolText(result), `info_scene: failed to read ${scenePath}: stat failed`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('info_scene reports read failures after stat succeeds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-info-read-'))
+  const scenePath = path.join(dir, 'scene.hype')
+
+  try {
+    fs.writeFileSync(scenePath, '')
+
+    const result = await handleInfoScene(
+      { scene: scenePath },
+      testDeps({
+        readFileSync: () => {
+          throw new Error('read failed')
+        },
+      }),
+    )
+
+    assert.equal(result.isError, true)
+    assert.equal(assertToolText(result), `info_scene: failed to read ${scenePath}: read failed`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
