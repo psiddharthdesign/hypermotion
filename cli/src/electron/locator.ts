@@ -63,7 +63,7 @@ function resolveOverrideBinary(override: string): string | null {
 }
 
 function locateMac(): string | null {
-  const candidates = [
+  const candidates: readonly string[] = [
     '/Applications/hyper-motion.app/Contents/MacOS/hyper-motion',
     path.join(os.homedir(), 'Applications/hyper-motion.app/Contents/MacOS/hyper-motion'),
   ]
@@ -76,7 +76,7 @@ function locateMac(): string | null {
 function locateWindows(): string | null {
   const programFiles = process.env['ProgramFiles'] ?? 'C:\\Program Files'
   const localAppData = process.env['LOCALAPPDATA'] ?? path.join(os.homedir(), 'AppData', 'Local')
-  const candidates = [
+  const candidates: readonly string[] = [
     path.join(programFiles, 'hyper-motion', 'hyper-motion.exe'),
     path.join(localAppData, 'Programs', 'hyper-motion', 'hyper-motion.exe'),
   ]
@@ -87,7 +87,7 @@ function locateWindows(): string | null {
 }
 
 function locateLinux(): string | null {
-  const candidates = [
+  const candidates: readonly string[] = [
     '/opt/hyper-motion/hyper-motion',
     '/usr/bin/hyper-motion',
     path.join(os.homedir(), 'Applications/hyper-motion.AppImage'),
