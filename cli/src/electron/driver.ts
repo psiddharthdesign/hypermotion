@@ -27,6 +27,7 @@
 
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import type { RenderFormat, RenderQuality } from '../renderOptions.js'
 
 export interface HeadlessRenderRequest {
@@ -122,13 +123,13 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   child.on('exit', (code, signal) => {
     exitCode = code
     exitSignal = signal
-    exitedAt = Date.now()
+    exitedAt = performance.now()
   })
 
   // Poll until the success sentinel is fully written. Empty, partial, or
   // malformed sentinel files are ignored and retried.
-  const start = Date.now()
-  while (Date.now() - start < RENDER_TIMEOUT_MS) {
+  const start = performance.now()
+  while (performance.now() - start < RENDER_TIMEOUT_MS) {
     if (errorRef.current) {
       throw new Error(`Failed to spawn desktop app: ${errorRef.current.message}`)
     }
@@ -154,7 +155,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
     // appeared after the grace window, the render failed.
     if (
       exitedAt > 0 &&
-      Date.now() - exitedAt > POST_EXIT_GRACE_MS &&
+      performance.now() - exitedAt > POST_EXIT_GRACE_MS &&
       exitCode !== null &&
       exitCode !== 0
     ) {
@@ -165,7 +166,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
         }`,
       )
     }
-    if (exitSignal && Date.now() - exitedAt > POST_EXIT_GRACE_MS) {
+    if (exitSignal && performance.now() - exitedAt > POST_EXIT_GRACE_MS) {
       throw new Error(`Desktop app was killed by signal ${exitSignal}`)
     }
 
