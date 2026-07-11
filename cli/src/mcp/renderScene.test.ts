@@ -217,6 +217,34 @@ test('render_scene reports output parent files before locating the app', async (
   }
 })
 
+test('render_scene reports output path stat failures as MCP errors', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-file-stat-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  fs.writeFileSync(outputPath, 'existing output')
+
+  try {
+    const result = await handleRenderScene(
+      {
+        output: outputPath,
+      },
+      testDeps({
+        statSync: (targetPath: fs.PathLike) => {
+          if (targetPath === outputPath) throw new Error('stat failed')
+          return fs.statSync(targetPath)
+        },
+      }),
+    )
+
+    assert.equal(result.isError, true)
+    assert.equal(
+      assertToolText(result),
+      `render_scene: failed to inspect output path ${outputPath}: stat failed`,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('render_scene reports output directory stat failures as MCP errors', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-out-stat-'))
   const outDir = path.join(dir, 'exports')
