@@ -10,7 +10,7 @@ import { withEnvVar } from '../testUtils/env.js'
 
 test('driveHeadlessRender passes saved scene paths and clears stale files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
   const scenePath = path.join(dir, 'scene with spaces.hype')
 
@@ -22,7 +22,7 @@ test('driveHeadlessRender passes saved scene paths and clears stale files', asyn
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const sceneArg = process.argv.find((arg) => arg.startsWith('--scene='));",
       "const formatArg = process.argv.find((arg) => arg === '--format=mp4');",
@@ -57,7 +57,7 @@ test('driveHeadlessRender passes saved scene paths and clears stale files', asyn
 
 test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
@@ -67,7 +67,7 @@ test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "fs.writeFileSync(`${out}.error`, 'encoder failed before JSON');",
     ].join('\n'),
   )
@@ -121,7 +121,7 @@ test('driveHeadlessRender removes stale files before spawn failures', async () =
 
 test('driveHeadlessRender falls back for blank plain-text error sentinels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
@@ -131,7 +131,7 @@ test('driveHeadlessRender falls back for blank plain-text error sentinels', asyn
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "await import('node:fs').then((fs) => fs.writeFileSync(`${out}.error`, '   \\n\\t  '))",
+      "require('node:fs').writeFileSync(`${out}.error`, '   \\n\\t  ');",
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
@@ -155,7 +155,7 @@ test('driveHeadlessRender falls back for blank plain-text error sentinels', asyn
 
 test('driveHeadlessRender clears stale error sentinels after successful renders', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(`${outputPath}.error`, 'stale failure')
@@ -163,7 +163,7 @@ test('driveHeadlessRender clears stale error sentinels after successful renders'
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -192,14 +192,14 @@ test('driveHeadlessRender clears stale error sentinels after successful renders'
 
 test('driveHeadlessRender waits for complete success sentinels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -230,14 +230,14 @@ test('driveHeadlessRender waits for complete success sentinels', async () => {
 
 test('driveHeadlessRender waits for success sentinels with timestamps', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -268,14 +268,14 @@ test('driveHeadlessRender waits for success sentinels with timestamps', async ()
 
 test('driveHeadlessRender ignores malformed success sentinels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -306,14 +306,14 @@ test('driveHeadlessRender ignores malformed success sentinels', async () => {
 
 test('driveHeadlessRender ignores success sentinels with fractional metadata', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -344,14 +344,14 @@ test('driveHeadlessRender ignores success sentinels with fractional metadata', a
 
 test('driveHeadlessRender enables Electron logging when verbose mode is set', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -380,14 +380,14 @@ test('driveHeadlessRender enables Electron logging when verbose mode is set', as
 
 test('driveHeadlessRender disables Electron logging by default', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -416,14 +416,14 @@ test('driveHeadlessRender disables Electron logging by default', async () => {
 
 test('driveHeadlessRender only enables Electron logging for verbose value 1', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -452,7 +452,7 @@ test('driveHeadlessRender only enables Electron logging for verbose value 1', as
 
 test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(outputPath, 'stale output')
@@ -460,7 +460,7 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -489,14 +489,14 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
 
 test('driveHeadlessRender trims JSON error sentinel messages', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -527,14 +527,14 @@ test('driveHeadlessRender trims JSON error sentinel messages', async () => {
 
 test('driveHeadlessRender falls back when JSON error sentinels omit messages', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -562,14 +562,14 @@ test('driveHeadlessRender falls back when JSON error sentinels omit messages', a
 
 test('driveHeadlessRender waits for complete JSON error sentinels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -600,14 +600,14 @@ test('driveHeadlessRender waits for complete JSON error sentinels', async () => 
 
 test('driveHeadlessRender falls back when JSON error sentinel messages are blank', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
@@ -635,14 +635,14 @@ test('driveHeadlessRender falls back when JSON error sentinel messages are blank
 
 test('driveHeadlessRender falls back when JSON error sentinel messages are not strings', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
