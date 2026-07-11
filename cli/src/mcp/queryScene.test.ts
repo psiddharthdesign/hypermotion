@@ -79,7 +79,7 @@ test('query scene MCP tool schemas describe their path and node id inputs', () =
 })
 
 test('query scene MCP handlers report invalid arguments as MCP errors', async () => {
-  const cases: Array<{
+  const cases: ReadonlyArray<{
     name: string
     run: () => Promise<CallToolResult>
   }> = [
@@ -97,7 +97,7 @@ test('query scene MCP handlers report invalid arguments as MCP errors', async ()
 })
 
 test('query scene MCP handlers reject non-record argument payloads', async () => {
-  const cases: Array<{
+  const cases: ReadonlyArray<{
     name: string
     run: () => Promise<CallToolResult>
   }> = [
@@ -115,7 +115,7 @@ test('query scene MCP handlers reject non-record argument payloads', async () =>
 })
 
 test('query scene MCP handlers reject unknown arguments as MCP errors', async () => {
-  const cases: Array<{
+  const cases: ReadonlyArray<{
     name: string
     run: () => Promise<CallToolResult>
   }> = [
@@ -149,7 +149,7 @@ test('query scene MCP handlers reject unknown arguments as MCP errors', async ()
 })
 
 test('query scene MCP handlers reject blank node ids clearly', async () => {
-  const cases: Array<{
+  const cases: ReadonlyArray<{
     name: string
     run: () => Promise<CallToolResult>
   }> = [
@@ -170,7 +170,7 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
   const missingScene = path.join(dir, 'missing.hype')
 
   try {
-    const cases: Array<{
+    const cases: ReadonlyArray<{
       name: string
       run: () => Promise<CallToolResult>
     }> = [
@@ -191,7 +191,7 @@ test('query scene MCP handlers report missing scene files as MCP errors', async 
 })
 
 test('query scene MCP handlers reject empty scene paths clearly', async () => {
-  const cases: Array<{
+  const cases: ReadonlyArray<{
     name: string
     run: () => Promise<CallToolResult>
   }> = [
@@ -215,7 +215,7 @@ test('query scene MCP handlers report directories as MCP errors', async () => {
   fs.mkdirSync(scenePath)
 
   try {
-    const cases: Array<{
+    const cases: ReadonlyArray<{
       name: string
       run: () => Promise<CallToolResult>
     }> = [
@@ -242,7 +242,7 @@ test('query scene MCP handlers report malformed scene files as MCP errors', asyn
   try {
     fs.writeFileSync(scenePath, 'not a yjs update')
 
-    const cases: Array<{
+    const cases: ReadonlyArray<{
       name: string
       run: () => Promise<CallToolResult>
     }> = [
