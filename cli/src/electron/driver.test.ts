@@ -280,10 +280,10 @@ test('driveHeadlessRender ignores malformed success sentinels', async () => {
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
       "fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: -1 }));",
-      "setTimeout(() => {",
+      "setImmediate(() => {",
       "  fs.writeFileSync(out, 'fresh output');",
       "  fs.writeFileSync(`${out}.done`, JSON.stringify({ ts: Date.now(), bytes: 12 }));",
-      '}, 100);',
+      '});',
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
@@ -500,7 +500,10 @@ test('driveHeadlessRender trims JSON error sentinel messages', async () => {
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "fs.writeFileSync(`${out}.error`, JSON.stringify({ message: '  encoder reported JSON failure  ' }));",
+      "const writeError = () => fs.writeFileSync(`${out}.error`, JSON.stringify({ message: '  encoder reported JSON failure  ' }));",
+      'writeError();',
+      'const timer = setInterval(writeError, 50);',
+      'setTimeout(() => clearInterval(timer), 500);',
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
