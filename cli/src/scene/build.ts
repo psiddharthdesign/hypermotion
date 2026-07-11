@@ -1439,9 +1439,9 @@ function ensureNodeChildren(node: Y.Map<unknown>): Y.Array<string> {
   return next
 }
 
-function arrayToY(items: unknown[]): Y.Array<unknown> {
+function arrayToY(items: readonly unknown[]): Y.Array<unknown> {
   const arr = new Y.Array<unknown>()
-  if (items.length > 0) arr.push(items)
+  if (items.length > 0) arr.push(Array.from(items))
   return arr
 }
 
