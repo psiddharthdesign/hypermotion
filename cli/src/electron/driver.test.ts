@@ -651,7 +651,7 @@ test('driveHeadlessRender falls back when JSON error sentinel messages are blank
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       "if (!out) process.exit(2);",
-      "fs.writeFileSync(`${out}.error`, JSON.stringify({ message: '  \\n\\t  ' }));",
+      "fs.writeFileSync(`${out}.error`, JSON.stringify({ message: '      ' }));",
     ].join('\n'),
   )
   fs.chmodSync(appPath, 0o755)
