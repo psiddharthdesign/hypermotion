@@ -2,7 +2,7 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 
-export type McpToolArgs = Readonly<Record<string, unknown>>
+export type McpToolArgs = Readonly<Record<string | symbol, unknown>>
 export type StringSchemaProperty = {
   readonly type: 'string'
   readonly minLength?: number
