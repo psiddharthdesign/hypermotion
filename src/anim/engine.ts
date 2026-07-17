@@ -358,14 +358,14 @@ function applyTextProgressTrack(
   if (t < first.time) {
     if (mode === 'in' && typeof first.value === 'number') {
       into.textProgress = first.value
-      into.textAnimation = track.textAnimation
+      if (track.textAnimation) into.textAnimation = track.textAnimation
     }
     return
   }
   if (t > last.time) {
     if (mode === 'out' && typeof last.value === 'number') {
       into.textProgress = last.value
-      into.textAnimation = track.textAnimation
+      if (track.textAnimation) into.textAnimation = track.textAnimation
     }
     return
   }

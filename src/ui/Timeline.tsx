@@ -491,28 +491,30 @@ export function Timeline() {
         // and wraps the layer in a frame.
         e.preventDefault()
         e.stopPropagation()
-        // Resolution order — three escalating tiers:
+        // Resolution order:
         //
-        //   1. Explicit track selection (`selectedTrackIds`) wins.
-        //      Jitter's primary gesture: marquee tracks, Cmd+G to
-        //      compose. Treated literally.
-        //   2. Implicit track selection inferred from the keyframe
-        //      selection. If the user has picked even one keyframe
-        //      from 2+ tracks, they CLEARLY mean "group these tracks"
-        //      — partial selection per track is a tedious accident
-        //      to require the user to fix. We expand to a track
-        //      group covering every track that has any selected
-        //      keyframe, so the entire track joins the group, not
-        //      just the highlighted diamonds. (User explicitly
-        //      requested this expansion.)
-        //   3. Keyframe-only grouping. Only fires when every
-        //      selected keyframe lives on the SAME track — a
-        //      legitimate "bundle these specific kfs as a beat"
-        //      use case that doesn't fit the track-group model.
+        //   1. A live keyframe selection means "group these exact
+        //      keyframes", even when they span multiple tracks. This is
+        //      the set/beat workflow: marquee a few endpoints, Cmd+G,
+        //      drag them as one unit.
+        //   2. Explicit track selection means "group whole tracks" into
+        //      a Composed/Sequence group.
+        //   3. With no keyframe or track selection, fall back to the
+        //      selected animated layer tracks.
         //
-        // Both Y.Doc helpers are inside the UndoManager's transact
-        // window, so each tier produces one undo step.
+        // This keeps keyframe-set grouping distinct from track grouping;
+        // upgrading multi-track keyframes into Sequence groups makes
+        // ordinary retiming drags affect far more than the user picked.
         const tids = useUI.getState().selectedTrackIds
+        if (selectedKfs.size > 0) {
+          const keys = Array.from(selectedKfs)
+          if (e.shiftKey) {
+            ungroupKeyframesHelper(api, keys)
+          } else if (keys.length >= 2) {
+            groupKeyframesHelper(api, keys)
+          }
+          return
+        }
         // Helper: when the user's track selection partially overlaps
         // an existing group, fold the rest of the selection INTO
         // that group instead of creating a brand-new sibling group.
@@ -554,36 +556,6 @@ export function Timeline() {
             groupTracksHelper(api, selectedLayerTracks)
           }
           return
-        }
-        if (selectedKfs.size === 0) return
-        const keys = Array.from(selectedKfs)
-        // Ungroup should dissolve the actual selected keyframe groups,
-        // even when that group spans multiple tracks. The grouping path
-        // can still infer track intent from multi-track keyframe picks.
-        if (e.shiftKey) {
-          ungroupKeyframesHelper(api, keys)
-          return
-        }
-
-        // Pull unique track ids from the selected kf keys
-        // (`trackId:kfId` shape). One track → keyframe grouping.
-        // Multiple tracks → infer the track-group intent and route
-        // to the track helpers, picking up every keyframe on those
-        // tracks for free since track groups bind the whole track.
-        const tracksFromKfs = new Set<string>()
-        for (const k of keys) {
-          const colon = k.indexOf(':')
-          if (colon > 0) tracksFromKfs.add(k.slice(0, colon))
-        }
-        if (tracksFromKfs.size >= 2) {
-          const ids = Array.from(tracksFromKfs)
-          if (!tryMergeIntoExisting(ids)) {
-            groupTracksHelper(api, ids)
-          }
-          return
-        }
-        if (selectedKfs.size >= 2) {
-          groupKeyframesHelper(api, keys)
         }
       }
     }
@@ -3538,15 +3510,6 @@ function KeyframeDiamond({
       }
       return
     }
-    // Plain click on a grouped keyframe: replace selection with the
-    // entire group. From there, the existing batch-drag path takes
-    // over — drag any group member and they all move together. This
-    // is the whole point of grouping.
-    if (inGroup && !isSelected && groupMembers) {
-      replaceKfs([...groupMembers])
-      onFocus()
-      return
-    }
     if (e.altKey) {
       // Alt-click ALWAYS removes the single clicked keyframe — even if
       // it sits inside a live multi-selection. The earlier behavior
@@ -3556,6 +3519,20 @@ function KeyframeDiamond({
       // selection set; alt-click is the surgical remover.
       onDelete()
       return
+    }
+    // Plain click on a grouped keyframe replaces selection with the
+    // entire group, but the gesture still continues into drag. That
+    // way the first click-drag on a grouped set moves the set instead
+    // of only selecting it.
+    const activeSelectedKfs =
+      inGroup && groupMembers
+        ? groupMembers
+        : selectedKfs
+    if (inGroup && groupMembers) {
+      const allMembersSelected = [...groupMembers].every((k) =>
+        selectedKfs.has(k),
+      )
+      if (!allMembersSelected) replaceKfs([...groupMembers])
     }
     onFocus()
 
@@ -3569,7 +3546,8 @@ function KeyframeDiamond({
     const ui = useUI.getState()
     const trackBatchActive =
       ui.selectedTrackIds.length > 1 && ui.selectedTrackIds.includes(trackId)
-    const kfBatchActive = isSelected && selectedKfs.size > 1
+    const kfBatchActive =
+      activeSelectedKfs.has(myKey) && activeSelectedKfs.size > 1
     const isBatch = kfBatchActive || trackBatchActive
     const startX = e.clientX
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -3587,7 +3565,7 @@ function KeyframeDiamond({
       for (const t of flatTracks) {
         for (const kf of t.keyframes) {
           const key = kfKey(t.id, kf.id)
-          const inKfSelection = kfBatchActive && selectedKfs.has(key)
+          const inKfSelection = kfBatchActive && activeSelectedKfs.has(key)
           const inTrackSelection = trackBatchActive && trackSet.has(t.id)
           if ((inKfSelection || inTrackSelection) && !seen.has(key)) {
             seen.add(key)

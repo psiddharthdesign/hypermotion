@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { AnimatedValue } from '@/anim'
+import { normalizeTextAnimation } from '@/anim'
+import type { TextAnimationConfig } from '@/anim'
 import type { Rect, SolvedLayout } from '@/layout'
 import type { CameraNode, Fill, Node, NodeId, SceneAPI } from '@/scene'
 import { fillToCss } from '@/scene'
@@ -199,6 +201,7 @@ export function ThreeSceneViewport({
         resolvedCamera,
         renderer,
         perspective,
+        animated,
       )
     } else {
       clearPlanes(scene, planesRef.current)
@@ -213,7 +216,7 @@ export function ThreeSceneViewport({
     )
 
     renderer.render(scene, perspective)
-  }, [api, layout, planes, resolvedCamera, sceneFill, selectedIds, showHelpers, showPlanes, focusWorldPoint, width, height, webglUnavailable])
+  }, [api, layout, planes, resolvedCamera, sceneFill, selectedIds, showHelpers, showPlanes, focusWorldPoint, width, height, webglUnavailable, animated])
 
   if (webglUnavailable) return null
 
@@ -265,6 +268,7 @@ function syncPlanes(
   camera: ResolvedCamera3D,
   renderer: THREE.WebGLRenderer,
   perspective: THREE.PerspectiveCamera,
+  animated: Record<NodeId, AnimatedValue>,
 ) {
   const active = new Set<NodeId>()
   const selected = new Set(selectedIds)
@@ -284,7 +288,7 @@ function syncPlanes(
       camera.depthOfField,
     )
     const focusMask = focusMaskForPlane(plane, camera)
-    const canvas = renderPlaneCanvas(api, layout, plane, blur, focusMask)
+    const canvas = renderPlaneCanvas(api, layout, plane, blur, focusMask, animated)
     if (!record) {
       const geometry = new THREE.PlaneGeometry(plane.rect.width, plane.rect.height)
       const texture = createPlaneTexture(canvas, renderer)
@@ -329,7 +333,7 @@ function syncPlanes(
     applyPlaneTransform(record.outline, plane)
     record.mesh.renderOrder = plane.paintOrder
     record.outline.renderOrder = 100000 + plane.paintOrder
-    record.mesh.material.opacity = (plane.node.appearance.opacity ?? 1)
+    record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
     record.mesh.visible = plane.node.visible
     record.outline.visible = selected.has(plane.nodeId)
     // Keep the deterministic scene-data texture as the source of truth.
@@ -453,10 +457,11 @@ function renderPlaneCanvas(
   plane: Plane3D,
   blurPx: number,
   focusMask: PlaneFocusMask | null,
+  animated: Record<NodeId, AnimatedValue>,
 ): HTMLCanvasElement {
-  const sharp = renderSharpPlaneCanvas(api, layout, plane)
+  const sharp = renderSharpPlaneCanvas(api, layout, plane, animated)
   if (blurPx <= 0.05) return sharp
-  const blurred = renderBlurredPlaneCanvas(api, layout, plane, blurPx)
+  const blurred = renderBlurredPlaneCanvas(api, layout, plane, blurPx, animated)
   if (!focusMask) return blurred
   return compositeFocusedPlaneTexture(blurred, sharp, focusMask)
 }
@@ -465,13 +470,14 @@ function renderSharpPlaneCanvas(
   api: SceneAPI,
   layout: SolvedLayout,
   plane: Plane3D,
+  animated: Record<NodeId, AnimatedValue>,
 ): HTMLCanvasElement {
   if (plane.contentMode === 'self') {
-    return renderPlaneTexture(plane.node, plane.rect, 0)
+    return renderPlaneTexture(plane.node, plane.rect, 0, animated[plane.nodeId])
   }
   return (
-    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, 0) ??
-    renderPlaneTexture(plane.node, plane.rect, 0)
+    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, 0, animated) ??
+    renderPlaneTexture(plane.node, plane.rect, 0, animated[plane.nodeId])
   )
 }
 
@@ -480,13 +486,14 @@ function renderBlurredPlaneCanvas(
   layout: SolvedLayout,
   plane: Plane3D,
   blurPx: number,
+  animated: Record<NodeId, AnimatedValue>,
 ): HTMLCanvasElement {
   if (plane.contentMode === 'self') {
-    return renderPlaneTexture(plane.node, plane.rect, blurPx)
+    return renderPlaneTexture(plane.node, plane.rect, blurPx, animated[plane.nodeId])
   }
   return (
-    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, blurPx) ??
-    renderPlaneTexture(plane.node, plane.rect, blurPx)
+    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, blurPx, animated) ??
+    renderPlaneTexture(plane.node, plane.rect, blurPx, animated[plane.nodeId])
   )
 }
 
@@ -657,7 +664,12 @@ function syncHelpers(
   group.add(marker)
 }
 
-function renderPlaneTexture(node: Node, rect: Rect, blurPx: number): HTMLCanvasElement {
+function renderPlaneTexture(
+  node: Node,
+  rect: Rect,
+  blurPx: number,
+  anim?: AnimatedValue,
+): HTMLCanvasElement {
   const w = Math.max(1, Math.ceil(rect.width))
   const h = Math.max(1, Math.ceil(rect.height))
   const scale = textureScaleForRect(rect)
@@ -683,10 +695,7 @@ function renderPlaneTexture(node: Node, rect: Rect, blurPx: number): HTMLCanvasE
     }
   })
   if (node.kind === 'text') {
-    ctx.fillStyle = node.color ?? '#111111'
-    ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px ${node.fontFamily ?? 'Inter'}`
-    ctx.textBaseline = 'top'
-    paintText(ctx, node.text, 0, 0, w, node.fontSize ?? 16, node.lineHeight ?? 1.2)
+    paintTextNode(ctx, node, 0, 0, w, anim)
   }
   ctx.filter = 'none'
   const stroke = node.appearance.stroke
@@ -712,6 +721,7 @@ function renderSubtreeTexture(
   rootId: NodeId,
   rootRect: Rect,
   blurPx: number,
+  animated: Record<NodeId, AnimatedValue>,
 ): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null
   const width = Math.max(1, Math.ceil(rootRect.width))
@@ -735,7 +745,7 @@ function renderSubtreeTexture(
     if (!node || !rect || node.kind === 'camera' || !node.visible) return
     const extracted3D = id !== rootId && isExplicit3DNode(node)
     if (extracted3D) return
-    paintNodeIntoSubtree(ctx, node, rect, rootRect)
+    paintNodeIntoSubtree(ctx, node, rect, rootRect, animated[id])
     for (const child of node.children) paint(child)
   }
   paint(rootId)
@@ -753,13 +763,14 @@ function paintNodeIntoSubtree(
   node: Node,
   rect: Rect,
   rootRect: Rect,
+  anim?: AnimatedValue,
 ) {
   const x = rect.x - rootRect.x
   const y = rect.y - rootRect.y
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
   ctx.save()
-  ctx.globalAlpha *= node.appearance.opacity ?? 1
+  ctx.globalAlpha *= anim?.opacity ?? node.appearance.opacity ?? 1
   ctx.translate(x + w / 2, y + h / 2)
   const rot = node.transform.rotation ?? 0
   if (rot !== 0) ctx.rotate(THREE.MathUtils.degToRad(rot))
@@ -767,11 +778,16 @@ function paintNodeIntoSubtree(
   ctx.translate(-w / 2, -h / 2)
   const localRect = { x: 0, y: 0, width: w, height: h }
   const nodeForPaint = node
-  renderNodePaint(ctx, nodeForPaint, localRect)
+  renderNodePaint(ctx, nodeForPaint, localRect, anim)
   ctx.restore()
 }
 
-function renderNodePaint(ctx: CanvasRenderingContext2D, node: Node, rect: Rect) {
+function renderNodePaint(
+  ctx: CanvasRenderingContext2D,
+  node: Node,
+  rect: Rect,
+  anim?: AnimatedValue,
+) {
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
   const cornerRadius =
@@ -783,10 +799,7 @@ function renderNodePaint(ctx: CanvasRenderingContext2D, node: Node, rect: Rect) 
     if (node.kind === 'image' && node.src) paintImagePlaceholder(ctx, w, h)
   })
   if (node.kind === 'text') {
-    ctx.fillStyle = node.color ?? '#111111'
-    ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px ${node.fontFamily ?? 'Inter'}`
-    ctx.textBaseline = 'top'
-    paintText(ctx, node.text, 0, 0, w, node.fontSize ?? 16, node.lineHeight ?? 1.2)
+    paintTextNode(ctx, node, 0, 0, w, anim)
   }
   const stroke = node.appearance.stroke
   if (stroke && stroke.width > 0) {
@@ -892,6 +905,201 @@ function paintText(
   }
   if (line) lines.push(line.trimEnd())
   lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeightPx))
+}
+
+function paintTextNode(
+  ctx: CanvasRenderingContext2D,
+  node: Extract<Node, { kind: 'text' }>,
+  x: number,
+  y: number,
+  maxWidth: number,
+  anim?: AnimatedValue,
+) {
+  ctx.fillStyle = node.color ?? '#111111'
+  ctx.font = `${node.fontWeight ?? 400} ${node.fontSize ?? 16}px ${cssFontFamily(node.fontFamily ?? 'Inter')}`
+  ctx.textBaseline = 'top'
+  const config = normalizeTextAnimation(anim?.textAnimation ?? node.textAnimation)
+  if (!config || anim?.textProgress === undefined) {
+    paintText(ctx, node.text, x, y, maxWidth, node.fontSize ?? 16, node.lineHeight ?? 1.2)
+    return
+  }
+  paintAnimatedText(ctx, node, x, y, maxWidth, config, anim.textProgress)
+}
+
+function paintAnimatedText(
+  ctx: CanvasRenderingContext2D,
+  node: Extract<Node, { kind: 'text' }>,
+  x: number,
+  y: number,
+  maxWidth: number,
+  config: TextAnimationConfig,
+  progress: number,
+) {
+  const segments = splitTextAnimationSegments(node.text, config.applyTo)
+  const animatedSegments = segments.filter((segment) => segment.animate)
+  const count = Math.max(1, animatedSegments.length)
+  const fontSize = node.fontSize ?? 16
+  const lineHeightPx = Math.max(1, fontSize * (node.lineHeight ?? 1.2))
+  let cursorX = x
+  let cursorY = y
+  let animateIndex = 0
+
+  for (const segment of segments) {
+    if (segment.text === '\n') {
+      cursorX = x
+      cursorY += lineHeightPx
+      continue
+    }
+    const width = ctx.measureText(segment.text).width
+    if (cursorX > x && cursorX + width > x + maxWidth && /\S/.test(segment.text)) {
+      cursorX = x
+      cursorY += lineHeightPx
+    }
+    if (!segment.animate) {
+      ctx.fillText(segment.text, cursorX, cursorY)
+      cursorX += width
+      continue
+    }
+
+    const orderIndex =
+      config.order === 'backward' ? count - animateIndex - 1 : animateIndex
+    animateIndex++
+    paintAnimatedTextSegment(
+      ctx,
+      segment.text,
+      cursorX,
+      cursorY,
+      lineHeightPx,
+      config,
+      progress,
+      orderIndex,
+      count,
+    )
+    cursorX += width
+  }
+}
+
+function paintAnimatedTextSegment(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  lineHeightPx: number,
+  config: TextAnimationConfig,
+  progress: number,
+  orderIndex: number,
+  count: number,
+) {
+  const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
+  const timelineProgress = Math.max(0, Math.min(1, progress))
+  const globalElapsed = timelineProgress * totalSpan
+  const raw =
+    (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)
+  const u = Math.max(0, Math.min(1, raw))
+  const exit = config.mode === 'out'
+  const amount = exit ? u : 1 - u
+  const travel = Math.max(1, lineHeightPx * config.travelDistance)
+  const [dx, dy] = directionOffset(config.direction, travel * amount)
+  const opacity = textAnimationOpacity(config, amount)
+  if (opacity <= 0.001) return
+
+  ctx.save()
+  ctx.globalAlpha *= opacity
+  if (config.id === 'blur' || config.id === 'blur-slide') {
+    ctx.filter = `blur(${config.blurRadius * amount}px)`
+  }
+  ctx.translate(x, y)
+  if (config.id.startsWith('slide') || config.id === 'blur-slide') {
+    ctx.translate(dx, dy)
+  } else if (config.id === 'grow') {
+    const s = 1 - amount * 0.35
+    ctx.scale(s, s)
+  } else if (config.id === 'shrink') {
+    const s = 1 + amount * 0.35
+    ctx.scale(s, s)
+  } else if (config.id === 'skew') {
+    ctx.translate(dx, dy)
+    ctx.transform(1, 0, Math.tan((-14 * amount * Math.PI) / 180), 1, 0, 0)
+  } else if (config.id === 'character-wave') {
+    const phase = count <= 1 ? 0 : orderIndex / (count - 1)
+    ctx.translate(0, Math.sin((phase + u) * Math.PI * 2) * 8 * amount)
+  } else if (config.id === 'tracking') {
+    ctx.translate(amount * 10, 0)
+  }
+  ctx.fillText(displayTextForSegment(text, config, progress, orderIndex), 0, 0)
+  ctx.restore()
+}
+
+function textAnimationOpacity(
+  config: TextAnimationConfig,
+  amount: number,
+): number {
+  if (config.id === 'mask-up' || config.id === 'mask-down' || config.id === 'gradient-reveal') return 1
+  if (config.id === 'appear' || config.id === 'typewriter') return amount > 0.5 ? 0 : 1
+  if (config.id === 'character-wave') return 1 - amount * 0.35
+  return 1 - amount
+}
+
+function splitTextAnimationSegments(
+  text: string,
+  applyTo: TextAnimationConfig['applyTo'],
+): Array<{ text: string; animate: boolean }> {
+  if (applyTo === 'layer') return [{ text, animate: true }]
+  if (applyTo === 'lines') {
+    return text.split(/(\n)/).map((part) => ({
+      text: part,
+      animate: part !== '\n' && part.length > 0,
+    }))
+  }
+  if (applyTo === 'words') {
+    return text.split(/(\s+)/).map((part) => ({
+      text: part,
+      animate: !/^\s+$/.test(part) && part.length > 0,
+    }))
+  }
+  return Array.from(text).map((char) => ({
+    text: char,
+    animate: char !== '\n' && char !== ' ',
+  }))
+}
+
+function directionOffset(
+  direction: TextAnimationConfig['direction'],
+  distance: number,
+): [number, number] {
+  switch (direction) {
+    case 'down':
+      return [0, -distance]
+    case 'left':
+      return [distance, 0]
+    case 'right':
+      return [-distance, 0]
+    case 'up':
+    default:
+      return [0, distance]
+  }
+}
+
+function displayTextForSegment(
+  text: string,
+  config: TextAnimationConfig,
+  progress: number,
+  orderIndex: number,
+): string {
+  if (config.id !== 'scramble') return text
+  if (progress >= 0.85) return text
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&'
+  return Array.from(text)
+    .map((char, index) => {
+      if (/\s/.test(char)) return char
+      const n = Math.abs(Math.sin((orderIndex + 1) * 17.17 + index * 9.91 + progress * 24))
+      return glyphs[Math.floor(n * glyphs.length) % glyphs.length]!
+    })
+    .join('')
+}
+
+function cssFontFamily(fontFamily: string): string {
+  return /[\s,]/.test(fontFamily) ? JSON.stringify(fontFamily) : fontFamily
 }
 
 function paintImagePlaceholder(ctx: CanvasRenderingContext2D, width: number, height: number) {
