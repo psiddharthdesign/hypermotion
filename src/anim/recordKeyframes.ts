@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NodeId, PropertyId } from '@/scene'
+import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { addKeyframe, findTrack } from './tracks'
 
@@ -110,9 +110,8 @@ export function recordKeyframesForPatch(
     if (!pid) continue
     const v = patch[key]
     if (v === undefined || v === null) continue
-    // KeyframeValue accepts number | string | Fill | Size literal. We
-    // trust the caller that the scene has just accepted this value, so
-    // a reasonable-looking primitive or object is safe to stamp.
+    // The scene has just accepted this value; keep the runtime filter
+    // broad here so live-track stamping follows the committed patch.
     if (
       typeof v !== 'number' &&
       typeof v !== 'string' &&
@@ -120,7 +119,7 @@ export function recordKeyframesForPatch(
     ) {
       continue
     }
-    addKeyframe(api, nodeId, pid, playhead, v as never)
+    addKeyframe(api, nodeId, pid, playhead, v as KeyframeValue)
   }
 }
 
@@ -173,6 +172,6 @@ export function stampToActiveTracksForPatch(
     ) {
       continue
     }
-    addKeyframe(api, nodeId, pid, playhead, v as never)
+    addKeyframe(api, nodeId, pid, playhead, v as KeyframeValue)
   }
 }
