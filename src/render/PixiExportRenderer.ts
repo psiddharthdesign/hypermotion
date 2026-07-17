@@ -53,6 +53,7 @@ import type {
   Stroke,
   TextNode,
 } from '@/scene'
+import { displayedText } from '@/scene'
 
 /**
  * Public input for a frame render. The caller (the export orchestrator)
@@ -617,19 +618,21 @@ export class PixiExportRenderer {
   private paintTextShape(
     node: TextNode,
     w: number,
-    _h: number,
+    h: number,
     animated: AnimatedValue,
     container: Container,
   ): void {
     const textColor = animated.fill ?? node.color
     const c = parseColor(textColor)
     // Map our 'start' / 'center' / 'end' to Pixi's 'left' / 'center' / 'right'.
-    const align: 'left' | 'center' | 'right' =
+    const align: 'left' | 'center' | 'right' | 'justify' =
       node.textAlign === 'center'
         ? 'center'
         : node.textAlign === 'end'
           ? 'right'
-          : 'left'
+          : node.textAlign === 'justify'
+            ? 'justify'
+            : 'left'
     // lineHeight is stored as a unitless multiplier (Figma convention,
     // matched by our text import); Pixi wants pixels.
     const lineHeightPx = Math.round(node.lineHeight * node.fontSize)
@@ -643,15 +646,22 @@ export class PixiExportRenderer {
     // a number; map common weights to keep the type system happy and
     // fall back to a numeric string for in-betweens.
     const fontWeight = mapFontWeight(node.fontWeight)
+    const renderedText = displayedText(node)
 
     let text: Text
     try {
       text = new Text({
-        text: node.text,
+        text: renderedText,
         style: {
           fontFamily: node.fontFamily || 'Inter',
           fontSize: node.fontSize,
           fontWeight,
+          fontStyle: node.fontStyle,
+          fontVariant:
+            node.textCase === 'small-caps' ||
+            node.textCase === 'small-caps-forced'
+              ? 'small-caps'
+              : 'normal',
           // Pixi accepts a hex number for fill — c.color is already
           // 0xRRGGBB. Alpha applied via Text.alpha below.
           fill: c.color,
@@ -667,7 +677,7 @@ export class PixiExportRenderer {
       // eslint-disable-next-line no-console
       console.warn(
         '[PixiExportRenderer] Text construction failed',
-        { text: node.text, fontFamily: node.fontFamily, fontWeight },
+        { text: renderedText, fontFamily: node.fontFamily, fontWeight },
         err,
       )
       return
@@ -685,7 +695,7 @@ export class PixiExportRenderer {
       console.log(
         '[PixiExport] text',
         node.id,
-        JSON.stringify(node.text.slice(0, 40)),
+        JSON.stringify(renderedText.slice(0, 40)),
         'family=',
         node.fontFamily,
         'size=',
@@ -705,10 +715,24 @@ export class PixiExportRenderer {
     // right (see paintShape's localX/localY comment). For start align,
     // text top-left sits at local (0, 0). For center, text top-center
     // at local (w/2, 0). For end, text top-right at local (w, 0).
+    // Vertical alignment uses the same anchor/position pairing so the
+    // export renderer matches the editor's top/center/bottom controls.
     const anchorX = align === 'center' ? 0.5 : align === 'right' ? 1 : 0
     const localX = align === 'center' ? w / 2 : align === 'right' ? w : 0
-    text.anchor.set(anchorX, 0)
-    text.position.set(localX, 0)
+    const anchorY =
+      node.textAlignVertical === 'center'
+        ? 0.5
+        : node.textAlignVertical === 'bottom'
+          ? 1
+          : 0
+    const localY =
+      node.textAlignVertical === 'center'
+        ? h / 2
+        : node.textAlignVertical === 'bottom'
+          ? h
+          : 0
+    text.anchor.set(anchorX, anchorY)
+    text.position.set(localX, localY)
     container.addChild(text)
   }
 

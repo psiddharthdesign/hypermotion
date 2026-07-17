@@ -21,6 +21,9 @@ const SCRUB_CURSOR =
 export function NumberField({
   value,
   onCommit,
+  onScrubPreview,
+  onScrubCommit,
+  onScrubCancel,
   min,
   max,
   step = 1,
@@ -29,6 +32,15 @@ export function NumberField({
 }: {
   value: number
   onCommit: (next: number) => void
+  /**
+   * Optional lightweight pointer-scrub preview. When supplied, drag packets
+   * call this instead of `onCommit`; `onScrubCommit` (or `onCommit`) receives
+   * the final value once on pointer-up. This keeps expensive document writes
+   * out of high-frequency transform scrubs.
+   */
+  onScrubPreview?: (next: number) => void
+  onScrubCommit?: (next: number) => void
+  onScrubCancel?: () => void
   min?: number
   max?: number
   step?: number
@@ -39,17 +51,37 @@ export function NumberField({
   const [draft, setDraft] = useState(() => formatNumber(value))
   const [focused, setFocused] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
-  const latestRef = useRef({ value, onCommit, min, max, step })
+  const latestRef = useRef({
+    value,
+    onCommit,
+    onScrubPreview,
+    onScrubCommit,
+    onScrubCancel,
+    min,
+    max,
+    step,
+  })
   const scrubRef = useRef<{
     pointerId: number
     startX: number
     startY: number
     startValue: number
     scrubbing: boolean
+    latestValue: number
+    deferredCommit: boolean
     previousCursor: string
   } | null>(null)
 
-  latestRef.current = { value, onCommit, min, max, step }
+  latestRef.current = {
+    value,
+    onCommit,
+    onScrubPreview,
+    onScrubCommit,
+    onScrubCancel,
+    min,
+    max,
+    step,
+  }
 
   // Keep the draft in sync with the prop when the user is not typing.
   useEffect(() => {
@@ -86,8 +118,14 @@ export function NumberField({
       const multiplier = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
       const delta = (dx - dy) * latest.step * multiplier
       const next = clamp(scrub.startValue + delta, latest.min, latest.max)
+      scrub.latestValue = next
       setDraft(formatNumber(next))
-      latest.onCommit(next)
+      if (latest.onScrubPreview) {
+        scrub.deferredCommit = true
+        latest.onScrubPreview(next)
+      } else {
+        latest.onCommit(next)
+      }
     }
 
     const onPointerUp = (e: PointerEvent) => {
@@ -98,6 +136,11 @@ export function NumberField({
       document.documentElement.style.cursor = scrub.previousCursor
       document.body.style.cursor = scrub.previousCursor
       if (scrub.scrubbing) {
+        if (scrub.deferredCommit) {
+          ;(latestRef.current.onScrubCommit ?? latestRef.current.onCommit)(
+            scrub.latestValue,
+          )
+        }
         e.preventDefault()
         ref.current?.blur()
       }
@@ -113,6 +156,7 @@ export function NumberField({
       const scrub = scrubRef.current
       document.body.style.userSelect = ''
       if (scrub) {
+        if (scrub.deferredCommit) latestRef.current.onScrubCancel?.()
         document.documentElement.style.cursor = scrub.previousCursor
         document.body.style.cursor = scrub.previousCursor
         scrubRef.current = null
@@ -133,6 +177,8 @@ export function NumberField({
       startY: e.clientY,
       startValue: evaluateExpression(draft) ?? latestRef.current.value,
       scrubbing: false,
+      latestValue: evaluateExpression(draft) ?? latestRef.current.value,
+      deferredCommit: false,
       previousCursor,
     }
   }

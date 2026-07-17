@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NodeId, PropertyId, Track } from '@/scene'
+import type { NodeId, PropertyId, Track, TrackId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { PROPERTIES } from '@/scene/props'
 import { lerpOklchStrings } from './color'
@@ -121,6 +121,12 @@ export interface AnimEngine {
   setPlaybackRange(
     range: { start: number; end: number; mode?: 'loop' | 'stop' } | null,
   ): void
+  /**
+   * Temporarily replace authored tracks without mutating the scene document.
+   * Timeline keyframe drags use this for live canvas feedback, then persist one
+   * batched document transaction when the pointer is released.
+   */
+  setTrackPreview(tracks: ReadonlyMap<TrackId, Track> | null): void
   /** Subscribe via the `useSyncExternalStore` convention. */
   subscribe: (cb: () => void) => () => void
   getSnapshot: () => Record<NodeId, AnimatedValue>
@@ -148,6 +154,7 @@ function createAnimEngine(): AnimEngine {
   // Snapshot is a fresh object each update (React sees identity change).
   let snapshot: Record<NodeId, AnimatedValue> = {}
   const listeners = new Set<() => void>()
+  let unsubscribeScene: (() => void) | null = null
   const notify = () => {
     for (const l of listeners) l()
   }
@@ -156,6 +163,8 @@ function createAnimEngine(): AnimEngine {
   // bump (the whole cache clears — simpler than diffing).
   const evaluatorCache = new Map<string, EasingEvaluator>()
   let cachedVersion = -1
+  let compiledTracks: Track[] = []
+  let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
   const tick = (now: number) => {
     if (!playing || !api) return
@@ -201,16 +210,22 @@ function createAnimEngine(): AnimEngine {
     if (v !== cachedVersion) {
       evaluatorCache.clear()
       cachedVersion = v
+      // Track topology and keyframes only change with the scene version.
+      // Compile once here instead of scanning every scene node and sorting
+      // every keyframe array on every animation frame.
+      compiledTracks = api
+        .getAllTracks()
+        // Preserve the previous engine semantics: tracks targeting deleted
+        // nodes are inert and must not reappear in the animated snapshot.
+        .filter((track) => !!api!.getNode(track.nodeId))
+        .map(compileTrack)
     }
     const out: Record<NodeId, AnimatedValue> = {}
-    for (const id of api.getAllNodeIds()) {
-      const tracks = api.getTracksForNode(id)
-      if (tracks.length === 0) continue
-      const value: AnimatedValue = { ...EMPTY_VALUE }
-      for (const track of tracks) {
-        applyTrack(track, playhead, value, evaluatorCache)
-      }
-      out[id] = value
+    for (const authoredTrack of compiledTracks) {
+      const track = trackPreview?.get(authoredTrack.id) ?? authoredTrack
+      const value = out[track.nodeId] ?? { ...EMPTY_VALUE }
+      applyTrack(track, playhead, value, evaluatorCache)
+      out[track.nodeId] = value
     }
     snapshot = out
     notify()
@@ -218,11 +233,21 @@ function createAnimEngine(): AnimEngine {
 
   return {
     attach(a) {
+      // Fast Refresh and provider remounts can reattach the singleton. Keep
+      // exactly one scene listener; leaked subscriptions multiply every
+      // mutation/recompute and show up as large playback-start stalls in dev.
+      unsubscribeScene?.()
       api = a
+      cachedVersion = -1
+      compiledTracks = []
+      trackPreview = null
       // On any scene mutation (including track edits), refresh the
       // snapshot so the render layer stays coherent with the data.
-      a.subscribe(() => {
-        if (!playing) recompute()
+      unsubscribeScene = a.subscribe(() => {
+        // A drag preview deliberately owns the visible track timing. Ignore
+        // the final document commit until the preview is cleared; that turns
+        // commit + clear into one coherent canvas refresh instead of two.
+        if (!playing && !trackPreview) recompute()
       })
       recompute()
     },
@@ -260,6 +285,18 @@ function createAnimEngine(): AnimEngine {
         ? { start: range.start, end: range.end, mode: range.mode ?? 'loop' }
         : null
     },
+    setTrackPreview(tracks) {
+      trackPreview =
+        tracks && tracks.size > 0
+          ? new Map(
+              [...tracks].map(([trackId, track]) => [
+                trackId,
+                compileTrack(track),
+              ] as const),
+            )
+          : null
+      recompute()
+    },
     getPlayhead: () => playhead,
     subscribe: (cb) => {
       listeners.add(cb)
@@ -267,6 +304,22 @@ function createAnimEngine(): AnimEngine {
     },
     getSnapshot: () => snapshot,
   }
+}
+
+function compileTrack(track: Track): Track {
+  let sorted = true
+  for (let index = 1; index < track.keyframes.length; index++) {
+    if (track.keyframes[index - 1]!.time > track.keyframes[index]!.time) {
+      sorted = false
+      break
+    }
+  }
+  return sorted
+    ? track
+    : {
+        ...track,
+        keyframes: [...track.keyframes].sort((a, b) => a.time - b.time),
+      }
 }
 
 /**
@@ -350,22 +403,23 @@ function applyTextProgressTrack(
   into: AnimatedValue,
   cache: Map<string, EasingEvaluator>,
 ): void {
-  const kfs = [...track.keyframes].sort((a, b) => a.time - b.time)
+  const kfs = track.keyframes
   if (kfs.length < 2) return
   const first = kfs[0]!
   const last = kfs[kfs.length - 1]!
-  const mode = track.textAnimation?.mode
+  const textAnimation = track.textAnimation ?? undefined
+  const mode = textAnimation?.mode
   if (t < first.time) {
-    if (mode === 'in' && typeof first.value === 'number') {
+    if ((mode === 'in' || mode === 'out') && typeof first.value === 'number') {
       into.textProgress = first.value
-      into.textAnimation = track.textAnimation
+      into.textAnimation = textAnimation
     }
     return
   }
   if (t > last.time) {
-    if (mode === 'out' && typeof last.value === 'number') {
+    if ((mode === 'in' || mode === 'out') && typeof last.value === 'number') {
       into.textProgress = last.value
-      into.textAnimation = track.textAnimation
+      into.textAnimation = textAnimation
     }
     return
   }

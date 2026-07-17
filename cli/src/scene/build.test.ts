@@ -295,6 +295,7 @@ test('buildSceneBytes fills nested defaults expected by the desktop app', () => 
     fill: { kind: 'solid', color: '#f4f4f5' },
     stroke: null,
     cornerRadius: 0,
+    blendMode: 'normal',
     effects: [],
   })
   assert.equal(root.visible, true)
@@ -377,6 +378,22 @@ test('buildSceneBytes preserves image fills in appearance', () => {
   })
   assert.equal(appearance.opacity, 1)
   assert.equal(appearance.cornerRadius, 0)
+})
+
+test('buildSceneBytes preserves blend modes in appearance', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.appearance = {
+    blendMode: 'screen',
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as PlainSceneMap
+  const appearance = nodes.root.appearance as PlainSceneObject
+
+  assert.equal(appearance.blendMode, 'screen')
+  assert.equal(appearance.opacity, 1)
 })
 
 test('buildSceneBytes preserves gradient fills in appearance', () => {
@@ -1847,6 +1864,7 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
       fill: null,
       stroke: null,
       cornerRadius: 0,
+      blendMode: 'normal',
       effects: [],
     },
     visible: true,
@@ -1859,6 +1877,7 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     enabled: true,
     background: null,
     focalLength: 1000,
+    scrollSensitivity: 1,
     fieldOfView: 35,
     pointOfInterestX: 640,
     pointOfInterestY: 360,
@@ -2456,6 +2475,7 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   const camera = nodes.camera
 
   assert.equal(camera.focalLength, 1000)
+  assert.equal(camera.scrollSensitivity, 1)
   assert.equal(camera.fieldOfView, 35)
   assert.equal(camera.nearClip, 1)
   assert.equal(camera.farClip, 100000)
@@ -2477,6 +2497,7 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   const camera = scene.nodes?.camera
   if (!camera) throw new Error('missing sample camera')
   camera.focalLength = 640
+  camera.scrollSensitivity = 0.5
   camera.fieldOfView = 50
   camera.nearClip = 2
   camera.farClip = 5000
@@ -2491,6 +2512,7 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   const cameraNode = nodes.camera
 
   assert.equal(cameraNode.focalLength, 640)
+  assert.equal(cameraNode.scrollSensitivity, 0.5)
   assert.equal(cameraNode.fieldOfView, 50)
   assert.equal(cameraNode.nearClip, 2)
   assert.equal(cameraNode.farClip, 5000)

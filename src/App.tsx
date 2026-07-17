@@ -114,7 +114,6 @@ function Shell() {
 
   // Global wiring — must be mounted once, at the top of the scene tree.
   useKeyboardShortcuts()
-  useAnim()
   useFigmaPaste()
   useFileMenu()
 
@@ -230,13 +229,18 @@ function Shell() {
 
   return (
     <div className="flex h-full w-full flex-col bg-app-bg text-text">
+      <AnimationHost />
       <TopBar />
       <div className="flex min-h-0 flex-1">
-        {showLayers && <LayersPanel />}
-        {componentEditId ? <ComponentEditor /> : <Canvas />}
-        {showInspector && <Inspector />}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            {showLayers && <LayersPanel />}
+            {componentEditId ? <ComponentEditor /> : <Canvas />}
+            {showInspector && <Inspector />}
+          </div>
+          {showTimeline && !componentEditId && <Timeline />}
+        </div>
       </div>
-      {showTimeline && !componentEditId && <Timeline />}
       <AudioPlaybackHost />
       <ContextMenu />
       <RenameDialog />
@@ -244,6 +248,20 @@ function Shell() {
       <UpdateNotice />
     </div>
   )
+}
+
+/**
+ * Keep the animation bridge out of the large editor shells.
+ *
+ * `useAnim` samples the engine playhead into the UI store during playback.
+ * Mounting that subscription directly in `Shell` made every sample reconcile
+ * the complete editor (canvas, inspector, layers, and timeline). This tiny
+ * leaf owns the subscription without giving those large siblings a per-tick
+ * parent render.
+ */
+function AnimationHost() {
+  useAnim()
+  return null
 }
 
 function AudioPlaybackHost() {
@@ -260,7 +278,16 @@ function AudioPlaybackHost() {
   }, [api, version])
 
   return (
-    <div hidden aria-hidden="true">
+    <div
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        width: 0,
+        height: 0,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+      }}
+    >
       {clips.map((clip) => (
         <AudioPlaybackElement key={clip.id} node={clip} />
       ))}
@@ -273,46 +300,271 @@ function AudioPlaybackElement({
 }: {
   node: Extract<SceneNode, { kind: 'audio' }>
 }) {
-  const ref = useRef<HTMLAudioElement | null>(null)
+  const mediaRef = useRef<HTMLAudioElement | null>(null)
+  const bufferRef = useRef<AudioBuffer | null>(null)
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const gainRef = useRef<GainNode | null>(null)
+  const sourceStartedAtRef = useRef(0)
+  const sourceStartedLocalRef = useRef(0)
+  const [metadataDuration, setMetadataDuration] = useState(0)
+  const [decodeTick, setDecodeTick] = useState(0)
+  const [fallbackToMediaElement, setFallbackToMediaElement] = useState(false)
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
-  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
-  const local = clampAudioLocal(playhead - node.startTime + node.trimStart, node)
+  const rate = Math.max(0.05, Math.min(16, node.playbackRate ?? 1))
+  const startTime = Number.isFinite(node.startTime) ? node.startTime : 0
+  const trimStart = Number.isFinite(node.trimStart) ? node.trimStart : 0
+  const sourceDuration =
+    Number.isFinite(node.duration) && node.duration > 0
+      ? node.duration
+      : metadataDuration
+  const trimEnd =
+    Number.isFinite(node.trimEnd) && node.trimEnd > trimStart
+      ? node.trimEnd
+      : sourceDuration
+  const sourceClipLen = Math.max(0, trimEnd - trimStart)
+  const sceneClipLen = sourceClipLen / rate
+  const local = clampAudioLocal(
+    (playhead - startTime) * rate + trimStart,
+    trimStart,
+    trimEnd,
+  )
 
   useEffect(() => {
-    const el = ref.current
+    const gain = gainRef.current
+    if (!gain) return
+    gain.gain.value = Math.max(0, Math.min(1, node.volume))
+  }, [node.volume])
+
+  useEffect(() => {
+    let cancelled = false
+    stopAudioSource(sourceRef)
+    bufferRef.current = null
+    gainRef.current = null
+    setMetadataDuration(0)
+    setFallbackToMediaElement(false)
+    setDecodeTick((tick) => tick + 1)
+
+    if (!node.src) return
+
+    void decodePreviewAudio(node.src)
+      .then((buffer) => {
+        if (cancelled) return
+        bufferRef.current = buffer
+        setMetadataDuration(buffer.duration)
+        setDecodeTick((tick) => tick + 1)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('[audio] preview decode failed, falling back to media element', err)
+          setFallbackToMediaElement(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+      stopAudioSource(sourceRef)
+    }
+  }, [node.src])
+
+  useEffect(() => {
+    const el = mediaRef.current
     if (!el) return
     el.muted = node.muted
     el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.muted, node.volume])
+    el.playbackRate = rate
+  }, [fallbackToMediaElement, node.muted, node.volume, rate])
 
   useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
-    if (playing && inRange && !node.muted) {
-      if (el.paused) {
-        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
-        el.play().catch(() => {})
-      }
-    } else {
-      if (!el.paused) el.pause()
-      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
+    if (fallbackToMediaElement) return
+    const inRange = playhead >= startTime && playhead < startTime + sceneClipLen
+    const buffer = bufferRef.current
+    if (!playing || !inRange || node.muted || !buffer || sourceClipLen <= 0) {
+      stopAudioSource(sourceRef)
+      return
     }
-  }, [playing, playhead, local, clipLen, node.startTime, node.muted])
 
-  if (!node.src) return null
-  return <audio ref={ref} src={node.src} preload="auto" />
+    const ctx = getPreviewAudioContext()
+    if (!ctx) {
+      console.warn('[audio] Web Audio is unavailable in this renderer')
+      return
+    }
+
+    const current = sourceRef.current
+    const expectedLocal = local
+    const actualLocal = current
+      ? sourceStartedLocalRef.current +
+        (ctx.currentTime - sourceStartedAtRef.current) * rate
+      : Number.NaN
+    if (current && Math.abs(actualLocal - expectedLocal) <= 0.35) {
+      if (gainRef.current) {
+        gainRef.current.gain.value = Math.max(0, Math.min(1, node.volume))
+      }
+      return
+    }
+
+    stopAudioSource(sourceRef)
+    void ctx.resume().catch((err) => {
+      console.warn('[audio] preview context resume failed', err)
+    })
+    const source = ctx.createBufferSource()
+    const gain = ctx.createGain()
+    source.buffer = buffer
+    source.playbackRate.value = rate
+    source.loop = node.loop
+    source.loopStart = trimStart
+    source.loopEnd = trimEnd
+    gain.gain.value = Math.max(0, Math.min(1, node.volume))
+    source.connect(gain)
+    gain.connect(ctx.destination)
+
+    const offset = Math.max(trimStart, Math.min(trimEnd, local))
+    const remaining = Math.max(0, trimEnd - offset)
+    if (!node.loop && remaining <= 0) return
+    source.onended = () => {
+      if (sourceRef.current === source) {
+        sourceRef.current = null
+        gainRef.current = null
+      }
+    }
+    try {
+      if (node.loop) source.start(0, offset)
+      else source.start(0, offset, remaining)
+      sourceRef.current = source
+      gainRef.current = gain
+      sourceStartedAtRef.current = ctx.currentTime
+      sourceStartedLocalRef.current = offset
+    } catch (err) {
+      console.warn('[audio] preview source start failed', err)
+    }
+  }, [
+    decodeTick,
+    local,
+    node.loop,
+    node.muted,
+    node.volume,
+    playhead,
+    playing,
+    rate,
+    sceneClipLen,
+    sourceClipLen,
+    startTime,
+    trimEnd,
+    trimStart,
+  ])
+
+  useEffect(() => {
+    if (!fallbackToMediaElement) return
+    const el = mediaRef.current
+    if (!el) return
+    const inRange = playhead >= startTime && playhead < startTime + sceneClipLen
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      el.load()
+      return
+    }
+    if (playing && inRange && !node.muted) {
+      if (el.paused || Math.abs(el.currentTime - local) > 0.35) {
+        seekMediaAudioElement(el, local, 0.2)
+      }
+      if (el.paused) {
+        el.play().catch((err) => {
+          console.warn('[audio] media-element preview playback failed', err)
+        })
+      }
+      return
+    }
+    if (!el.paused) el.pause()
+    seekMediaAudioElement(el, local, 0.05)
+  }, [
+    fallbackToMediaElement,
+    decodeTick,
+    local,
+    node.muted,
+    playhead,
+    playing,
+    sceneClipLen,
+    startTime,
+  ])
+
+  if (!fallbackToMediaElement || !node.src) return null
+  return (
+    <audio
+      ref={mediaRef}
+      src={node.src}
+      preload="auto"
+      onLoadedMetadata={(event) => {
+        const duration = event.currentTarget.duration
+        setMetadataDuration(Number.isFinite(duration) ? duration : 0)
+        setDecodeTick((tick) => tick + 1)
+      }}
+      onCanPlay={() => setDecodeTick((tick) => tick + 1)}
+      onError={(event) => {
+        console.warn('[audio] media-element preview failed to load', event.currentTarget.error)
+      }}
+    />
+  )
 }
 
 function clampAudioLocal(
   t: number,
-  node: Extract<SceneNode, { kind: 'audio' }>,
+  trimStart: number,
+  trimEnd: number,
 ): number {
-  const trimEnd = node.trimEnd || node.duration || 0
-  if (t < node.trimStart) return node.trimStart
+  if (t < trimStart) return trimStart
   if (t > trimEnd) return trimEnd
   return t
+}
+
+let sharedPreviewAudioContext: AudioContext | null = null
+
+function getPreviewAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
+    return null
+  }
+  if (!sharedPreviewAudioContext || sharedPreviewAudioContext.state === 'closed') {
+    sharedPreviewAudioContext = new AudioContext()
+  }
+  return sharedPreviewAudioContext
+}
+
+async function decodePreviewAudio(src: string): Promise<AudioBuffer> {
+  const ctx = getPreviewAudioContext()
+  if (!ctx) throw new Error('Web Audio is unavailable')
+  const response = await fetch(src)
+  const bytes = await response.arrayBuffer()
+  return await ctx.decodeAudioData(bytes.slice(0))
+}
+
+function stopAudioSource(ref: React.MutableRefObject<AudioBufferSourceNode | null>): void {
+  const source = ref.current
+  ref.current = null
+  if (!source) return
+  source.onended = null
+  try {
+    source.stop()
+  } catch {
+    // Already stopped.
+  }
+  source.disconnect()
+}
+
+function seekMediaAudioElement(
+  el: HTMLAudioElement,
+  localTime: number,
+  tolerance: number,
+): void {
+  if (!Number.isFinite(localTime)) return
+  const duration =
+    Number.isFinite(el.duration) && el.duration > 0
+      ? el.duration
+      : Number.POSITIVE_INFINITY
+  const next = Math.max(0, Math.min(duration, localTime))
+  if (Math.abs(el.currentTime - next) <= tolerance) return
+  try {
+    el.currentTime = next
+  } catch (err) {
+    console.warn('[audio] media-element preview seek failed', err)
+  }
 }
 
 function PreviewShell() {
@@ -360,7 +612,6 @@ function PreviewShell() {
     window.dispatchEvent(new Event('popstate'))
   }, [setPlaying])
 
-  useAnim()
   useEagerLoadSceneFonts()
   useCustomFonts()
 
@@ -545,6 +796,7 @@ function PreviewShell() {
 
   return (
     <div className="flex h-full w-full flex-col bg-black text-text">
+      <AnimationHost />
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-white/10 bg-black px-3 text-white">
         <button
           type="button"

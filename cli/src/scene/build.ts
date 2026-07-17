@@ -113,6 +113,24 @@ export type FillJson =
       fit: ImageFillFitJson
     }
 
+export type BlendModeJson =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
+
 export type StrokeStyleJson = 'solid' | 'dashed' | 'dotted'
 
 export type MediaFitJson = 'cover' | 'contain' | 'fill' | 'none'
@@ -210,6 +228,7 @@ export interface NodeJson {
   importWarning?: string
   duration?: number
   volume?: number
+  playbackRate?: number
   startTime?: number
   trimStart?: number
   trimEnd?: number
@@ -219,6 +238,7 @@ export interface NodeJson {
   enabled?: boolean
   background?: FillJson | null
   focalLength?: number
+  scrollSensitivity?: number
   fieldOfView?: number
   pointOfInterestX?: number
   pointOfInterestY?: number
@@ -275,6 +295,7 @@ export interface AppearanceJson {
   fill?: FillJson | null
   stroke?: StrokeJson | null
   cornerRadius?: number
+  blendMode?: BlendModeJson
   cornerRadii?: {
     tl: number
     tr: number
@@ -323,6 +344,7 @@ export const PROPERTY_IDS = [
   'appearance.cornerRadii.br',
   'appearance.cornerRadii.bl',
   'appearance.fill',
+  'appearance.blendMode',
   'text.progress',
   'layout.gap',
   'layout.padding.top',
@@ -560,6 +582,7 @@ interface SceneAppearance {
   fill: unknown | null
   stroke: unknown | null
   cornerRadius: number
+  blendMode: BlendModeJson
   cornerRadii?: AppearanceJson['cornerRadii']
   effects: unknown[]
 }
@@ -600,6 +623,7 @@ const DEFAULT_APPEARANCE: SceneAppearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
 }
 
@@ -743,6 +767,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('src', node.src ?? '')
       y.set('duration', node.duration ?? 0)
       y.set('volume', node.volume ?? 1)
+      y.set('playbackRate', node.playbackRate ?? 1)
       y.set('startTime', node.startTime ?? 0)
       y.set('trimStart', node.trimStart ?? 0)
       y.set('trimEnd', node.trimEnd ?? node.duration ?? 0)
@@ -774,6 +799,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
       y.set('focalLength', node.focalLength ?? 1000)
+      y.set(
+        'scrollSensitivity',
+        normalizeCameraScrollSensitivity(node.scrollSensitivity),
+      )
       y.set('fieldOfView', node.fieldOfView ?? 35)
       y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
       y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
@@ -1279,6 +1308,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'enabled',
       'background',
       'focalLength',
+      'scrollSensitivity',
       'fieldOfView',
       'pointOfInterestX',
       'pointOfInterestY',
@@ -1310,6 +1340,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
     y.set('focalLength', node.focalLength ?? 1000)
+    y.set(
+      'scrollSensitivity',
+      normalizeCameraScrollSensitivity(node.scrollSensitivity),
+    )
     y.set('fieldOfView', node.fieldOfView ?? 35)
     y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
     y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
@@ -1338,6 +1372,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set(k, v)
   }
   return y
+}
+
+function normalizeCameraScrollSensitivity(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 1
+  return Math.max(0.1, Math.min(2, numeric))
 }
 
 function readSceneMeta(scene: Y.Map<unknown>): SceneMeta {
@@ -1591,8 +1630,8 @@ function defaultName(kind: NodeKindJson): string {
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
-  if (kind === 'text') {
-    return { ...DEFAULT_APPEARANCE, fill: null }
+  if (kind === 'text' || kind === 'video' || kind === 'audio') {
+    return { ...DEFAULT_APPEARANCE, fill: null, stroke: null }
   }
   return { ...DEFAULT_APPEARANCE }
 }

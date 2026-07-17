@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NodeId, PropertyId } from '@/scene'
+import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { addKeyframe, findTrack } from './tracks'
 
@@ -80,7 +80,36 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   blurQuality: 'camera.blurQuality',
 }
 
-type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'
+export type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'
+
+export interface PatchKeyframeValue {
+  propertyId: PropertyId
+  value: KeyframeValue
+}
+
+/** Convert a scene-group patch into the keyframeable property/value pairs. */
+export function keyframeValuesForPatch(
+  group: PatchGroup,
+  patch: Record<string, unknown>,
+): PatchKeyframeValue[] {
+  const map = propertyMapForGroup(group)
+  const values: PatchKeyframeValue[] = []
+  for (const key of Object.keys(patch)) {
+    const propertyId = map[key]
+    if (!propertyId) continue
+    const value = patch[key]
+    if (value === undefined || value === null) continue
+    if (
+      typeof value !== 'number' &&
+      typeof value !== 'string' &&
+      typeof value !== 'object'
+    ) {
+      continue
+    }
+    values.push({ propertyId, value: value as KeyframeValue })
+  }
+  return values
+}
 
 /**
  * Stamp keyframes for every animatable key in `patch`. The value is the
@@ -97,30 +126,8 @@ export function recordKeyframesForPatch(
   group: PatchGroup,
   patch: Record<string, unknown>,
 ): void {
-  const map =
-    group === 'transform'
-      ? TRANSFORM_PROP_IDS
-      : group === 'appearance'
-        ? APPEARANCE_PROP_IDS
-        : group === 'size'
-          ? SIZE_PROP_IDS
-          : CAMERA_PROP_IDS
-  for (const key of Object.keys(patch)) {
-    const pid = map[key]
-    if (!pid) continue
-    const v = patch[key]
-    if (v === undefined || v === null) continue
-    // KeyframeValue accepts number | string | Fill | Size literal. We
-    // trust the caller that the scene has just accepted this value, so
-    // a reasonable-looking primitive or object is safe to stamp.
-    if (
-      typeof v !== 'number' &&
-      typeof v !== 'string' &&
-      typeof v !== 'object'
-    ) {
-      continue
-    }
-    addKeyframe(api, nodeId, pid, playhead, v as never)
+  for (const { propertyId, value } of keyframeValuesForPatch(group, patch)) {
+    addKeyframe(api, nodeId, propertyId, playhead, value)
   }
 }
 
@@ -151,28 +158,21 @@ export function stampToActiveTracksForPatch(
   group: PatchGroup,
   patch: Record<string, unknown>,
 ): void {
-  const map =
-    group === 'transform'
-      ? TRANSFORM_PROP_IDS
-      : group === 'appearance'
-        ? APPEARANCE_PROP_IDS
-        : group === 'size'
-          ? SIZE_PROP_IDS
-          : CAMERA_PROP_IDS
-  for (const key of Object.keys(patch)) {
-    const pid = map[key]
-    if (!pid) continue
+  for (const { propertyId, value } of keyframeValuesForPatch(group, patch)) {
     // Only follow existing tracks — never create new ones here.
-    if (!findTrack(api, nodeId, pid)) continue
-    const v = patch[key]
-    if (v === undefined || v === null) continue
-    if (
-      typeof v !== 'number' &&
-      typeof v !== 'string' &&
-      typeof v !== 'object'
-    ) {
-      continue
-    }
-    addKeyframe(api, nodeId, pid, playhead, v as never)
+    if (!findTrack(api, nodeId, propertyId)) continue
+    addKeyframe(api, nodeId, propertyId, playhead, value)
   }
+}
+
+function propertyMapForGroup(
+  group: PatchGroup,
+): Partial<Record<string, PropertyId>> {
+  return group === 'transform'
+    ? TRANSFORM_PROP_IDS
+    : group === 'appearance'
+      ? APPEARANCE_PROP_IDS
+      : group === 'size'
+        ? SIZE_PROP_IDS
+        : CAMERA_PROP_IDS
 }

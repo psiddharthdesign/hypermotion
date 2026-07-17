@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SceneAPI } from '@/scene/doc'
+import { removeTrack } from '@/anim'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 
 /**
  * Mutations on the Y.Doc-backed `uiState` slab.
@@ -130,6 +132,24 @@ export function removeTracksFromGroups(
     if (filtered.length >= 2) next[gid] = { ...g, trackIds: filtered }
   }
   api.setUiState({ trackGroups: next })
+}
+
+/** Delete animation tracks while preserving their scene layers. Any track
+ * group memberships are cleaned in the same undoable transaction, so a
+ * selected Composed/Sequence row behaves like one deletable animation unit. */
+export function deleteAnimationTracks(
+  api: SceneAPI,
+  trackIds: readonly string[],
+): number {
+  const liveTrackIds = [...new Set(trackIds)].filter((trackId) =>
+    Boolean(api.getTrack(trackId)),
+  )
+  if (liveTrackIds.length === 0) return 0
+  api.doc.transact(() => {
+    removeTracksFromGroups(api, liveTrackIds)
+    for (const trackId of liveTrackIds) removeTrack(api, trackId)
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return liveTrackIds.length
 }
 
 /** Flip a track group's collapsed flag. */

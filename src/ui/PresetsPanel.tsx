@@ -31,6 +31,11 @@ import type {
 import { EasingPicker } from '@/ui/EasingPicker'
 import { GraphEditor } from '@/ui/GraphEditor'
 import { NumberField } from '@/ui/fields'
+import {
+  registerStaggerSetKeyframes,
+  resolveStaggerKeyframeBundle,
+  retimeStaggerSet,
+} from '@/anim/staggerSets'
 
 const TEXT_EASING_PRESETS = [
   'smooth',
@@ -82,6 +87,7 @@ export function PresetsPanel() {
   const staggerDelay = useUI((s) => s.staggerDelay)
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
+  const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
   const [showLayerOptions, setShowLayerOptions] = useState(false)
   const [layerPresetTab, setLayerPresetTab] = useState<'in' | 'out'>('in')
   const [openSectionState, setOpenSectionState] = useState({
@@ -91,6 +97,12 @@ export function PresetsPanel() {
       text: false,
     },
   })
+  const updateStaggerDelay = (delay: number) => {
+    if (activeStaggerSetId) {
+      retimeStaggerSet(api, activeStaggerSetId, delay)
+    }
+    setStaggerDelay(delay)
+  }
   // Timeline selection sources, in order of precedence:
   //   1. selectedKeyframes — individual diamonds the user marquee'd or
   //      shift-clicked. Compound keys "trackId:kfId" — we derive track
@@ -177,12 +189,34 @@ export function PresetsPanel() {
   // `i * staggerDelay` when stagger is on. The same target list drives
   // the easing sweep so "click preset, slide easing" feels coherent.
   const stampPreset = (id: AnimPresetId) => {
+    const presetDirection = PRESETS.find((preset) => preset.id === id)?.direction
     for (let i = 0; i < targets.length; i++) {
       const targetId = targets[i]!
       const startTime = isStaggerActive
         ? playhead + i * staggerDelay
         : playhead
       applyPreset(api, targetId, id, startTime)
+    }
+    if (isStaggerActive && activeStaggerSetId && presetDirection) {
+      registerStaggerSetKeyframes(
+        api,
+        {
+          setId: activeStaggerSetId,
+          layerIds: targets,
+          delay: staggerDelay,
+          order: 'forward',
+        },
+        targets.flatMap((nodeId) =>
+          api.getTracksForNode(nodeId).flatMap((track) => {
+            const keyframeIds = track.keyframes
+              .filter((keyframe) => keyframe.presetOrigin === presetDirection)
+              .map((keyframe) => keyframe.id)
+            return keyframeIds.length > 0
+              ? [{ nodeId, propertyId: track.propertyId, keyframeIds }]
+              : []
+          }),
+        ),
+      )
     }
     rewriteEasing(api, targets, easing, trackFilter)
   }
@@ -257,7 +291,7 @@ export function PresetsPanel() {
               on={staggerOn}
               delay={staggerDelay}
               onToggle={() => setStaggerOn(!staggerOn)}
-              onDelayChange={setStaggerDelay}
+              onDelayChange={updateStaggerDelay}
             />
           </div>
         ) : null}
@@ -405,11 +439,18 @@ function TextAnimationPanel() {
   const staggerDelay = useUI((s) => s.staggerDelay)
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
+  const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
   const playhead = useUI((s) => s.playhead)
   const [showPicker, setShowPicker] = useState(false)
   const [showEasing, setShowEasing] = useState(false)
   const [copiedEasing, setCopiedEasing] = useState(false)
   const [easingDraft, setEasingDraft] = useState({ source: '', value: '' })
+  const updateStaggerDelay = (delay: number) => {
+    if (activeStaggerSetId) {
+      retimeStaggerSet(api, activeStaggerSetId, delay)
+    }
+    setStaggerDelay(delay)
+  }
   const selectedTextTrackFilter = timelineTrackFilter(selectedTrackIds, selectedKeyframes)
   const selectedTextNodes = textNodesFromSelectionOrTimeline(
     api,
@@ -488,10 +529,21 @@ function TextAnimationPanel() {
 
   const pickPreset = (id: TextAnimationId) => {
     const applied = new Set<NodeId>()
+    const staggerMembers: Array<{
+      nodeId: NodeId
+      propertyId: 'text.progress'
+      keyframeIds: string[]
+    }> = []
     for (let i = 0; i < selectedTextNodes.length; i++) {
       const node = selectedTextNodes[i]!
       if (applied.has(node.id)) continue
       applied.add(node.id)
+      const priorTextTrackIds = new Set(
+        api
+          .getTracksForNode(node.id)
+          .filter((track) => track.propertyId === 'text.progress')
+          .map((track) => track.id),
+      )
       const selectedTimelineTrack = findSelectedTimelineTrack(api, node.id, selectedTextTrackFilter)
       const textTrack =
         findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead) ??
@@ -538,6 +590,39 @@ function TextAnimationPanel() {
           { trackId: textTrack?.id },
         )
       }
+      const authoredTrack = textTrack
+        ? api.getTrack(textTrack.id)
+        : api
+            .getTracksForNode(node.id)
+            .find(
+              (track) =>
+                track.propertyId === 'text.progress' &&
+                !priorTextTrackIds.has(track.id),
+            )
+      if (authoredTrack?.propertyId === 'text.progress') {
+        staggerMembers.push({
+          nodeId: node.id,
+          propertyId: 'text.progress',
+          keyframeIds: authoredTrack.keyframes.map((keyframe) => keyframe.id),
+        })
+      }
+    }
+    if (
+      staggerOn &&
+      activeStaggerSetId &&
+      selectedTextNodes.length > 1 &&
+      staggerMembers.length > 0
+    ) {
+      registerStaggerSetKeyframes(
+        api,
+        {
+          setId: activeStaggerSetId,
+          layerIds: selectedTextNodes.map((node) => node.id),
+          delay: staggerDelay,
+          order: 'forward',
+        },
+        staggerMembers,
+      )
     }
     setShowPicker(false)
   }
@@ -570,7 +655,7 @@ function TextAnimationPanel() {
           delay={staggerDelay}
           disabled={selectedTextNodes.length < 2}
           onEnabledChange={setStaggerOn}
-          onDelayChange={setStaggerDelay}
+          onDelayChange={updateStaggerDelay}
         />
       </div>
     )
@@ -630,7 +715,7 @@ function TextAnimationPanel() {
         delay={staggerDelay}
         disabled={selectedTextNodes.length < 2 || Boolean(primaryTextAnimationTrack)}
         onEnabledChange={setStaggerOn}
-        onDelayChange={setStaggerDelay}
+        onDelayChange={updateStaggerDelay}
       />
 
       <ControlCard title="Effect">
@@ -904,6 +989,8 @@ function TextStaggerControls({
           <NumberField
             value={delay}
             onCommit={(next) => onDelayChange(Math.max(0, next))}
+            onScrubPreview={() => {}}
+            onScrubCommit={(next) => onDelayChange(Math.max(0, next))}
             min={0}
             step={0.05}
             suffix="s"
@@ -1533,6 +1620,8 @@ function StaggerControls({
           <NumberField
             value={delay}
             onCommit={onDelayChange}
+            onScrubPreview={() => {}}
+            onScrubCommit={onDelayChange}
             min={0}
             step={0.05}
             suffix="s"
@@ -1603,27 +1692,57 @@ function rewriteEasing(
   easing: EasingKind,
   trackIdFilter?: ReadonlySet<string>,
 ): void {
-  const writeTrack = (t: ReturnType<typeof listTracksForNode>[number]) => {
-    api.setTrack({
-      ...t,
-      defaultEasing: easing,
-      // Rewrite per-keyframe easingOut too — otherwise the curves
-      // baked in by applyPreset would win over the new defaultEasing
-      // and the user's slider would feel inert.
-      keyframes: t.keyframes.map((k) => ({ ...k, easingOut: easing })),
-    })
-  }
+  const selectedTracks: ReturnType<typeof listTracksForNode> = []
   if (trackIdFilter && trackIdFilter.size > 0) {
     // Walk every node in the scene; cheap because the filter membership
     // check short-circuits anything that doesn't match.
     for (const id of api.getAllNodeIds()) {
       for (const t of listTracksForNode(api, id)) {
-        if (trackIdFilter.has(t.id)) writeTrack(t)
+        if (trackIdFilter.has(t.id)) selectedTracks.push(t)
       }
     }
-    return
+  } else {
+    for (const id of targets) selectedTracks.push(...listTracksForNode(api, id))
   }
-  for (const id of targets) {
-    for (const t of listTracksForNode(api, id)) writeTrack(t)
+  if (selectedTracks.length === 0) return
+
+  // Expand every selected keyframe through its persistent stagger bundle.
+  // This keeps the right-panel easing control and graph-editor curve handles
+  // consistent: editing any member applies the exact curve to its peers.
+  const keyframeIdsByTrack = new Map<string, Set<string>>()
+  const add = (trackId: string, keyframeId: string) => {
+    const ids = keyframeIdsByTrack.get(trackId) ?? new Set<string>()
+    ids.add(keyframeId)
+    keyframeIdsByTrack.set(trackId, ids)
   }
+  for (const track of selectedTracks) {
+    for (const keyframe of track.keyframes) {
+      const bundle = resolveStaggerKeyframeBundle(api, track.id, keyframe.id)
+      if (bundle) {
+        for (const member of bundle.members) {
+          add(member.trackId, member.keyframeId)
+        }
+      } else {
+        add(track.id, keyframe.id)
+      }
+    }
+  }
+
+  api.doc.transact(() => {
+    for (const [trackId, keyframeIds] of keyframeIdsByTrack) {
+      const track = api.getTrack(trackId)
+      if (!track) continue
+      api.setTrack({
+        ...track,
+        defaultEasing: easing,
+        // Rewrite per-keyframe easingOut too — otherwise curves baked in by
+        // presets win over the chosen easing and make the control feel inert.
+        keyframes: track.keyframes.map((keyframe) =>
+          keyframeIds.has(keyframe.id)
+            ? { ...keyframe, easingOut: easing }
+            : keyframe,
+        ),
+      })
+    }
+  })
 }

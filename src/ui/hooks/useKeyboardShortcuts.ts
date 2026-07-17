@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useSceneAPI } from '@/scene'
 import type {
   EasingKind,
@@ -18,6 +19,12 @@ import {
   wrapInAutoLayout,
 } from '@/ui/actions'
 import { addKeyframe, removeTrack, type TextAnimationConfig } from '@/anim'
+import { deleteStaggerSet } from '@/anim/staggerSets'
+import { deleteAnimationTracks } from '@/state/groupActions'
+import {
+  importClipboardFiles,
+  readElectronClipboardFiles,
+} from '@/ui/importClipboardFiles'
 
 /**
  * Global keyboard shortcuts.
@@ -74,16 +81,23 @@ export function useKeyboardShortcuts() {
       // Group edits within 500ms into a single undo step — mirrors what
       // typing / dragging produces (many micro-transactions per second).
       captureTimeout: 500,
-      // Only track transactions with a null origin (the default for
-      // user-driven `doc.transact(...)` calls). Migrations on App.Shell
-      // mount tag their transact with a 'migration' origin so they
-      // don't pollute the undo stack — otherwise the user's first
-      // Cmd+Z would roll back the migration cleanup instead of their
-      // most recent edit.
-      trackedOrigins: new Set([null]),
+      // Track ordinary null-origin edits plus explicit gesture-boundary edits.
+      // Migrations on App.Shell mount use a separate 'migration' origin and
+      // therefore cannot pollute the user's undo stack.
+      trackedOrigins: new Set([null, UNDOABLE_GESTURE_ORIGIN]),
     })
+    const closeGestureCapture = (transaction: Y.Transaction) => {
+      if (transaction.origin === UNDOABLE_GESTURE_ORIGIN) {
+        // Relationship-aware actions already commit at the gesture boundary.
+        // Keep them as exactly one undo step, even when two actions happen
+        // within the normal 500ms typing/drag coalescing window.
+        mgr.stopCapturing()
+      }
+    }
+    api.doc.on('afterTransaction', closeGestureCapture)
     undoManagerRef.current = mgr
     return () => {
+      api.doc.off('afterTransaction', closeGestureCapture)
       mgr.destroy()
       undoManagerRef.current = null
     }
@@ -265,19 +279,35 @@ export function useKeyboardShortcuts() {
         // payloads from the Figma plugin can be read by useFigmaPaste().
         if (clipboard.length === 0) return
         e.preventDefault()
-        const sel = useUI.getState().selection
-        const root = api.getRoot()
-        let targetParent: NodeId | null = root || null
-        if (sel.length === 1) {
-          const only = api.getNode(sel[0]!)
-          if (only && (only.kind === 'frame' || only.kind === 'component')) {
-            targetParent = only.id
+        void (async () => {
+          const externalFiles = await readElectronClipboardFiles().catch((err) => {
+            console.warn('[clipboard-file-paste] failed:', err)
+            return []
+          })
+          if (externalFiles.length > 0) {
+            const ids = await importClipboardFiles(externalFiles, api, api.getRoot() || null, {
+              workspaceOnly: false,
+            })
+            if (ids.length > 0) {
+              setSelection(ids)
+              return
+            }
           }
-        }
-        const newIds = clipboard
-          .map((item) => pasteClipboardItem(api, item, targetParent))
-          .filter((id): id is NodeId => id !== null)
-        if (newIds.length > 0) setSelection(newIds)
+
+          const sel = useUI.getState().selection
+          const root = api.getRoot()
+          let targetParent: NodeId | null = root || null
+          if (sel.length === 1) {
+            const only = api.getNode(sel[0]!)
+            if (only && (only.kind === 'frame' || only.kind === 'component')) {
+              targetParent = only.id
+            }
+          }
+          const newIds = clipboard
+            .map((item) => pasteClipboardItem(api, item, targetParent))
+            .filter((id): id is NodeId => id !== null)
+          if (newIds.length > 0) setSelection(newIds)
+        })()
         return
       }
 
@@ -539,6 +569,25 @@ export function useKeyboardShortcuts() {
         // selection actions clear `selectedTrackId` so this only fires
         // when the user is truly working in track-edit mode.
         const ui = useUI.getState()
+        if (ui.selectedStaggerSetId) {
+          const setId = ui.selectedStaggerSetId
+          if (api.getUiState().staggerSets[setId]) {
+            deleteStaggerSet(api, setId)
+            if (ui.activeStaggerSetId === setId) ui.setStaggerOn(false)
+            ui.setSelectedStaggerSetId(null)
+            ui.setSelectedKeyframes([])
+            ui.setSelectedTrackIds([])
+            ui.setSelectedTrackId(null)
+            return
+          }
+          ui.setSelectedStaggerSetId(null)
+        }
+        if (ui.selectedTrackIds.length > 0) {
+          deleteAnimationTracks(api, ui.selectedTrackIds)
+          ui.setSelectedTrackIds([])
+          ui.setSelectedTrackId(null)
+          return
+        }
         if (ui.selectedTrackId) {
           removeTrack(api, ui.selectedTrackId)
           ui.setSelectedTrackId(null)
@@ -557,6 +606,35 @@ export function useKeyboardShortcuts() {
 
       // Tool shortcuts — single letter, no modifiers.
       if (meta || e.shiftKey || e.altKey) return
+      if (e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        if (e.repeat) return
+        const ui = useUI.getState()
+        const selectedSetId = ui.selectedStaggerSetId
+        const selectedSet = selectedSetId
+          ? api.getUiState().staggerSets[selectedSetId]
+          : undefined
+        if (selectedSetId && selectedSet) {
+          if (ui.staggerOn && ui.activeStaggerSetId === selectedSetId) {
+            ui.setStaggerOn(false)
+          } else {
+            ui.activateStaggerSet(selectedSetId, selectedSet.delay)
+            const sourceNodeId =
+              selectedSet.order === 'reverse'
+                ? selectedSet.layerIds[selectedSet.layerIds.length - 1]
+                : selectedSet.layerIds[0]
+            setSelection(sourceNodeId ? [sourceNodeId] : [])
+          }
+          return
+        }
+        if (selectedSetId && !selectedSet) {
+          ui.setSelectedStaggerSetId(null)
+        }
+        // No existing relationship is selected: S starts/stops a fresh local
+        // authoring session for the current layer selection.
+        ui.setStaggerOn(!ui.staggerOn)
+        return
+      }
       const tool = TOOL_KEYS[e.key.toLowerCase()]
       if (tool) {
         e.preventDefault()
@@ -567,6 +645,10 @@ export function useKeyboardShortcuts() {
       // Space toggles play.
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault()
+        // Holding Space must remain one transport command. Native key repeat
+        // otherwise flips play/pause several times per second and makes the
+        // canvas look as if playback itself is dropping frames.
+        if (e.repeat) return
         useUI.setState((s) => ({ playing: !s.playing }))
         return
       }

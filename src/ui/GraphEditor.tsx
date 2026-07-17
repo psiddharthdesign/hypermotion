@@ -5,6 +5,7 @@ import type { EasingKind, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
+import { patchStaggerKeyframeBundle } from '@/anim/staggerSets'
 
 /**
  * After-Effects-style value-over-time graph editor.
@@ -324,6 +325,13 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
       if (!live) return
       const liveKf = live.keyframes[segIndex]
       if (!liveKf) return
+      if (
+        patchStaggerKeyframeBundle(api, trackId, liveKf.id, {
+          easingOut: { bezier: next } as EasingKind,
+        })
+      ) {
+        return
+      }
       const updated = {
         ...liveKf,
         easingOut: { bezier: next } as EasingKind,

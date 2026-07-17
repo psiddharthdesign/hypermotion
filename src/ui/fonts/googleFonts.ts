@@ -115,7 +115,7 @@ export function isGoogleFont(family: string): boolean {
  */
 const WEIGHT_LIST = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const
 
-const loadingFamilies = new Set<string>()
+const loadingFamilies = new Map<string, Promise<void>>()
 const loadedFamilies = new Set<string>()
 
 /**
@@ -158,67 +158,124 @@ function cssUrl(family: string): string {
 }
 
 /**
- * Ensure `family` is loaded. Safe to call repeatedly — subsequent calls
- * for the same family return immediately once the first load resolved.
- *
- * Resolves once the primary (400) weight is downloaded, which is when
- * Canvas2D.measureText starts returning correct widths. Other weights
- * may still be loading; we fire an extra notify() whenever they finish
- * so the layout picks them up.
+ * Wait for Google's stylesheet before asking the Font Loading API for a
+ * face. Calling `document.fonts.load()` before the stylesheet has parsed can
+ * resolve with an empty array: there was no matching @font-face yet, but the
+ * old loader treated that as success and permanently kept fallback metrics.
  */
-export async function loadGoogleFont(family: string): Promise<void> {
-  if (loadedFamilies.has(family) || loadingFamilies.has(family)) return
-  if (!GOOGLE_FAMILY_SET.has(family)) return
-  if (typeof document === 'undefined') return
+async function ensureStylesheetLoaded(family: string): Promise<void> {
+  const attr = 'data-gf-family'
+  let link = document.querySelector<HTMLLinkElement>(
+    `link[${attr}="${family}"]`,
+  )
+  const needsAppend = !link
 
-  loadingFamilies.add(family)
-
-  // Dedupe link injection across hot-reloads.
-  const attr = `data-gf-family`
-  const existing = document.querySelector(`link[${attr}="${family}"]`)
-  if (!existing) {
-    const link = document.createElement('link')
+  if (!link) {
+    link = document.createElement('link')
     link.rel = 'stylesheet'
     link.href = cssUrl(family)
     link.setAttribute(attr, family)
-    document.head.appendChild(link)
   }
 
-  // Wait for the 400-weight face first — it's the one users see by
-  // default. `document.fonts.load` returns FontFaceSet entries for
-  // every face that matched, so an empty array means the family
-  // isn't known yet. We poll a few times to cover the gap between the
-  // link injecting `@font-face` rules and the browser registering
-  // them in the FontFaceSet.
-  if ('fonts' in document) {
-    try {
-      await document.fonts.load(`400 16px "${family}"`)
+  // `sheet` is populated once an existing stylesheet has loaded. This also
+  // covers hot reloads, where the link survives but this module's state does
+  // not.
+  if (link.sheet) return
+
+  const ready = new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      link.removeEventListener('load', onLoad)
+      link.removeEventListener('error', onError)
+    }
+    const onLoad = (): void => {
+      cleanup()
+      resolve()
+    }
+    const onError = (): void => {
+      cleanup()
+      reject(new Error(`Failed to load Google Fonts stylesheet for ${family}`))
+    }
+
+    link.addEventListener('load', onLoad)
+    link.addEventListener('error', onError)
+  })
+
+  if (needsAppend) document.head.appendChild(link)
+
+  try {
+    await ready
+  } catch (error) {
+    // An errored <link> will not emit another load event. Remove it so a later
+    // call creates a fresh request instead of getting stuck on the dead node.
+    link.remove()
+    throw error
+  }
+}
+
+async function loadGoogleFontOnce(family: string): Promise<void> {
+  try {
+    await ensureStylesheetLoaded(family)
+
+    if ('fonts' in document) {
+      // Wait for every requested weight, then publish one layout invalidation
+      // for the family. The previous per-weight notification could trigger
+      // nine Yoga solves and nine WebGL texture refreshes in the same task.
+      const loadedWeights = await Promise.all(
+        WEIGHT_LIST.map(async (weight): Promise<boolean> => {
+          try {
+            const faces = await document.fonts.load(
+              `${weight} 16px "${family}"`,
+            )
+            if (faces.length === 0) return false
+            return true
+          } catch {
+            return false
+          }
+        }),
+      )
+
+      // A stylesheet can load while its faces fail (network/CSP), and
+      // FontFaceSet.load can resolve early with no matches. Only cache the
+      // family when every requested weight produced a real face; otherwise a
+      // later call retries the incomplete load.
+      if (loadedWeights.every(Boolean)) loadedFamilies.add(family)
+      if (loadedWeights.some(Boolean)) notify()
+    } else {
+      // Old browsers without the Font Loading API — stylesheet readiness is
+      // the strongest signal available.
       loadedFamilies.add(family)
       notify()
-
-      // Kick the remaining weights in the background; each will fire
-      // its own notify so the layout re-measures progressively.
-      for (const w of WEIGHT_LIST) {
-        if (w === 400) continue
-        document.fonts.load(`${w} 16px "${family}"`).then(
-          () => notify(),
-          () => {
-            /* font may not exist at this weight; ignore */
-          },
-        )
-      }
-    } catch {
-      // Network down, or CSP blocked the request. The link tag is
-      // still attached, so a later retry (user picks the font again)
-      // has a chance to succeed.
     }
-  } else {
-    // Old browsers without the Font Loading API — just trust the link.
-    loadedFamilies.add(family)
-    notify()
+  } catch {
+    // Network down, or CSP blocked the stylesheet. Keeping the family out of
+    // loadedFamilies lets a later call retry.
   }
+}
 
-  loadingFamilies.delete(family)
+/**
+ * Ensure `family` is loaded. Safe to call repeatedly — concurrent callers
+ * share one promise, and subsequent calls return immediately after a fully
+ * successful load.
+ *
+ * Resolves after all requested weights have either loaded or failed. Failed
+ * and empty-face attempts are not cached, so callers can retry later.
+ */
+export function loadGoogleFont(family: string): Promise<void> {
+  if (loadedFamilies.has(family)) return Promise.resolve()
+  if (!GOOGLE_FAMILY_SET.has(family)) return Promise.resolve()
+  if (typeof document === 'undefined') return Promise.resolve()
+
+  const existing = loadingFamilies.get(family)
+  if (existing) return existing
+
+  const attempt = loadGoogleFontOnce(family)
+  const tracked = attempt.finally(() => {
+    if (loadingFamilies.get(family) === tracked) {
+      loadingFamilies.delete(family)
+    }
+  })
+  loadingFamilies.set(family, tracked)
+  return tracked
 }
 
 /**

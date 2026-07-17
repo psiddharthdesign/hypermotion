@@ -224,16 +224,17 @@ interface UIState {
    */
   scaleLinked: boolean
   /**
-   * Stagger controls on the Animate panel. When on, clicking a preset
-   * spreads it across multiple targets — either the direct children of
-   * a single selected parent, or the members of a multi-selection. Each
-   * target `i` starts at `playhead + i * staggerDelay`, first child
-   * first. `staggerDelay` is in seconds to match the rest of the tool
-   * (keyframe times, scene duration, playhead). The delay field stays
-   * in UI state so it survives selection changes.
+   * Armed stagger authoring mode. While on, multi-layer property diamonds,
+   * later keyed edits, and presets join one persistent property-keyframe set.
+   * Layer `i` authors at `basePlayhead + i * staggerDelay`, so adding another
+   * property or later keyframe keeps the same layer offsets.
    */
   staggerOn: boolean
   staggerDelay: number
+  /** Id of the property-keyframe set currently being authored. */
+  activeStaggerSetId: string | null
+  /** Timeline stagger relationship currently selected, whether editing or not. */
+  selectedStaggerSetId: string | null
   /**
    * Auto-keyframe ("record") mode. When on, any committed value change
    * on an animatable property (transform.*, appearance.opacity, corner,
@@ -351,6 +352,10 @@ interface UIState {
   toggleScaleLinked: () => void
   /** Turn the Animate panel's stagger on or off. */
   setStaggerOn: (on: boolean) => void
+  /** Resume authoring into an existing persistent stagger relationship. */
+  activateStaggerSet: (id: string, delay: number) => void
+  /** Select a local stagger track without entering stagger edit mode. */
+  setSelectedStaggerSetId: (id: string | null) => void
   /** Set the stagger delay in seconds. Clamped to >= 0. */
   setStaggerDelay: (seconds: number) => void
   /**
@@ -533,6 +538,8 @@ export const useUI = create<UIState>((set) => ({
   // 0.1s is the "designer default" for staggers — noticeable but not
   // glacial at 60fps. Users tweak this per-animation.
   staggerDelay: 0.1,
+  activeStaggerSetId: null,
+  selectedStaggerSetId: null,
   recording: false,
   renameDialogOpen: false,
   editingTextId: null,
@@ -661,7 +668,27 @@ export const useUI = create<UIState>((set) => ({
       ),
     }),
   toggleScaleLinked: () => set((s) => ({ scaleLinked: !s.scaleLinked })),
-  setStaggerOn: (on) => set({ staggerOn: on }),
+  setStaggerOn: (on) =>
+    set((state) => {
+      if (state.staggerOn === on) return state
+      return {
+        staggerOn: on,
+        // Every off → on transition begins a fresh authoring set. The set
+        // adopts the selected layers when its first property is keyed.
+        activeStaggerSetId: on ? makeStaggerSetId() : null,
+        // A generic authoring session is not one of the existing local rows.
+        // Turning an existing selected row on goes through activateStaggerSet.
+        selectedStaggerSetId: on ? null : state.selectedStaggerSetId,
+      }
+    }),
+  activateStaggerSet: (id, delay) =>
+    set({
+      staggerOn: true,
+      activeStaggerSetId: id,
+      selectedStaggerSetId: id,
+      staggerDelay: Math.max(0, delay),
+    }),
+  setSelectedStaggerSetId: (id) => set({ selectedStaggerSetId: id }),
   setStaggerDelay: (seconds) =>
     set({ staggerDelay: Math.max(0, seconds) }),
   setRecording: (on) => set({ recording: on }),
@@ -732,4 +759,8 @@ export const useUI = create<UIState>((set) => ({
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
+}
+
+function makeStaggerSetId(): string {
+  return `stagger_${Math.random().toString(36).slice(2, 10)}`
 }

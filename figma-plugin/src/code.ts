@@ -74,6 +74,7 @@ interface CapturedNodeBase {
   width: number
   height: number
   rotation: number
+  layoutPositioning?: 'AUTO' | 'ABSOLUTE'
   cornerRadius: [number, number, number, number]
   fills: CapturedFill[]
   strokes: CapturedFill[]
@@ -81,12 +82,18 @@ interface CapturedNodeBase {
   strokeWidths?: { top: number; right: number; bottom: number; left: number }
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   strokeDashes: number[]
+  blendMode: CapturedBlendMode
   effects: CapturedEffect[]
 }
 
 interface CapturedFrame extends CapturedNodeBase {
   type: 'FRAME' | 'GROUP' | 'COMPONENT' | 'INSTANCE'
   layoutMode: 'NONE' | 'HORIZONTAL' | 'VERTICAL' | 'GRID'
+  gridRowCount?: number
+  gridColumnCount?: number
+  gridRowGap?: number
+  gridColumnGap?: number
+  strokesIncludedInLayout?: boolean
   primaryAxisSizingMode: 'FIXED' | 'AUTO'
   counterAxisSizingMode: 'FIXED' | 'AUTO'
   layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
@@ -120,6 +127,14 @@ interface CapturedText extends CapturedNodeBase {
   fontSize: number
   lineHeightPx: number
   letterSpacingPx: number
+  textCase:
+    | 'ORIGINAL'
+    | 'UPPER'
+    | 'LOWER'
+    | 'TITLE'
+    | 'SMALL_CAPS'
+    | 'SMALL_CAPS_FORCED'
+  textDecoration: 'NONE' | 'UNDERLINE' | 'STRIKETHROUGH'
   textAlignHorizontal: 'LEFT' | 'CENTER' | 'RIGHT' | 'JUSTIFIED'
   textAlignVertical: 'TOP' | 'CENTER' | 'BOTTOM'
   textAutoResize: 'NONE' | 'HEIGHT' | 'WIDTH_AND_HEIGHT'
@@ -150,6 +165,27 @@ type CapturedEffect =
     }
 
 type CapturedFill = SolidFill | GradientFill | ImageFill
+
+type CapturedBlendMode =
+  | 'PASS_THROUGH'
+  | 'NORMAL'
+  | 'DARKEN'
+  | 'MULTIPLY'
+  | 'LINEAR_BURN'
+  | 'COLOR_BURN'
+  | 'LIGHTEN'
+  | 'SCREEN'
+  | 'LINEAR_DODGE'
+  | 'COLOR_DODGE'
+  | 'OVERLAY'
+  | 'SOFT_LIGHT'
+  | 'HARD_LIGHT'
+  | 'DIFFERENCE'
+  | 'EXCLUSION'
+  | 'HUE'
+  | 'SATURATION'
+  | 'COLOR'
+  | 'LUMINOSITY'
 
 interface SolidFill {
   type: 'SOLID'
@@ -254,6 +290,17 @@ async function captureFrame(
     ...base,
     type: nodeTypeAsFrame(node.type),
     layoutMode: node.layoutMode as CapturedFrame['layoutMode'],
+    ...(node.layoutMode === 'GRID'
+      ? {
+          gridRowCount: node.gridRowCount,
+          gridColumnCount: node.gridColumnCount,
+          gridRowGap: node.gridRowGap,
+          gridColumnGap: node.gridColumnGap,
+        }
+      : {}),
+    strokesIncludedInLayout: (node as unknown as {
+      strokesIncludedInLayout?: boolean
+    }).strokesIncludedInLayout,
     primaryAxisSizingMode:
       (node.primaryAxisSizingMode as CapturedFrame['primaryAxisSizingMode']) ??
       'FIXED',
@@ -369,6 +416,8 @@ async function captureText(
     fontSize: typeof fontSize === 'number' ? fontSize : 14,
     lineHeightPx: lineHeightToPx(lineHeight, fontSize),
     letterSpacingPx: letterSpacingToPx(letterSpacing, fontSize),
+    textCase: firstTextCase(node),
+    textDecoration: firstTextDecoration(node),
     textAlignHorizontal: node.textAlignHorizontal,
     textAlignVertical: node.textAlignVertical,
     textAutoResize: node.textAutoResize as CapturedText['textAutoResize'],
@@ -447,12 +496,10 @@ async function captureBase(
     strokes?: ReadonlyArray<Paint>
     strokeWeight?: number | symbol
     strokeAlign?: 'INSIDE' | 'OUTSIDE' | 'CENTER'
-    individualStrokeWeights?: {
-      top: number
-      right: number
-      bottom: number
-      left: number
-    } | symbol
+    strokeTopWeight?: number
+    strokeRightWeight?: number
+    strokeBottomWeight?: number
+    strokeLeftWeight?: number
     dashPattern?: ReadonlyArray<number>
     cornerRadius?: number | symbol
     topLeftRadius?: number
@@ -460,7 +507,9 @@ async function captureBase(
     bottomLeftRadius?: number
     bottomRightRadius?: number
     rotation?: number
+    layoutPositioning?: 'AUTO' | 'ABSOLUTE'
     opacity?: number
+    blendMode?: BlendMode
     effects?: ReadonlyArray<Effect> | symbol
   }
   const fills = await capturePaints(
@@ -470,7 +519,15 @@ async function captureBase(
   const strokes = await capturePaints(geo.strokes ?? [], assets)
   const strokeWeight =
     typeof geo.strokeWeight === 'number' ? geo.strokeWeight : 0
-  const strokeWidths = strokeWidthsOf(geo.individualStrokeWeights, strokeWeight)
+  const strokeWidths = strokeWidthsOf(
+    {
+      top: geo.strokeTopWeight,
+      right: geo.strokeRightWeight,
+      bottom: geo.strokeBottomWeight,
+      left: geo.strokeLeftWeight,
+    },
+    strokeWeight,
+  )
   const strokeAlign = geo.strokeAlign ?? 'INSIDE'
   const strokeDashes = Array.isArray(geo.dashPattern)
     ? Array.from(geo.dashPattern)
@@ -487,6 +544,7 @@ async function captureBase(
     width: node.width,
     height: node.height,
     rotation: typeof geo.rotation === 'number' ? geo.rotation : 0,
+    layoutPositioning: geo.layoutPositioning,
     cornerRadius: cornerRadiiOf(geo),
     fills,
     strokes,
@@ -494,6 +552,7 @@ async function captureBase(
     ...(strokeWidths ? { strokeWidths } : {}),
     strokeAlign,
     strokeDashes,
+    blendMode: (geo.blendMode as CapturedBlendMode | undefined) ?? 'NORMAL',
     effects,
   }
 }
@@ -522,18 +581,22 @@ function captureEffects(effects: ReadonlyArray<Effect>): CapturedEffect[] {
 }
 
 function strokeWidthsOf(
-  widths:
-    | {
-        top: number
-        right: number
-        bottom: number
-        left: number
-      }
-    | symbol
-    | undefined,
+  widths: {
+    top?: number
+    right?: number
+    bottom?: number
+    left?: number
+  },
   uniformWeight: number,
 ): { top: number; right: number; bottom: number; left: number } | undefined {
-  if (!widths || typeof widths === 'symbol') return undefined
+  if (
+    typeof widths.top !== 'number' ||
+    typeof widths.right !== 'number' ||
+    typeof widths.bottom !== 'number' ||
+    typeof widths.left !== 'number'
+  ) {
+    return undefined
+  }
   const out = {
     top: widths.top,
     right: widths.right,
@@ -628,7 +691,7 @@ async function capturePaint(
         const image = figma.getImageByHash(paint.imageHash)
         if (image) {
           const bytes = await image.getBytesAsync()
-          assets[paint.imageHash] = bytesToBase64(bytes)
+          assets[paint.imageHash] = bytesToDataUrl(bytes)
         }
       } catch (err) {
         console.warn('[hyper-motion] Image bytes fetch failed', err)
@@ -670,6 +733,22 @@ function weightFromStyle(style: string): number {
   return map[key] ?? 400
 }
 
+function firstTextCase(node: TextNode): CapturedText['textCase'] {
+  const value =
+    node.characters.length > 0 ? node.getRangeTextCase(0, 1) : node.textCase
+  return typeof value === 'string' ? value : 'ORIGINAL'
+}
+
+function firstTextDecoration(
+  node: TextNode,
+): CapturedText['textDecoration'] {
+  const value =
+    node.characters.length > 0
+      ? node.getRangeTextDecoration(0, 1)
+      : node.textDecoration
+  return typeof value === 'string' ? value : 'NONE'
+}
+
 function lineHeightToPx(lh: LineHeight, fontSize: number): number {
   if (typeof fontSize !== 'number') return 0
   if (!lh || (lh as { unit?: string }).unit === 'AUTO') return fontSize * 1.2
@@ -705,6 +784,45 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
   // Plugin sandbox exposes `btoa`.
   return btoa(binary)
+}
+
+function bytesToDataUrl(bytes: Uint8Array): string {
+  return `data:${sniffImageMime(bytes)};base64,${bytesToBase64(bytes)}`
+}
+
+function sniffImageMime(bytes: Uint8Array): string {
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
+    return 'image/gif'
+  }
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  return 'image/png'
 }
 
 /**

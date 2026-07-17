@@ -53,12 +53,15 @@ export function FillField({
   value,
   onCommit,
   label = 'Fill',
+  mixed = false,
   disabled = false,
   disabledReason,
 }: {
   value: Fill | null
   onCommit: (next: Fill | null) => void
   label?: string
+  /** Selection contains different fills; the editor stays interactive. */
+  mixed?: boolean
   disabled?: boolean
   disabledReason?: string
 }) {
@@ -74,7 +77,7 @@ export function FillField({
   const control = (
     <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
       <span className="min-w-[56px] truncate text-right font-mono text-[10px] uppercase text-text-muted">
-        {summary(value)}
+        {mixed ? 'Mixed' : summary(value)}
       </span>
       {/* Inline eyedropper — pick any color on screen and have it
           land directly on the fill, without opening the popover.
@@ -90,17 +93,33 @@ export function FillField({
         ref={anchorRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={value ? `Edit fill (${value.kind})` : 'Add fill'}
-        className="h-5 w-5 shrink-0 rounded border border-border hover:border-border-strong"
+        aria-label={
+          mixed
+            ? 'Set fill for selected layers'
+            : value
+              ? `Edit fill (${value.kind})`
+              : 'Add fill'
+        }
+        className={[
+          'h-5 w-5 shrink-0 rounded border hover:border-border-strong',
+          mixed ? 'border-accent' : 'border-border',
+        ].join(' ')}
         style={{
           ...(imageBg ?? {}),
-          background: imageBg ? undefined : swatchBg ?? undefined,
+          background: mixed
+            ? undefined
+            : imageBg
+              ? undefined
+              : swatchBg ?? undefined,
           backgroundImage:
-            imageBg
+            mixed
+              ? 'linear-gradient(135deg, var(--color-accent) 0 25%, transparent 25% 50%, var(--color-accent) 50% 75%, transparent 75%)'
+              : imageBg
               ? imageBg.backgroundImage
               : swatchBg
                 ? undefined
                 : 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 3px)',
+          backgroundSize: mixed ? '6px 6px' : undefined,
         }}
       />
     </div>

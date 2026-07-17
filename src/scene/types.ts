@@ -101,7 +101,7 @@ export interface Transform {
 
 export type FlexDirection = 'row' | 'column'
 export type FlexJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around'
-export type FlexAlign = 'start' | 'center' | 'end' | 'stretch'
+export type FlexAlign = 'start' | 'center' | 'end' | 'stretch' | 'baseline'
 
 /**
  * Layout mode for a frame (or component / root).
@@ -393,8 +393,28 @@ export interface Appearance {
   cornerRadius: number
   /** Per-corner override of `cornerRadius`. See {@link CornerRadii}. */
   cornerRadii?: CornerRadii
+  /** CSS-compatible compositing mode for this layer. */
+  blendMode?: BlendMode
   effects: Effect[]
 }
+
+export type BlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
 
 // ---------------------------------------------------------------------------
 // Node base + variants
@@ -481,6 +501,18 @@ export interface EllipseNode extends NodeBase {
   size: Size
 }
 
+export type TextFontStyle = 'normal' | 'italic'
+export type TextCase =
+  | 'original'
+  | 'upper'
+  | 'lower'
+  | 'title'
+  | 'small-caps'
+  | 'small-caps-forced'
+export type TextDecoration = 'none' | 'underline' | 'strikethrough'
+export type TextAlign = 'start' | 'center' | 'end' | 'justify'
+export type TextAlignVertical = 'top' | 'center' | 'bottom'
+
 export interface TextNode extends NodeBase {
   kind: 'text'
   /**
@@ -495,9 +527,16 @@ export interface TextNode extends NodeBase {
   fontFamily: string
   fontSize: number
   fontWeight: number
+  /** Normal/italic face selection. Defaults to normal for legacy scenes. */
+  fontStyle: TextFontStyle
   lineHeight: number
   letterSpacing: number
-  textAlign: 'start' | 'center' | 'end'
+  textAlign: TextAlign
+  /** Vertical placement of glyph lines inside a fixed-height text box. */
+  textAlignVertical: TextAlignVertical
+  /** Non-destructive display casing; `text` keeps its authored characters. */
+  textCase: TextCase
+  textDecoration: TextDecoration
   color: Color
   /**
    * Text-specific animation effect. Unlike ordinary layer presets,
@@ -536,11 +575,17 @@ export interface VideoNode extends NodeBase {
   kind: 'video'
   size: Size
   src: string
+  /** Still preview frame used before the video element has painted. */
+  poster?: string
+  /** Optional user-facing note about import conversion or fallback behavior. */
+  importWarning?: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
   /** Length of the source media in seconds (decoded on import). */
   duration: number
   /** 0..1 volume multiplier for the video's audio track. */
   volume: number
+  /** Source playback speed, where 1 is normal speed. */
+  playbackRate: number
   /** Whether the video's audio is muted. Default true. */
   muted: boolean
   /** When in the scene timeline playback begins, in seconds. */
@@ -567,6 +612,7 @@ export interface AudioNode extends NodeBase {
   src: string
   duration: number
   volume: number
+  playbackRate: number
   muted: boolean
   startTime: number
   trimStart: number
@@ -598,6 +644,18 @@ export interface AudioNode extends NodeBase {
  * 'perspective' variant can carry `fov` + `near` / `far` without
  * breaking existing '2d' cameras.
  */
+export const DEFAULT_CAMERA_SCROLL_SENSITIVITY = 1
+export const MIN_CAMERA_SCROLL_SENSITIVITY = 0.1
+export const MAX_CAMERA_SCROLL_SENSITIVITY = 2
+
+export function normalizeCameraScrollSensitivity(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 1
+  return Math.max(
+    MIN_CAMERA_SCROLL_SENSITIVITY,
+    Math.min(MAX_CAMERA_SCROLL_SENSITIVITY, numeric),
+  )
+}
+
 export interface CameraNode extends NodeBase {
   kind: 'camera'
   /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
@@ -636,6 +694,8 @@ export interface CameraNode extends NodeBase {
    * hardcoded value so existing scenes render identically.
    */
   focalLength: number
+  /** Multiplier for wheel/trackpad dolly speed. 1 = the editor default. */
+  scrollSensitivity: number
   /** Vertical field of view in degrees. Derived from focal length when absent. */
   fieldOfView: number
   /** Camera point of interest / look-at target in world canvas units. */
@@ -896,6 +956,7 @@ export type PropertyId =
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
   | 'appearance.fill'
+  | 'appearance.blendMode'
   // text effect group — drives text-specific reveal effects
   | 'text.progress'
   // layout group — triggers relayout + FLIP

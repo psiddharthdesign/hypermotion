@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type CSSProperties,
+} from 'react'
 import {
   useSceneAPI,
   useSceneVersion,
@@ -28,11 +39,30 @@ import { useAnimatedValues, type AnimatedValue } from '@/ui/hooks/useAnimatedVal
 import { useDragToMove } from '@/ui/hooks/useDragToMove'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
-import { importMediaFiles, isMediaFile } from '@/ui/importMedia'
+import {
+  captureVideoPoster,
+  decodeVideoMeta,
+  importMediaFiles,
+  isMediaFile,
+  normalizeVideoFileForBrowser,
+  readMediaFileAsDataUrl,
+  VIDEO_PLAYBACK_PROXY_WARNING,
+} from '@/ui/importMedia'
+import {
+  filesFromClipboardEvent,
+  importClipboardFiles,
+  readElectronClipboardFiles,
+} from '@/ui/importClipboardFiles'
 import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { splitDomTextAnimationSegments } from '@/ui/textAnimationSegments'
+import {
+  canvasTextEditPresentation,
+  isRepeatedCanvasPress,
+  type CanvasPress,
+} from '@/ui/canvasTextEditing'
 import {
   buildWorldPlanes,
   hitTestPlanes,
@@ -47,6 +77,70 @@ import {
   normalizeTextAnimation,
 } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
+import {
+  cameraPreviewStore,
+  cameraTransformPreview,
+} from '@/ui/cameraPreviewStore'
+import { cameraWheelStartZ, cameraZFromWheel } from '@/ui/cameraWheel'
+
+const MemoizedThreeSceneViewport = memo(ThreeSceneViewport)
+MemoizedThreeSceneViewport.displayName = 'MemoizedThreeSceneViewport'
+
+type AnimatedThreeSceneViewportProps = Omit<
+  ComponentProps<typeof ThreeSceneViewport>,
+  'animated' | 'cameraAnim'
+> & {
+  animationIds: NodeId[]
+}
+
+const EMPTY_CAMERA_ANIMATION_IDS: NodeId[] = []
+const EMPTY_SCENE_ANIMATION_IDS: NodeId[] = []
+const subscribeToNothing = () => () => {}
+const getNoCameraPreview = () => undefined
+
+/** Keep camera rAF updates inside the tiny WebGL leaf, not all of Canvas. */
+const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
+  camera,
+  animationIds,
+  ...props
+}: AnimatedThreeSceneViewportProps) {
+  const sceneAnimated = useAnimatedValues(animationIds)
+  const cameraAnimationIds = useMemo(() => [camera.id], [camera.id])
+  const cameraAnimated = useAnimatedValues(cameraAnimationIds)
+  const pausedPlayhead = useUI((state) =>
+    state.playing ? null : state.playhead,
+  )
+  const cameraPreviewSnapshot = useSyncExternalStore(
+    cameraPreviewStore.subscribe,
+    cameraPreviewStore.getSnapshot,
+    cameraPreviewStore.getSnapshot,
+  )
+  const cameraPreview =
+    cameraPreviewSnapshot?.cameraId === camera.id
+      ? cameraPreviewSnapshot.value
+      : undefined
+  const cameraAnim = useMemo<AnimatedValue | undefined>(() => {
+    const engineValue = cameraAnimated[camera.id]
+    if (!cameraPreview) return engineValue
+    return { ...engineValue, ...cameraPreview }
+  }, [camera.id, cameraPreview, cameraAnimated])
+  // Camera tracks already publish one animation snapshot per engine frame.
+  // Read the engine-owned time during that render instead of subscribing this
+  // WebGL leaf to the slower 15 Hz UI mirror as a second render source.
+  const playbackPlayhead = props.playing
+    ? getAnimEngine().getPlayhead()
+    : (pausedPlayhead ?? props.playhead ?? 0)
+  return (
+    <MemoizedThreeSceneViewport
+      {...props}
+      camera={camera}
+      animated={sceneAnimated}
+      cameraAnim={cameraAnim}
+      interactiveCameraPreview={!!cameraPreview}
+      playhead={playbackPlayhead}
+    />
+  )
+})
 
 /**
  * Per-node values accumulated from every ancestor in the scene tree.
@@ -91,6 +185,16 @@ interface Matrix2D {
   d: number
   e: number
   f: number
+}
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  return !!(
+    el &&
+    (el.tagName === 'INPUT' ||
+      el.tagName === 'TEXTAREA' ||
+      el.isContentEditable)
+  )
 }
 
 const IDENTITY_MATRIX_2D: Matrix2D = {
@@ -226,7 +330,7 @@ function maxCornerRadius(cornerRadius: number, cornerRadii?: CornerRadii): numbe
     : cornerRadius
 }
 
-function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSProperties {
+export function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSProperties {
   if (!fill) return {}
   if (fill.kind === 'solid') {
     return { backgroundColor: fill.color }
@@ -571,9 +675,18 @@ export function Canvas() {
   // the Scene Inspector's Background section. Runs through the same
   // fillToCss serializer as inner nodes so the artboard can host a
   // gradient just like any other frame.
-  const rootNode = rootId ? api.getNode(rootId) : null
-  const sceneFill = fillToCss(rootNode?.appearance.fill ?? null) ?? null
-  const sceneCorner = rootNode?.appearance.cornerRadius ?? 0
+  const rootNode = useMemo(
+    () => {
+      void version
+      return rootId ? api.getNode(rootId) : null
+    },
+    [api, rootId, version],
+  )
+  const rootVisible = rootNode?.visible !== false
+  const sceneFill = rootVisible
+    ? fillToCss(rootNode?.appearance.fill ?? null) ?? null
+    : null
+  const sceneCorner = rootVisible ? rootNode?.appearance.cornerRadius ?? 0 : 0
   // Camera viewport background — paints behind the artboard so when
   // the user zooms out / pans beyond the artboard, this fill (rather
   // than the workspace chrome) is what shows. Read here so the
@@ -589,10 +702,17 @@ export function Canvas() {
   const clearSelection = useUI((s) => s.clearSelection)
   const selection = useUI((s) => s.selection)
   const tool = useUI((s) => s.tool)
+  const playing = useUI((s) => s.playing)
+  const editingTextId = useUI((s) => s.editingTextId)
+  const setEditingTextId = useUI((s) => s.setEditingTextId)
+  const isEditingText = editingTextId !== null
+  const pausedPlayhead = useUI((s) => (s.playing ? null : s.playhead))
+  const playhead = playing
+    ? getAnimEngine().getPlayhead()
+    : (pausedPlayhead ?? 0)
   const setTool = useUI((s) => s.setTool)
   const view = useUI((s) => s.view)
   const setView = useUI((s) => s.setView)
-  const zoomAt = useUI((s) => s.zoomAt)
   const focusPickingCameraId = useUI((s) => s.focusPickingCameraId)
   const setFocusPickingCameraId = useUI((s) => s.setFocusPickingCameraId)
 
@@ -615,7 +735,10 @@ export function Canvas() {
     const out: NodeId[] = []
     const visit = (id: NodeId) => {
       out.push(id)
-      for (const c of api.getChildren(id)) visit(c.id)
+      const children = api.getChildren(id)
+      for (let i = children.length - 1; i >= 0; i--) {
+        visit(children[i]!.id)
+      }
     }
     visit(rootId)
     return out
@@ -640,7 +763,23 @@ export function Canvas() {
   // Animated values (opacity, transform offsets) from the anim engine,
   // keyed by node id. Empty object while no tracks exist, which is the
   // current default — the engine is wired but untouched until Step 5.
-  const animated = useAnimatedValues(renderOrder)
+  const cameraId = api.getActiveCameraId()
+  const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
+  const textEditPresentation = canvasTextEditPresentation(
+    threeCameraAvailable,
+    editingTextId,
+  )
+  const fallbackSceneAnimationIds = useMemo(
+    () =>
+      cameraId && threeCameraAvailable && !isEditingText
+        ? EMPTY_SCENE_ANIMATION_IDS
+        : renderOrder,
+    [cameraId, isEditingText, renderOrder, threeCameraAvailable],
+  )
+  // Once WebGL owns the visible scene, keep its per-frame animation
+  // subscription inside AnimatedThreeSceneViewport. Subscribing Canvas here
+  // made every transform keyframe reconcile the entire editor surface.
+  const animated = useAnimatedValues(fallbackSceneAnimationIds)
 
   // Active camera: a scene-level node whose transform is interpreted as
   // the view transform, inverse-applied to the artboard content. The
@@ -652,9 +791,46 @@ export function Canvas() {
   //
   // When there's no active camera (legacy doc, not migrated yet), the
   // view collapses to identity — scene renders exactly as before.
-  const cameraId = api.getActiveCameraId()
-  const camera = cameraId ? api.getNode(cameraId) : null
-  const cameraAnim = cameraId ? animated[cameraId] : undefined
+  const camera = useMemo(
+    () => {
+      void version
+      return cameraId ? api.getNode(cameraId) : null
+    },
+    [api, cameraId, version],
+  )
+  // The WebGL leaf owns camera animation/drag subscriptions on the normal
+  // path. If WebGL creation fails, opt the DOM fallback back into those
+  // updates so camera movement remains live instead of jumping on release.
+  const fallbackCameraAnimationIds = useMemo(
+    () =>
+      (!threeCameraAvailable || isEditingText) && cameraId
+        ? [cameraId]
+        : EMPTY_CAMERA_ANIMATION_IDS,
+    [cameraId, isEditingText, threeCameraAvailable],
+  )
+  const fallbackCameraAnimated = useAnimatedValues(
+    fallbackCameraAnimationIds,
+  )
+  const domCameraPreviewSnapshot = useSyncExternalStore(
+    threeCameraAvailable && !isEditingText
+      ? subscribeToNothing
+      : cameraPreviewStore.subscribe,
+    threeCameraAvailable && !isEditingText
+      ? getNoCameraPreview
+      : cameraPreviewStore.getSnapshot,
+    getNoCameraPreview,
+  )
+  const domCameraPreview =
+    cameraId && domCameraPreviewSnapshot?.cameraId === cameraId
+      ? domCameraPreviewSnapshot.value
+      : undefined
+  // Reading the latest value without subscribing keeps editor-only overlays
+  // coherent at normal UI refreshes. The fallback selector above takes over
+  // the per-frame subscription only when no WebGL renderer is available.
+  const cameraAnim = cameraId
+    ? fallbackCameraAnimated[cameraId] ??
+      getAnimEngine().getSnapshot()[cameraId]
+    : undefined
   // Pre-serialize the camera's viewport background so the canvas-root
   // JSX further down can swap it in for the static panel color. Null
   // when there's no active camera or no fill set; the renderer falls
@@ -665,32 +841,16 @@ export function Canvas() {
   // For image fills, the renderer needs the full background-* bundle
   // (image url + size + repeat). For solid/gradient, we just paint
   // `background: <css>`. Branch here so the JSX stays simple.
-  const cameraBackgroundImageStyle = cameraBackgroundFill
-    ? imageBackgroundStyle(cameraBackgroundFill)
+  const cameraBackgroundStyle = cameraBackgroundFill
+    ? fillBackgroundStyle(cameraBackgroundFill)
     : null
-  const [cameraPreview, setCameraPreview] = useState<{
-    cameraId: NodeId
-    transform: CameraNode['transform']
-  } | null>(null)
-  const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
-  const previewCameraTransform =
-    camera && camera.kind === 'camera' && cameraPreview?.cameraId === camera.id
-      ? cameraPreview.transform
-      : null
   const liveCameraAnim = useMemo<AnimatedValue | undefined>(() => {
-    if (!previewCameraTransform) return cameraAnim
-    return {
-      ...cameraAnim,
-      x: previewCameraTransform.x,
-      y: previewCameraTransform.y,
-      z: previewCameraTransform.z,
-      rotation: previewCameraTransform.rotation,
-      rotationX: previewCameraTransform.rotationX,
-      rotationY: previewCameraTransform.rotationY,
-      scaleX: previewCameraTransform.scaleX,
-      scaleY: previewCameraTransform.scaleY,
-    }
-  }, [cameraAnim, previewCameraTransform])
+    if (!domCameraPreview) return cameraAnim
+    return { ...cameraAnim, ...domCameraPreview }
+  }, [cameraAnim, domCameraPreview])
+  useEffect(() => {
+    cameraPreviewStore.clear()
+  }, [cameraId])
   // ---------------------------------------------------------------
   // 3D camera
   // ---------------------------------------------------------------
@@ -755,6 +915,18 @@ export function Canvas() {
     canvasWidth,
     canvasHeight,
   ])
+  const cameraSceneContentStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      cameraTransform
+        ? {
+            transform: cameraTransform,
+            transformOrigin: '0 0',
+            transformStyle: 'preserve-3d',
+            backfaceVisibility: 'visible',
+          }
+        : undefined,
+    [cameraTransform],
+  )
 
   // Inherited-from-ancestor effects per node, so a parent's animated
   // translate / opacity / scale also moves the children that sit beside
@@ -865,6 +1037,11 @@ export function Canvas() {
     lastSampleTime: number
     didStampStart: boolean
     moved: boolean
+    samples: Array<{
+      time: number
+      patch: Record<string, number>
+      mode: 'record' | 'active-track'
+    }>
   } | null>(null)
   const focusMaskDragRef = useRef<{
     pointerId: number
@@ -874,6 +1051,7 @@ export function Canvas() {
     latestPatch: Record<string, number>
     moved: boolean
   } | null>(null)
+  const lastCanvasPressRef = useRef<CanvasPress | null>(null)
 
   const stampCanvasPatch = useCallback(
     (
@@ -945,11 +1123,11 @@ export function Canvas() {
       const nextPatch = cameraControlPatch(cameraControl.mode, nextTransform)
 
       if (ui.recording && !cameraControl.didStampStart) {
-        stampCanvasTransformPatch(
-          cameraControl.cameraId,
-          cameraControlPatch(cameraControl.mode, cameraControl.transform),
-          cameraControl.startPlayhead,
-        )
+        cameraControl.samples.push({
+          time: cameraControl.startPlayhead,
+          patch: cameraControlPatch(cameraControl.mode, cameraControl.transform),
+          mode: 'record',
+        })
         cameraControl.didStampStart = true
       }
 
@@ -967,7 +1145,11 @@ export function Canvas() {
       ) {
         return
       }
-      stampCanvasTransformPatch(cameraControl.cameraId, nextPatch, sampleTime)
+      cameraControl.samples.push({
+        time: sampleTime,
+        patch: nextPatch,
+        mode: ui.recording ? 'record' : 'active-track',
+      })
       cameraControl.lastSampleTime = sampleTime
     },
     [
@@ -975,7 +1157,6 @@ export function Canvas() {
       currentAnimationAuthorTime,
       frameStep,
       duration,
-      stampCanvasTransformPatch,
     ],
   )
 
@@ -1039,19 +1220,28 @@ export function Canvas() {
     [camera, liveCameraAnim, canvasWidth, canvasHeight],
   )
 
-  const planes3D = useMemo(
-    () =>
-      resolvedCamera3D && solved
-        ? buildWorldPlanes(api, solved, animated, resolvedCamera3D)
-        : [],
-    [api, solved, animated, resolvedCamera3D, version],
-  )
-
   const hitTestCanvas3D = useCallback(
-    (clientX: number, clientY: number) => {
+    (
+      clientX: number,
+      clientY: number,
+      independentNodes = false,
+    ) => {
       if (!resolvedCamera3D || !solved) return null
       const point = clientToViewport(clientX, clientY)
       if (!point) return null
+      // Hit testing is a discrete pointer action. Building this hierarchy on
+      // every camera animation frame duplicated the renderer's full scene
+      // walk even when the user never interacted with the canvas.
+      const hitAnimated = threeCameraAvailable
+        ? getAnimEngine().getSnapshot()
+        : animated
+      const planes3D = buildWorldPlanes(
+        api,
+        solved,
+        hitAnimated,
+        resolvedCamera3D,
+        { independentNodes },
+      )
       return hitTestPlanes(
         planes3D,
         viewportPointToRay(
@@ -1067,12 +1257,45 @@ export function Canvas() {
     [
       resolvedCamera3D,
       solved,
+      api,
+      animated,
+      threeCameraAvailable,
       clientToViewport,
-      planes3D,
       canvasWidth,
       canvasHeight,
     ],
   )
+
+  const onCanvasDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      if (tool !== 'select' || editingTextId) return
+      const hit = hitTestCanvas3D(e.clientX, e.clientY, true)
+      if (!hit) return
+      const node = api.getNode(hit.nodeId)
+      if (!node || node.kind !== 'text') return
+      setSelection([node.id])
+      setEditingTextId(node.id)
+      useUI.getState().setPlaying(false)
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [
+      api,
+      editingTextId,
+      hitTestCanvas3D,
+      setEditingTextId,
+      setSelection,
+      tool,
+    ],
+  )
+
+  // Text editing needs a stable caret. Pause regardless of whether editing
+  // started from a WebGL double-click, Enter, or the DOM fallback.
+  useEffect(() => {
+    if (editingTextId && useUI.getState().playing) {
+      useUI.getState().setPlaying(false)
+    }
+  }, [editingTextId])
 
   // Convert a clientX/clientY into canvas-space coordinates.
   //
@@ -1202,6 +1425,8 @@ export function Canvas() {
       if (
         !focusPickingCameraId &&
         tool === 'select' &&
+        !e.metaKey &&
+        !e.ctrlKey &&
         camera &&
         camera.kind === 'camera' &&
         selection.includes(camera.id)
@@ -1222,8 +1447,9 @@ export function Canvas() {
           lastSampleTime: currentAnimationAuthorTime(),
           didStampStart: false,
           moved: false,
+          samples: [],
         }
-        setCameraPreview({ cameraId: camera.id, transform: startTransform })
+        cameraPreviewStore.set(camera.id, cameraTransformPreview(startTransform))
         setIsCameraManipulating(true)
         ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
         e.preventDefault()
@@ -1406,11 +1632,11 @@ export function Canvas() {
       const target = e.target as HTMLElement
       const onExistingNode = !!target.closest('[data-node-id]')
 
-      if (tool === 'hand' || e.metaKey || spacePanning) {
+      if (tool === 'hand' || spacePanning) {
         // Start pan. Alt/Opt is deliberately NOT a pan trigger — it now
         // means "show distance annotations" (Figma parity), handled by
-        // DistanceOverlay. Cmd (⌘) still pans for users on trackpads
-        // who prefer it, and the dedicated H tool is always available.
+        // DistanceOverlay. Command/Ctrl is reserved for direct nested-layer
+        // selection; use Space-drag or the dedicated H tool to pan.
         panStateRef.current = {
           startX: e.clientX,
           startY: e.clientY,
@@ -1451,7 +1677,7 @@ export function Canvas() {
       if (tool === 'select' && !onExistingNode) {
         const workspaceHit = hitTestWorkspace(e.clientX, e.clientY)
         if (workspaceHit) {
-          if (e.shiftKey || e.metaKey || e.ctrlKey) {
+          if (e.shiftKey) {
             useUI.getState().toggleInSelection(workspaceHit, true)
           } else {
             setSelection([workspaceHit])
@@ -1464,9 +1690,37 @@ export function Canvas() {
 
 	      if (!onExistingNode) {
 	        if (tool === 'select') {
-	          const hit = hitTestCanvas3D(e.clientX, e.clientY)
+	          const now = performance.now()
+	          const lastPress = lastCanvasPressRef.current
+	          const currentPress = {
+	            time: now,
+	            clientX: e.clientX,
+	            clientY: e.clientY,
+	          }
+	          const isDoublePress = isRepeatedCanvasPress(
+	            lastPress,
+	            currentPress,
+	          )
+	          lastCanvasPressRef.current = currentPress
+	          const directSelect = e.metaKey || e.ctrlKey || isDoublePress
+	          const hit = hitTestCanvas3D(
+	            e.clientX,
+	            e.clientY,
+	            directSelect,
+	          )
 	          if (hit) {
-            if (e.shiftKey || e.metaKey) {
+            if (isDoublePress) {
+              const hitNode = api.getNode(hit.nodeId)
+              if (hitNode?.kind === 'text') {
+                setSelection([hitNode.id])
+                setEditingTextId(hitNode.id)
+                useUI.getState().setPlaying(false)
+                e.preventDefault()
+                e.stopPropagation()
+                return
+              }
+            }
+            if (e.shiftKey) {
               useUI.getState().toggleInSelection(hit.nodeId, true)
             } else {
               setSelection([hit.nodeId])
@@ -1477,6 +1731,8 @@ export function Canvas() {
 	        }
 	        if (
 	          tool === 'select' &&
+	          !e.metaKey &&
+	          !e.ctrlKey &&
 	          camera &&
 	          camera.kind === 'camera' &&
 	          selection.includes(camera.id)
@@ -1495,8 +1751,9 @@ export function Canvas() {
 	            lastSampleTime: currentAnimationAuthorTime(),
 	            didStampStart: false,
 	            moved: false,
+	            samples: [],
 	          }
-	          setCameraPreview({ cameraId: camera.id, transform: startTransform })
+	          cameraPreviewStore.set(camera.id, cameraTransformPreview(startTransform))
 	          setIsCameraManipulating(true)
 	          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 	          e.preventDefault()
@@ -1552,7 +1809,9 @@ export function Canvas() {
       isInsideArtboard,
       hitTestWorkspace,
 	      hitTestCanvas3D,
+	      api,
 	      setSelection,
+	      setEditingTextId,
 	      currentAnimationAuthorTime,
 		      camera,
 		      displayedCameraTransform,
@@ -1595,12 +1854,11 @@ export function Canvas() {
 	          }
 	        }
 	        cameraControl.latestTransform = nextTransform
-	        applyCameraControlTransform(cameraControl.cameraId, nextTransform)
 	        maybeStampCameraControlSample(cameraControl, nextTransform)
-	        setCameraPreview({
-	          cameraId: cameraControl.cameraId,
-	          transform: nextTransform,
-	        })
+	        cameraPreviewStore.set(
+	          cameraControl.cameraId,
+	          cameraTransformPreview(nextTransform),
+	        )
 	        e.preventDefault()
 	        return
 	      }
@@ -1640,7 +1898,6 @@ export function Canvas() {
 	    },
 	    [
 	      api,
-	      applyCameraControlTransform,
 	      maybeStampCameraControlSample,
 	      cameraScaleFromZ,
 	      clientToCanvas,
@@ -1655,16 +1912,41 @@ export function Canvas() {
 	      const cameraControl = cameraControlRef.current
 		      if (cameraControl && e.pointerId === cameraControl.pointerId) {
 		        const current = api.getNode(cameraControl.cameraId)
-		        if (cameraControl.moved && current && current.kind === 'camera') {
-		          const nextTransform = cameraControl.latestTransform
-		          stampCanvasTransformPatch(
-		            current.id,
-		            cameraControlPatch(cameraControl.mode, nextTransform),
-		            currentAnimationAuthorTime(),
-		          )
+	        if (cameraControl.moved && current && current.kind === 'camera') {
+	          const nextTransform = cameraControl.latestTransform
+	          // Pointer-move is a transient WebGL preview. Commit the scene
+	          // document once on release so dragging the camera cannot trigger
+	          // Yoga, track recompilation, and texture invalidation per packet.
+	          api.doc.transact(() => {
+	            applyCameraControlTransform(current.id, nextTransform)
+	            for (const sample of cameraControl.samples) {
+	              if (sample.mode === 'record') {
+	                recordKeyframesForPatch(
+	                  api,
+	                  current.id,
+	                  sample.time,
+	                  'transform',
+	                  sample.patch,
+	                )
+	              } else {
+	                stampToActiveTracksForPatch(
+	                  api,
+	                  current.id,
+	                  sample.time,
+	                  'transform',
+	                  sample.patch,
+	                )
+	              }
+	            }
+	            stampCanvasTransformPatch(
+	              current.id,
+	              cameraControlPatch(cameraControl.mode, nextTransform),
+	              currentAnimationAuthorTime(),
+	            )
+	          })
 		        }
 		        cameraControlRef.current = null
-		        setCameraPreview(null)
+		        cameraPreviewStore.clear(cameraControl.cameraId)
 		        setIsCameraManipulating(false)
 	        try {
 	          ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
@@ -1879,6 +2161,7 @@ export function Canvas() {
       setTool,
       solved,
       workspaceOrder,
+      applyCameraControlTransform,
       cameraControlPatch,
       currentAnimationAuthorTime,
       stampCanvasTransformPatch,
@@ -1886,26 +2169,107 @@ export function Canvas() {
     ],
   )
 
+  const wheelFrameRef = useRef<number | null>(null)
+  const pendingWheelRef = useRef({
+    zoomDeltaY: 0,
+    zoomClientX: 0,
+    zoomClientY: 0,
+    panDeltaX: 0,
+    panDeltaY: 0,
+    cameraId: null as NodeId | null,
+    cameraZ: null as number | null,
+    cameraAuthorTime: null as number | null,
+    cameraCommitTimer: null as number | null,
+  })
+
   // --- wheel: cmd/ctrl + wheel = zoom, otherwise pan -------------------
   useEffect(() => {
     const el = workspaceRef.current
     if (!el) return
+    const pendingWheel = pendingWheelRef.current
+    const commitCameraWheel = () => {
+      const cameraId = pendingWheel.cameraId
+      const cameraZ = pendingWheel.cameraZ
+      if (!cameraId || cameraZ === null) return
+      const authorTime =
+        pendingWheel.cameraAuthorTime ?? currentAnimationAuthorTime()
+      pendingWheel.cameraId = null
+      pendingWheel.cameraZ = null
+      pendingWheel.cameraAuthorTime = null
+      pendingWheel.cameraCommitTimer = null
+      const current = api.getNode(cameraId)
+      if (!current || current.kind !== 'camera') {
+        cameraPreviewStore.clear(cameraId)
+        return
+      }
+      // A trackpad dolly can emit dozens of packets. Keep those packets in
+      // the shared rAF preview and author one scene/track mutation after the
+      // gesture goes idle, just like pointer-based camera movement.
+      api.doc.transact(() => {
+        api.setNodeProperty(current.id, 'transform', {
+          ...current.transform,
+          z: cameraZ,
+        })
+        stampCanvasTransformPatch(current.id, { z: cameraZ }, authorTime)
+      })
+      // Keep the final transient Z for one paint while the scene update and
+      // newly-authored track reach the WebGL leaf. Clearing synchronously can
+      // reveal its previous engine snapshot for one frame and looks like the
+      // zoom jumped backwards at the end of every wheel burst.
+      cameraPreviewStore.finish(cameraId)
+    }
+    const scheduleViewCommit = () => {
+      if (wheelFrameRef.current !== null) return
+      wheelFrameRef.current = requestAnimationFrame(() => {
+        wheelFrameRef.current = null
+        const pending = pendingWheel
+        const zoomDeltaY = pending.zoomDeltaY
+        const panDeltaX = pending.panDeltaX
+        const panDeltaY = pending.panDeltaY
+        const zoomClientX = pending.zoomClientX
+        const zoomClientY = pending.zoomClientY
+        pending.zoomDeltaY = 0
+        pending.panDeltaX = 0
+        pending.panDeltaY = 0
+
+        if (zoomDeltaY !== 0) {
+          // Read geometry once for the whole frame rather than once per
+          // high-frequency trackpad packet.
+          const rect = el.getBoundingClientRect()
+          const ox = zoomClientX - rect.left - rect.width / 2
+          const oy = zoomClientY - rect.top - rect.height / 2
+          const current = useUI.getState().view
+          const boundedDelta = Math.max(-100, Math.min(100, zoomDeltaY))
+          const factor = Math.exp(-boundedDelta * 0.01)
+          useUI.getState().zoomAt(current.zoom * factor, ox, oy)
+        }
+        if (panDeltaX !== 0 || panDeltaY !== 0) {
+          const current = useUI.getState().view
+          useUI.getState().setView({
+            panX: current.panX - panDeltaX,
+            panY: current.panY - panDeltaY,
+          })
+        }
+      })
+    }
     const onWheel = (e: WheelEvent) => {
       if (!el.contains(e.target as Node)) return
       e.preventDefault()
-      const rect = el.getBoundingClientRect()
-      // zoomAt wants *origin-relative* coordinates — the transform
-      // container is anchored at the workspace center via CSS, so we
-      // subtract the center to get the right fixed point under the
-      // cursor. Using the top-left (as the old code did) made Cmd+wheel
-      // zoom toward the bottom-right instead of toward the cursor.
-      const ox = e.clientX - rect.left - rect.width / 2
-      const oy = e.clientY - rect.top - rect.height / 2
+      const deltaScale =
+        e.deltaMode === 1
+          ? 16
+          : e.deltaMode === 2
+            ? Math.max(1, el.clientHeight)
+            : 1
       if (e.ctrlKey || e.metaKey) {
-        // Trackpad pinch registers as ctrlKey. Discrete mouse wheels too
-        // when user holds Cmd. Delta is signed: up = zoom in.
-        const factor = Math.exp(-e.deltaY * 0.01)
-        zoomAt(view.zoom * factor, ox, oy)
+        // Trackpad pinch can deliver packets faster than the display can
+        // paint. Accumulate them and commit one current-state update per
+        // animation frame so WebGL never receives a backlog of stale zooms.
+        const pending = pendingWheel
+        pending.zoomDeltaY += e.deltaY * deltaScale
+        pending.zoomClientX = e.clientX
+        pending.zoomClientY = e.clientY
+        scheduleViewCommit()
       } else if (
         camera &&
         camera.kind === 'camera' &&
@@ -1914,37 +2278,90 @@ export function Canvas() {
       ) {
         const current = api.getNode(camera.id)
         if (!current || current.kind !== 'camera') return
-        const zStep = e.altKey ? 120 : 60
-        const minZ = -cameraFocalLength * 220
-        const maxZ = cameraFocalLength * 100 - 10
-        const nextZ = Math.max(
-          minZ,
-          Math.min(maxZ, current.transform.z - e.deltaY * zStep),
-        )
-        api.setNodeProperty(current.id, 'transform', {
-          ...current.transform,
-          z: nextZ,
+        // Canvas deliberately avoids subscribing its whole tree to the
+        // camera's per-frame animation. Read the engine imperatively at the
+        // event boundary instead, then layer any still-visible wheel preview
+        // over it. This makes every new burst begin at what is actually on
+        // screen rather than a stale React closure/static transform.
+        const engineValue = getAnimEngine().getSnapshot()[current.id]
+        const previewSnapshot = cameraPreviewStore.getSnapshot()
+        const activePreview =
+          previewSnapshot?.cameraId === current.id
+            ? previewSnapshot.value
+            : undefined
+        const baseZ = cameraWheelStartZ({
+          pendingZ:
+            pendingWheel.cameraId === current.id &&
+            pendingWheel.cameraZ !== null
+              ? pendingWheel.cameraZ
+              : undefined,
+          previewZ: activePreview?.z,
+          animatedZ: engineValue?.z,
+          staticZ: current.transform.z,
         })
-        stampCanvasTransformPatch(current.id, { z: nextZ })
+        const effectiveCamera = resolveCamera3D(
+          current,
+          { ...engineValue, ...activePreview },
+          { width: canvasWidth, height: canvasHeight },
+        )
+        const nextZ = cameraZFromWheel({
+          currentZ: baseZ,
+          focalLength: effectiveCamera.focalLength,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          pageHeight: el.clientHeight,
+          scrollSensitivity: current.scrollSensitivity,
+          fine: e.altKey,
+        })
+        pendingWheel.cameraId = current.id
+        pendingWheel.cameraZ = nextZ
+        pendingWheel.cameraAuthorTime = currentAnimationAuthorTime()
+        // Only Z belongs to this gesture. Publishing a full transform here
+        // would override the WebGL leaf's fresher animated X/Y/rotation values.
+        // The preview store already coalesces packets to one rAF, so routing it
+        // through scheduleViewCommit would add a second frame of latency.
+        cameraPreviewStore.set(current.id, { z: nextZ })
+        if (pendingWheel.cameraCommitTimer !== null) {
+          window.clearTimeout(pendingWheel.cameraCommitTimer)
+        }
+        pendingWheel.cameraCommitTimer = window.setTimeout(
+          commitCameraWheel,
+          180,
+        )
       } else {
-        setView({ panX: view.panX - e.deltaX, panY: view.panY - e.deltaY })
+        const pending = pendingWheel
+        pending.panDeltaX += e.deltaX * deltaScale
+        pending.panDeltaY += e.deltaY * deltaScale
+        scheduleViewCommit()
       }
     }
     // React only synthesizes wheel as passive; we need to preventDefault
     // to stop the page from scrolling under Cmd+wheel, so attach native.
     el.addEventListener('wheel', onWheel, { capture: true, passive: false })
-    return () => el.removeEventListener('wheel', onWheel, { capture: true })
+    return () => {
+      el.removeEventListener('wheel', onWheel, { capture: true })
+      if (wheelFrameRef.current !== null) {
+        cancelAnimationFrame(wheelFrameRef.current)
+        wheelFrameRef.current = null
+      }
+      if (pendingWheel.cameraCommitTimer !== null) {
+        window.clearTimeout(pendingWheel.cameraCommitTimer)
+        pendingWheel.cameraCommitTimer = null
+      }
+      commitCameraWheel()
+      pendingWheel.zoomDeltaY = 0
+      pendingWheel.panDeltaX = 0
+      pendingWheel.panDeltaY = 0
+    }
   }, [
     api,
     camera,
+    canvasHeight,
+    canvasWidth,
+    currentAnimationAuthorTime,
     selection,
     stampCanvasTransformPatch,
     tool,
-    view.zoom,
-    view.panX,
-    view.panY,
-    zoomAt,
-    setView,
   ])
 
   const workspaceCursor =
@@ -2067,6 +2484,44 @@ export function Canvas() {
     [api, rootId, clientToCanvas, clientToViewport, isInsideArtboard, setSelection, setTool],
   )
 
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditablePasteTarget(e.target)) return
+
+      const importFiles = async (files: File[]) => {
+        const ids = await importClipboardFiles(files, api, rootId, {
+          workspaceOnly: false,
+        })
+        if (ids.length > 0) {
+          setSelection(ids)
+          setTool('select')
+        }
+        return ids.length > 0
+      }
+
+      const eventFiles = filesFromClipboardEvent(e)
+      if (eventFiles.length > 0) {
+        e.preventDefault()
+        void importFiles(eventFiles)
+        return
+      }
+
+      const bridge = window.hypermotion?.clipboard
+      if (!bridge?.readFiles) return
+      void readElectronClipboardFiles()
+        .then(async (files) => {
+          if (files.length === 0) return
+          await importFiles(files)
+        })
+        .catch((err) => {
+          console.warn('[clipboard-file-paste] failed:', err)
+        })
+    }
+
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [api, rootId, setSelection, setTool])
+
   return (
     <main
       ref={workspaceRef}
@@ -2075,6 +2530,7 @@ export function Canvas() {
       onPointerDown={onBackgroundPointerDown}
       onPointerMove={onBackgroundPointerMove}
       onPointerUp={onBackgroundPointerUp}
+      onDoubleClick={onCanvasDoubleClick}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -2096,8 +2552,9 @@ export function Canvas() {
         data-canvas-workspace="1"
         className="absolute left-1/2 top-1/2"
         style={{
-          transform: `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`,
+          transform: `translate3d(${view.panX}px, ${view.panY}px, 0) scale(${view.zoom})`,
           transformOrigin: '0 0',
+          willChange: 'transform',
         }}
       >
         <div
@@ -2137,15 +2594,11 @@ export function Canvas() {
               back, see your scene shrink, see the backdrop framing it.
               Image fills get the full background-* bundle so `cover` /
               `contain` / `tile` all work. */}
-          {cameraBackgroundImageStyle ? (
+          {cameraBackgroundStyle ? (
             <div
+              key="camera-background"
               className="pointer-events-none absolute inset-0"
-              style={cameraBackgroundImageStyle}
-            />
-          ) : cameraBackgroundCss ? (
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{ background: cameraBackgroundCss }}
+              style={cameraBackgroundStyle}
             />
           ) : null}
           {/* Checkerboard sits on the OUTER canvas-root, anchored to the
@@ -2179,79 +2632,77 @@ export function Canvas() {
             >
               {camera && camera.kind === 'camera' ? (
                 <>
+                  {textEditPresentation.showDomScene ? (
+                    <div className="absolute inset-0 z-[1]">
+                      <ScenePostProcessLayer
+                        rootId={rootId}
+                        solved={solved}
+                        order={renderOrder}
+                        animated={animated}
+                        inherited={inherited}
+                        cameraDepthOfField={
+                          isEditingText ? null : previewCameraDepthOfField
+                        }
+                        sceneFill={sceneFill}
+                        canvasWidth={canvasWidth}
+                        canvasHeight={canvasHeight}
+                        sceneCorner={sceneCorner}
+                        includeSceneFill
+                        textureSource
+                        sceneContentStyle={cameraSceneContentStyle}
+                      />
+                    </div>
+                  ) : null}
                   <div
                     className="absolute inset-0"
                     style={{
-                      opacity: threeCameraAvailable ? 0 : 1,
-                      pointerEvents: threeCameraAvailable ? 'none' : undefined,
+                      visibility: textEditPresentation.hideWebglScene
+                        ? 'hidden'
+                        : 'visible',
                     }}
                   >
-                    <ScenePostProcessLayer
-                      rootId={rootId}
-                      solved={solved}
-                      order={renderOrder}
-                      animated={animated}
-                      inherited={inherited}
-                      cameraDepthOfField={threeCameraAvailable ? null : previewCameraDepthOfField}
-                      sceneFill={sceneFill}
-                      canvasWidth={canvasWidth}
-                      canvasHeight={canvasHeight}
-                      sceneCorner={sceneCorner}
-                      includeSceneFill
-                      textureSource
-                      sceneContentStyle={
-                        threeCameraAvailable
-                          ? undefined
-                          : cameraTransform
-                            ? {
-                                transform: cameraTransform,
-                                transformOrigin: '0 0',
-                                transformStyle: 'preserve-3d',
-                                backfaceVisibility: 'visible',
-                              }
-                            : undefined
-                      }
-                    />
-                  </div>
-                  <ThreeSceneViewport
-                    api={api}
-                    layout={solved}
-                    animated={animated}
-                    camera={camera}
-                    cameraAnim={liveCameraAnim}
-                    width={canvasWidth}
-                    height={canvasHeight}
-                    sceneFill={sceneFill}
-                    selectedIds={selection}
-                    showHelpers={false}
-                    showPlanes
-                    exportable
-                    onAvailabilityChange={setThreeCameraAvailable}
-                  />
-                  {selection.includes(camera.id) ||
-                  focusPickingCameraId === camera.id ||
-                  !!camera.showFocusPlane ? (
-                    <ThreeSceneViewport
+                    <AnimatedThreeSceneViewport
                       api={api}
                       layout={solved}
-                      animated={animated}
+                      animationIds={renderOrder}
                       camera={camera}
-                      cameraAnim={liveCameraAnim}
+                      width={canvasWidth}
+                      height={canvasHeight}
+                      sceneFill={sceneFill}
+                      selectedIds={selection}
+                      showHelpers={false}
+                      showPlanes
+                      exportable
+                      playing={playing}
+                      playhead={playhead}
+                      sceneVersion={version}
+                      onAvailabilityChange={setThreeCameraAvailable}
+                    />
+                  </div>
+                  {!isEditingText && focusPickingCameraId === camera.id ? (
+                    <AnimatedThreeSceneViewport
+                      api={api}
+                      layout={solved}
+                      animationIds={renderOrder}
+                      camera={camera}
                       width={canvasWidth}
                       height={canvasHeight}
                       sceneFill={null}
                       selectedIds={selection}
-                      showHelpers={focusPickingCameraId === camera.id}
+                      showHelpers
                       showPlanes={false}
+                      playing={playing}
+                      playhead={playhead}
+                      sceneVersion={version}
                       focusWorldPoint={
                         focusTargetWorld ??
-	                        (previewCameraDepthOfField
-	                          ? {
-	                              x: previewCameraDepthOfField.focusWorldX,
-	                              y: previewCameraDepthOfField.focusWorldY,
-	                              z: previewCameraDepthOfField.focusWorldZ,
-	                            }
-	                          : null)
+                        (previewCameraDepthOfField
+                          ? {
+                              x: previewCameraDepthOfField.focusWorldX,
+                              y: previewCameraDepthOfField.focusWorldY,
+                              z: previewCameraDepthOfField.focusWorldZ,
+                            }
+                          : null)
                       }
                     />
                   ) : null}
@@ -2374,7 +2825,7 @@ export function Canvas() {
               represents). Visible when the user has Camera selected,
               so the panel doesn't gain extra noise during normal
               editing. */}
-          {camera && camera.kind === 'camera' ? (
+          {camera && camera.kind === 'camera' && camera.visible ? (
             <CameraGizmo
               camera={camera}
               cameraAnim={liveCameraAnim}
@@ -2547,6 +2998,22 @@ function WorkspaceLayer({
   const selection = useUI((s) => s.selection)
   const setSelection = useUI((s) => s.setSelection)
 
+  const hiddenIds = useMemo(() => {
+    const hidden = new Set<NodeId>()
+    const visit = (id: NodeId, parentHidden: boolean) => {
+      const node = api.getNode(id)
+      if (!node) return
+      const hiddenHere = parentHidden || !node.visible
+      if (hiddenHere) hidden.add(id)
+      for (const child of api.getChildren(id)) visit(child.id, hiddenHere)
+    }
+    for (const id of order) {
+      const node = api.getNode(id)
+      if (node?.parent === null) visit(id, false)
+    }
+    return hidden
+  }, [api, order])
+
   const inherited = useMemo(() => {
     const map: Record<NodeId, InheritedAnim> = {}
     const visit = (id: NodeId, inherit: InheritedAnim) => {
@@ -2588,7 +3055,7 @@ function WorkspaceLayer({
     >
       {order.map((id) => {
         const node = api.getNode(id)
-        if (!node || !node.visible) return null
+        if (!node || hiddenIds.has(id)) return null
         const rect = workspaceRectForNode(node)
         const inherit = inherited[id] ?? IDENTITY_INHERITED
         const selected = selection.includes(id)
@@ -3038,7 +3505,7 @@ function ClippedFrameStrokeOverlay({
  * selected subtrees. `group3d` remains below this layer in the normal
  * scene renderer, so DOM auto-layout and 3D grouping are preserved.
  */
-export function ScenePostProcessLayer({
+function ScenePostProcessLayerImpl({
   rootId,
   solved,
   order,
@@ -3131,6 +3598,14 @@ export function ScenePostProcessLayer({
     </SnapshotCompositor>
   )
 }
+
+/**
+ * Workspace zoom only changes the compositor transform outside this tree.
+ * Keep the full scene DOM stable so a view-only update does not reconcile
+ * hundreds of NodeViews hidden behind the WebGL viewport.
+ */
+export const ScenePostProcessLayer = memo(ScenePostProcessLayerImpl)
+ScenePostProcessLayer.displayName = 'ScenePostProcessLayer'
 
 function CameraFocusMaskOverlay({
   cameraDepthOfField,
@@ -3700,7 +4175,7 @@ function NodeView({
   //
   // When there's no clipping ancestor, render the styled box directly
   // (no wrapper) so unrelated nodes pay no DOM cost.
-  const effectiveAncestorClip = hasProjected3D ? undefined : ancestorClip
+  const effectiveAncestorClip = ancestorClip
   const clipWrapperStyle =
     effectiveAncestorClip && !isRoot
       ? ({
@@ -3785,6 +4260,15 @@ function NodeView({
         transform,
         transformOrigin,
         transformStyle: 'preserve-3d',
+        // Frames act as design-tool compositing groups. Without isolation,
+        // a child using mix-blend-mode can blend against unrelated canvas
+        // content instead of the frame's own fill/backdrop, which makes
+        // imported Figma blend modes look broken.
+        isolation: node.kind === 'frame' ? 'isolate' : undefined,
+        mixBlendMode:
+          node.appearance.blendMode && node.appearance.blendMode !== 'normal'
+            ? node.appearance.blendMode
+            : undefined,
         filter: effectFilterCss || undefined,
         overflow: clips ? 'hidden' : undefined,
         cursor: isRoot ? 'default' : 'move',
@@ -4063,42 +4547,92 @@ function TextGlyphs({
   effectiveFill: Extract<SceneNode, { kind: 'text' }>['appearance']['fill']
   anim: AnimatedValue | undefined
 }) {
+  const api = useSceneAPI()
   const editingTextId = useUI((s) => s.editingTextId)
   const setEditingTextId = useUI((s) => s.setEditingTextId)
-  const playhead = useUI((s) => s.playhead)
-  const api = useSceneAPI()
   const isEditing = editingTextId === node.id
   const hasTextAnimationTracks = listTracksForNode(api, node.id).some(
     (track) =>
       track.propertyId === 'text.progress' && track.keyframes.length >= 2,
   )
+  const legacyTextAnimation = hasTextAnimationTracks
+    ? null
+    : normalizeTextAnimation(node.textAnimation)
+  // Most scenes contain many text nodes but few (often zero) text effects.
+  // Returning a constant for ordinary text prevents every glyph component
+  // from rerendering on the 15 Hz UI playhead mirror. Engine-driven text
+  // effects already rerender from their animated snapshot, so they can read
+  // the exact engine time without subscribing to the global UI store.
+  const mirroredPlayhead = useUI((s) =>
+    legacyTextAnimation ? s.playhead : 0,
+  )
+  const playhead = hasTextAnimationTracks
+    ? getAnimEngine().getPlayhead()
+    : mirroredPlayhead
   const textAnimation =
-    anim?.textAnimation ??
-    (hasTextAnimationTracks ? null : normalizeTextAnimation(node.textAnimation))
+    anim?.textAnimation ?? legacyTextAnimation
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.
-  const textAlign: 'left' | 'right' | 'center' =
+  const textAlign: 'left' | 'right' | 'center' | 'justify' =
     node.textAlign === 'start'
       ? 'left'
       : node.textAlign === 'end'
         ? 'right'
-        : 'center'
+        : node.textAlign === 'justify'
+          ? 'justify'
+          : 'center'
   // When the node hugs width, force `whiteSpace: 'pre'` so the text
   // never wraps — the box is supposed to be exactly the text's natural
   // width, and any sub-pixel measurement drift would otherwise cause
   // the last word to fold onto a new line. For fixed/fill widths we
   // keep `pre-wrap` + `break-word` so multi-line text wraps correctly.
   const hugWidth = node.size.width === 'hug'
+  const textTransform: React.CSSProperties['textTransform'] =
+    node.textCase === 'upper'
+      ? 'uppercase'
+      : node.textCase === 'lower'
+        ? 'lowercase'
+        : node.textCase === 'title'
+          ? 'capitalize'
+          : 'none'
+  const fontVariantCaps: React.CSSProperties['fontVariantCaps'] =
+    node.textCase === 'small-caps'
+      ? 'small-caps'
+      : node.textCase === 'small-caps-forced'
+        ? 'all-small-caps'
+        : 'normal'
+  const textDecorationLine: React.CSSProperties['textDecorationLine'] =
+    node.textDecoration === 'underline'
+      ? 'underline'
+      : node.textDecoration === 'strikethrough'
+        ? 'line-through'
+        : 'none'
+  const verticalJustify: React.CSSProperties['justifyContent'] =
+    node.textAlignVertical === 'center'
+      ? 'center'
+      : node.textAlignVertical === 'bottom'
+        ? 'flex-end'
+        : 'flex-start'
+  const containerStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: verticalJustify,
+    width: '100%',
+    height: '100%',
+  }
   const sharedStyle: React.CSSProperties = {
     display: 'block',
     width: '100%',
-    height: '100%',
     fontFamily: node.fontFamily,
     fontSize: node.fontSize,
     fontWeight: node.fontWeight,
+    fontStyle: node.fontStyle ?? 'normal',
+    fontVariantCaps,
     lineHeight: node.lineHeight,
     letterSpacing: node.letterSpacing,
+    textTransform,
+    textDecorationLine,
     // Text color layering — fill via background-clip: text when a
     // gradient/solid fill is set, otherwise plain `color`.
     ...(effectiveFill
@@ -4144,47 +4678,53 @@ function TextGlyphs({
   if (isEditing) {
     return (
       <div
-        ref={editRef}
-        contentEditable
-        suppressContentEditableWarning
-        // Make the editor swallow pointer events so the parent's
-        // drag handler doesn't fight the cursor.
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
-        onBlur={(e) => commit((e.currentTarget.textContent ?? '').toString())}
-        onKeyDown={(e) => {
-          // Enter (no shift) commits + exits. Shift+Enter inserts a
-          // newline so multi-line text is editable.
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            commit((e.currentTarget.textContent ?? '').toString())
-            return
-          }
-          // Escape discards changes and exits. We rely on React not
-          // re-rendering between the keydown and blur to bypass the
-          // commit() in onBlur.
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            setEditingTextId(null)
-            ;(e.currentTarget as HTMLDivElement).blur()
-            return
-          }
-          // Stop the global keyboard shortcut handler from claiming
-          // Backspace / Delete / Cmd+A / etc. while the editor is
-          // focused — those are text-editing actions inside the field.
-          e.stopPropagation()
-        }}
         style={{
-          ...sharedStyle,
-          // Allow caret/selection rendering and prevent the OS no-
-          // cursor mask the read-only span uses.
-          userSelect: 'text',
-          cursor: 'text',
-          outline: 'none',
+          ...containerStyle,
         }}
       >
-        {node.text}
+        <div
+          ref={editRef}
+          contentEditable
+          suppressContentEditableWarning
+          // Make the editor swallow pointer events so the parent's
+          // drag handler doesn't fight the cursor.
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onBlur={(e) => commit((e.currentTarget.textContent ?? '').toString())}
+          onKeyDown={(e) => {
+            // Enter (no shift) commits + exits. Shift+Enter inserts a
+            // newline so multi-line text is editable.
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              commit((e.currentTarget.textContent ?? '').toString())
+              return
+            }
+            // Escape discards changes and exits. We rely on React not
+            // re-rendering between the keydown and blur to bypass the
+            // commit() in onBlur.
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setEditingTextId(null)
+              ;(e.currentTarget as HTMLDivElement).blur()
+              return
+            }
+            // Stop the global keyboard shortcut handler from claiming
+            // Backspace / Delete / Cmd+A / etc. while the editor is
+            // focused — those are text-editing actions inside the field.
+            e.stopPropagation()
+          }}
+          style={{
+            ...sharedStyle,
+            // Allow caret/selection rendering and prevent the OS no-
+            // cursor mask the read-only span uses.
+            userSelect: 'text',
+            cursor: 'text',
+            outline: 'none',
+          }}
+        >
+          {node.text}
+        </div>
       </div>
     )
   }
@@ -4192,20 +4732,22 @@ function TextGlyphs({
   return (
     <span
       style={{
-        ...sharedStyle,
+        ...containerStyle,
         // Static text shouldn't grab cursor flicker.
         userSelect: 'none',
       }}
     >
-      {textAnimation
-        ? renderTextAnimationSegments(
-            node.text,
-            textAnimation,
-            playhead,
-            sharedStyle,
-            anim?.textProgress,
-          )
-        : node.text}
+      <span style={sharedStyle}>
+        {textAnimation
+          ? renderTextAnimationSegments(
+              node.text,
+              textAnimation,
+              playhead,
+              sharedStyle,
+              anim?.textProgress,
+            )
+          : node.text}
+      </span>
     </span>
   )
 }
@@ -4217,18 +4759,29 @@ function renderTextAnimationSegments(
   sharedStyle: CSSProperties,
   progress?: number,
 ) {
-  if (config.id === 'tracking') {
-    return (
-      <span style={trackingTextStyle(config, playhead, progress, sharedStyle)}>
-        {text}
-      </span>
+  if (config.applyTo === 'letters') {
+    return renderLetterTextAnimationSegments(
+      text,
+      config,
+      playhead,
+      sharedStyle,
+      progress,
     )
   }
-  const segments = splitTextAnimationSegments(text, config.applyTo)
+  const segments = splitDomTextAnimationSegments(text, config.applyTo)
   const orderedCount = Math.max(1, segments.filter((s) => s.animate).length)
   let animateIndex = 0
   return segments.map((segment, index) => {
-    if (!segment.animate) return segment.text
+    if (!segment.animate) {
+      return (
+        <Fragment key={`${index}-${segment.text}`}>
+          {segment.kind === 'line' && segment.text.length === 0
+            ? '\u200b'
+            : segment.text}
+          {segment.breakAfter ? <br /> : null}
+        </Fragment>
+      )
+    }
     const orderIndex =
       config.order === 'backward'
         ? orderedCount - animateIndex - 1
@@ -4244,75 +4797,85 @@ function renderTextAnimationSegments(
       segment.kind,
     )
     return (
-      <span key={`${index}-${segment.text}`} style={style}>
-        {displayTextForSegment(
-          segment.text,
-          config,
-          playhead,
-          progress,
-          orderIndex,
-          orderedCount,
-        )}
-      </span>
+      <Fragment key={`${index}-${segment.text}`}>
+        <span style={style}>
+          {displayTextForSegment(
+            segment.text || '\u200b',
+            config,
+            playhead,
+            progress,
+            orderIndex,
+            orderedCount,
+          )}
+        </span>
+        {segment.breakAfter ? <br /> : null}
+      </Fragment>
     )
   })
 }
 
-function trackingTextStyle(
+/**
+ * Keep normal word-wrapping while animating individual letters. A flat list
+ * of inline-block glyphs creates a legal line-break opportunity after every
+ * character, so adding an animation could reflow a heading differently from
+ * its unanimated state. Grouping glyphs by word retains the authored wrap
+ * geometry; explicit whitespace/newlines remain ordinary text flow.
+ */
+function renderLetterTextAnimationSegments(
+  text: string,
   config: TextAnimationConfig,
   playhead: number,
-  progress: number | undefined,
   sharedStyle: CSSProperties,
-): CSSProperties {
-  const timelineProgress =
-    progress === undefined ? undefined : Math.max(0, Math.min(1, progress))
-  const globalElapsed =
-    timelineProgress === undefined
-      ? playhead - config.startTime
-      : timelineProgress * config.duration
-  const raw = globalElapsed / Math.max(0.05, config.duration)
-  const u = Math.max(0, Math.min(1, raw))
-  const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
-  const exit = config.mode === 'out'
-  const amount = exit ? eased : 1 - eased
-  const extraTrackingPx = amount * 10
-  const authoredTracking =
-    typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
-
-  return {
-    display: 'inline',
-    whiteSpace: 'inherit',
-    letterSpacing: authoredTracking + extraTrackingPx,
-    opacity: 1 - amount,
-    willChange: 'letter-spacing, opacity',
-  }
-}
-
-function splitTextAnimationSegments(
-  text: string,
-  applyTo: TextAnimationConfig['applyTo'],
-): Array<{ text: string; animate: boolean; kind: 'inline' | 'line' }> {
-  if (applyTo === 'layer') return [{ text, animate: true, kind: 'inline' }]
-  if (applyTo === 'lines') {
-    const lines = text.split(/(\n)/)
-    return lines.map((part) => ({
-      text: part,
-      animate: part !== '\n' && part.length > 0,
-      kind: part === '\n' ? 'inline' : 'line',
-    }))
-  }
-  if (applyTo === 'words') {
-    return text.split(/(\s+)/).map((part) => ({
-      text: part,
-      animate: !/^\s+$/.test(part) && part.length > 0,
-      kind: 'inline',
-    }))
-  }
-  return Array.from(text).map((char) => ({
-    text: char,
-    animate: char !== '\n' && char !== ' ',
-    kind: 'inline',
-  }))
+  progress?: number,
+) {
+  const animatedCount = Math.max(
+    1,
+    Array.from(text).filter((character) => !/\s/.test(character)).length,
+  )
+  let animatedIndex = 0
+  return text.split(/(\s+)/).map((part, partIndex) => {
+    if (/^\s+$/.test(part)) {
+      return Array.from(part).map((character, whitespaceIndex) =>
+        character === '\n' ? (
+          <br key={`${partIndex}-break-${whitespaceIndex}`} />
+        ) : (
+          character
+        ),
+      )
+    }
+    return (
+      <span key={`${partIndex}-${part}`} style={{ whiteSpace: 'nowrap' }}>
+        {Array.from(part).map((character, characterIndex) => {
+          const orderIndex =
+            config.order === 'backward'
+              ? animatedCount - animatedIndex - 1
+              : animatedIndex
+          animatedIndex++
+          const style = textAnimationSegmentStyle(
+            config,
+            playhead,
+            progress,
+            orderIndex,
+            animatedCount,
+            sharedStyle,
+            'inline',
+          )
+          return (
+            <span key={`${characterIndex}-${character}`} style={style}>
+              {displayTextForSegment(
+                character,
+                config,
+                playhead,
+                progress,
+                orderIndex,
+                animatedCount,
+              )}
+            </span>
+          )
+        })}
+      </span>
+    )
+  })
 }
 
 function textAnimationSegmentStyle(
@@ -4322,7 +4885,7 @@ function textAnimationSegmentStyle(
   orderIndex: number,
   count: number,
   sharedStyle: CSSProperties,
-  kind: 'inline' | 'line',
+  kind: 'inline' | 'line' | 'layer',
 ): CSSProperties {
   const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
   const timelineProgress = progress === undefined
@@ -4347,6 +4910,9 @@ function textAnimationSegmentStyle(
   let filter: string | undefined
   let clipPath: string | undefined
   let color: string | undefined
+  const authoredTracking =
+    typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
+  let effectiveTracking = authoredTracking
 
   if (
     config.id === 'fade' ||
@@ -4392,8 +4958,10 @@ function textAnimationSegmentStyle(
     const background = fillToCss(gradient ?? null)
     if (background) {
       return {
-        display: kind === 'line' ? 'block' : 'inline-block',
-        whiteSpace: kind === 'line' ? 'pre-wrap' : 'pre',
+        display: kind === 'layer' ? 'block' : 'inline-block',
+        width: kind === 'layer' ? '100%' : undefined,
+        maxWidth: kind === 'line' ? '100%' : undefined,
+        whiteSpace: kind === 'inline' ? 'pre' : 'pre-wrap',
         opacity,
         filter,
         clipPath,
@@ -4402,9 +4970,10 @@ function textAnimationSegmentStyle(
         backgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         color: 'transparent',
+        letterSpacing: effectiveTracking,
         transform: transforms.length > 0 ? transforms.join(' ') : undefined,
         transformOrigin: '50% 50%',
-        willChange: 'transform, opacity, filter, clip-path',
+        willChange: 'transform, opacity, filter, clip-path, letter-spacing',
       }
     }
   }
@@ -4418,7 +4987,7 @@ function textAnimationSegmentStyle(
     opacity = 1 - amount * 0.35
   }
   if (config.id === 'tracking') {
-    transforms.push(`translateX(${amount * 10}px)`)
+    effectiveTracking = authoredTracking + amount * 10
     opacity = 1 - amount
   }
   if (config.id === 'skew') {
@@ -4432,15 +5001,18 @@ function textAnimationSegmentStyle(
   }
 
   return {
-    display: kind === 'line' ? 'block' : 'inline-block',
-    whiteSpace: kind === 'line' ? 'pre-wrap' : 'pre',
+    display: kind === 'layer' ? 'block' : 'inline-block',
+    width: kind === 'layer' ? '100%' : undefined,
+    maxWidth: kind === 'line' ? '100%' : undefined,
+    whiteSpace: kind === 'inline' ? 'pre' : 'pre-wrap',
     opacity,
     filter,
     clipPath,
     color,
+    letterSpacing: effectiveTracking,
     transform: transforms.length > 0 ? transforms.join(' ') : undefined,
     transformOrigin: '50% 50%',
-    willChange: 'transform, opacity, filter, clip-path',
+    willChange: 'transform, opacity, filter, clip-path, letter-spacing',
   }
 }
 
@@ -4507,11 +5079,44 @@ function MediaVideo({
 }: {
   node: Extract<SceneNode, { kind: 'video' }>
 }) {
+  const api = useSceneAPI()
   const ref = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const repairAttemptedRef = useRef<string>('')
+  const [mediaReadyTick, setMediaReadyTick] = useState(0)
+  const [localPoster, setLocalPoster] = useState('')
+  const [decodeError, setDecodeError] = useState('')
+  const [hasCanvasFrame, setHasCanvasFrame] = useState(false)
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
-  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
-  const local = clampLocal(playhead - node.startTime + node.trimStart, node)
+  const rate = clampPlaybackRate(node.playbackRate)
+  const sourceClipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
+  const sceneClipLen = sourceClipLen / rate
+  const local = clampLocal((playhead - node.startTime) * rate + node.trimStart, node)
+
+  useEffect(() => {
+    setHasCanvasFrame(false)
+    setDecodeError('')
+  }, [node.src])
+
+  useEffect(() => {
+    if (!node.src.startsWith('data:video/')) return
+    if (node.importWarning === VIDEO_PLAYBACK_PROXY_WARNING) return
+    if (repairAttemptedRef.current === node.src) return
+    repairAttemptedRef.current = node.src
+
+    let cancelled = false
+    void repairVideoNodeSource(node, api)
+      .catch((err) => {
+        console.warn('[media] video self-repair failed', err)
+      })
+      .finally(() => {
+        if (!cancelled) setMediaReadyTick((tick) => tick + 1)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, node])
 
   useEffect(() => {
     const el = ref.current
@@ -4519,17 +5124,22 @@ function MediaVideo({
     // Reflect muted + volume every render. These are cheap.
     el.muted = node.muted
     el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.muted, node.volume])
+    el.playbackRate = rate
+  }, [node.muted, node.volume, rate])
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
+    const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      el.load()
+      return
+    }
     if (playing && inRange) {
+      if (el.paused || Math.abs(el.currentTime - local) > 0.35) {
+        seekMediaElement(el, local, 0.2)
+      }
       if (el.paused) {
-        // Seek once on transition-into-playback so we start at the right
-        // frame; thereafter let the element's own clock drive the tick.
-        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
         el.play().catch(() => {
           // Autoplay policies may reject — user interaction is required.
           // We pause silently; the user can click play again after
@@ -4539,29 +5149,177 @@ function MediaVideo({
     } else {
       if (!el.paused) el.pause()
       // While paused / out-of-range, pin the element to the scrubbed time.
-      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
+      const pausedPreviewLocal = previewLocalForPausedVideo(local, node)
+      seekMediaElement(el, pausedPreviewLocal, 0.05)
     }
-  }, [playing, playhead, local, clipLen, node.startTime])
+  }, [playing, playhead, local, sceneClipLen, node, rate, mediaReadyTick])
+
+  useEffect(() => {
+    const video = ref.current
+    const canvas = canvasRef.current
+    if (!video || !canvas) return
+    let raf = 0
+    const draw = () => {
+      if (drawVideoToCanvas(video, canvas)) {
+        setHasCanvasFrame(true)
+      }
+      if (playing && !video.paused && !video.ended) {
+        raf = requestAnimationFrame(draw)
+      }
+    }
+    draw()
+    if (playing) raf = requestAnimationFrame(draw)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [playing, mediaReadyTick, playhead, node.src])
 
   if (!node.src) return null
+  const poster = node.poster || localPoster || undefined
+  const markVideoReady = () => {
+    setDecodeError('')
+    setMediaReadyTick((tick) => tick + 1)
+    const el = ref.current
+    const canvas = canvasRef.current
+    if (el && canvas && drawVideoToCanvas(el, canvas)) {
+      setHasCanvasFrame(true)
+    }
+    if (!el || node.poster || localPoster) return
+    const frame = capturePosterFromVideoElement(el)
+    if (frame) setLocalPoster(frame)
+  }
 
   return (
-    <video
-      ref={ref}
-      src={node.src}
-      draggable={false}
-      playsInline
-      preload="auto"
-      style={{
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        objectFit: node.fit,
-        borderRadius: 'inherit',
-        pointerEvents: 'none',
-      }}
-    />
+    <>
+      {poster ? (
+        <img
+          src={poster}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: node.fit,
+            borderRadius: 'inherit',
+            pointerEvents: 'none',
+            zIndex: hasCanvasFrame ? 1 : 3,
+          }}
+        />
+      ) : null}
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: node.fit,
+          borderRadius: 'inherit',
+          pointerEvents: 'none',
+          zIndex: 2,
+        }}
+      />
+      <video
+        ref={ref}
+        src={node.src}
+        poster={poster}
+        draggable={false}
+        playsInline
+        preload="auto"
+        onLoadedMetadata={markVideoReady}
+        onLoadedData={markVideoReady}
+        onCanPlay={markVideoReady}
+        onSeeked={markVideoReady}
+        onTimeUpdate={markVideoReady}
+        onError={() => {
+          const el = ref.current
+          setDecodeError(el?.error?.message || 'Video decode failed')
+        }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: node.fit,
+          opacity: 0,
+          zIndex: 0,
+          pointerEvents: 'none',
+        }}
+      />
+      {decodeError ? (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-red-500/10 px-3 text-center font-mono text-[10px] text-red-700"
+          style={{ zIndex: 3, borderRadius: 'inherit', pointerEvents: 'none' }}
+        >
+          {decodeError}
+        </div>
+      ) : null}
+    </>
   )
+}
+
+async function repairVideoNodeSource(
+  node: Extract<SceneNode, { kind: 'video' }>,
+  api: SceneAPI,
+) {
+  const file = await dataUrlToFile(
+    node.src,
+    `${node.name || 'video'}.mp4`,
+  )
+  const normalized = await normalizeVideoFileForBrowser(file)
+  if (!normalized.normalized) return
+
+  const dataUrl = await readMediaFileAsDataUrl(normalized.file)
+  const meta = await decodeVideoMeta(dataUrl).catch(() => ({
+    width: typeof node.size.width === 'number' ? node.size.width : 1,
+    height: typeof node.size.height === 'number' ? node.size.height : 1,
+    duration: node.duration,
+  }))
+  const poster = await captureVideoPoster(dataUrl, meta.duration).catch(() => '')
+
+  api.doc.transact(() => {
+    api.setNodeProperty(node.id, 'src', dataUrl)
+    api.setNodeProperty(node.id, 'duration', meta.duration)
+    api.setNodeProperty(node.id, 'trimEnd', Math.min(node.trimEnd || meta.duration, meta.duration))
+    api.setNodeProperty(node.id, 'poster', poster)
+    api.setNodeProperty(
+      node.id,
+      'importWarning',
+      VIDEO_PLAYBACK_PROXY_WARNING,
+    )
+  }, 'video-self-repair')
+}
+
+async function dataUrlToFile(dataUrl: string, fallbackName: string): Promise<File> {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  const mime = blob.type || dataUrl.match(/^data:([^;,]+)/)?.[1] || 'video/mp4'
+  const ext = mime.includes('quicktime') ? 'mov' : mime.includes('webm') ? 'webm' : 'mp4'
+  const name = /\.[a-z0-9]+$/i.test(fallbackName)
+    ? fallbackName
+    : `${fallbackName}.${ext}`
+  return new File([blob], name, { type: mime })
+}
+
+function seekMediaElement(
+  el: HTMLMediaElement,
+  localTime: number,
+  tolerance: number,
+) {
+  if (!Number.isFinite(localTime)) return
+  const duration = Number.isFinite(el.duration) && el.duration > 0
+    ? el.duration
+    : Number.POSITIVE_INFINITY
+  const next = Math.max(0, Math.min(duration, localTime))
+  if (Math.abs(el.currentTime - next) <= tolerance) return
+  try {
+    el.currentTime = next
+  } catch {
+    // Some codecs reject early seeks until data is decoded. The
+    // loadedmetadata/loadeddata handlers above re-run the sync pass.
+  }
 }
 
 function clampLocal(
@@ -4574,45 +5332,70 @@ function clampLocal(
   return t
 }
 
+function clampPlaybackRate(rate: number | undefined): number {
+  return Math.max(0.05, Math.min(16, Number.isFinite(rate) ? rate! : 1))
+}
+
+function previewLocalForPausedVideo(
+  local: number,
+  node: Extract<SceneNode, { kind: 'video' }>,
+): number {
+  const trimStart = node.trimStart ?? 0
+  const trimEnd = node.trimEnd || node.duration || trimStart
+  if (local > trimStart + 0.001) return local
+  if (trimEnd <= trimStart + 0.12) return local
+  return Math.min(trimEnd, trimStart + 0.12)
+}
+
+function capturePosterFromVideoElement(el: HTMLVideoElement): string {
+  if (el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return ''
+  const width = el.videoWidth || 0
+  const height = el.videoHeight || 0
+  if (width <= 0 || height <= 0) return ''
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return ''
+    ctx.drawImage(el, 0, 0, width, height)
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } catch {
+    return ''
+  }
+}
+
+function drawVideoToCanvas(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+): boolean {
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false
+  const width = video.videoWidth || 0
+  const height = video.videoHeight || 0
+  if (width <= 0 || height <= 0) return false
+  if (canvas.width !== width) canvas.width = width
+  if (canvas.height !== height) canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return false
+  try {
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(video, 0, 0, width, height)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Audio "chip" — a non-visual node gets a small card on the artboard
- * so the user has something to click, drag, and inspect. The playback
- * is driven by a headless `<audio>` element mounted alongside the
- * chip; visuals are a speaker glyph + the node's name.
+ * so the user has something to click, drag, and inspect. Playback is
+ * handled once by `AudioPlaybackHost`; this component is visual only.
  */
 function AudioChip({
   node,
 }: {
   node: Extract<SceneNode, { kind: 'audio' }>
 }) {
-  const ref = useRef<HTMLAudioElement | null>(null)
-  const playing = useUI((s) => s.playing)
-  const playhead = useUI((s) => s.playhead)
-  const clipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
-  const local = clampLocal(playhead - node.startTime + node.trimStart, node)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.muted = node.muted
-    el.volume = Math.max(0, Math.min(1, node.volume))
-  }, [node.muted, node.volume])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + clipLen
-    if (playing && inRange) {
-      if (el.paused) {
-        if (Math.abs(el.currentTime - local) > 0.2) el.currentTime = local
-        el.play().catch(() => {})
-      }
-    } else {
-      if (!el.paused) el.pause()
-      if (Math.abs(el.currentTime - local) > 0.05) el.currentTime = local
-    }
-  }, [playing, playhead, local, clipLen, node.startTime])
-
   return (
     <div
       style={{
@@ -4643,14 +5426,6 @@ function AudioChip({
       >
         {node.name}
       </span>
-      {node.src ? (
-        <audio
-          ref={ref}
-          src={node.src}
-          preload="auto"
-          muted={node.muted}
-        />
-      ) : null}
     </div>
   )
 }

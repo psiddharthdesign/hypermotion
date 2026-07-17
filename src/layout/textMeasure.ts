@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Yoga, MeasureFunction } from 'yoga-layout/load'
-import type { TextNode } from '@/scene'
+import { displayedText, type TextNode } from '@/scene'
 
 /**
  * Text intrinsic measurement for Yoga.
@@ -44,16 +44,23 @@ function fontString(node: TextNode): string {
   // CSS shorthand: `<weight> <size>px/<line-height> <family>`. We omit
   // line-height from the shorthand because Canvas2D ignores it during
   // measureText anyway — line height only matters for our height math.
-  return `${node.fontWeight} ${node.fontSize}px ${node.fontFamily}`
+  const style = node.fontStyle ?? 'normal'
+  const variant =
+    node.textCase === 'small-caps' || node.textCase === 'small-caps-forced'
+      ? 'small-caps'
+      : 'normal'
+  return `${style} ${variant} ${node.fontWeight} ${node.fontSize}px ${node.fontFamily}`
 }
 
-function widestLineWidth(ctx: CanvasRenderingContext2D, lines: string[]): number {
-  let max = 0
-  for (const line of lines) {
-    const w = ctx.measureText(line).width
-    if (w > max) max = w
-  }
-  return max
+function measureTextWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  letterSpacing: number,
+): number {
+  const base = ctx.measureText(text).width
+  if (!Number.isFinite(letterSpacing) || letterSpacing === 0) return base
+  const glyphCount = Array.from(text).length
+  return base + Math.max(0, glyphCount - 1) * letterSpacing
 }
 
 /**
@@ -78,7 +85,7 @@ function wrapToWidth(
     let line = ''
     for (const tok of tokens) {
       const candidate = line + tok
-      if (ctx.measureText(candidate).width <= maxWidth || line === '') {
+      if (measureTextWidth(ctx, candidate, 0) <= maxWidth || line === '') {
         line = candidate
       } else {
         out.push(line.replace(/\s+$/, ''))
@@ -101,14 +108,15 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
     void _height
     void _heightMode
     const ctx = getCtx()
+    const text = displayedText(node)
     if (!ctx) {
       // No canvas available — fall back to a rough estimate so we don't
       // collapse to 0. 0.6em per glyph is a reasonable average for
       // proportional fonts.
-      const charW = node.fontSize * 0.6
-      const lines = node.text.split('\n').length || 1
+      const charW = node.fontSize * 0.6 + Math.max(0, node.letterSpacing)
+      const lines = text.split('\n').length || 1
       return {
-        width: Math.max(1, node.text.length * charW),
+        width: Math.max(1, text.length * charW),
         height: Math.max(1, lines * node.fontSize * node.lineHeight),
       }
     }
@@ -117,17 +125,17 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
     let lines: string[]
     if (widthMode === yoga.MEASURE_MODE_UNDEFINED) {
       // Natural single-line measurement per source line. No wrap.
-      lines = node.text.split('\n')
+      lines = text.split('\n')
     } else {
       // Exactly + AtMost both wrap to the given width budget. The
       // difference matters for Yoga's internal sizing decisions, not
       // for what we report back.
       const budget = Math.max(1, width)
-      lines = wrapToWidth(ctx, node.text, budget)
+      lines = wrapToWidthWithTracking(ctx, text, budget, node.letterSpacing)
     }
 
     const lineCount = Math.max(1, lines.length)
-    const measuredWidth = widestLineWidth(ctx, lines)
+    const measuredWidth = widestLineWidthWithTracking(ctx, lines, node.letterSpacing)
     // CRITICAL: ceil + 1px safety margin.
     //
     // `measureText` returns a fractional width (e.g. 127.34px). If we
@@ -143,4 +151,48 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
       height: Math.max(1, Math.ceil(lineCount * node.fontSize * node.lineHeight)),
     }
   }
+}
+
+function widestLineWidthWithTracking(
+  ctx: CanvasRenderingContext2D,
+  lines: string[],
+  letterSpacing: number,
+): number {
+  let max = 0
+  for (const line of lines) {
+    const w = measureTextWidth(ctx, line, letterSpacing)
+    if (w > max) max = w
+  }
+  return max
+}
+
+function wrapToWidthWithTracking(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  letterSpacing: number,
+): string[] {
+  if (!Number.isFinite(letterSpacing) || letterSpacing === 0) {
+    return wrapToWidth(ctx, text, maxWidth)
+  }
+  const out: string[] = []
+  for (const paragraph of text.split('\n')) {
+    if (paragraph === '') {
+      out.push('')
+      continue
+    }
+    const tokens = paragraph.split(/(\s+)/)
+    let line = ''
+    for (const tok of tokens) {
+      const candidate = line + tok
+      if (measureTextWidth(ctx, candidate, letterSpacing) <= maxWidth || line === '') {
+        line = candidate
+      } else {
+        out.push(line.replace(/\s+$/, ''))
+        line = tok.replace(/^\s+/, '')
+      }
+    }
+    out.push(line)
+  }
+  return out
 }

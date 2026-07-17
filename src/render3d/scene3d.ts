@@ -48,6 +48,7 @@ export interface Plane3D {
   rect: Rect
   contentMode: 'self' | 'subtree'
   paintOrder: number
+  opacity: number
   center: Vec3
   rotation: Vec3
   scaleX: number
@@ -57,6 +58,17 @@ export interface Plane3D {
   down: Vec3
   normal: Vec3
   cameraDepth: number
+  extractedFromParent?: boolean
+  clips?: PlaneClip3D[]
+}
+
+export interface PlaneClip3D {
+  rect: Rect
+  center: Vec3
+  right: Vec3
+  down: Vec3
+  width: number
+  height: number
 }
 
 interface PlaneBuildOptions {
@@ -94,6 +106,7 @@ const IDENTITY_INHERITED = {
   rotationY: 0,
   scaleX: 1,
   scaleY: 1,
+  opacity: 1,
 }
 
 interface Inherited3D {
@@ -107,6 +120,7 @@ interface Inherited3D {
   rotationY: number
   scaleX: number
   scaleY: number
+  opacity: number
 }
 
 export function resolveCamera3D(
@@ -333,10 +347,49 @@ export function buildWorldPlanes(
     return false
   }
 
-  const visit = (id: NodeId, inherited: Inherited3D): void => {
+  const hasVideoDescendant = (id: NodeId): boolean => {
+    const node = api.getNode(id)
+    if (!node) return false
+    for (const childId of node.children) {
+      const child = api.getNode(childId)
+      if (!child) continue
+      if (child.kind === 'video') return true
+      if (hasVideoDescendant(childId)) return true
+    }
+    return false
+  }
+
+  const hasDirectVideoChild = (node: Node | null): boolean =>
+    !!node && node.children.some((childId) => api.getNode(childId)?.kind === 'video')
+
+  const clipFromFrame = (rect: Rect, inherited: Inherited3D): PlaneClip3D => {
+    const basisXLength = Math.max(0.0001, len3(inherited.basisX))
+    const basisYLength = Math.max(0.0001, len3(inherited.basisY))
+    return {
+      rect,
+      center: mapPoint(inherited, {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        z: 0,
+      }),
+      right: norm3(inherited.basisX),
+      down: norm3(inherited.basisY),
+      width: rect.width * basisXLength,
+      height: rect.height * basisYLength,
+    }
+  }
+
+  const visit = (id: NodeId, inherited: Inherited3D, activeClips: PlaneClip3D[] = []): void => {
     const node = api.getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera') return
+    // Visibility is hierarchical. The WebGL compositor emits some descendants
+    // as independent planes (group3d children, videos, and explicit planes),
+    // so checking only each emitted plane's own `visible` flag lets those
+    // descendants survive when their parent is hidden. Stop the walk at the
+    // first hidden node: this matches the DOM renderer and also removes hidden
+    // descendants from rendering, outlines, and hit testing in one place.
+    if (!node.visible) return
     const a = animated[id]
     const isRoot = id === rootId
     const x = a?.x ?? node.transform.x
@@ -347,6 +400,7 @@ export function buildWorldPlanes(
     const rotationY = a?.rotationY ?? node.transform.rotationY
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
+    const opacity = a?.opacity ?? node.appearance.opacity ?? 1
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -374,6 +428,7 @@ export function buildWorldPlanes(
       rotationY: inherited.rotationY + rotationY,
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
+      opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
     }
 
     const parent = node.parent ? api.getNode(node.parent) : null
@@ -381,9 +436,13 @@ export function buildWorldPlanes(
     const parentMode = parent?.transform.renderMode ?? 'flat'
     const isRootChild = node.parent === rootId
     const independentNodes = options.independentNodes ?? false
+    const videoStackSibling = !!parent && hasDirectVideoChild(parent)
+    const containsExplicit3DDescendant = hasExplicit3DDescendant(id)
     const shouldEmitPlane =
       !isRoot &&
       (independentNodes ||
+        videoStackSibling ||
+        node.kind === 'video' ||
         renderMode === 'plane' ||
         renderMode === 'group3d' ||
         parentMode === 'group3d' ||
@@ -396,6 +455,13 @@ export function buildWorldPlanes(
       const right = norm3(nextInherited.basisX)
       const down = norm3(nextInherited.basisY)
       const normal = norm3(nextInherited.basisZ)
+      const contentMode =
+        independentNodes ||
+        node.kind === 'video' ||
+        (videoStackSibling && node.kind !== 'frame' && node.kind !== 'component') ||
+        renderMode === 'group3d'
+          ? 'self'
+          : 'subtree'
       const center = mapPoint(nextInherited, {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
@@ -405,8 +471,9 @@ export function buildWorldPlanes(
         nodeId: id,
         node,
         rect,
-        contentMode: independentNodes || renderMode === 'group3d' ? 'self' : 'subtree',
+        contentMode,
         paintOrder: planes.length,
+        opacity: contentMode === 'subtree' ? inherited.opacity : nextInherited.opacity,
         center,
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
@@ -416,16 +483,26 @@ export function buildWorldPlanes(
         down,
         normal,
         cameraDepth: cameraSpaceDepth(center, camera),
+        extractedFromParent: videoStackSibling || node.kind === 'video',
+        clips: activeClips.length ? [...activeClips] : undefined,
       })
     }
+
+    const nextClips =
+      !isRoot && node.kind === 'frame' && node.clipsContent
+        ? [...activeClips, clipFromFrame(rect, nextInherited)]
+        : activeClips
 
     if (
       independentNodes ||
       !shouldEmitPlane ||
+      hasVideoDescendant(id) ||
       (node.transform.renderMode ?? 'flat') === 'group3d' ||
-      hasExplicit3DDescendant(id)
+      containsExplicit3DDescendant
     ) {
-      for (const child of node.children) visit(child, nextInherited)
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        visit(node.children[i]!, nextInherited, nextClips)
+      }
     }
   }
 

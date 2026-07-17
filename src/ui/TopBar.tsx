@@ -36,6 +36,7 @@ export function TopBar() {
   const togglePanel = useUI((s) => s.togglePanel)
   const zoom = useUI((s) => s.view.zoom)
   const zoomAt = useUI((s) => s.zoomAt)
+  const setView = useUI((s) => s.setView)
   const resetView = useUI((s) => s.resetView)
   const api = useSceneAPI()
   // Subscribe to scene version so the displayed project name re-renders
@@ -60,6 +61,39 @@ export function TopBar() {
 
   const centerZoom = (next: number) =>
     zoomAt(next, window.innerWidth / 2, window.innerHeight / 2)
+
+  const fitToScreen = () => {
+    // The transformed workspace wrapper is a direct child of the visible
+    // canvas viewport. Measuring that viewport keeps the fit correct when
+    // either sidebar or the timeline is resized.
+    const workspace = document.querySelector<HTMLElement>(
+      '[data-canvas-workspace="1"]',
+    )
+    const viewport = workspace?.parentElement
+    const rect = viewport?.getBoundingClientRect()
+    const canvas = api.getMeta().canvas ?? { width: 960, height: 540 }
+
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      resetView()
+      return
+    }
+
+    const edgeMargin = 32
+    const availableWidth = Math.max(1, rect.width - edgeMargin * 2)
+    const availableHeight = Math.max(1, rect.height - edgeMargin * 2)
+    const nextZoom = Math.min(
+      availableWidth / Math.max(1, canvas.width),
+      availableHeight / Math.max(1, canvas.height),
+    )
+
+    // Match the zoom store's supported range while resetting pan so the
+    // fitted artboard lands in the exact center of the visible workspace.
+    setView({
+      zoom: Math.max(0.05, Math.min(16, nextZoom)),
+      panX: 0,
+      panY: 0,
+    })
+  }
 
   // Export popover anchor — captured from the trigger's bounding rect
   // when the user opens the menu, so ExportMenu can position itself
@@ -133,6 +167,14 @@ export function TopBar() {
             className="flex h-[28px] w-7 items-center justify-center text-text-muted hover:text-text"
           >
             +
+          </button>
+          <button
+            type="button"
+            title="Fit canvas to screen"
+            onClick={fitToScreen}
+            className="flex h-[28px] items-center justify-center border-l border-border px-2.5 text-[10px] font-medium text-text-muted hover:text-text"
+          >
+            Fit to screen
           </button>
         </div>
 

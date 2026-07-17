@@ -5,6 +5,7 @@ import type {
   Appearance,
   CameraNode,
   Fill,
+  BlendMode,
   FrameNode,
   ImageNode,
   Keyframe,
@@ -21,6 +22,10 @@ import type {
   Track,
   TrackId,
   Transform,
+} from '@/scene/types'
+import {
+  DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+  normalizeCameraScrollSensitivity,
 } from '@/scene/types'
 import { normalizeTextAnimation } from '@/anim/textAnimations'
 
@@ -42,12 +47,32 @@ export interface UiStateSlab {
   >
   kfGroups: Record<string, string[]>
   kfGroupCollapsed: Record<string, boolean>
+  /**
+   * Persistent layer-level animation bundles authored while Stagger is armed.
+   * Member ids point at real keyframes, so later properties/keyframes can join
+   * the same set without retiming unrelated keys on the owning tracks.
+   */
+  staggerSets: Record<string, StaggerPropertySet>
+}
+
+export interface StaggerPropertySet {
+  id: string
+  /** Optional timeline label. Falls back to "Stagger N" in the editor. */
+  name?: string
+  layerIds: NodeId[]
+  delay: number
+  order: 'forward' | 'reverse'
+  members: Record<
+    NodeId,
+    Partial<Record<PropertyId, string[]>>
+  >
 }
 
 const DEFAULT_UI_STATE: UiStateSlab = {
   trackGroups: {},
   kfGroups: {},
   kfGroupCollapsed: {},
+  staggerSets: {},
 }
 
 /**
@@ -180,6 +205,17 @@ export interface NodeBaseMutable {
   position: import('@/scene/types').Position
   isMask: boolean
   text: string
+  fontFamily: string
+  fontSize: number
+  fontWeight: number
+  fontStyle: import('@/scene/types').TextFontStyle
+  lineHeight: number
+  letterSpacing: number
+  textAlign: import('@/scene/types').TextAlign
+  textAlignVertical: import('@/scene/types').TextAlignVertical
+  textCase: import('@/scene/types').TextCase
+  textDecoration: import('@/scene/types').TextDecoration
+  color: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
   // image-kind fields — settable via Inspector on ImageNode. The scene
   // API doesn't (yet) enforce that these keys only land on an image
@@ -189,7 +225,10 @@ export interface NodeBaseMutable {
   fit: 'cover' | 'contain' | 'fill' | 'none'
   importWarning: string
   // media-kind fields — used by audio/video layers.
+  poster: string
+  duration: number
   volume: number
+  playbackRate: number
   muted: boolean
   startTime: number
   trimStart: number
@@ -201,6 +240,7 @@ export interface NodeBaseMutable {
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
    *  scale and the CSS perspective wrapper. */
   focalLength: number
+  scrollSensitivity: number
   fieldOfView: number
   pointOfInterestX: number
   pointOfInterestY: number
@@ -261,6 +301,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   fill: { kind: 'solid', color: 'oklch(0.62 0.21 250)' },
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
 }
 
@@ -278,7 +319,72 @@ const TEXT_DEFAULT_APPEARANCE: Appearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  blendMode: 'normal',
   effects: [],
+}
+
+const MEDIA_DEFAULT_APPEARANCE: Appearance = {
+  opacity: 1,
+  fill: null,
+  stroke: null,
+  cornerRadius: 0,
+  blendMode: 'normal',
+  effects: [],
+}
+
+function defaultAppearanceForKind(kind: NodeKind): Appearance {
+  if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
+  if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
+  return DEFAULT_APPEARANCE
+}
+
+function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
+  const appearance = (raw as Appearance | undefined) ?? defaultAppearanceForKind(kind)
+  const normalized: Appearance = {
+    ...appearance,
+    blendMode: normalizeBlendMode(appearance.blendMode),
+    effects: appearance.effects ?? [],
+  }
+  if (kind === 'video' || kind === 'audio') {
+    return {
+      ...normalized,
+      fill: null,
+      stroke: null,
+    }
+  }
+  if (kind === 'text') {
+    return {
+      ...normalized,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      cornerRadii: undefined,
+    }
+  }
+  return normalized
+}
+
+function normalizeBlendMode(value: unknown): BlendMode {
+  switch (value) {
+    case 'multiply':
+    case 'screen':
+    case 'overlay':
+    case 'darken':
+    case 'lighten':
+    case 'color-dodge':
+    case 'color-burn':
+    case 'hard-light':
+    case 'soft-light':
+    case 'difference':
+    case 'exclusion':
+    case 'hue':
+    case 'saturation':
+    case 'color':
+    case 'luminosity':
+      return value
+    default:
+      return 'normal'
+  }
 }
 
 const DEFAULT_LAYOUT: Layout = {
@@ -396,6 +502,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   }
 
   const yNodeToNode = (y: Y.Map<unknown>): Node => {
+    const kind = y.get('kind') as NodeKind
     const childrenValue = y.get('children') as
       | Y.Array<NodeId>
       | NodeId[]
@@ -408,7 +515,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     const base = {
       id: y.get('id') as NodeId,
       name: (y.get('name') as string) ?? 'Layer',
-      kind: y.get('kind') as NodeKind,
+      kind,
       parent: (y.get('parent') as NodeId | null) ?? null,
       children,
       // Ensure `z` exists on every read — older docs predate the
@@ -419,7 +526,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         ...DEFAULT_TRANSFORM,
         ...((y.get('transform') as Partial<Transform>) ?? {}),
       },
-      appearance: (y.get('appearance') as Appearance) ?? DEFAULT_APPEARANCE,
+      appearance: normalizeAppearanceForKind(kind, y.get('appearance')),
       visible: (y.get('visible') as boolean) ?? true,
       locked: (y.get('locked') as boolean) ?? false,
       // Default to 'flow' for legacy documents predating the field. New
@@ -433,7 +540,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
     }
-    const kind = base.kind
     switch (kind) {
       case 'frame':
         return {
@@ -476,6 +582,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           src: (y.get('src') as string) ?? '',
           duration: (y.get('duration') as number) ?? 0,
           volume: (y.get('volume') as number) ?? 1,
+          playbackRate: (y.get('playbackRate') as number) ?? 1,
           startTime: (y.get('startTime') as number) ?? 0,
           trimStart: (y.get('trimStart') as number) ?? 0,
           trimEnd:
@@ -487,7 +594,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (kind === 'video' ? true : false),
           ...(kind === 'video'
             ? {
+                poster: (y.get('poster') as string | undefined) ?? '',
                 fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
+                importWarning:
+                  (y.get('importWarning') as string | undefined) ?? undefined,
               }
             : {}),
         } as Node
@@ -503,9 +613,21 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           fontFamily: (y.get('fontFamily') as string) ?? 'Inter',
           fontSize: (y.get('fontSize') as number) ?? 16,
           fontWeight: (y.get('fontWeight') as number) ?? 400,
+          fontStyle:
+            (y.get('fontStyle') as import('@/scene/types').TextFontStyle) ??
+            'normal',
           lineHeight: (y.get('lineHeight') as number) ?? 1.4,
           letterSpacing: (y.get('letterSpacing') as number) ?? 0,
-          textAlign: (y.get('textAlign') as 'start' | 'center' | 'end') ?? 'start',
+          textAlign:
+            (y.get('textAlign') as import('@/scene/types').TextAlign) ?? 'start',
+          textAlignVertical:
+            (y.get('textAlignVertical') as import('@/scene/types').TextAlignVertical) ??
+            'top',
+          textCase:
+            (y.get('textCase') as import('@/scene/types').TextCase) ?? 'original',
+          textDecoration:
+            (y.get('textDecoration') as import('@/scene/types').TextDecoration) ??
+            'none',
           color: (y.get('color') as string) ?? '#0a0a0c',
           textAnimation: normalizeTextAnimation(y.get('textAnimation')),
         } as Node
@@ -568,6 +690,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           background:
             (y.get('background') as CameraNode['background']) ?? null,
           focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
+          scrollSensitivity: normalizeCameraScrollSensitivity(
+            y.get('scrollSensitivity') ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+          ),
           fieldOfView: (y.get('fieldOfView') as number | undefined) ?? 35,
           pointOfInterestX:
             (y.get('pointOfInterestX') as number | undefined) ??
@@ -716,10 +841,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('parent', parent)
         y.set('children', new Y.Array<NodeId>())
         y.set('transform', (props as Partial<FrameNode>)?.transform ?? DEFAULT_TRANSFORM)
-        // Text picks a fill-less default; every other kind falls through
-        // to DEFAULT_APPEARANCE. Any caller-supplied appearance wins.
-        const defaultAppearance =
-          kind === 'text' ? TEXT_DEFAULT_APPEARANCE : DEFAULT_APPEARANCE
+        // Text and media paint through their own content, not through a
+        // colored wrapper box. Any caller-supplied appearance wins.
+        const defaultAppearance = defaultAppearanceForKind(kind)
         y.set('appearance', (props as Partial<FrameNode>)?.appearance ?? defaultAppearance)
         y.set('visible', props?.visible ?? true)
         y.set('locked', props?.locked ?? false)
@@ -765,17 +889,21 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // speaker-chip footprint (audio doesn't paint anything, it's
           // just a handle on the canvas + a row in the layers panel).
           type MediaProps = Partial<{
-            size: Size; src: string; duration: number; volume: number;
+            size: Size; src: string; poster: string; duration: number; volume: number;
+            playbackRate: number;
             startTime: number; trimStart: number; trimEnd: number; loop: boolean;
             fit: 'cover' | 'contain' | 'fill' | 'none'; muted: boolean;
+            importWarning: string;
           }>
           const mp = (props ?? {}) as MediaProps
           const defaultSize: Size =
             kind === 'audio' ? { width: 120, height: 40 } : DEFAULT_SIZE
           y.set('size', mp.size ?? defaultSize)
           y.set('src', mp.src ?? '')
+          if (kind === 'video') y.set('poster', mp.poster ?? '')
           y.set('duration', mp.duration ?? 0)
           y.set('volume', mp.volume ?? 1)
+          y.set('playbackRate', mp.playbackRate ?? 1)
           y.set('startTime', mp.startTime ?? 0)
           y.set('trimStart', mp.trimStart ?? 0)
           y.set('trimEnd', mp.trimEnd ?? mp.duration ?? 0)
@@ -783,6 +911,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('muted', mp.muted ?? (kind === 'video'))
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
+            if (mp.importWarning) y.set('importWarning', mp.importWarning)
             // Motion tools are primarily visual — default to muted so
             // a dropped MP4 doesn't surprise the user with audio.
           }
@@ -822,9 +951,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('fontFamily', tp?.fontFamily ?? 'Inter')
           y.set('fontSize', tp?.fontSize ?? 16)
           y.set('fontWeight', tp?.fontWeight ?? 400)
+          y.set('fontStyle', tp?.fontStyle ?? 'normal')
           y.set('lineHeight', tp?.lineHeight ?? 1.4)
           y.set('letterSpacing', tp?.letterSpacing ?? 0)
           y.set('textAlign', tp?.textAlign ?? 'start')
+          y.set('textAlignVertical', tp?.textAlignVertical ?? 'top')
+          y.set('textCase', tp?.textCase ?? 'original')
+          y.set('textDecoration', tp?.textDecoration ?? 'none')
           y.set('color', tp?.color ?? '#0a0a0c')
           y.set('textAnimation', normalizeTextAnimation(tp?.textAnimation) ?? null)
         }
@@ -845,6 +978,12 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // hardcoded perspective value so legacy scenes render the
           // same. Larger = more telephoto (less distortion).
           y.set('focalLength', cp?.focalLength ?? 1000)
+          y.set(
+            'scrollSensitivity',
+            normalizeCameraScrollSensitivity(
+              cp?.scrollSensitivity ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+            ),
+          )
           y.set('fieldOfView', cp?.fieldOfView ?? 35)
           y.set('pointOfInterestX', cp?.pointOfInterestX ?? (cp?.focusWorldX ?? (cp?.transform?.x ?? 0)))
           y.set('pointOfInterestY', cp?.pointOfInterestY ?? (cp?.focusWorldY ?? (cp?.transform?.y ?? 0)))
@@ -988,7 +1127,18 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     getSections: () => {
       const out: Section[] = []
       sections.forEach((s) => {
-        if (s && typeof s.id === 'string') out.push(s)
+        if (!s || typeof s.id !== 'string') return
+        const raw = s as Section & { duration?: number }
+        const start = Number.isFinite(raw.start) ? raw.start : 0
+        const end = Number.isFinite(raw.end)
+          ? raw.end
+          : start + (Number.isFinite(raw.duration) ? raw.duration : 0)
+        out.push({
+          ...raw,
+          start,
+          end: Math.max(start, end),
+          color: raw.color ?? 'oklch(0.55 0.2 260)',
+        })
       })
       out.sort((a, b) => a.start - b.start)
       return out
@@ -1057,6 +1207,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         ...((uiState.get('kfGroupCollapsed')
           ? { kfGroupCollapsed: uiState.get('kfGroupCollapsed') as UiStateSlab['kfGroupCollapsed'] }
           : {}) as Partial<UiStateSlab>),
+        ...((uiState.get('staggerSets')
+          ? { staggerSets: uiState.get('staggerSets') as UiStateSlab['staggerSets'] }
+          : {}) as Partial<UiStateSlab>),
       }
     },
 
@@ -1091,7 +1244,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   // users get "rotation spins around the middle of the scene" out of
   // the box — the natural expectation.
   {
-    const existingId = scene.get('activeCameraId') as NodeId | undefined
+    const existingRaw = scene.get('activeCameraId') as NodeId | null | undefined
+    // Explicit null means the scene intentionally has no active camera
+    // and should render through the flat 2D path. Undefined is the
+    // legacy/missing value that still gets backfilled below.
+    if (existingRaw === null) {
+      return api
+    }
+    const existingId = existingRaw as NodeId | undefined
     const existingOk = existingId && nodes.has(existingId)
     // Don't seed if the stored id is valid AND still refers to a camera.
     const existingKind = existingOk

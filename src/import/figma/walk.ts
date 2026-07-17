@@ -2,6 +2,7 @@
 
 import type {
   Appearance,
+  BlendMode,
   CornerRadii,
   Effect as SceneEffect,
   NodeId,
@@ -16,6 +17,7 @@ import type {
   FigmaCapturedFrame,
   FigmaCapturedNode,
   FigmaCapturedEffect,
+  FigmaBlendMode,
   FigmaCapturedText,
   FigmaCapturedVector,
   FigmaPayload,
@@ -281,6 +283,7 @@ function walk(
       node.strokeWidths,
     ),
     cornerRadius: averageCornerRadius(node.cornerRadius),
+    blendMode: figmaToBlendMode(node.blendMode),
     // Preserve Figma's per-corner radii when they're non-uniform. The
     // uniform `cornerRadius` above stays populated as the fallback so
     // any code path that hasn't been per-corner-aware yet still gets a
@@ -288,17 +291,13 @@ function walk(
     ...(cornerRadii ? { cornerRadii } : {}),
     effects: figmaToEffects(node.effects ?? []),
   }
-  // Free-canvas children should NOT participate in the parent's flex/
-  // grid solve. Auto-layout children DO. Set `position` accordingly so
-  // the Yoga adapter knows which path to take.
+  // Figma's per-child "Absolute position" flag means this layer opts
+  // out of its parent's layout even when the parent itself is a flow /
+  // auto-layout container. Preserve that as our Position='absolute' so
+  // Yoga pins the slot at the parent origin and the renderer composes
+  // the captured transform.x/y on top.
   const position: Position =
-    parentLayoutMode === null || parentLayoutMode === 'NONE'
-      ? 'flow'
-      : 'flow'
-  // (Both branches currently use 'flow' — we may flip free-canvas
-  // children to 'absolute' once the canvas's free-position semantics
-  // need it. Keeping the branch in place so the call site documents
-  // the decision point.)
+    node.layoutPositioning === 'ABSOLUTE' ? 'absolute' : 'flow'
 
   switch (kind) {
     case 'frame':
@@ -382,29 +381,6 @@ function createFrame(
 ): NodeId {
   const layout = figmaToLayout(node)
   const size = figmaToSize(node, forceFixed)
-  // Clip heuristic. Figma's default for frames is clipsContent=true,
-  // which is fine in Figma because their renderer's font metrics match
-  // exactly what their layout solver was sized against — content always
-  // fits perfectly inside its parent. Our renderer uses fallback fonts
-  // (Inter when the Figma family isn't on our Google Fonts allowlist)
-  // and Yoga, so glyph widths can differ by a few pixels from what
-  // Figma measured at capture time. A frame that JUST fits in Figma
-  // overflows by 2–3px in our app and gets clipped — text disappearing
-  // mid-word ("Invite new members, manage roles, and ass") and entire
-  // right-side controls vanishing inside the card.
-  //
-  // The fix: only preserve clipsContent on import when the frame has
-  // a non-zero corner radius. Rounded corners are the visually load-
-  // bearing reason to clip (a rounded card with overflow shows ugly
-  // square children poking past the curve). Plain rectangle frames
-  // are layout containers — their clip in Figma is incidental, not
-  // intentional, and dropping it lets the design render fully even
-  // when our fonts add a couple pixels.
-  //
-  // Designers can re-enable clip per-frame in the Inspector for any
-  // case the heuristic gets wrong.
-  const corner = maxCornerRadius(appearance)
-  const importedClips = node.clipsContent && corner > 0
   const id = api.createNode('frame', parentId, {
     name: node.name || 'Frame',
     visible: node.visible,
@@ -414,7 +390,7 @@ function createFrame(
     position,
     size,
     layout,
-    clipsContent: importedClips,
+    clipsContent: node.clipsContent,
   })
   for (const child of node.children) {
     walk(child, api, id, assets, node.layoutMode)
@@ -453,12 +429,19 @@ function createText(
   position: Position,
 ): NodeId {
   const text = figmaToText(node, assets)
+  const textAppearance: Appearance = {
+    ...appearance,
+    fill: null,
+    stroke: null,
+    cornerRadius: 0,
+    cornerRadii: undefined,
+  }
   return api.createNode('text', parentId, {
     name: node.name || 'Text',
     visible: node.visible,
     locked: node.locked,
     transform,
-    appearance,
+    appearance: textAppearance,
     position,
     ...text,
   })
@@ -479,7 +462,7 @@ function createVectorAsImage(
   const svg = node.svg.trim()
   const shouldUseRasterFallback =
     !!node.rasterPng &&
-    (!!node.rasterReason || !svg || node.width < 1 || node.height < 1)
+    (!svg || node.width < 1 || node.height < 1)
   if (!svg && !node.rasterPng) return null
   const intrinsicSize = readSvgIntrinsicSize(svg)
   const size = {
@@ -580,13 +563,6 @@ function perCornerRadiiFromFigma(
   return { tl, tr, br, bl }
 }
 
-function maxCornerRadius(appearance: Appearance): number {
-  const radii = appearance.cornerRadii
-  return radii
-    ? Math.max(radii.tl, radii.tr, radii.br, radii.bl)
-    : appearance.cornerRadius
-}
-
 function figmaToEffects(effects: FigmaCapturedEffect[]): SceneEffect[] {
   return effects.map((effect) => {
     if (effect.type === 'DROP_SHADOW' || effect.type === 'INNER_SHADOW') {
@@ -606,6 +582,44 @@ function figmaToEffects(effects: FigmaCapturedEffect[]): SceneEffect[] {
       amount: effect.radius,
     }
   })
+}
+
+function figmaToBlendMode(mode: FigmaBlendMode | undefined): BlendMode {
+  switch (mode) {
+    case 'DARKEN':
+      return 'darken'
+    case 'MULTIPLY':
+      return 'multiply'
+    case 'COLOR_BURN':
+      return 'color-burn'
+    case 'LIGHTEN':
+      return 'lighten'
+    case 'SCREEN':
+      return 'screen'
+    case 'COLOR_DODGE':
+    case 'LINEAR_DODGE':
+      return 'color-dodge'
+    case 'OVERLAY':
+      return 'overlay'
+    case 'SOFT_LIGHT':
+      return 'soft-light'
+    case 'HARD_LIGHT':
+      return 'hard-light'
+    case 'DIFFERENCE':
+      return 'difference'
+    case 'EXCLUSION':
+      return 'exclusion'
+    case 'HUE':
+      return 'hue'
+    case 'SATURATION':
+      return 'saturation'
+    case 'COLOR':
+      return 'color'
+    case 'LUMINOSITY':
+      return 'luminosity'
+    default:
+      return 'normal'
+  }
 }
 
 function figmaColorToRgba(color: {

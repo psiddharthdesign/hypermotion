@@ -53,12 +53,12 @@ export function figmaToLayout(node: FigmaCapturedFrame): Layout {
       left: node.paddingLeft ?? 0,
     },
     wrap: node.layoutWrap === 'WRAP',
-    // Grid columns aren't carried in older Figma data — Figma's GRID
-    // layoutMode shipped recently. For MVP we default to a 3-column
-    // grid; users can adjust in the Inspector after import.
-    columns: 3,
-    rowGap: node.itemSpacing ?? 0,
-    columnGap: node.itemSpacing ?? 0,
+    // Modern plugin captures carry Figma's real GRID dimensions and
+    // independent gutters. Older payloads did not; one column is the
+    // only lossless fallback because it never invents horizontal slots.
+    columns: Math.max(1, Math.floor(node.gridColumnCount ?? 1)),
+    rowGap: node.gridRowGap ?? node.itemSpacing ?? 0,
+    columnGap: node.gridColumnGap ?? node.itemSpacing ?? 0,
   }
 }
 
@@ -89,17 +89,20 @@ export function figmaToSize(
 ): Size {
   if (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'COMPONENT' || node.type === 'INSTANCE') {
     const frame = node as FigmaCapturedFrame
+    const horizontalIsPrimary = frame.layoutMode === 'HORIZONTAL'
     const horiz = sizeAxisFromFrame(
       frame.layoutSizingHorizontal,
-      frame.primaryAxisSizingMode,
-      frame.layoutMode === 'HORIZONTAL',
+      horizontalIsPrimary
+        ? frame.primaryAxisSizingMode
+        : frame.counterAxisSizingMode,
       frame.width,
       forceFixed,
     )
     const vert = sizeAxisFromFrame(
       frame.layoutSizingVertical,
-      frame.counterAxisSizingMode,
-      frame.layoutMode === 'HORIZONTAL',
+      horizontalIsPrimary
+        ? frame.counterAxisSizingMode
+        : frame.primaryAxisSizingMode,
       frame.height,
       forceFixed,
     )
@@ -111,10 +114,6 @@ export function figmaToSize(
 function sizeAxisFromFrame(
   modern: 'FIXED' | 'HUG' | 'FILL' | undefined,
   fallback: 'FIXED' | 'AUTO' | undefined,
-  // True when this axis is the primary axis. In Figma, primaryAxisSizingMode
-  // applies to the layout's main axis (HORIZONTAL → x, VERTICAL → y).
-  // We honor that mapping when falling back to the older fields.
-  isPrimary: boolean,
   px: number,
   forceFixed: boolean,
 ): SizeAxis {
@@ -124,10 +123,8 @@ function sizeAxisFromFrame(
     if (modern === 'FILL') return 'fill'
     return px
   }
-  // Fallback path. We only get one of the two old fields per axis; the
-  // caller picks which one is "the" mode for this axis based on
-  // layoutMode. AUTO means hug; FIXED means px.
-  void isPrimary
+  // Fallback path. The caller has already selected primary/counter for
+  // this physical axis. AUTO means hug; FIXED means px.
   if (fallback === 'AUTO') return 'hug'
   return px
 }
@@ -136,10 +133,15 @@ function sizeAxisFromFrame(
  * Build a Transform for a captured node.
  *
  * CRITICAL: under an auto-layout parent (parent.layoutMode !== 'NONE')
- * the transform must be IDENTITY. Yoga will recompute the position from
- * the layout properties; storing both Yoga's solved position and a
- * captured x/y produces a ghost-position bug — the node renders
- * doubled-up because it gets the layout slot AND the transform offset.
+ * the transform must be IDENTITY for normal flow children. Yoga will
+ * recompute the position from the layout properties; storing both
+ * Yoga's solved position and a captured x/y produces a ghost-position
+ * bug — the node renders doubled-up because it gets the layout slot AND
+ * the transform offset.
+ *
+ * Exception: Figma also has a per-child "Absolute position" flag
+ * (`layoutPositioning === 'ABSOLUTE'`). Those children opt out of the
+ * parent's layout and their captured x/y is the source of truth.
  *
  * Under a free-canvas parent (layoutMode === 'NONE'), the captured
  * x/y/rotation become the transform.
@@ -149,12 +151,15 @@ export function figmaToTransform(
   parentLayoutMode: 'NONE' | 'HORIZONTAL' | 'VERTICAL' | 'GRID' | null,
 ): Transform {
   const inAutoLayout = parentLayoutMode !== null && parentLayoutMode !== 'NONE'
-  if (inAutoLayout) {
+  const absoluteInParent = node.layoutPositioning === 'ABSOLUTE'
+  if (inAutoLayout && !absoluteInParent) {
     return {
       x: 0,
       y: 0,
       z: 0,
-      rotation: 0,
+      // Yoga owns flow x/y, but rotation remains a visual transform and
+      // must not be erased. Rotated badges and labels otherwise flatten.
+      rotation: node.rotation,
       rotationX: 0,
       rotationY: 0,
       scaleX: 1,

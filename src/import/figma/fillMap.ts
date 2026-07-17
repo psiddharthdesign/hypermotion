@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Fill, GradientStop, Stroke, StrokeStyle } from '@/scene'
-import { hexToOklch, formatOklch } from '@/ui/fields/colorConvert'
 import type {
   FigmaCapturedFill,
   FigmaGradientFill,
@@ -115,7 +114,7 @@ function linear(f: FigmaGradientFill): Fill {
   if (angle < 0) angle += 360
   return {
     kind: 'linear',
-    stops: stopsToOurs(f.gradientStops),
+    stops: stopsToOurs(f.gradientStops, f.opacity),
     angle: Math.round(angle),
   }
 }
@@ -127,7 +126,7 @@ function radial(f: FigmaGradientFill): Fill {
   const center = f.gradientHandlePositions[0] ?? { x: 0.5, y: 0.5 }
   return {
     kind: 'radial',
-    stops: stopsToOurs(f.gradientStops),
+    stops: stopsToOurs(f.gradientStops, f.opacity),
     cx: clamp01(center.x),
     cy: clamp01(center.y),
     shape: 'ellipse',
@@ -145,7 +144,7 @@ function conic(f: FigmaGradientFill): Fill {
   if (angle < 0) angle += 360
   return {
     kind: 'conic',
-    stops: stopsToOurs(f.gradientStops),
+    stops: stopsToOurs(f.gradientStops, f.opacity),
     angle: Math.round(angle),
     cx: clamp01(center.x),
     cy: clamp01(center.y),
@@ -184,17 +183,26 @@ function image(f: FigmaImageFill, assets: Record<string, string>): Fill | null {
 
 function stopsToOurs(
   stops: Array<{ position: number; color: { r: number; g: number; b: number; a: number } }>,
+  paintOpacity = 1,
 ): GradientStop[] {
   return stops.map((s) => ({
     at: clamp01(s.position),
-    color: colorWithOpacity(s.color.r, s.color.g, s.color.b, s.color.a),
+    color: colorWithOpacity(
+      s.color.r,
+      s.color.g,
+      s.color.b,
+      s.color.a * paintOpacity,
+    ),
   }))
 }
 
 function colorWithOpacity(r: number, g: number, b: number, opacity = 1): string {
   const alpha = clamp01(opacity)
   if (alpha < 1) return rgbToRgba(r, g, b, alpha)
-  return rgbToOklch(r, g, b)
+  // Keep Figma's source sRGB channels in their native color space.
+  // Converting to rounded OKLCH and back introduced small channel drift,
+  // which is visible in pixel diffs even though the colors look similar.
+  return rgbToHex(r, g, b)
 }
 
 function rgbToRgba(r: number, g: number, b: number, alpha: number): string {
@@ -205,17 +213,10 @@ function channelToByte(n: number): number {
   return Math.round(clamp01(n) * 255)
 }
 
-function rgbToOklch(r: number, g: number, b: number): string {
-  // Figma's r/g/b are 0..1 sRGB. Convert via hex round-trip — reuses
-  // the OKLab math in colorConvert.ts without us re-implementing it.
-  const hex =
-    '#' +
-    [r, g, b]
-      .map((c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0'))
-      .join('')
-  const lch = hexToOklch(hex)
-  if (!lch) return 'oklch(0.5 0 0)'
-  return formatOklch(lch)
+function rgbToHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b]
+    .map((channel) => channelToByte(channel).toString(16).padStart(2, '0'))
+    .join('')}`
 }
 
 function solidColorFor(fill: Fill | null): string {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import type { NodeId } from '@/scene'
 import { getAnimEngine } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
@@ -57,6 +57,67 @@ export interface AnimatedValue {
   blurQuality?: number
 }
 
+const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<
+  NodeId,
+  AnimatedValue
+>
+
+function sameAnimatedValue(
+  left: AnimatedValue | undefined,
+  right: AnimatedValue | undefined,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  const leftKeys = Object.keys(left) as (keyof AnimatedValue)[]
+  const rightKeys = Object.keys(right) as (keyof AnimatedValue)[]
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every((key) => Object.is(left[key], right[key]))
+}
+
+/**
+ * Select one stable slice from the animation engine's global snapshot.
+ *
+ * The engine publishes a new object every frame. Returning that global
+ * object from every consumer meant a camera-only track also rerendered the
+ * complete scene DOM. This selector structurally shares its previous result
+ * and returns the same frozen empty object when none of the requested nodes
+ * is animated.
+ */
+export function createAnimatedSnapshotSelector(nodeIds: readonly NodeId[]) {
+  const selectedIds = [...nodeIds]
+  let previousSource: Record<NodeId, AnimatedValue> | null = null
+  let previousSelection = EMPTY_ANIMATED_VALUES
+
+  return (source: Record<NodeId, AnimatedValue>): Record<NodeId, AnimatedValue> => {
+    if (source === previousSource) return previousSelection
+    previousSource = source
+
+    const next: Record<NodeId, AnimatedValue> = {}
+    for (const id of selectedIds) {
+      const value = source[id]
+      if (value) next[id] = value
+    }
+    const nextIds = Object.keys(next)
+    if (nextIds.length === 0) {
+      previousSelection = EMPTY_ANIMATED_VALUES
+      return previousSelection
+    }
+
+    const previousIds = Object.keys(previousSelection)
+    if (
+      previousIds.length === nextIds.length &&
+      nextIds.every((id) =>
+        sameAnimatedValue(previousSelection[id], next[id]),
+      )
+    ) {
+      return previousSelection
+    }
+
+    previousSelection = next
+    return previousSelection
+  }
+}
+
 /**
  * Subscribe to the engine's per-frame output for a set of nodes.
  *
@@ -69,15 +130,17 @@ export function useAnimatedValues(
   nodeIds: NodeId[],
 ): Record<NodeId, AnimatedValue> {
   const engine = getAnimEngine()
-  // nodeIds changes identity on every Canvas render because the tree
-  // walk re-runs. The engine ignores the actual contents and returns
-  // its latest snapshot, so the argument is advisory: it lets the
-  // engine know which nodes the UI needs. In practice we subscribe to
-  // the whole snapshot and the consumer pulls what it wants.
-  void nodeIds
+  const selectSnapshot = useMemo(
+    () => createAnimatedSnapshotSelector(nodeIds),
+    [nodeIds],
+  )
+  const getSelectedSnapshot = useMemo(
+    () => () => selectSnapshot(engine.getSnapshot()),
+    [engine, selectSnapshot],
+  )
   return useSyncExternalStore(
     engine.subscribe,
-    engine.getSnapshot,
-    engine.getSnapshot,
+    getSelectedSnapshot,
+    getSelectedSnapshot,
   )
 }
