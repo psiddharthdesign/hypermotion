@@ -93,6 +93,10 @@ export interface AnimatedValue {
   nearClip?: number
   farClip?: number
   aperture?: number
+  fStop?: number
+  bladeCount?: number
+  bladeRotation?: number
+  bokehRatio?: number
   iso?: number
   blurLevel?: number
   blurQuality?: number
@@ -566,6 +570,18 @@ function writeProperty(
       break
     case 'camera.aperture':
       into.aperture = value
+      break
+    case 'camera.fStop':
+      into.fStop = value
+      break
+    case 'camera.bladeCount':
+      into.bladeCount = value
+      break
+    case 'camera.bladeRotation':
+      into.bladeRotation = value
+      break
+    case 'camera.bokehRatio':
+      into.bokehRatio = value
       break
     case 'camera.iso':
       into.iso = value

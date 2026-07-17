@@ -259,6 +259,11 @@ export interface NodeBaseMutable {
   focusRadius: number
   focusFalloff: number
   aperture: number
+  fStop: number
+  bladeCount: number
+  bladeRotation: number
+  bokehRatio: number
+  dofPreviewQuality: CameraNode['dofPreviewQuality']
   iso: number
   blurLevel: number
   blurQuality: number
@@ -727,9 +732,16 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           focusRadius: (y.get('focusRadius') as number | undefined) ?? 160,
           focusFalloff: (y.get('focusFalloff') as number | undefined) ?? 180,
           aperture: (y.get('aperture') as number | undefined) ?? 0,
+          fStop: (y.get('fStop') as number | undefined) ?? 2.8,
+          bladeCount: (y.get('bladeCount') as number | undefined) ?? 7,
+          bladeRotation: (y.get('bladeRotation') as number | undefined) ?? 0,
+          bokehRatio: (y.get('bokehRatio') as number | undefined) ?? 1,
+          dofPreviewQuality:
+            (y.get('dofPreviewQuality') as CameraNode['dofPreviewQuality'] | undefined) ??
+            'balanced',
           iso: (y.get('iso') as number | undefined) ?? 100,
           blurLevel: (y.get('blurLevel') as number | undefined) ?? 1,
-          blurQuality: (y.get('blurQuality') as number | undefined) ?? 8,
+          blurQuality: (y.get('blurQuality') as number | undefined) ?? 24,
           showFocusPlane: (y.get('showFocusPlane') as boolean | undefined) ?? false,
         } as CameraNode
       }
@@ -1007,9 +1019,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('focusRadius', cp?.focusRadius ?? 160)
           y.set('focusFalloff', cp?.focusFalloff ?? 180)
           y.set('aperture', cp?.aperture ?? 0)
+          y.set('fStop', cp?.fStop ?? 2.8)
+          y.set('bladeCount', cp?.bladeCount ?? 7)
+          y.set('bladeRotation', cp?.bladeRotation ?? 0)
+          y.set('bokehRatio', cp?.bokehRatio ?? 1)
+          y.set('dofPreviewQuality', cp?.dofPreviewQuality ?? 'balanced')
           y.set('iso', cp?.iso ?? 100)
           y.set('blurLevel', cp?.blurLevel ?? 1)
-          y.set('blurQuality', cp?.blurQuality ?? 8)
+          y.set('blurQuality', cp?.blurQuality ?? 24)
           y.set('showFocusPlane', cp?.showFocusPlane ?? false)
         }
 

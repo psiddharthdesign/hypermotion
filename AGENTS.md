@@ -399,7 +399,8 @@ camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ,
 camera.focusRadius, camera.focusFalloff,
 camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ,
 camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip,
-camera.aperture, camera.iso, camera.blurLevel, camera.blurQuality,
+camera.aperture, camera.fStop, camera.bladeCount, camera.bladeRotation,
+camera.bokehRatio, camera.iso, camera.blurLevel, camera.blurQuality,
 appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
@@ -407,6 +408,11 @@ text.progress, layout.gap, layout.padding.top, layout.padding.right,
 layout.padding.bottom, layout.padding.left, layout.direction,
 size.width, size.height, variant
 ```
+
+`camera.blurQuality` controls the final/export depth-of-field sample budget. It
+defaults to 24 (Balanced), has an effective range of 24-48 samples, and clamps
+legacy lower values to 24 at render time. Higher values produce smoother bokeh
+at greater render cost.
 
 EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
 

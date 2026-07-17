@@ -8,7 +8,7 @@ import {
   useSceneAPI,
   useSceneVersion,
 } from '@/scene'
-import type { NodeId } from '@/scene'
+import type { CameraNode, NodeId } from '@/scene'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
@@ -42,6 +42,12 @@ import {
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { registerFont } from '@/fonts'
 import { useUI } from '@/state/ui'
+import {
+  buildApertureBokehPlan,
+  resolveDofRenderQuality,
+  type DofRenderQuality,
+} from './apertureBokeh'
+import { shouldUseRadialExportFocusMask } from './focusFallback'
 
 /**
  * RenderWindowApp — the chrome-less render shell loaded in the hidden
@@ -431,6 +437,11 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     >
       <div
         data-canvas-root
+        data-render-camera-backend={
+          camera && camera.kind === 'camera' && threeCameraAvailable
+            ? 'webgl'
+            : 'dom'
+        }
         style={{
           position: 'absolute',
           left: 0,
@@ -511,6 +522,8 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               showHelpers={false}
               showPlanes
               exportable
+              finalRender
+              renderPixelRatio={Math.max(scaleX, scaleY)}
               playing={playing}
               playhead={playhead}
               onAvailabilityChange={setThreeCameraAvailable}
@@ -688,14 +701,23 @@ async function runExportLoop(
             }`,
           )
         }
-        const focusEffect = resolveRenderWindowFocusEffect(
-          api,
-          engine.getSnapshot(),
-          sceneCanvas,
-          { width: canvasEl.width, height: canvasEl.height },
-        )
-        if (focusEffect) {
-          canvasEl = applyCanvasFocusBlur(canvasEl, focusEffect)
+        // ThreeSceneViewport already resolves depth-of-field in its final
+        // render pass. Applying the canvas aperture pass on that capture would
+        // double-blur it. Keep the deterministic canvas bokeh as a graceful
+        // fallback for DOM rendering or machines where WebGL is unavailable.
+        const cameraBackend = document.querySelector<HTMLElement>(
+          '[data-canvas-root]',
+        )?.dataset.renderCameraBackend
+        if (cameraBackend !== 'webgl') {
+          const focusEffect = resolveRenderWindowFocusEffect(
+            api,
+            engine.getSnapshot(),
+            sceneCanvas,
+            { width: canvasEl.width, height: canvasEl.height },
+          )
+          if (focusEffect) {
+            canvasEl = applyCanvasFocusBlur(canvasEl, focusEffect)
+          }
         }
 
         if (!encoder) {
@@ -851,11 +873,17 @@ function mimeForFormat(format: 'mp4' | 'webm' | 'gif'): string {
 }
 
 interface ExportFocusEffect {
+  mode: CameraNode['focusMode']
   focusX: number
   focusY: number
   radius: number
   feather: number
   blurPx: number
+  bladeCount: number
+  bladeRotation: number
+  bokehRatio: number
+  quality: DofRenderQuality
+  legacyQuality: number
 }
 
 function resolveRenderWindowFocusEffect(
@@ -887,12 +915,28 @@ function resolveRenderWindowFocusEffect(
   const scaleX = outputCanvas.width / sceneCanvas.width
   const scaleY = outputCanvas.height / sceneCanvas.height
   const scale = (scaleX + scaleY) / 2
+  const cameraWithRenderQuality = camera as typeof camera & {
+    dofRenderQuality?: DofRenderQuality
+  }
+  const legacyQuality = Math.max(
+    24,
+    cameraAnim?.blurQuality ?? camera.blurQuality ?? 24,
+  )
   return {
+    mode: dof.mode,
     focusX: dof.focusX * scaleX,
     focusY: dof.focusY * scaleY,
     radius: Math.max(1, dof.focusRadius * scale),
     feather: Math.max(1, dof.featherPx * scale),
     blurPx: Math.max(0, dof.blurPx * scale),
+    bladeCount: cameraAnim?.bladeCount ?? camera.bladeCount ?? 0,
+    bladeRotation: cameraAnim?.bladeRotation ?? camera.bladeRotation ?? 0,
+    bokehRatio: cameraAnim?.bokehRatio ?? camera.bokehRatio ?? 1,
+    quality: resolveDofRenderQuality(
+      cameraWithRenderQuality.dofRenderQuality,
+      legacyQuality,
+    ),
+    legacyQuality,
   }
 }
 
@@ -902,7 +946,17 @@ function applyCanvasFocusBlur(
 ): HTMLCanvasElement {
   const width = source.width
   const height = source.height
-  const blur = Math.max(0, Math.min(128, focus.blurPx))
+  const bokeh = buildApertureBokehPlan({
+    width,
+    height,
+    blurPx: focus.blurPx,
+    bladeCount: focus.bladeCount,
+    bladeRotation: focus.bladeRotation,
+    bokehRatio: focus.bokehRatio,
+    quality: focus.quality,
+    legacyQuality: focus.legacyQuality,
+  })
+  const blur = bokeh.blurPx
   if (width <= 0 || height <= 0 || blur <= 0.05) return source
 
   const blurred = document.createElement('canvas')
@@ -915,7 +969,7 @@ function applyCanvasFocusBlur(
   // Chromium samples transparent/black beyond the edges, which creates a
   // dark vignette at high blur values. Build a padded edge-clamped copy
   // first, blur that, then crop the original frame region back out.
-  const pad = Math.max(8, Math.ceil(blur * 3))
+  const pad = bokeh.paddingPx
   const padded = document.createElement('canvas')
   padded.width = width + pad * 2
   padded.height = height + pad * 2
@@ -961,14 +1015,48 @@ function applyCanvasFocusBlur(
     pad,
   )
 
-  const paddedBlur = document.createElement('canvas')
-  paddedBlur.width = padded.width
-  paddedBlur.height = padded.height
-  const paddedBlurCtx = paddedBlur.getContext('2d', { alpha: false })
-  if (!paddedBlurCtx) return source
-  paddedBlurCtx.filter = `blur(${Number(blur.toFixed(2))}px)`
-  paddedBlurCtx.drawImage(padded, 0, 0)
-  blurredCtx.drawImage(paddedBlur, pad, pad, width, height, 0, 0, width, height)
+  // A small Gaussian prefilter fills the space between deterministic aperture
+  // samples. The actual defocus then comes from averaging shifted copies over
+  // the round/polygonal diaphragm, preserving blade and anamorphic bokeh shape
+  // instead of reducing every lens to the browser's generic Gaussian filter.
+  let apertureSource = padded
+  if (bokeh.prefilterPx > 0.05) {
+    const prefiltered = document.createElement('canvas')
+    prefiltered.width = padded.width
+    prefiltered.height = padded.height
+    const prefilteredCtx = prefiltered.getContext('2d', { alpha: false })
+    if (!prefilteredCtx) return source
+    prefilteredCtx.filter = `blur(${Number(bokeh.prefilterPx.toFixed(2))}px)`
+    prefilteredCtx.drawImage(padded, 0, 0)
+    apertureSource = prefiltered
+  }
+
+  // Incremental source-over averaging is exact for opaque canvases:
+  // after N samples the destination contains their arithmetic mean. It avoids
+  // additive-composite clipping around bright highlights and is deterministic
+  // across frames regardless of the selected export tier.
+  bokeh.samples.forEach((sample, index) => {
+    blurredCtx.globalAlpha = index === 0 ? 1 : 1 / (index + 1)
+    blurredCtx.drawImage(
+      apertureSource,
+      pad + sample.x,
+      pad + sample.y,
+      width,
+      height,
+      0,
+      0,
+      width,
+      height,
+    )
+  })
+  blurredCtx.globalAlpha = 1
+
+  // The DOM fallback has no per-layer depth buffer. A circular sharp mask is
+  // therefore valid only for the screen/point focus tool. Plane and target
+  // focus describe camera-space depth, so drawing the same radial mask would
+  // invent a visibly incorrect point-focus region. Preserve their non-radial
+  // semantics by returning the uniformly defocused fallback instead.
+  if (!shouldUseRadialExportFocusMask(focus.mode)) return blurred
 
   const sharp = document.createElement('canvas')
   sharp.width = width

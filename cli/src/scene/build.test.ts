@@ -931,7 +931,12 @@ test('applyScenePatch fills camera defaults for created nodes', () => {
   })
   assert.equal(nodes['shot-camera'].focalLength, 1000)
   assert.equal(nodes['shot-camera'].focusMode, 'screen')
-  assert.equal(nodes['shot-camera'].blurQuality, 8)
+  assert.equal(nodes['shot-camera'].fStop, 2.8)
+  assert.equal(nodes['shot-camera'].bladeCount, 7)
+  assert.equal(nodes['shot-camera'].bladeRotation, 0)
+  assert.equal(nodes['shot-camera'].bokehRatio, 1)
+  assert.equal(nodes['shot-camera'].dofPreviewQuality, 'balanced')
+  assert.equal(nodes['shot-camera'].blurQuality, 24)
   assert.equal(data.activeCameraId, 'shot-camera')
 })
 
@@ -1896,9 +1901,14 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     focusRadius: 160,
     focusFalloff: 180,
     aperture: 0,
+    fStop: 2.8,
+    bladeCount: 7,
+    bladeRotation: 0,
+    bokehRatio: 1,
+    dofPreviewQuality: 'balanced',
     iso: 100,
     blurLevel: 1,
-    blurQuality: 8,
+    blurQuality: 24,
     showFocusPlane: false,
   })
 })
@@ -2486,9 +2496,14 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   assert.equal(camera.focusRadius, 160)
   assert.equal(camera.focusFalloff, 180)
   assert.equal(camera.aperture, 0)
+  assert.equal(camera.fStop, 2.8)
+  assert.equal(camera.bladeCount, 7)
+  assert.equal(camera.bladeRotation, 0)
+  assert.equal(camera.bokehRatio, 1)
+  assert.equal(camera.dofPreviewQuality, 'balanced')
   assert.equal(camera.iso, 100)
   assert.equal(camera.blurLevel, 1)
-  assert.equal(camera.blurQuality, 8)
+  assert.equal(camera.blurQuality, 24)
   assert.equal(camera.showFocusPlane, false)
 })
 
@@ -2503,6 +2518,11 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   camera.farClip = 5000
   camera.depthOfField = true
   camera.aperture = 1.8
+  camera.fStop = 1.4
+  camera.bladeCount = 11
+  camera.bladeRotation = 22.5
+  camera.bokehRatio = 1.6
+  camera.dofPreviewQuality = 'high'
   camera.iso = 400
   camera.blurLevel = 3
   camera.blurQuality = 12
@@ -2518,6 +2538,11 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   assert.equal(cameraNode.farClip, 5000)
   assert.equal(cameraNode.depthOfField, true)
   assert.equal(cameraNode.aperture, 1.8)
+  assert.equal(cameraNode.fStop, 1.4)
+  assert.equal(cameraNode.bladeCount, 11)
+  assert.equal(cameraNode.bladeRotation, 22.5)
+  assert.equal(cameraNode.bokehRatio, 1.6)
+  assert.equal(cameraNode.dofPreviewQuality, 'high')
   assert.equal(cameraNode.iso, 400)
   assert.equal(cameraNode.blurLevel, 3)
   assert.equal(cameraNode.blurQuality, 12)

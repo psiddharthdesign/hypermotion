@@ -1327,6 +1327,10 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
   const playing = useUI((state) => state.playing)
+  const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
+  const setFocusPickingCameraId = useUI(
+    (state) => state.setFocusPickingCameraId,
+  )
   // Whether this node's parent is a frame with fill explicitly set to
   // null. When that's the case, a child fill would paint on top of a
   // parent that's invisible — so we dim the FillField to signal
@@ -1373,29 +1377,20 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera'
       ? anim?.focusY ?? node.focusY ?? node.transform.y
       : 0
-  const liveFocusWorldX =
-    node.kind === 'camera'
-      ? anim?.focusWorldX ??
-        anim?.focusX ??
-        node.focusWorldX ??
-        node.focusX ??
-        node.transform.x
-      : 0
-  const liveFocusWorldY =
-    node.kind === 'camera'
-      ? anim?.focusWorldY ??
-        anim?.focusY ??
-        node.focusWorldY ??
-        node.focusY ??
-        node.transform.y
-      : 0
   const liveFocusRadius =
     node.kind === 'camera' ? anim?.focusRadius ?? node.focusRadius ?? 160 : 160
   const liveFocusFalloff =
     node.kind === 'camera' ? anim?.focusFalloff ?? node.focusFalloff ?? 180 : 180
-  const liveAperture =
-    node.kind === 'camera' ? anim?.aperture ?? node.aperture ?? 0 : 0
-  const liveIso = node.kind === 'camera' ? node.iso ?? 100 : 100
+  const liveFStop =
+    node.kind === 'camera' ? anim?.fStop ?? node.fStop ?? 2.8 : 2.8
+  const liveBladeCount =
+    node.kind === 'camera' ? anim?.bladeCount ?? node.bladeCount ?? 7 : 7
+  const liveBladeRotation =
+    node.kind === 'camera'
+      ? anim?.bladeRotation ?? node.bladeRotation ?? 0
+      : 0
+  const liveBokehRatio =
+    node.kind === 'camera' ? anim?.bokehRatio ?? node.bokehRatio ?? 1 : 1
   const liveBlurLevel =
     node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
   const liveFieldOfView =
@@ -1408,16 +1403,26 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
   const liveFarClip =
     node.kind === 'camera' ? anim?.farClip ?? node.farClip ?? 100000 : 100000
-  useEffect(() => {
-    if (node.kind !== 'camera') return
-    if ((node.focusMode ?? 'screen') === 'screen' && !node.focusTargetNodeId) {
-      return
-    }
-    api.doc.transact(() => {
-      api.setNodeProperty(node.id, 'focusMode', 'screen')
-      api.setNodeProperty(node.id, 'focusTargetNodeId', null)
-    })
-  }, [api, node])
+  const liveBlurQuality =
+    node.kind === 'camera'
+      ? Math.max(24, anim?.blurQuality ?? node.blurQuality ?? 24)
+      : 24
+  const focusTargetOptions = useMemo(() => {
+    // `version` makes this list react to layer additions, deletions and names.
+    void version
+    if (node.kind !== 'camera') return []
+    return api
+      .getAllNodeIds()
+      .map((id) => api.getNode(id))
+      .filter(
+        (candidate): candidate is Node =>
+          !!candidate && candidate.kind !== 'camera' && candidate.id !== node.id,
+      )
+      .map((candidate) => ({
+        value: candidate.id,
+        label: candidate.name || candidate.kind,
+      }))
+  }, [api, node.id, node.kind, version])
   // Convenience patchers. Each reads the current group, merges the patch,
   // and writes the whole group back. This is the granularity setNodeProperty
   // accepts today; later we might split groups into nested Y.Maps so
@@ -1541,6 +1546,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       Pick<
         CameraNode,
         | 'focusMode'
+        | 'depthOfField'
         | 'focusDistance'
         | 'focusX'
         | 'focusY'
@@ -1553,6 +1559,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focalLength'
         | 'scrollSensitivity'
         | 'aperture'
+        | 'fStop'
+        | 'bladeCount'
+        | 'bladeRotation'
+        | 'bokehRatio'
+        | 'dofPreviewQuality'
         | 'iso'
         | 'blurLevel'
         | 'fieldOfView'
@@ -1569,6 +1580,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     if (node.kind !== 'camera') return
     if (patch.focusMode !== undefined) {
       api.setNodeProperty(node.id, 'focusMode', patch.focusMode)
+    }
+    if (patch.depthOfField !== undefined) {
+      api.setNodeProperty(node.id, 'depthOfField', patch.depthOfField)
     }
     if (patch.focusDistance !== undefined) {
       api.setNodeProperty(node.id, 'focusDistance', patch.focusDistance)
@@ -1610,6 +1624,25 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     if (patch.aperture !== undefined) {
       api.setNodeProperty(node.id, 'aperture', patch.aperture)
     }
+    if (patch.fStop !== undefined) {
+      api.setNodeProperty(node.id, 'fStop', patch.fStop)
+    }
+    if (patch.bladeCount !== undefined) {
+      api.setNodeProperty(node.id, 'bladeCount', patch.bladeCount)
+    }
+    if (patch.bladeRotation !== undefined) {
+      api.setNodeProperty(node.id, 'bladeRotation', patch.bladeRotation)
+    }
+    if (patch.bokehRatio !== undefined) {
+      api.setNodeProperty(node.id, 'bokehRatio', patch.bokehRatio)
+    }
+    if (patch.dofPreviewQuality !== undefined) {
+      api.setNodeProperty(
+        node.id,
+        'dofPreviewQuality',
+        patch.dofPreviewQuality,
+      )
+    }
     if (patch.iso !== undefined) {
       api.setNodeProperty(node.id, 'iso', patch.iso)
     }
@@ -1641,25 +1674,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       api.setNodeProperty(node.id, 'showFocusPlane', patch.showFocusPlane)
     }
     stampForPatch('camera', patch)
-  }
-  const patchPreciseFocusPoint = (
-    patch: Partial<Pick<CameraNode, 'focusWorldX' | 'focusWorldY' | 'focusWorldZ'>>,
-  ) => {
-    if (node.kind !== 'camera') return
-    const nextX = patch.focusWorldX ?? node.focusWorldX ?? node.focusX ?? node.transform.x
-    const nextY = patch.focusWorldY ?? node.focusWorldY ?? node.focusY ?? node.transform.y
-    const nextZ =
-      patch.focusWorldZ ?? node.focusWorldZ ?? node.focusDistance ?? node.transform.z
-    api.doc.transact(() => {
-      patchCamera({
-        focusMode: 'plane',
-        focusWorldX: nextX,
-        focusWorldY: nextY,
-        focusWorldZ: nextZ,
-        focusDistance: nextZ,
-        focusTargetNodeId: null,
-      })
-    })
   }
   const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
@@ -2257,134 +2271,44 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             </FieldRow>
             <FieldRow
-              label="Aperture"
+              label="Clip start"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
-                  propertyId="camera.aperture"
-                  currentValue={liveAperture}
+                  propertyId="camera.nearClip"
+                  currentValue={liveNearClip}
                 />
               }
             >
               <NumberField
-                value={Math.max(0, liveAperture)}
-                onCommit={(v) => patchCamera({ aperture: Math.max(0, v) })}
-                min={0}
-                max={22}
-                step={0.25}
-              />
-            </FieldRow>
-            <FieldRow
-              label="Focus radius"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.focusRadius"
-                  currentValue={liveFocusRadius}
-                />
-              }
-            >
-              <NumberField
-                value={liveFocusRadius}
-                onCommit={(v) => patchCamera({ focusRadius: Math.max(4, v) })}
-                min={4}
-                max={2000}
-                step={5}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Focus falloff"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.focusFalloff"
-                  currentValue={liveFocusFalloff}
-                />
-              }
-            >
-              <NumberField
-                value={liveFocusFalloff}
-                onCommit={(v) => patchCamera({ focusFalloff: Math.max(1, v) })}
-                min={1}
-                max={4000}
-                step={5}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow
-              label="Focus X"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.focusX"
-                  currentValue={liveFocusX}
-                />
-              }
-            >
-              <NumberField
-                value={liveFocusX}
+                value={liveNearClip}
                 onCommit={(v) =>
                   patchCamera({
-                    focusMode: 'screen',
-                    focusX: v,
-                    focusWorldX: v,
-                    focusTargetNodeId: null,
+                    nearClip: Math.max(0.001, Math.min(liveFarClip - 0.001, v)),
                   })
                 }
-                step={1}
-                suffix="px"
+                min={0.001}
+                max={Math.max(0.002, liveFarClip - 0.001)}
+                step={0.1}
               />
             </FieldRow>
             <FieldRow
-              label="Focus Y"
+              label="Clip end"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
-                  propertyId="camera.focusY"
-                  currentValue={liveFocusY}
+                  propertyId="camera.farClip"
+                  currentValue={liveFarClip}
                 />
               }
             >
               <NumberField
-                value={liveFocusY}
+                value={liveFarClip}
                 onCommit={(v) =>
-                  patchCamera({
-                    focusMode: 'screen',
-                    focusY: v,
-                    focusWorldY: v,
-                    focusTargetNodeId: null,
-                  })
+                  patchCamera({ farClip: Math.max(liveNearClip + 0.001, v) })
                 }
-                step={1}
-                suffix="px"
-              />
-            </FieldRow>
-            <FieldRow label="Depth of field">
-              <CheckboxField
-                value={node.depthOfField ?? false}
-                onCommit={(v) => api.setNodeProperty(node.id, 'depthOfField', v)}
-              />
-            </FieldRow>
-            <FieldRow
-              label="Blur amount"
-              keyframe={
-                <KeyframeButton
-                  nodeId={node.id}
-                  propertyId="camera.blurLevel"
-                  currentValue={liveBlurLevel}
-                />
-              }
-            >
-              <NumberField
-                value={Math.max(0, Math.min(128, liveBlurLevel))}
-                onCommit={(v) =>
-                  patchCamera({ blurLevel: Math.max(0, Math.min(128, v)) })
-                }
-                min={0}
-                max={128}
-                step={1}
-                suffix="px"
+                min={liveNearClip + 0.001}
+                step={10}
               />
             </FieldRow>
             <FillField
@@ -2392,6 +2316,366 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               value={node.background ?? null}
               onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
             />
+          </Section>
+
+          <Section title="Depth of Field">
+            <FieldRow label="Enable">
+              <CheckboxField
+                value={node.depthOfField ?? false}
+                onCommit={(depthOfField) =>
+                  patchCamera({
+                    depthOfField,
+                    ...(depthOfField && (node.aperture ?? 0) <= 0
+                      ? { aperture: 1 }
+                      : {}),
+                  })
+                }
+              />
+            </FieldRow>
+            {node.depthOfField ? (
+              <>
+                <FieldRow label="Focus mode">
+                  <SelectField<CameraNode['focusMode']>
+                    value={node.focusMode ?? 'screen'}
+                    options={[
+                      { value: 'plane', label: 'Distance' },
+                      { value: 'screen', label: 'Point' },
+                      { value: 'target', label: 'Object' },
+                    ]}
+                    onCommit={(focusMode) => {
+                      const targetId =
+                        focusMode === 'target'
+                          ? node.focusTargetNodeId ??
+                            focusTargetOptions[0]?.value ??
+                            null
+                          : null
+                      patchCamera({ focusMode, focusTargetNodeId: targetId })
+                    }}
+                    width="w-full"
+                  />
+                </FieldRow>
+
+                {node.focusMode === 'target' ? (
+                  <FieldRow label="Target">
+                    <SelectField<string>
+                      value={node.focusTargetNodeId ?? ''}
+                      options={[
+                        { value: '', label: 'Choose layer' },
+                        ...focusTargetOptions,
+                      ]}
+                      onCommit={(focusTargetNodeId) =>
+                        patchCamera({
+                          focusMode: 'target',
+                          focusTargetNodeId: focusTargetNodeId || null,
+                        })
+                      }
+                      width="w-full"
+                    />
+                  </FieldRow>
+                ) : (
+                  <FieldRow
+                    label="Focus distance"
+                    keyframe={
+                      <KeyframeButton
+                        nodeId={node.id}
+                        propertyId="camera.focusDistance"
+                        currentValue={liveFocusDistance}
+                      />
+                    }
+                  >
+                    <NumberField
+                      value={liveFocusDistance}
+                      onCommit={(v) =>
+                        patchCamera({
+                          focusDistance: v,
+                          focusWorldZ: v,
+                          focusTargetNodeId: null,
+                        })
+                      }
+                      step={1}
+                      suffix="px"
+                    />
+                  </FieldRow>
+                )}
+
+                {node.focusMode === 'screen' ? (
+                  <>
+                    <FieldRow label="Pick point">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFocusPickingCameraId(
+                            focusPickingCameraId === node.id ? null : node.id,
+                          )
+                        }
+                        className={[
+                          'h-7 w-full rounded-md border px-2 text-[11px] transition-colors',
+                          focusPickingCameraId === node.id
+                            ? 'border-accent bg-accent/15 text-accent'
+                            : 'border-border bg-app-bg text-text-muted hover:border-border-strong hover:text-text',
+                        ].join(' ')}
+                      >
+                        {focusPickingCameraId === node.id
+                          ? 'Cancel picking'
+                          : 'Pick on canvas'}
+                      </button>
+                    </FieldRow>
+                    <FieldRow
+                      label="Point X"
+                      keyframe={
+                        <KeyframeButton
+                          nodeId={node.id}
+                          propertyId="camera.focusX"
+                          currentValue={liveFocusX}
+                        />
+                      }
+                    >
+                      <NumberField
+                        value={liveFocusX}
+                        onCommit={(v) =>
+                          patchCamera({
+                            focusMode: 'screen',
+                            focusX: v,
+                            focusWorldX: v,
+                            focusTargetNodeId: null,
+                          })
+                        }
+                        step={1}
+                        suffix="px"
+                      />
+                    </FieldRow>
+                    <FieldRow
+                      label="Point Y"
+                      keyframe={
+                        <KeyframeButton
+                          nodeId={node.id}
+                          propertyId="camera.focusY"
+                          currentValue={liveFocusY}
+                        />
+                      }
+                    >
+                      <NumberField
+                        value={liveFocusY}
+                        onCommit={(v) =>
+                          patchCamera({
+                            focusMode: 'screen',
+                            focusY: v,
+                            focusWorldY: v,
+                            focusTargetNodeId: null,
+                          })
+                        }
+                        step={1}
+                        suffix="px"
+                      />
+                    </FieldRow>
+                    <FieldRow
+                      label="Point radius"
+                      keyframe={
+                        <KeyframeButton
+                          nodeId={node.id}
+                          propertyId="camera.focusRadius"
+                          currentValue={liveFocusRadius}
+                        />
+                      }
+                    >
+                      <NumberField
+                        value={liveFocusRadius}
+                        onCommit={(v) =>
+                          patchCamera({ focusRadius: Math.max(4, v) })
+                        }
+                        min={4}
+                        max={2000}
+                        step={5}
+                        suffix="px"
+                      />
+                    </FieldRow>
+                    <FieldRow
+                      label="Falloff"
+                      keyframe={
+                        <KeyframeButton
+                          nodeId={node.id}
+                          propertyId="camera.focusFalloff"
+                          currentValue={liveFocusFalloff}
+                        />
+                      }
+                    >
+                      <NumberField
+                        value={liveFocusFalloff}
+                        onCommit={(v) =>
+                          patchCamera({ focusFalloff: Math.max(1, v) })
+                        }
+                        min={1}
+                        max={4000}
+                        step={5}
+                        suffix="px"
+                      />
+                    </FieldRow>
+                  </>
+                ) : null}
+
+                <FieldRow label="Show plane">
+                  <CheckboxField
+                    value={node.showFocusPlane ?? false}
+                    onCommit={(showFocusPlane) =>
+                      patchCamera({ showFocusPlane })
+                    }
+                  />
+                </FieldRow>
+
+                <div className="!mt-4 border-t border-border pt-3 text-[11px] font-medium uppercase tracking-wide text-text-dim">
+                  Aperture
+                </div>
+                <FieldRow
+                  label="F-Stop"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.fStop"
+                      currentValue={liveFStop}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveFStop}
+                    onCommit={(v) =>
+                      patchCamera({ fStop: Math.max(0.1, Math.min(64, v)) })
+                    }
+                    min={0.1}
+                    max={64}
+                    step={0.1}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Blades"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bladeCount"
+                      currentValue={liveBladeCount}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={Math.round(liveBladeCount)}
+                    onCommit={(v) =>
+                      patchCamera({
+                        bladeCount: Math.max(3, Math.min(16, Math.round(v))),
+                      })
+                    }
+                    min={3}
+                    max={16}
+                    step={1}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Rotation"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bladeRotation"
+                      currentValue={liveBladeRotation}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBladeRotation}
+                    onCommit={(bladeRotation) =>
+                      patchCamera({ bladeRotation })
+                    }
+                    step={1}
+                    suffix="°"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Bokeh ratio"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bokehRatio"
+                      currentValue={liveBokehRatio}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBokehRatio}
+                    onCommit={(v) =>
+                      patchCamera({
+                        bokehRatio: Math.max(0.25, Math.min(4, v)),
+                      })
+                    }
+                    min={0.25}
+                    max={4}
+                    step={0.05}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Max blur"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.blurLevel"
+                      currentValue={liveBlurLevel}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={Math.max(0, Math.min(128, liveBlurLevel))}
+                    onCommit={(v) =>
+                      patchCamera({ blurLevel: Math.max(0, Math.min(128, v)) })
+                    }
+                    min={0}
+                    max={128}
+                    step={1}
+                    suffix="px"
+                  />
+                </FieldRow>
+                <FieldRow label="Preview quality">
+                  <SelectField<CameraNode['dofPreviewQuality']>
+                    value={node.dofPreviewQuality ?? 'balanced'}
+                    options={[
+                      { value: 'draft', label: 'Draft · 6 taps' },
+                      { value: 'balanced', label: 'Balanced · 24 taps' },
+                      { value: 'high', label: 'High · 48 taps' },
+                    ]}
+                    onCommit={(dofPreviewQuality) =>
+                      patchCamera({ dofPreviewQuality })
+                    }
+                    width="w-full"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Export samples"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.blurQuality"
+                      currentValue={liveBlurQuality}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBlurQuality}
+                    onCommit={(v) =>
+                      patchCamera({
+                        blurQuality: Math.max(24, Math.min(48, Math.round(v))),
+                      })
+                    }
+                    min={24}
+                    max={48}
+                    step={1}
+                    suffix="taps"
+                  />
+                </FieldRow>
+                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                  Preview controls live smoothness. Export samples controls the
+                  final rendered bokeh quality.
+                </p>
+              </>
+            ) : (
+              <p className="pl-[22px] text-[11px] leading-4 text-text-dim">
+                Enable depth of field to configure focus, aperture and quality.
+              </p>
+            )}
             <CameraAnimationActions node={node} api={api} />
           </Section>
         </>

@@ -4,9 +4,24 @@ import { describe, expect, it } from 'vitest'
 import {
   shouldRasterizePlaneTexture,
   textureScaleForRect,
+  viewportPixelRatioForZoom,
 } from './texturePolicy'
 
 describe('WebGL plane texture policy', () => {
+  it('quantizes the editor framebuffer to the visible zoom footprint', () => {
+    expect(viewportPixelRatioForZoom(0.23, 2)).toBe(0.5)
+    expect(viewportPixelRatioForZoom(0.5, 2)).toBe(1)
+    expect(viewportPixelRatioForZoom(1, 2)).toBe(2)
+    expect(viewportPixelRatioForZoom(0.05, 2)).toBe(0.25)
+    expect(viewportPixelRatioForZoom(0.28, 2)).toBe(0.5)
+  })
+
+  it('keeps a 4K editor preview below a 4K-class framebuffer budget', () => {
+    expect(viewportPixelRatioForZoom(0.71, 2, 3840, 2160)).toBe(1)
+    expect(viewportPixelRatioForZoom(1, 2, 3840, 2160)).toBe(1)
+    expect(viewportPixelRatioForZoom(1, 2, 1104, 908)).toBe(2)
+  })
+
   it('matches a Retina framebuffer without the previous 4x oversampling', () => {
     const scale = textureScaleForRect({ width: 1104, height: 908 }, 2)
 

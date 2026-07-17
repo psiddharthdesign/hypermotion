@@ -147,6 +147,22 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'camera.aperture', group: 'camera', label: 'Aperture',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'camera.fStop': {
+    id: 'camera.fStop', group: 'camera', label: 'F-Stop',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 2.8,
+  },
+  'camera.bladeCount': {
+    id: 'camera.bladeCount', group: 'camera', label: 'Blade Count',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 7,
+  },
+  'camera.bladeRotation': {
+    id: 'camera.bladeRotation', group: 'camera', label: 'Blade Rotation',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.bokehRatio': {
+    id: 'camera.bokehRatio', group: 'camera', label: 'Bokeh Ratio',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
   'camera.iso': {
     id: 'camera.iso', group: 'camera', label: 'ISO',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 100,
@@ -156,8 +172,8 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
   },
   'camera.blurQuality': {
-    id: 'camera.blurQuality', group: 'camera', label: 'Blur Quality',
-    layoutAffecting: false, interpolation: 'numeric', defaultValue: 8,
+    id: 'camera.blurQuality', group: 'camera', label: 'Export Samples',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 24,
   },
 
   // appearance group — also post-layout

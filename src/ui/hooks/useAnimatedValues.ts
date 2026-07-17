@@ -53,6 +53,10 @@ export interface AnimatedValue {
   nearClip?: number
   farClip?: number
   aperture?: number
+  fStop?: number
+  bladeCount?: number
+  bladeRotation?: number
+  bokehRatio?: number
   blurLevel?: number
   blurQuality?: number
 }

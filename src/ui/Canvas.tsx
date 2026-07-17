@@ -57,6 +57,7 @@ import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { viewportPixelRatioForZoom } from '@/render3d/texturePolicy'
 import { splitDomTextAnimationSegments } from '@/ui/textAnimationSegments'
 import {
   canvasTextEditPresentation,
@@ -65,6 +66,7 @@ import {
 } from '@/ui/canvasTextEditing'
 import {
   buildWorldPlanes,
+  effectiveApertureStrength,
   hitTestPlanes,
   resolveCamera3D,
   viewportPointToRay,
@@ -491,6 +493,7 @@ export function computeCameraDepthOfField(
   if (!camera || !camera.depthOfField) return null
   const focusDistance = cameraAnim?.focusDistance ?? camera.focusDistance ?? 0
   const aperture = Math.max(0, cameraAnim?.aperture ?? camera.aperture ?? 0)
+  const fStop = Math.max(0.1, cameraAnim?.fStop ?? camera.fStop ?? 2.8)
   const focusZ = cameraAnim?.focusWorldZ ?? camera.focusWorldZ ?? focusDistance
   const maxBlur = Math.max(0, Math.min(128, cameraAnim?.blurLevel ?? camera.blurLevel ?? 1))
   const focalLength = Math.max(50, camera.focalLength ?? 1000)
@@ -500,15 +503,22 @@ export function computeCameraDepthOfField(
   const safeCameraScale = Math.max(0.05, cameraScale)
   const focalFactor = Math.max(0.35, Math.min(6, focalLength / 1000))
   const dollyFactor = Math.max(0.5, Math.min(5, 1 + Math.max(0, cameraZ) / focalLength))
-  const apertureFactor =
-    aperture <= 0 ? 1 : Math.max(0.25, Math.min(5, Math.pow(aperture / 10, 1.15)))
   const focusDepthFactor = Math.max(
     0.75,
     Math.min(5, 1 + Math.abs(focusZ - cameraZ) / Math.max(120, focalLength * 0.55)),
   )
+  const opticalStrength =
+    effectiveApertureStrength(aperture, fStop) *
+    focusDepthFactor *
+    Math.sqrt(focalFactor) *
+    dollyFactor
+  // Match the GPU path: the lens controls the approach to the authored
+  // maximum, never the maximum itself. The coefficient keeps f/2.8 close to
+  // the legacy fallback while smoothly saturating very wide apertures.
+  const blurFraction = 1 - Math.exp(-Math.max(0, opticalStrength) * 0.287682)
   const blurPx = Math.min(
-    160,
-    maxBlur * apertureFactor * focusDepthFactor * Math.sqrt(focalFactor) * dollyFactor,
+    maxBlur,
+    maxBlur * blurFraction,
   )
   const effectiveFocusRadius = Math.max(
     4,
@@ -576,7 +586,10 @@ export function computeCameraDepthOfField(
     cameraZ,
     cameraScale: safeCameraScale,
     iso: Math.max(0, camera.iso ?? 100),
-    blurQuality: Math.max(1, Math.min(8, cameraAnim?.blurQuality ?? camera.blurQuality ?? 4)),
+    blurQuality: Math.max(
+      24,
+      Math.min(48, cameraAnim?.blurQuality ?? camera.blurQuality ?? 24),
+    ),
     blurAxisDeg:
       Math.abs(rotationX) + Math.abs(rotationY) < 0.001
         ? 90
@@ -764,6 +777,12 @@ export function Canvas() {
   // keyed by node id. Empty object while no tracks exist, which is the
   // current default — the engine is wired but untouched until Step 5.
   const cameraId = api.getActiveCameraId()
+  const webglPreviewPixelRatio = viewportPixelRatioForZoom(
+    view.zoom,
+    undefined,
+    canvasWidth,
+    canvasHeight,
+  )
   const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
   const textEditPresentation = canvasTextEditPresentation(
     threeCameraAvailable,
@@ -951,7 +970,15 @@ export function Canvas() {
         inherited,
         { width: canvasWidth, height: canvasHeight },
       ),
-    [api, camera, solved, animated, inherited],
+    [
+      api,
+      camera,
+      solved,
+      animated,
+      inherited,
+      canvasWidth,
+      canvasHeight,
+    ],
   )
 
   const cameraDepthOfField = useMemo(
@@ -2554,7 +2581,9 @@ export function Canvas() {
         style={{
           transform: `translate3d(${view.panX}px, ${view.panY}px, 0) scale(${view.zoom})`,
           transformOrigin: '0 0',
-          willChange: 'transform',
+          // The child WebGL canvas already owns a compositor surface. Forcing
+          // this 4K wrapper into a second permanent layer retains off-screen
+          // raster tiles and can exceed Chromium's tile-memory budget.
         }}
       >
         <div
@@ -2670,30 +2699,12 @@ export function Canvas() {
                       height={canvasHeight}
                       sceneFill={sceneFill}
                       selectedIds={selection}
-                      showHelpers={false}
-                      showPlanes
-                      exportable
-                      playing={playing}
-                      playhead={playhead}
-                      sceneVersion={version}
-                      onAvailabilityChange={setThreeCameraAvailable}
-                    />
-                  </div>
-                  {!isEditingText && focusPickingCameraId === camera.id ? (
-                    <AnimatedThreeSceneViewport
-                      api={api}
-                      layout={solved}
-                      animationIds={renderOrder}
-                      camera={camera}
-                      width={canvasWidth}
-                      height={canvasHeight}
-                      sceneFill={null}
-                      selectedIds={selection}
-                      showHelpers
-                      showPlanes={false}
-                      playing={playing}
-                      playhead={playhead}
-                      sceneVersion={version}
+                      renderPixelRatio={webglPreviewPixelRatio}
+                      showHelpers={
+                        !isEditingText &&
+                        (focusPickingCameraId === camera.id ||
+                          camera.showFocusPlane)
+                      }
                       focusWorldPoint={
                         focusTargetWorld ??
                         (previewCameraDepthOfField
@@ -2704,9 +2715,16 @@ export function Canvas() {
                             }
                           : null)
                       }
+                      showPlanes
+                      exportable
+                      playing={playing}
+                      playhead={playhead}
+                      sceneVersion={version}
+                      onAvailabilityChange={setThreeCameraAvailable}
                     />
-                  ) : null}
-                  {camera.showFocusPlane || focusPickingCameraId === camera.id ? (
+                  </div>
+                  {!threeCameraAvailable &&
+                  (camera.showFocusPlane || focusPickingCameraId === camera.id) ? (
                     <div
                       className="pointer-events-none absolute inset-0"
                       style={
@@ -2902,6 +2920,7 @@ export function Canvas() {
         {previewCameraDepthOfField?.enabled &&
         camera &&
         camera.kind === 'camera' &&
+        (camera.focusMode ?? 'screen') === 'screen' &&
         (selection.includes(camera.id) ||
           focusPickingCameraId === camera.id ||
           camera.showFocusPlane) ? (
