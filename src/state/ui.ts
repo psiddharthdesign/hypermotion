@@ -560,17 +560,31 @@ export const useUI = create<UIState>((set) => ({
       selection: ids,
       selectionAnchor: ids[ids.length - 1] ?? null,
       selectedTrackId: null,
+      selectedTrackIds: [],
+      selectedKeyframes: [],
     }),
   toggleInSelection: (id, additive) =>
     set((s) => {
       if (!additive)
-        return { selection: [id], selectionAnchor: id, selectedTrackId: null }
+        return {
+          selection: [id],
+          selectionAnchor: id,
+          selectedTrackId: null,
+          selectedTrackIds: [],
+          selectedKeyframes: [],
+        }
       const next = s.selection.includes(id)
         ? s.selection.filter((x) => x !== id)
         : [...s.selection, id]
       // Anchor follows the just-touched node so a subsequent Shift+click
       // extends from here, not from some stale plain-click anchor.
-      return { selection: next, selectionAnchor: id, selectedTrackId: null }
+      return {
+        selection: next,
+        selectionAnchor: id,
+        selectedTrackId: null,
+        selectedTrackIds: [],
+        selectedKeyframes: [],
+      }
     }),
   extendSelectionTo: (id, orderedIds, filter) =>
     set((s) => {
@@ -578,6 +592,8 @@ export const useUI = create<UIState>((set) => ({
       const finish = (range: string[]) => ({
         selection: filter ? filter(range) : range,
         selectedTrackId: null,
+        selectedTrackIds: [],
+        selectedKeyframes: [],
       })
       // No anchor yet — behave like a plain click, but don't move the
       // anchor (mirrors Figma: shift-click with no prior selection just
@@ -599,9 +615,17 @@ export const useUI = create<UIState>((set) => ({
       selection: orderedIds.slice(),
       selectionAnchor: orderedIds[0] ?? null,
       selectedTrackId: null,
+      selectedTrackIds: [],
+      selectedKeyframes: [],
     }),
   clearSelection: () =>
-    set({ selection: [], selectionAnchor: null, selectedTrackId: null }),
+    set({
+      selection: [],
+      selectionAnchor: null,
+      selectedTrackId: null,
+      selectedTrackIds: [],
+      selectedKeyframes: [],
+    }),
   togglePanel: (key) =>
     set((s) => ({ panels: { ...s.panels, [key]: !s.panels[key] } })),
   setPlayhead: (t) => set({ playhead: t }),
