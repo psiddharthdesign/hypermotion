@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { AnimatedValue } from '@/anim'
 import type { TextAnimationConfig } from '@/anim/textAnimations'
 import type { Rect, SolvedLayout } from '@/layout'
 import type { BlendMode, CameraNode, Fill, GradientStop, Node, NodeId, SceneAPI } from '@/scene'
-import { fillToCss } from '@/scene'
+import { displayedText } from '@/scene'
 import {
   buildWorldPlanes,
+  cameraSpaceDepth,
   cameraFrustumCorners,
   depthBlurAmount,
   resolveCamera3D,
@@ -17,6 +18,16 @@ import {
   type ResolvedCamera3D,
 } from '@/render3d/scene3d'
 import { dot3, sub3 } from '@/render3d/math'
+import {
+  shouldRasterizePlaneTexture,
+  textureScaleForRect,
+} from '@/render3d/texturePolicy'
+import {
+  layoutCanvasTextAnimationSegments as computeCanvasTextAnimationSegments,
+  layoutCanvasTextLines as computeCanvasTextLines,
+  type CanvasTextLine,
+} from '@/render3d/textAnimationLayout'
+import { applyCanvasStrokePattern } from '@/render/strokePattern'
 
 interface ThreeSceneViewportProps {
   api: SceneAPI
@@ -36,6 +47,8 @@ interface ThreeSceneViewportProps {
   playhead?: number
   sceneVersion?: number
   onAvailabilityChange?: (available: boolean) => void
+  /** Camera gesture/scrub is transient; defer depth-of-field reraster to commit. */
+  interactiveCameraPreview?: boolean
 }
 
 interface PlaneRecord {
@@ -44,7 +57,19 @@ interface PlaneRecord {
   texture: THREE.CanvasTexture | THREE.VideoTexture
   textureKind: 'canvas' | 'video'
   video?: HTMLVideoElement
-  textureRequest: number
+  textureRevision: PlaneTextureRevision | null
+  textureSignature: string
+}
+
+interface PlaneTextureRevision {
+  sceneVersion: number
+  imageRevision: number
+  layout: SolvedLayout
+}
+
+interface PlayheadDrivenTextureRange {
+  start: number
+  end: number
 }
 
 interface PlaneFocusMask {
@@ -74,11 +99,12 @@ interface SubtreeTransformContext {
   matrix: Matrix2D
 }
 
-const MAX_TEXTURE_SCALE = 4
-const MAX_TEXTURE_DIMENSION = 4096
 const IMAGE_TEXTURE_LOADED_EVENT = 'hypermotion:render3d-image-loaded'
 const RENDER3D_VIDEO_REGISTRY = '__hypermotionRender3dVideos'
+const EMPTY_PLANES: Plane3D[] = []
 const imageCache = new Map<string, HTMLImageElement>()
+const parsedCanvasColorCache = new Map<string, string | null>()
+let canvasColorParserContext: CanvasRenderingContext2D | null | undefined
 const IDENTITY_MATRIX_2D: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
 const IDENTITY_SUBTREE_TRANSFORM: SubtreeTransformContext = {
   x: 0,
@@ -89,13 +115,6 @@ const IDENTITY_SUBTREE_TRANSFORM: SubtreeTransformContext = {
   scaleY: 1,
   opacity: 1,
   matrix: IDENTITY_MATRIX_2D,
-}
-
-function textureScaleForRect(rect: Rect): number {
-  const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
-  const desired = Math.min(MAX_TEXTURE_SCALE, Math.max(2, dpr * 2))
-  const maxSide = Math.max(1, Math.ceil(Math.max(rect.width, rect.height)))
-  return Math.max(1, Math.min(desired, MAX_TEXTURE_DIMENSION / maxSide))
 }
 
 function createPlaneTexture(
@@ -248,6 +267,7 @@ export function ThreeSceneViewport({
   playhead = 0,
   sceneVersion = 0,
   onAvailabilityChange,
+  interactiveCameraPreview = false,
 }: ThreeSceneViewportProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -255,12 +275,23 @@ export function ThreeSceneViewport({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const planesRef = useRef<Map<NodeId, PlaneRecord>>(new Map())
   const helpersRef = useRef<THREE.Group | null>(null)
+  const planeSyncRef = useRef<{
+    planes: Plane3D[]
+    selectedIds: NodeId[]
+    textureRevision: PlaneTextureRevision
+    playing: boolean
+    playhead: number
+    showPlanes: boolean
+    dynamicDepthOfField: boolean
+  } | null>(null)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
   const [imageRevision, setImageRevision] = useState(0)
 
   const baseCamera = useMemo(
-    () => resolveCamera3D(camera, cameraAnim, { width, height }),
-    [camera, cameraAnim, width, height],
+    // Plane topology/world transforms are camera-independent. Keep a static
+    // reference camera so camera keyframes do not rebuild the scene graph.
+    () => resolveCamera3D(camera, undefined, { width, height }),
+    [camera, width, height],
   )
   const focusTargetWorld = useMemo(() => {
     if ((camera.focusMode ?? 'screen') !== 'target' || !camera.focusTargetNodeId) {
@@ -272,10 +303,64 @@ export function ThreeSceneViewport({
     return targetPlane?.center ?? null
   }, [api, layout, animated, baseCamera, camera.focusMode, camera.focusTargetNodeId])
   const resolvedCamera = useMemo(
-    () => resolveCamera3D(camera, cameraAnim, { width, height }, focusTargetWorld),
+    () =>
+      resolveCamera3D(
+        camera,
+        cameraAnim,
+        { width, height },
+        focusTargetWorld,
+      ),
     [camera, cameraAnim, width, height, focusTargetWorld],
   )
-  const planes = buildWorldPlanes(api, layout, animated, resolvedCamera)
+  const planes = useMemo(
+    () => {
+      void sceneVersion
+      return showPlanes
+        ? buildWorldPlanes(api, layout, animated, baseCamera)
+        : EMPTY_PLANES
+    },
+    [api, layout, animated, baseCamera, sceneVersion, showPlanes],
+  )
+  const playheadDrivenTextureRanges = useMemo(() => {
+    void sceneVersion
+    const ranges = new Map<NodeId, PlayheadDrivenTextureRange>()
+    if (!showPlanes) return ranges
+    for (const id of api.getAllNodeIds()) {
+      const node = api.getNode(id)
+      if (node?.kind !== 'text' || !node.textAnimation) continue
+      const engineDriven = api
+        .getTracksForNode(id)
+        .some(
+          (track) =>
+            track.propertyId === 'text.progress' && track.keyframes.length >= 2,
+        )
+      if (engineDriven) continue
+      const config = node.textAnimation
+      ranges.set(id, {
+        start: config.startTime,
+        end:
+          config.startTime +
+          config.duration +
+          Math.max(
+            0,
+            textAnimationSegmentCount(node.text, config.applyTo) - 1,
+          ) *
+            config.delay,
+      })
+    }
+    return ranges
+  }, [api, sceneVersion, showPlanes])
+  const textureRevision = useMemo<PlaneTextureRevision>(
+    // Camera and animation snapshots are intentionally excluded. Per-plane
+    // signatures below decide whether animated values affect bitmap pixels or
+    // only mesh transforms/opacity.
+    () => ({
+      sceneVersion,
+      imageRevision,
+      layout,
+    }),
+    [sceneVersion, imageRevision, layout],
+  )
 
   useEffect(() => {
     const onImageLoaded = () => setImageRevision((revision) => revision + 1)
@@ -283,13 +368,17 @@ export function ThreeSceneViewport({
     return () => window.removeEventListener(IMAGE_TEXTURE_LOADED_EVENT, onImageLoaded)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (webglUnavailable) return
     const host = hostRef.current
     if (!host) return
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+        powerPreference: 'high-performance',
+      })
     } catch (error) {
       console.warn('3D helper disabled: WebGL context creation failed.', error)
       setWebglUnavailable(true)
@@ -324,6 +413,9 @@ export function ThreeSceneViewport({
         ;(record.outline.material as THREE.Material).dispose()
       }
       planesRef.current.clear()
+      planeSyncRef.current = null
+      publishRender3dVideos(planesRef.current)
+      clearHelperGroup(helpers)
       renderer.dispose()
       renderer.domElement.remove()
       scene.clear()
@@ -337,7 +429,7 @@ export function ThreeSceneViewport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webglUnavailable])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (webglUnavailable) return
     const renderer = rendererRef.current
     const perspective = cameraRef.current
@@ -347,7 +439,7 @@ export function ThreeSceneViewport({
     perspective.updateProjectionMatrix()
   }, [webglUnavailable, width, height])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (webglUnavailable) return
     const scene = sceneRef.current
     const perspective = cameraRef.current
@@ -356,23 +448,70 @@ export function ThreeSceneViewport({
 
     syncThreeCamera(perspective, resolvedCamera, width, height)
     syncBackground(scene, sceneFill)
-    if (showPlanes) {
-      syncPlanes(
-        scene,
-        planesRef.current,
-        api,
-        layout,
-        planes,
-        selectedIds,
-        resolvedCamera,
-        renderer,
-        perspective,
-        animated,
-        playing,
-        playhead,
-      )
-    } else {
-      clearPlanes(scene, planesRef.current)
+    const previousPlaneSync = planeSyncRef.current
+    const hasVideoPlane = planes.some((plane) => plane.node.kind === 'video')
+    const hasDynamicDepthOfField =
+      !interactiveCameraPreview &&
+      resolvedCamera.depthOfField &&
+      resolvedCamera.aperture > 0 &&
+      resolvedCamera.blurLevel > 0
+    const playheadDrivenTextureChanged = previousPlaneSync
+      ? playheadDrivenTextureNeedsSync(
+          playheadDrivenTextureRanges,
+          previousPlaneSync.playhead,
+          playhead,
+        )
+      : playheadDrivenTextureRanges.size > 0
+    const planeStateChanged =
+      !previousPlaneSync ||
+      previousPlaneSync.planes !== planes ||
+      previousPlaneSync.selectedIds !== selectedIds ||
+      previousPlaneSync.textureRevision !== textureRevision ||
+      previousPlaneSync.showPlanes !== showPlanes ||
+      (hasVideoPlane &&
+        (previousPlaneSync.playing !== playing ||
+          previousPlaneSync.playhead !== playhead)) ||
+      playheadDrivenTextureChanged ||
+      hasDynamicDepthOfField ||
+      (!interactiveCameraPreview &&
+        previousPlaneSync.dynamicDepthOfField !== hasDynamicDepthOfField)
+
+    if (planeStateChanged) {
+      if (showPlanes) {
+        syncPlanes(
+          scene,
+          planesRef.current,
+          api,
+          layout,
+          planes,
+          selectedIds,
+          interactiveCameraPreview
+            ? { ...resolvedCamera, depthOfField: false }
+            : resolvedCamera,
+          renderer,
+          perspective,
+          animated,
+          playing,
+          playhead,
+          textureRevision,
+          playheadDrivenTextureRanges,
+        )
+      } else {
+        clearPlanes(scene, planesRef.current)
+      }
+    }
+    // Keep the comparison snapshot current even when a camera-only preview
+    // reused every plane. In particular, remember the active→inactive DOF
+    // transition without forcing a bitmap repaint, then repaint once when the
+    // interaction commits and full-quality DOF becomes active again.
+    planeSyncRef.current = {
+      planes,
+      selectedIds,
+      textureRevision,
+      playing,
+      playhead,
+      showPlanes,
+      dynamicDepthOfField: hasDynamicDepthOfField,
     }
     syncHelpers(
       helpersRef.current,
@@ -384,7 +523,26 @@ export function ThreeSceneViewport({
     )
 
     renderer.render(scene, perspective)
-  }, [api, layout, planes, resolvedCamera, sceneFill, selectedIds, showHelpers, showPlanes, focusWorldPoint, width, height, webglUnavailable, playing, playhead, sceneVersion, imageRevision])
+  }, [
+    api,
+    layout,
+    planes,
+    resolvedCamera,
+    sceneFill,
+    selectedIds,
+    showHelpers,
+    showPlanes,
+    focusWorldPoint,
+    width,
+    height,
+    webglUnavailable,
+    animated,
+    playing,
+    playhead,
+    textureRevision,
+    playheadDrivenTextureRanges,
+    interactiveCameraPreview,
+  ])
 
   if (webglUnavailable) return null
 
@@ -396,6 +554,35 @@ export function ThreeSceneViewport({
       data-export-hide={exportable ? undefined : '1'}
     />
   )
+}
+
+/**
+ * Legacy text animations have no engine track to invalidate their texture.
+ * Repaint while either sample is inside an active range, and once when a seek
+ * crosses a range boundary. Frames wholly before or after every range stay on
+ * the cached bitmap.
+ */
+function playheadDrivenTextureNeedsSync(
+  ranges: ReadonlyMap<NodeId, PlayheadDrivenTextureRange>,
+  previousPlayhead: number,
+  playhead: number,
+): boolean {
+  if (previousPlayhead === playhead || ranges.size === 0) return false
+  for (const range of ranges.values()) {
+    const end = range.end + 1 / 60
+    const previousActive =
+      previousPlayhead >= range.start && previousPlayhead <= end
+    const active = playhead >= range.start && playhead <= end
+    if (previousActive || active) return true
+    const crossedStart =
+      (previousPlayhead < range.start && playhead >= range.start) ||
+      (playhead < range.start && previousPlayhead >= range.start)
+    const crossedEnd =
+      (previousPlayhead <= end && playhead > end) ||
+      (playhead <= end && previousPlayhead > end)
+    if (crossedStart || crossedEnd) return true
+  }
+  return false
 }
 
 function syncThreeCamera(
@@ -424,7 +611,82 @@ function syncThreeCamera(
 
 function syncBackground(scene: THREE.Scene, sceneFill: string | null) {
   const solidColor = sceneFill ? parseCanvasSolidColor(sceneFill) : null
+  const previousColor = scene.userData.hyperMotionBackgroundColor as
+    | string
+    | null
+    | undefined
+  if (previousColor === solidColor) return
+  scene.userData.hyperMotionBackgroundColor = solidColor
   scene.background = solidColor ? new THREE.Color(solidColor) : null
+}
+
+const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
+  'cornerRadius',
+  'fill',
+  'textProgress',
+])
+
+/**
+ * Return only animated values that alter this plane's bitmap.
+ *
+ * The plane root's transform and (for self planes) opacity are represented by
+ * the Three mesh, so those values must not trigger a multi-megapixel Canvas2D
+ * repaint. Descendant animation inside a flattened subtree does affect its
+ * pixels and is included. Extracted 3D/video stacks own separate planes and
+ * are skipped exactly as the subtree painter skips them.
+ */
+function planeTextureAnimationSignature(
+  api: SceneAPI,
+  plane: Plane3D,
+  animated: Record<NodeId, AnimatedValue>,
+  playhead: number,
+  playheadDrivenTextureRanges: ReadonlyMap<NodeId, PlayheadDrivenTextureRange>,
+): string {
+  const parts: string[] = []
+  const visit = (id: NodeId, isRoot: boolean) => {
+    const node = api.getNode(id)
+    if (!node) return
+    if (
+      !isRoot &&
+      (shouldSkipExtractedVideoStackNode(api, plane, id) ||
+        isExtractable3DNode(api, id, plane.nodeId, node))
+    ) {
+      return
+    }
+
+    const value = animated[id]
+    if (value) {
+      const record = value as unknown as Record<string, unknown>
+      for (const key of Object.keys(record).sort()) {
+        if (key === 'textAnimation') continue
+        if (
+          isRoot &&
+          !SELF_TEXTURE_ANIMATION_KEYS.has(key as keyof AnimatedValue) &&
+          !(plane.contentMode === 'subtree' && key === 'opacity')
+        ) {
+          continue
+        }
+        parts.push(`${id}.${key}=${JSON.stringify(record[key])}`)
+      }
+    }
+
+    const legacyRange = playheadDrivenTextureRanges.get(id)
+    if (legacyRange) {
+      const phase =
+        playhead < legacyRange.start
+          ? 'before'
+          : playhead <= legacyRange.end + 1 / 60
+            ? `active-${Number(playhead.toFixed(4))}`
+            : 'after'
+      parts.push(`${id}.legacyText=${phase}`)
+    }
+
+    if (plane.contentMode !== 'subtree') return
+    for (const childId of node.children) visit(childId, false)
+  }
+
+  visit(plane.nodeId, true)
+  return parts.length > 0 ? parts.join('|') : 'static-animation'
 }
 
 function syncPlanes(
@@ -440,6 +702,8 @@ function syncPlanes(
   animated: Record<NodeId, AnimatedValue>,
   playing: boolean,
   playhead: number,
+  textureRevision: PlaneTextureRevision,
+  playheadDrivenTextureRanges: ReadonlyMap<NodeId, PlayheadDrivenTextureRange>,
 ) {
   const active = new Set<NodeId>()
   const selected = new Set(selectedIds)
@@ -447,7 +711,7 @@ function syncPlanes(
     active.add(plane.nodeId)
     let record = records.get(plane.nodeId)
     const blur = depthBlurAmount(
-      plane.cameraDepth,
+      cameraSpaceDepth(plane.center, camera),
       plane.center,
       camera.focusWorld,
       camera.focusDistance,
@@ -460,9 +724,34 @@ function syncPlanes(
     )
     const focusMask = focusMaskForPlane(plane, camera)
     const videoNode = plane.node.kind === 'video' ? plane.node : null
-    const canvas = videoNode
-      ? null
-      : renderPlaneCanvas(api, layout, plane, blur, focusMask, animated, playhead)
+    const textureSignature = [
+      plane.contentMode,
+      Number(plane.rect.width.toFixed(3)),
+      Number(plane.rect.height.toFixed(3)),
+      Number(blur.toFixed(3)),
+      focusMask
+        ? `${Number(focusMask.x.toFixed(3))},${Number(focusMask.y.toFixed(3))},${Number(focusMask.radius.toFixed(3))},${Number(focusMask.falloff.toFixed(3))}`
+        : 'no-focus-mask',
+      planeTextureAnimationSignature(
+        api,
+        plane,
+        animated,
+        playhead,
+        playheadDrivenTextureRanges,
+      ),
+    ].join(':')
+    // Viewport pan/zoom, selection, and camera-only renders must reuse the
+    // existing bitmap. A plane is rasterized only when its scene/animation
+    // content revision or a texture-affecting parameter actually changes.
+    const needsCanvasRaster = shouldRasterizePlaneTexture(
+      !!videoNode,
+      record,
+      textureRevision,
+      textureSignature,
+    )
+    const canvas = needsCanvasRaster
+      ? renderPlaneCanvas(api, layout, plane, blur, focusMask, animated, playhead)
+      : null
     if (!record) {
       const geometry = new THREE.PlaneGeometry(plane.rect.width, plane.rect.height)
       const texture = videoNode
@@ -486,7 +775,8 @@ function syncPlanes(
         texture,
         textureKind: videoNode ? 'video' : 'canvas',
         video: videoNode ? texture.image as HTMLVideoElement : undefined,
-        textureRequest: 0,
+        textureRevision: videoNode ? null : textureRevision,
+        textureSignature,
       }
       records.set(plane.nodeId, record)
     } else {
@@ -509,9 +799,11 @@ function syncPlanes(
         material.map = record.texture
         material.needsUpdate = true
       }
+      record.textureRevision = null
+      record.textureSignature = textureSignature
       syncVideoElement(record.video!, videoNode, playing, playhead)
       record.texture.needsUpdate = true
-    } else {
+    } else if (needsCanvasRaster && canvas) {
       if (record.textureKind !== 'canvas') {
         record.texture.dispose()
         record.video?.pause()
@@ -535,6 +827,8 @@ function syncPlanes(
         record.texture.image = canvas!
       }
       record.texture.needsUpdate = true
+      record.textureRevision = textureRevision
+      record.textureSignature = textureSignature
     }
     applyPlaneTransform(record.mesh, plane)
     applyPlaneTransform(record.outline, plane)
@@ -582,88 +876,7 @@ function clearPlanes(scene: THREE.Scene, records: Map<NodeId, PlaneRecord>) {
     ;(record.outline.material as THREE.Material).dispose()
   }
   records.clear()
-}
-
-function queueDomPlaneTexture(
-  record: PlaneRecord,
-  plane: Plane3D,
-  blurPx: number,
-  renderer: THREE.WebGLRenderer,
-  scene: THREE.Scene,
-  perspective: THREE.PerspectiveCamera,
-) {
-  if (plane.contentMode === 'self') return
-  const request = record.textureRequest + 1
-  record.textureRequest = request
-  renderDomPlaneTexture(plane.rect, blurPx).then((canvas) => {
-    if (!canvas || record.textureRequest !== request) return
-    record.texture.image = canvas
-    record.texture.needsUpdate = true
-    renderer.render(scene, perspective)
-  }).catch(() => {
-    // Keep the deterministic scene-data fallback if DOM snapshotting fails.
-  })
-}
-
-async function renderDomPlaneTexture(
-  rootRect: Rect,
-  blurPx: number,
-): Promise<HTMLCanvasElement | null> {
-  if (typeof document === 'undefined') return null
-  const source = document.querySelector<HTMLElement>('[data-three-texture-source="1"]')
-  if (!source) return null
-  const width = Math.max(1, Math.ceil(rootRect.width))
-  const height = Math.max(1, Math.ceil(rootRect.height))
-  const sourceClone = source.cloneNode(true) as HTMLElement
-  sourceClone.removeAttribute('data-three-texture-source')
-  sourceClone.style.position = 'absolute'
-  sourceClone.style.left = `${-rootRect.x}px`
-  sourceClone.style.top = `${-rootRect.y}px`
-  sourceClone.style.width = source.style.width || `${Math.ceil(source.getBoundingClientRect().width)}px`
-  sourceClone.style.height = source.style.height || `${Math.ceil(source.getBoundingClientRect().height)}px`
-  sourceClone.style.transform = 'none'
-  sourceClone.style.transformOrigin = '0 0'
-  sourceClone.style.opacity = '1'
-  sourceClone.style.pointerEvents = 'none'
-  sourceClone.style.background = 'transparent'
-  for (const el of Array.from(sourceClone.querySelectorAll<HTMLElement>('[data-export-hide="1"]'))) {
-    el.remove()
-  }
-  const wrapper = document.createElement('div')
-  wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
-  wrapper.style.position = 'relative'
-  wrapper.style.width = `${width}px`
-  wrapper.style.height = `${height}px`
-  wrapper.style.overflow = 'hidden'
-  wrapper.style.background = 'transparent'
-  wrapper.appendChild(sourceClone)
-  const serialized = new XMLSerializer().serializeToString(wrapper)
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-    `<foreignObject width="100%" height="100%">${serialized}</foreignObject>` +
-    `</svg>`
-  const image = await loadSvgImage(svg)
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  canvas.dataset.blur = String(Number(blurPx.toFixed(2)))
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-  ctx.clearRect(0, 0, width, height)
-  if (blurPx > 0.05) ctx.filter = `blur(${Number(blurPx.toFixed(2))}px)`
-  ctx.drawImage(image, 0, 0)
-  ctx.filter = 'none'
-  return canvas
-}
-
-function loadSvgImage(svg: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('Failed to rasterize DOM plane texture'))
-    image.src = url
-  })
+  publishRender3dVideos(records)
 }
 
 function renderPlaneCanvas(
@@ -996,8 +1209,11 @@ function syncHelpers(
 ) {
   if (!group) return
   group.visible = show
-  group.clear()
-  if (!show) return
+  if (!show) {
+    if (group.children.length > 0) clearHelperGroup(group)
+    return
+  }
+  clearHelperGroup(group)
   const grid = new THREE.GridHelper(Math.max(width, height), 24, 0x9ca3af, 0xd1d5db)
   grid.rotation.x = Math.PI / 2
   grid.position.set(width / 2, height / 2, -400)
@@ -1053,6 +1269,22 @@ function syncHelpers(
   group.add(marker)
 }
 
+function clearHelperGroup(group: THREE.Group) {
+  group.traverse((object) => {
+    const disposable = object as THREE.Object3D & {
+      geometry?: THREE.BufferGeometry
+      material?: THREE.Material | THREE.Material[]
+    }
+    disposable.geometry?.dispose()
+    if (Array.isArray(disposable.material)) {
+      for (const material of disposable.material) material.dispose()
+    } else {
+      disposable.material?.dispose()
+    }
+  })
+  group.clear()
+}
+
 function renderPlaneTexture(
   node: Node,
   rect: Rect,
@@ -1085,13 +1317,15 @@ function renderPlaneTexture(
     }
   })
   if (node.kind === 'text') {
-    paintAnimatedTextNode(ctx, node, 0, 0, w, anim, playhead)
+    paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
   }
   ctx.filter = 'none'
   const stroke = node.appearance.stroke
   if (stroke && stroke.width > 0) {
+    ctx.save()
     ctx.strokeStyle = stroke.color
     ctx.lineWidth = stroke.width
+    applyCanvasStrokePattern(ctx, stroke)
     roundedRectPath(
       ctx,
       stroke.width / 2,
@@ -1101,6 +1335,7 @@ function renderPlaneTexture(
       Math.max(0, cornerRadius - stroke.width / 2),
     )
     ctx.stroke()
+    ctx.restore()
   }
   return canvas
 }
@@ -1416,12 +1651,14 @@ function renderNodePaint(
     if (node.kind === 'image' && node.src) paintImageNode(ctx, node, w, h)
   })
   if (node.kind === 'text') {
-    paintAnimatedTextNode(ctx, node, 0, 0, w, anim, playhead)
+    paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
   }
   const stroke = node.appearance.stroke
   if (stroke && stroke.width > 0) {
+    ctx.save()
     ctx.strokeStyle = stroke.color
     ctx.lineWidth = stroke.width
+    applyCanvasStrokePattern(ctx, stroke)
     roundedRectPath(
       ctx,
       stroke.width / 2,
@@ -1431,6 +1668,7 @@ function renderNodePaint(
       Math.max(0, cornerRadius - stroke.width / 2),
     )
     ctx.stroke()
+    ctx.restore()
   }
 }
 
@@ -1562,12 +1800,29 @@ function parseCanvasSolidColor(css: string): string | null {
   if (!value || value.includes('gradient(') || value.startsWith('url(')) {
     return null
   }
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return value
+  const cached = parsedCanvasColorCache.get(value)
+  if (cached !== undefined || parsedCanvasColorCache.has(value)) return cached ?? null
+
+  // Camera-only playback calls `syncBackground` every display frame. The old
+  // parser allocated a fresh canvas/context for the unchanged fill each time,
+  // creating hundreds of short-lived GPU-backed objects during Space-bar
+  // playback. Keep one tiny parser context and cache the normalized result.
+  if (canvasColorParserContext === undefined) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    canvasColorParserContext = canvas.getContext('2d')
+  }
+  const ctx = canvasColorParserContext
+  if (!ctx) {
+    parsedCanvasColorCache.set(value, value)
+    return value
+  }
   ctx.fillStyle = '#000000'
   ctx.fillStyle = value
-  return ctx.fillStyle
+  const parsed = ctx.fillStyle
+  parsedCanvasColorCache.set(value, parsed)
+  return parsed
 }
 
 function paintImageFill(
@@ -1639,20 +1894,52 @@ function paintAnimatedTextNode(
   x: number,
   y: number,
   maxWidth: number,
+  maxHeight: number,
   anim: AnimatedValue | undefined,
   playhead: number,
 ) {
   const config = anim?.textAnimation ?? node.textAnimation ?? null
   const fontSize = node.fontSize ?? 16
   const lineHeight = node.lineHeight ?? 1.2
-  ctx.fillStyle = node.color ?? '#111111'
-  ctx.font = `${node.fontWeight ?? 400} ${fontSize}px ${node.fontFamily ?? 'Inter'}`
-  ctx.textBaseline = 'top'
+  ctx.fillStyle = anim?.fill ?? node.color ?? '#111111'
+  const fontStyle = node.fontStyle ?? 'normal'
+  const fontVariant =
+    node.textCase === 'small-caps' || node.textCase === 'small-caps-forced'
+      ? 'small-caps'
+      : 'normal'
+  const fontFamily = (node.fontFamily || 'Inter').replaceAll('"', '\\"')
+  ctx.font = `${fontStyle} ${fontVariant} ${node.fontWeight ?? 400} ${fontSize}px "${fontFamily}"`
+  ctx.textBaseline = 'alphabetic'
+  ctx.textAlign = 'left'
+  ctx.fontKerning = 'normal'
+  ctx.fontStretch = 'normal'
+  ctx.fontVariantCaps = fontVariant
+  ctx.textRendering = 'geometricPrecision'
   const authoredTracking =
     Number.isFinite(node.letterSpacing) ? node.letterSpacing : 0
+  const text = displayedText(node)
+  const lineCount = layoutCanvasTextLines(ctx, text, maxWidth, authoredTracking).length
+  const textHeight = Math.max(1, lineCount) * Math.max(1, fontSize * lineHeight)
+  const alignedY =
+    node.textAlignVertical === 'center'
+      ? y + Math.max(0, (maxHeight - textHeight) / 2)
+      : node.textAlignVertical === 'bottom'
+        ? y + Math.max(0, maxHeight - textHeight)
+        : y
 
   if (!config) {
-    paintText(ctx, node.text, x, y, maxWidth, fontSize, lineHeight, authoredTracking)
+    paintText(
+      ctx,
+      text,
+      x,
+      alignedY,
+      maxWidth,
+      fontSize,
+      lineHeight,
+      authoredTracking,
+      node.textAlign ?? 'start',
+      node.textDecoration ?? 'none',
+    )
     return
   }
 
@@ -1664,7 +1951,7 @@ function paintAnimatedTextNode(
       node,
       config,
       x,
-      y,
+      alignedY,
       maxWidth,
       fontSize,
       lineHeight,
@@ -1676,13 +1963,24 @@ function paintAnimatedTextNode(
     return
   }
   if (config.id === 'typewriter' || config.id === 'scramble') {
-    const chars = Array.from(node.text)
+    const chars = Array.from(text)
     const count = Math.max(0, Math.min(chars.length, Math.ceil(chars.length * visibleProgress)))
-    const text =
+    const renderedText =
       config.id === 'scramble' && visibleProgress < 0.95
         ? scrambleText(chars.slice(0, count).join(''), playhead)
         : chars.slice(0, count).join('')
-    paintText(ctx, text, x, y, maxWidth, fontSize, lineHeight, authoredTracking)
+    paintText(
+      ctx,
+      renderedText,
+      x,
+      alignedY,
+      maxWidth,
+      fontSize,
+      lineHeight,
+      authoredTracking,
+      node.textAlign ?? 'start',
+      node.textDecoration ?? 'none',
+    )
     return
   }
 
@@ -1712,36 +2010,41 @@ function paintAnimatedTextNode(
   }
   if (config.id === 'grow' || config.id === 'shrink') {
     const scale = config.id === 'grow' ? 1 - amount * 0.35 : 1 + amount * 0.35
-    ctx.translate(x + maxWidth / 2, y + lineHeightPx / 2)
+    ctx.translate(x + maxWidth / 2, alignedY + lineHeightPx / 2)
     ctx.scale(scale, scale)
-    ctx.translate(-(x + maxWidth / 2), -(y + lineHeightPx / 2))
+    ctx.translate(-(x + maxWidth / 2), -(alignedY + lineHeightPx / 2))
   }
   if (config.id === 'skew') {
     ctx.transform(1, 0, -0.25 * amount, 1, 0, 0)
   }
   if (config.id === 'tracking') {
-    paintTrackedText(
+    paintText(
       ctx,
-      node.text,
+      text,
       x,
-      y,
-      authoredTracking + Math.max(0, 10 * amount),
+      alignedY,
+      maxWidth,
       fontSize,
       lineHeight,
+      authoredTracking + Math.max(0, 10 * amount),
+      node.textAlign ?? 'start',
+      node.textDecoration ?? 'none',
     )
   } else {
-    paintText(ctx, node.text, x, y, maxWidth, fontSize, lineHeight, authoredTracking)
+    paintText(
+      ctx,
+      text,
+      x,
+      alignedY,
+      maxWidth,
+      fontSize,
+      lineHeight,
+      authoredTracking,
+      node.textAlign ?? 'start',
+      node.textDecoration ?? 'none',
+    )
   }
   ctx.restore()
-}
-
-interface CanvasTextSegment {
-  text: string
-  x: number
-  y: number
-  width: number
-  animate: boolean
-  order: number
 }
 
 function paintSegmentedTextAnimation(
@@ -1758,9 +2061,10 @@ function paintSegmentedTextAnimation(
   timelineProgress: number | undefined,
   playhead: number,
 ) {
+  const text = displayedText(node)
   const segments = layoutCanvasTextAnimationSegments(
     ctx,
-    node.text,
+    text,
     config.applyTo,
     x,
     y,
@@ -1768,6 +2072,7 @@ function paintSegmentedTextAnimation(
     fontSize,
     lineHeight,
     authoredTracking,
+    node.textAlign ?? 'start',
   )
   const orderedCount = Math.max(1, segments.filter((segment) => segment.animate).length)
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
@@ -1807,15 +2112,28 @@ function paintSegmentedTextAnimation(
     const text = config.id === 'scramble' && state.localProgress < 0.95
       ? scrambleText(segment.text, playhead)
       : segment.text
+    const trackingShift =
+      state.extraTracking *
+      (segment.trackingIndex -
+        Math.max(0, segment.lineCharacterCount - 1) *
+          segment.trackingAlignment)
+    const paintX = segment.x + trackingShift
     paintCanvasTextSegment(
       ctx,
       text,
-      segment.x +
-        (config.id === 'tracking' && config.applyTo === 'letters'
-          ? state.extraTracking * segment.order
-          : 0),
+      paintX,
       segment.y,
       authoredTracking + state.extraTracking,
+      fontSize,
+      lineHeight,
+    )
+    paintCanvasTextDecoration(
+      ctx,
+      node.textDecoration ?? 'none',
+      paintX,
+      segment.y,
+      segment.width +
+        Math.max(0, Array.from(text).length - 1) * state.extraTracking,
       fontSize,
       lineHeight,
     )
@@ -1833,60 +2151,22 @@ function layoutCanvasTextAnimationSegments(
   fontSize: number,
   lineHeight: number,
   tracking: number,
-): CanvasTextSegment[] {
+  align: Extract<Node, { kind: 'text' }>['textAlign'],
+) {
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
-  if (applyTo === 'lines') {
-    let order = 0
-    return text.split('\n').map((line, index) => ({
-      text: line,
-      x,
-      y: y + index * lineHeightPx,
-      width: measureCanvasTextWidth(ctx, line, tracking),
-      animate: line.length > 0,
-      order: line.length > 0 ? order++ : order,
-    }))
-  }
-
-  const rawTokens = applyTo === 'words' ? text.split(/(\s+)/) : Array.from(text)
-  const segments: CanvasTextSegment[] = []
-  let cursorX = x
-  let cursorY = y
-  let order = 0
-  let tokenIndex = 0
-  for (const rawToken of rawTokens) {
-    const parts = rawToken.split(/(\n)/)
-    for (const token of parts) {
-      if (token === '') continue
-      if (token === '\n') {
-        cursorX = x
-        cursorY += lineHeightPx
-        tokenIndex++
-        continue
-      }
-      const width = measureCanvasTextWidth(ctx, token, tracking)
-      const isWhitespace = /^\s+$/.test(token)
-      if (!isWhitespace && cursorX > x && cursorX + width > x + maxWidth) {
-        cursorX = x
-        cursorY += lineHeightPx
-      }
-      const animate = !isWhitespace && token.length > 0
-      segments.push({
-        text: token,
-        x: cursorX,
-        y: cursorY,
-        width,
-        animate,
-        order: animate ? order++ : order,
-      })
-      const shouldAddInterSegmentTracking =
-        applyTo === 'letters' &&
-        !isWhitespace &&
-        tokenIndex < rawTokens.length - 1
-      cursorX += width + (shouldAddInterSegmentTracking ? tracking : 0)
-      tokenIndex++
-    }
-  }
-  return segments
+  // The caller routes whole-layer effects through paintText(). Keep this
+  // guard here as a type/runtime backstop for malformed legacy documents.
+  if (applyTo === 'layer') return []
+  return computeCanvasTextAnimationSegments({
+    text,
+    applyTo,
+    x,
+    y,
+    maxWidth,
+    lineHeightPx,
+    align,
+    measure: (value) => measureCanvasTextWidth(ctx, value, tracking),
+  })
 }
 
 function canvasTextSegmentState(
@@ -1992,8 +2272,34 @@ function paintCanvasTextSegment(
   if (tracking !== 0) {
     paintTrackedText(ctx, text, x, y, tracking, fontSize, lineHeight)
   } else {
-    ctx.fillText(text, x, y)
+    ctx.fillText(text, x, canvasTextBaseline(ctx, y, fontSize, lineHeight))
   }
+}
+
+/**
+ * Canvas2D's `top` baseline places glyphs against the font em box, which is
+ * not how Figma distributes leading inside a fixed line-height. Position an
+ * alphabetic baseline from the font's ascent/descent and split any remaining
+ * leading evenly above and below the font box, matching CSS/Figma line boxes.
+ */
+function canvasTextBaseline(
+  ctx: CanvasRenderingContext2D,
+  lineTop: number,
+  fontSize: number,
+  lineHeight: number,
+): number {
+  const metrics = ctx.measureText('Hg')
+  const ascent =
+    metrics.fontBoundingBoxAscent ||
+    metrics.actualBoundingBoxAscent ||
+    fontSize * 0.8
+  const descent =
+    metrics.fontBoundingBoxDescent ||
+    metrics.actualBoundingBoxDescent ||
+    fontSize * 0.2
+  const lineHeightPx = Math.max(1, fontSize * lineHeight)
+  const leading = Math.max(0, lineHeightPx - ascent - descent)
+  return lineTop + leading / 2 + ascent
 }
 
 function textAnimationProgress(
@@ -2004,6 +2310,24 @@ function textAnimationProgress(
   if (progress !== undefined) return Math.max(0, Math.min(1, progress))
   const elapsed = playhead - config.startTime
   return Math.max(0, Math.min(1, elapsed / Math.max(0.05, config.duration)))
+}
+
+function textAnimationSegmentCount(
+  text: string,
+  applyTo: TextAnimationConfig['applyTo'],
+): number {
+  if (applyTo === 'layer') return 1
+  if (applyTo === 'lines') {
+    return Math.max(1, text.split('\n').filter(Boolean).length)
+  }
+  if (applyTo === 'words') {
+    return Math.max(1, text.split(/\s+/).filter(Boolean).length)
+  }
+  return Math.max(
+    1,
+    Array.from(text).filter((character) => character !== ' ' && character !== '\n')
+      .length,
+  )
 }
 
 function textDirectionOffset(direction: string, distance: number): [number, number] {
@@ -2042,11 +2366,13 @@ function paintTrackedText(
 ) {
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
   let cursorX = x
-  let cursorY = y
+  let lineTop = y
+  let cursorY = canvasTextBaseline(ctx, lineTop, fontSize, lineHeight)
   for (const char of Array.from(text)) {
     if (char === '\n') {
       cursorX = x
-      cursorY += lineHeightPx
+      lineTop += lineHeightPx
+      cursorY = canvasTextBaseline(ctx, lineTop, fontSize, lineHeight)
       continue
     }
     ctx.fillText(char, cursorX, cursorY)
@@ -2063,28 +2389,144 @@ function paintText(
   fontSize: number,
   lineHeight: number,
   tracking = 0,
+  align: Extract<Node, { kind: 'text' }>['textAlign'] = 'start',
+  decoration: Extract<Node, { kind: 'text' }>['textDecoration'] = 'none',
 ) {
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
-  const words = text.split(/(\s+)/)
-  const lines: string[] = []
-  let line = ''
-  for (const word of words) {
-    const next = line + word
-    if (measureCanvasTextWidth(ctx, next, tracking) <= maxWidth || line.trim() === '') {
-      line = next
-    } else {
-      lines.push(line.trimEnd())
-      line = word.trimStart()
+  const lines = layoutCanvasTextLines(ctx, text, maxWidth, tracking)
+  lines.forEach((line, i) => {
+    const lineY = y + i * lineHeightPx
+    const naturalWidth = measureCanvasTextWidth(ctx, line.text, tracking)
+    if (align === 'justify' && line.canJustify) {
+      paintJustifiedCanvasLine(
+        ctx,
+        line.text,
+        x,
+        lineY,
+        maxWidth,
+        tracking,
+        fontSize,
+        lineHeight,
+      )
+      paintCanvasTextDecoration(
+        ctx,
+        decoration,
+        x,
+        lineY,
+        maxWidth,
+        fontSize,
+        lineHeight,
+      )
+      return
     }
-  }
-  if (line) lines.push(line.trimEnd())
-  lines.forEach((l, i) => {
+    const lineX =
+      align === 'center'
+        ? x + Math.max(0, (maxWidth - naturalWidth) / 2)
+        : align === 'end'
+          ? x + Math.max(0, maxWidth - naturalWidth)
+          : x
     if (tracking !== 0) {
-      paintTrackedText(ctx, l, x, y + i * lineHeightPx, tracking, fontSize, lineHeight)
+      paintTrackedText(
+        ctx,
+        line.text,
+        lineX,
+        lineY,
+        tracking,
+        fontSize,
+        lineHeight,
+      )
     } else {
-      ctx.fillText(l, x, y + i * lineHeightPx)
+      ctx.fillText(
+        line.text,
+        lineX,
+        canvasTextBaseline(ctx, lineY, fontSize, lineHeight),
+      )
     }
+    paintCanvasTextDecoration(
+      ctx,
+      decoration,
+      lineX,
+      lineY,
+      naturalWidth,
+      fontSize,
+      lineHeight,
+    )
   })
+}
+
+function layoutCanvasTextLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  tracking: number,
+): CanvasTextLine[] {
+  return computeCanvasTextLines(
+    text,
+    maxWidth,
+    (value) => measureCanvasTextWidth(ctx, value, tracking),
+  )
+}
+
+function paintJustifiedCanvasLine(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  tracking: number,
+  fontSize: number,
+  lineHeight: number,
+) {
+  const tokens = text.split(/(\s+)/).filter(Boolean)
+  const whitespaceCount = tokens.filter((token) => /^\s+$/.test(token)).length
+  const naturalWidth = tokens.reduce(
+    (sum, token) => sum + measureCanvasTextWidth(ctx, token, tracking),
+    0,
+  )
+  const extraPerGap =
+    whitespaceCount > 0 ? Math.max(0, maxWidth - naturalWidth) / whitespaceCount : 0
+  let cursorX = x
+  for (const token of tokens) {
+    if (!/^\s+$/.test(token)) {
+      if (tracking !== 0) {
+        paintTrackedText(ctx, token, cursorX, y, tracking, fontSize, lineHeight)
+      } else {
+        ctx.fillText(
+          token,
+          cursorX,
+          canvasTextBaseline(ctx, y, fontSize, lineHeight),
+        )
+      }
+    }
+    cursorX +=
+      measureCanvasTextWidth(ctx, token, tracking) +
+      (/^\s+$/.test(token) ? extraPerGap : 0)
+  }
+}
+
+function paintCanvasTextDecoration(
+  ctx: CanvasRenderingContext2D,
+  decoration: Extract<Node, { kind: 'text' }>['textDecoration'],
+  x: number,
+  y: number,
+  width: number,
+  fontSize: number,
+  lineHeight: number,
+) {
+  if (decoration === 'none' || width <= 0) return
+  const baseline = canvasTextBaseline(ctx, y, fontSize, lineHeight)
+  const decorationY =
+    decoration === 'underline'
+      ? baseline + Math.max(1, fontSize * 0.08)
+      : baseline - fontSize * 0.3
+  ctx.save()
+  ctx.beginPath()
+  ctx.strokeStyle = ctx.fillStyle
+  ctx.lineWidth = Math.max(1, fontSize / 16)
+  ctx.moveTo(x, decorationY)
+  ctx.lineTo(x + width, decorationY)
+  ctx.stroke()
+  ctx.restore()
 }
 
 function measureCanvasTextWidth(

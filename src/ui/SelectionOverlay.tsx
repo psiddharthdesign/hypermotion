@@ -2,11 +2,23 @@
 
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
-import type { NodeId } from '@/scene'
+import type { NodeId, SceneAPI } from '@/scene'
 import type { SolvedLayout } from '@/layout'
 import type { AnimatedValue } from '@/ui/hooks/useAnimatedValues'
 import type { InheritedAnim } from '@/ui/Canvas'
 import { ResizeHandles } from '@/ui/ResizeHandles'
+
+function isEffectivelyVisible(api: SceneAPI, id: NodeId): boolean {
+  const visited = new Set<NodeId>()
+  let node = api.getNode(id)
+  while (node) {
+    if (!node.visible) return false
+    if (!node.parent || visited.has(node.parent)) return true
+    visited.add(node.id)
+    node = api.getNode(node.parent)
+  }
+  return false
+}
 
 /**
  * Selection frame overlay.
@@ -59,7 +71,9 @@ export function SelectionOverlay({
       {selection.map((id) => {
         const rect = solved[id]
         const node = api.getNode(id)
-        if (!rect || !node) return null
+        // A hidden layer must not leave selection chrome behind. This also
+        // covers a visible child whose parent was hidden in the Layers panel.
+        if (!rect || !node || !isEffectivelyVisible(api, id)) return null
         const isRoot = id === rootId
         const anim = animated[id]
         const inh = inherited[id]

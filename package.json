@@ -16,6 +16,8 @@
     "build:win": "vite build && electron-builder --win --publish=never",
     "lint": "eslint .",
     "test": "pnpm --dir cli test",
+    "test:canvas": "vitest run src/render/strokePattern.test.ts src/render3d/texturePolicy.test.ts src/render3d/scene3d.hitTest.test.ts src/render3d/textAnimationLayout.test.ts src/anim/engine.test.ts src/anim/multiKeyframes.test.ts src/anim/staggerSets.test.ts src/state/groupActions.test.ts src/state/staggerSelection.test.ts src/ui/hooks/useAnimatedValues.test.ts src/ui/cameraPreviewStore.test.ts src/ui/cameraWheel.test.ts src/ui/cameraReset.test.ts src/ui/canvasTextEditing.test.ts src/ui/keyframeDragPreviewStore.test.ts src/ui/multiRenderMode.test.ts src/ui/sectionDragPreviewStore.test.ts src/ui/timelineDragHitArea.test.ts src/ui/textAnimationSegments.test.ts",
+    "test:figma": "vitest run src/import/figma src/ui/fonts/googleFonts.test.ts",
     "typecheck": "tsc -b",
     "preview": "vite preview"
   },
@@ -53,7 +55,8 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.9",
     "vite-plugin-electron": "^0.28.8",
-    "vite-plugin-electron-renderer": "^0.14.6"
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^4.1.10"
   },
   "build": {
     "appId": "com.hypermotion.app",

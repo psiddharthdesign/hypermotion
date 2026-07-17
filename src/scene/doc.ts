@@ -23,6 +23,10 @@ import type {
   TrackId,
   Transform,
 } from '@/scene/types'
+import {
+  DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+  normalizeCameraScrollSensitivity,
+} from '@/scene/types'
 import { normalizeTextAnimation } from '@/anim/textAnimations'
 
 /**
@@ -43,12 +47,32 @@ export interface UiStateSlab {
   >
   kfGroups: Record<string, string[]>
   kfGroupCollapsed: Record<string, boolean>
+  /**
+   * Persistent layer-level animation bundles authored while Stagger is armed.
+   * Member ids point at real keyframes, so later properties/keyframes can join
+   * the same set without retiming unrelated keys on the owning tracks.
+   */
+  staggerSets: Record<string, StaggerPropertySet>
+}
+
+export interface StaggerPropertySet {
+  id: string
+  /** Optional timeline label. Falls back to "Stagger N" in the editor. */
+  name?: string
+  layerIds: NodeId[]
+  delay: number
+  order: 'forward' | 'reverse'
+  members: Record<
+    NodeId,
+    Partial<Record<PropertyId, string[]>>
+  >
 }
 
 const DEFAULT_UI_STATE: UiStateSlab = {
   trackGroups: {},
   kfGroups: {},
   kfGroupCollapsed: {},
+  staggerSets: {},
 }
 
 /**
@@ -184,9 +208,13 @@ export interface NodeBaseMutable {
   fontFamily: string
   fontSize: number
   fontWeight: number
+  fontStyle: import('@/scene/types').TextFontStyle
   lineHeight: number
   letterSpacing: number
-  textAlign: 'start' | 'center' | 'end'
+  textAlign: import('@/scene/types').TextAlign
+  textAlignVertical: import('@/scene/types').TextAlignVertical
+  textCase: import('@/scene/types').TextCase
+  textDecoration: import('@/scene/types').TextDecoration
   color: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
   // image-kind fields — settable via Inspector on ImageNode. The scene
@@ -212,6 +240,7 @@ export interface NodeBaseMutable {
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
    *  scale and the CSS perspective wrapper. */
   focalLength: number
+  scrollSensitivity: number
   fieldOfView: number
   pointOfInterestX: number
   pointOfInterestY: number
@@ -584,9 +613,21 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           fontFamily: (y.get('fontFamily') as string) ?? 'Inter',
           fontSize: (y.get('fontSize') as number) ?? 16,
           fontWeight: (y.get('fontWeight') as number) ?? 400,
+          fontStyle:
+            (y.get('fontStyle') as import('@/scene/types').TextFontStyle) ??
+            'normal',
           lineHeight: (y.get('lineHeight') as number) ?? 1.4,
           letterSpacing: (y.get('letterSpacing') as number) ?? 0,
-          textAlign: (y.get('textAlign') as 'start' | 'center' | 'end') ?? 'start',
+          textAlign:
+            (y.get('textAlign') as import('@/scene/types').TextAlign) ?? 'start',
+          textAlignVertical:
+            (y.get('textAlignVertical') as import('@/scene/types').TextAlignVertical) ??
+            'top',
+          textCase:
+            (y.get('textCase') as import('@/scene/types').TextCase) ?? 'original',
+          textDecoration:
+            (y.get('textDecoration') as import('@/scene/types').TextDecoration) ??
+            'none',
           color: (y.get('color') as string) ?? '#0a0a0c',
           textAnimation: normalizeTextAnimation(y.get('textAnimation')),
         } as Node
@@ -649,6 +690,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           background:
             (y.get('background') as CameraNode['background']) ?? null,
           focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
+          scrollSensitivity: normalizeCameraScrollSensitivity(
+            y.get('scrollSensitivity') ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+          ),
           fieldOfView: (y.get('fieldOfView') as number | undefined) ?? 35,
           pointOfInterestX:
             (y.get('pointOfInterestX') as number | undefined) ??
@@ -907,9 +951,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('fontFamily', tp?.fontFamily ?? 'Inter')
           y.set('fontSize', tp?.fontSize ?? 16)
           y.set('fontWeight', tp?.fontWeight ?? 400)
+          y.set('fontStyle', tp?.fontStyle ?? 'normal')
           y.set('lineHeight', tp?.lineHeight ?? 1.4)
           y.set('letterSpacing', tp?.letterSpacing ?? 0)
           y.set('textAlign', tp?.textAlign ?? 'start')
+          y.set('textAlignVertical', tp?.textAlignVertical ?? 'top')
+          y.set('textCase', tp?.textCase ?? 'original')
+          y.set('textDecoration', tp?.textDecoration ?? 'none')
           y.set('color', tp?.color ?? '#0a0a0c')
           y.set('textAnimation', normalizeTextAnimation(tp?.textAnimation) ?? null)
         }
@@ -930,6 +978,12 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // hardcoded perspective value so legacy scenes render the
           // same. Larger = more telephoto (less distortion).
           y.set('focalLength', cp?.focalLength ?? 1000)
+          y.set(
+            'scrollSensitivity',
+            normalizeCameraScrollSensitivity(
+              cp?.scrollSensitivity ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
+            ),
+          )
           y.set('fieldOfView', cp?.fieldOfView ?? 35)
           y.set('pointOfInterestX', cp?.pointOfInterestX ?? (cp?.focusWorldX ?? (cp?.transform?.x ?? 0)))
           y.set('pointOfInterestY', cp?.pointOfInterestY ?? (cp?.focusWorldY ?? (cp?.transform?.y ?? 0)))
@@ -1152,6 +1206,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           : {}) as Partial<UiStateSlab>),
         ...((uiState.get('kfGroupCollapsed')
           ? { kfGroupCollapsed: uiState.get('kfGroupCollapsed') as UiStateSlab['kfGroupCollapsed'] }
+          : {}) as Partial<UiStateSlab>),
+        ...((uiState.get('staggerSets')
+          ? { staggerSets: uiState.get('staggerSets') as UiStateSlab['staggerSets'] }
           : {}) as Partial<UiStateSlab>),
       }
     },

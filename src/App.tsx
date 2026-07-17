@@ -114,7 +114,6 @@ function Shell() {
 
   // Global wiring — must be mounted once, at the top of the scene tree.
   useKeyboardShortcuts()
-  useAnim()
   useFigmaPaste()
   useFileMenu()
 
@@ -230,6 +229,7 @@ function Shell() {
 
   return (
     <div className="flex h-full w-full flex-col bg-app-bg text-text">
+      <AnimationHost />
       <TopBar />
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
@@ -248,6 +248,20 @@ function Shell() {
       <UpdateNotice />
     </div>
   )
+}
+
+/**
+ * Keep the animation bridge out of the large editor shells.
+ *
+ * `useAnim` samples the engine playhead into the UI store during playback.
+ * Mounting that subscription directly in `Shell` made every sample reconcile
+ * the complete editor (canvas, inspector, layers, and timeline). This tiny
+ * leaf owns the subscription without giving those large siblings a per-tick
+ * parent render.
+ */
+function AnimationHost() {
+  useAnim()
+  return null
 }
 
 function AudioPlaybackHost() {
@@ -598,7 +612,6 @@ function PreviewShell() {
     window.dispatchEvent(new Event('popstate'))
   }, [setPlaying])
 
-  useAnim()
   useEagerLoadSceneFonts()
   useCustomFonts()
 
@@ -783,6 +796,7 @@ function PreviewShell() {
 
   return (
     <div className="flex h-full w-full flex-col bg-black text-text">
+      <AnimationHost />
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-white/10 bg-black px-3 text-white">
         <button
           type="button"

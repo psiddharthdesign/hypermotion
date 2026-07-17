@@ -383,6 +383,13 @@ export function buildWorldPlanes(
     const node = api.getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera') return
+    // Visibility is hierarchical. The WebGL compositor emits some descendants
+    // as independent planes (group3d children, videos, and explicit planes),
+    // so checking only each emitted plane's own `visible` flag lets those
+    // descendants survive when their parent is hidden. Stop the walk at the
+    // first hidden node: this matches the DOM renderer and also removes hidden
+    // descendants from rendering, outlines, and hit testing in one place.
+    if (!node.visible) return
     const a = animated[id]
     const isRoot = id === rootId
     const x = a?.x ?? node.transform.x

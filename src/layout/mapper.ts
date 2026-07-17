@@ -39,6 +39,7 @@ export function toYogaAlign(y: Yoga, a: FlexAlign): number {
     case 'center': return y.ALIGN_CENTER
     case 'end': return y.ALIGN_FLEX_END
     case 'stretch': return y.ALIGN_STRETCH
+    case 'baseline': return y.ALIGN_BASELINE
   }
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Size, SizeAxis, TextNode } from '@/scene'
+import type { Size, TextNode } from '@/scene'
 import { figmaToFill } from './fillMap'
 import { isGoogleFont } from '@/ui/fonts/googleFonts'
 import type { FigmaCapturedText } from './types'
@@ -9,19 +9,13 @@ import type { FigmaCapturedText } from './types'
  * Map a Figma text node to a partial TextNode for createNode().
  *
  * `text/color/fontFamily/fontSize/fontWeight/lineHeight/letterSpacing/
- * textAlign` flow through directly. `size` prefers Figma's modern
- * `layoutSizingHorizontal/Vertical` (FILL / HUG / FIXED) when present,
- * because it's the only field that surfaces FILL — the "stretch to
- * parent width" mode that wraps long descriptions inside cards. Falls
- * back to the legacy `textAutoResize` for older captures:
- *   - 'NONE'              → fixed width + height (the captured rect)
- *   - 'HEIGHT'            → fixed width + hug height (wraps, grows down)
- *   - 'WIDTH_AND_HEIGHT'  → hug both (auto-sizes to glyph metrics)
- *
- * Pre-fix bug: a text marked FILL in Figma got treated as HUG by our
- * import (because `textAutoResize` reports 'WIDTH_AND_HEIGHT' for FILL
- * texts too), making the text expand single-line and overflow the
- * containing frame. Reading layoutSizing first fixes that.
+ * textAlign` flow through directly. The imported text box is pinned to
+ * Figma's captured pixel dimensions. Figma has already resolved HUG,
+ * FILL, mixed runs, and its exact font metrics; asking the browser and
+ * Yoga to resolve those modes again can produce a different box while
+ * a web font is loading, which then wraps labels that are single-line
+ * in Figma. Keeping the captured box makes clipboard import a snapshot
+ * of the authored frame instead of a responsive reinterpretation.
  *
  * The first visible fill on the text node provides the color. Falls
  * back to a readable default if there's no fill — Figma rarely sends
@@ -37,17 +31,8 @@ export function figmaToText(
       ? fillObj.color
       : 'oklch(0.86 0.012 280)'
   const size: Size = {
-    width: resolveTextWidth(node),
-    height: resolveAxis(
-      node.layoutSizingVertical,
-      node.height,
-      // Vertical fallback stays generous: NONE means fixed pixel
-      // height, anything else means hug-the-content vertically. Hug
-      // height with a fixed width works fine in Yoga because the
-      // text element has a real width constraint to wrap inside —
-      // the same problem as horizontal hug doesn't apply.
-      node.textAutoResize === 'NONE' ? node.height : 'hug',
-    ),
+    width: node.width,
+    height: node.height,
   }
   // Hyper Motion stores `lineHeight` as a UNITLESS multiplier of
   // font-size (CSS-style "line-height: 1.4"). Figma sends it as
@@ -78,6 +63,7 @@ export function figmaToText(
     fontFamily,
     fontSize: node.fontSize,
     fontWeight: node.fontWeight,
+    fontStyle: node.fontStyle === 'italic' ? 'italic' : 'normal',
     lineHeight: lineHeightRatio,
     letterSpacing: node.letterSpacingPx,
     textAlign:
@@ -85,41 +71,41 @@ export function figmaToText(
         ? 'start'
         : node.textAlignHorizontal === 'RIGHT'
           ? 'end'
-          : 'center',
+          : node.textAlignHorizontal === 'JUSTIFIED'
+            ? 'justify'
+            : 'center',
+    textAlignVertical:
+      node.textAlignVertical === 'CENTER'
+        ? 'center'
+        : node.textAlignVertical === 'BOTTOM'
+          ? 'bottom'
+          : 'top',
+    textCase: mapTextCase(node.textCase),
+    textDecoration:
+      node.textDecoration === 'UNDERLINE'
+        ? 'underline'
+        : node.textDecoration === 'STRIKETHROUGH'
+          ? 'strikethrough'
+          : 'none',
     color,
     size,
   }
 }
 
-function resolveTextWidth(node: FigmaCapturedText): SizeAxis {
-  if (node.layoutSizingHorizontal === 'FILL') return 'fill'
-  if (node.layoutSizingHorizontal === 'HUG') return 'hug'
-  // Figma can report layoutSizingHorizontal=FIXED for text that is
-  // still auto-width (`textAutoResize: WIDTH_AND_HEIGHT`) when the
-  // text sits in a free-positioned frame. Treat the text auto-resize
-  // field as authoritative for labels so tiny browser/Figma font
-  // metric drift cannot wrap "Sign Up" into two lines.
-  if (node.textAutoResize === 'WIDTH_AND_HEIGHT') return 'hug'
-  return node.width
-}
-
-/**
- * Translate one axis of a Figma sizing field. When the modern
- * `layoutSizing*` value is present we honor it directly:
- *   - 'FILL'  → 'fill' (stretch to parent's available space)
- *   - 'HUG'   → 'hug'  (size to content)
- *   - 'FIXED' → captured pixel size
- *
- * When it's missing (older plugin captures), we fall through to the
- * caller's legacy fallback expression.
- */
-function resolveAxis(
-  modern: 'FIXED' | 'HUG' | 'FILL' | undefined,
-  capturedPx: number,
-  legacyFallback: SizeAxis,
-): SizeAxis {
-  if (modern === 'FILL') return 'fill'
-  if (modern === 'HUG') return 'hug'
-  if (modern === 'FIXED') return capturedPx
-  return legacyFallback
+function mapTextCase(value: FigmaCapturedText['textCase']): TextNode['textCase'] {
+  switch (value) {
+    case 'UPPER':
+      return 'upper'
+    case 'LOWER':
+      return 'lower'
+    case 'TITLE':
+      return 'title'
+    case 'SMALL_CAPS':
+      return 'small-caps'
+    case 'SMALL_CAPS_FORCED':
+      return 'small-caps-forced'
+    case 'ORIGINAL':
+    default:
+      return 'original'
+  }
 }

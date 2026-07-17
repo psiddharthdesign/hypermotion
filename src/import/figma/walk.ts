@@ -381,29 +381,6 @@ function createFrame(
 ): NodeId {
   const layout = figmaToLayout(node)
   const size = figmaToSize(node, forceFixed)
-  // Clip heuristic. Figma's default for frames is clipsContent=true,
-  // which is fine in Figma because their renderer's font metrics match
-  // exactly what their layout solver was sized against — content always
-  // fits perfectly inside its parent. Our renderer uses fallback fonts
-  // (Inter when the Figma family isn't on our Google Fonts allowlist)
-  // and Yoga, so glyph widths can differ by a few pixels from what
-  // Figma measured at capture time. A frame that JUST fits in Figma
-  // overflows by 2–3px in our app and gets clipped — text disappearing
-  // mid-word ("Invite new members, manage roles, and ass") and entire
-  // right-side controls vanishing inside the card.
-  //
-  // The fix: only preserve clipsContent on import when the frame has
-  // a non-zero corner radius. Rounded corners are the visually load-
-  // bearing reason to clip (a rounded card with overflow shows ugly
-  // square children poking past the curve). Plain rectangle frames
-  // are layout containers — their clip in Figma is incidental, not
-  // intentional, and dropping it lets the design render fully even
-  // when our fonts add a couple pixels.
-  //
-  // Designers can re-enable clip per-frame in the Inspector for any
-  // case the heuristic gets wrong.
-  const corner = maxCornerRadius(appearance)
-  const importedClips = node.clipsContent && corner > 0
   const id = api.createNode('frame', parentId, {
     name: node.name || 'Frame',
     visible: node.visible,
@@ -413,7 +390,7 @@ function createFrame(
     position,
     size,
     layout,
-    clipsContent: importedClips,
+    clipsContent: node.clipsContent,
   })
   for (const child of node.children) {
     walk(child, api, id, assets, node.layoutMode)
@@ -584,13 +561,6 @@ function perCornerRadiiFromFigma(
     Math.abs(tl - bl) < eps
   if (isUniform) return null
   return { tl, tr, br, bl }
-}
-
-function maxCornerRadius(appearance: Appearance): number {
-  const radii = appearance.cornerRadii
-  return radii
-    ? Math.max(radii.tl, radii.tr, radii.br, radii.bl)
-    : appearance.cornerRadius
 }
 
 function figmaToEffects(effects: FigmaCapturedEffect[]): SceneEffect[] {

@@ -59,15 +59,16 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
       // Selecting on pointerdown (not click) matches Figma's feel —
       // the selection frame appears before you've released the mouse.
       //
-      // Multi-select on canvas: shift/cmd-pointerdown TOGGLES the node
-      // in the existing selection instead of replacing it. Without this,
-      // a designer holding shift to add a third node was actually losing
-      // their first two — which broke "select these and change them
-      // together" cold. Plain pointerdown still replaces selection
-      // (Figma parity).
-      const additive = e.shiftKey || e.metaKey || e.ctrlKey
-      if (additive) {
+      // Shift remains the additive canvas modifier. Command/Ctrl is the
+      // direct-selection modifier: because each NodeView is flattened into
+      // paint order, the event target is the deepest visible child under the
+      // pointer. Replace the selection with that child instead of toggling it
+      // into a possibly unrelated multi-selection. Command/Ctrl+Shift still
+      // extends the current selection with the directly hit child.
+      if (e.shiftKey) {
         useUI.getState().toggleInSelection(nodeId, true)
+      } else if (e.metaKey || e.ctrlKey) {
+        setSelection([nodeId])
       } else {
         const current = useUI.getState().selection
         // If the node is already part of the active selection, leave the

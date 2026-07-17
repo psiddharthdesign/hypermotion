@@ -238,6 +238,7 @@ export interface NodeJson {
   enabled?: boolean
   background?: FillJson | null
   focalLength?: number
+  scrollSensitivity?: number
   fieldOfView?: number
   pointOfInterestX?: number
   pointOfInterestY?: number
@@ -798,6 +799,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
       y.set('focalLength', node.focalLength ?? 1000)
+      y.set(
+        'scrollSensitivity',
+        normalizeCameraScrollSensitivity(node.scrollSensitivity),
+      )
       y.set('fieldOfView', node.fieldOfView ?? 35)
       y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
       y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
@@ -1303,6 +1308,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'enabled',
       'background',
       'focalLength',
+      'scrollSensitivity',
       'fieldOfView',
       'pointOfInterestX',
       'pointOfInterestY',
@@ -1334,6 +1340,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
     y.set('focalLength', node.focalLength ?? 1000)
+    y.set(
+      'scrollSensitivity',
+      normalizeCameraScrollSensitivity(node.scrollSensitivity),
+    )
     y.set('fieldOfView', node.fieldOfView ?? 35)
     y.set('pointOfInterestX', node.pointOfInterestX ?? node.focusWorldX ?? node.transform?.x ?? 0)
     y.set('pointOfInterestY', node.pointOfInterestY ?? node.focusWorldY ?? node.transform?.y ?? 0)
@@ -1362,6 +1372,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set(k, v)
   }
   return y
+}
+
+function normalizeCameraScrollSensitivity(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 1
+  return Math.max(0.1, Math.min(2, numeric))
 }
 
 function readSceneMeta(scene: Y.Map<unknown>): SceneMeta {

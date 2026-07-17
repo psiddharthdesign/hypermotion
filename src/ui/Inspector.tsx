@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from 'react'
 import { useUI } from '@/state/ui'
-import { useSceneAPI, useSceneVersion } from '@/scene'
+import {
+  MAX_CAMERA_SCROLL_SENSITIVITY,
+  MIN_CAMERA_SCROLL_SENSITIVITY,
+  normalizeCameraScrollSensitivity,
+  useSceneAPI,
+  useSceneVersion,
+} from '@/scene'
 import type {
   Appearance,
   BlendMode,
@@ -49,13 +55,23 @@ import {
 } from '@/ui/importMedia'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
+import {
+  cameraPreviewStore,
+  cameraTransformPreview,
+} from '@/ui/cameraPreviewStore'
+import {
+  resetCameraTransformGroup,
+  type CameraTransformResetGroup,
+} from '@/ui/cameraReset'
 import type { SceneAPI } from '@/scene/doc'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import {
   CheckboxField,
   ColorField,
   FieldRow,
   FillField,
   KeyframeButton,
+  MultiKeyframeButton,
   NumberField,
   ScalePairField,
   SelectField,
@@ -66,6 +82,12 @@ import {
 import { PresetsPanel } from '@/ui/PresetsPanel'
 import { AlignTools } from '@/ui/AlignTools'
 import { EasingPicker } from '@/ui/EasingPicker'
+import {
+  applyRenderModeToSelection,
+  RENDER_MODE_OPTIONS,
+  renderModeEligibleNodes,
+  type RenderMode,
+} from '@/ui/multiRenderMode'
 import type { EasingPresetId } from '@/anim'
 import {
   addComponentVariantInteraction,
@@ -89,11 +111,13 @@ import {
 import {
   findKeyframeAt,
   findTrack,
+  getAnimEngine,
   recordKeyframesForPatch,
   removeTrack,
   stampToActiveTracksForPatch,
   toggleKeyframe,
 } from '@/anim'
+import { stampStaggerSetPatch } from '@/anim/staggerSets'
 import {
   GOOGLE_FONTS,
   isGoogleFont,
@@ -445,12 +469,26 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   const selection = useUI((s) => s.selection)
   const recording = useUI((s) => s.recording)
   const playhead = useUI((s) => s.playhead)
+  const staggerOn = useUI((s) => s.staggerOn)
+  const staggerDelay = useUI((s) => s.staggerDelay)
+  const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
   const count = nodes.length
+  const staggerActive =
+    staggerOn && activeStaggerSetId !== null && nodes.length > 1
+  const staggerOptions = activeStaggerSetId
+    ? {
+        setId: activeStaggerSetId,
+        layerIds: nodes.map((node) => node.id),
+        delay: staggerDelay,
+        order: 'forward' as const,
+      }
+    : null
 
   // Capability gates — skip whole sections that don't fit every node.
   const allHaveSize = nodes.every((n) => 'size' in n)
   const allHaveLayout = nodes.every((n) => 'layout' in n)
   const allFrames = nodes.every((n) => n.kind === 'frame')
+  const renderModeNodes = renderModeEligibleNodes(nodes)
 
   // Per-group patchers. Each writes to every selected node that has
   // that group, preserving the node's other fields in the same group.
@@ -466,43 +504,63 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   //      track at the current playhead under REPLACE semantics.
   // recording=on already covers active tracks (it stamps everything),
   // so the two paths never overlap.
-  const patchTransformAll = (patch: Partial<Transform>) => {
-    for (const n of nodes) {
-      api.setNodeProperty(n.id, 'transform', { ...n.transform, ...patch })
+  const stampPatchAll = (
+    group: 'transform' | 'appearance' | 'size',
+    patch: Record<string, unknown>,
+  ) => {
+    if (staggerActive && staggerOptions) {
+      const trackIds = stampStaggerSetPatch(
+        api,
+        playhead,
+        group,
+        patch,
+        recording ? 'record' : 'active-track',
+        staggerOptions,
+      )
+      if (trackIds.length > 0) {
+        useUI.getState().setSelectedTrackIds(trackIds)
+      }
+      return
+    }
+    for (const node of nodes) {
       if (recording) {
-        recordKeyframesForPatch(api, n.id, playhead, 'transform', patch)
+        recordKeyframesForPatch(api, node.id, playhead, group, patch)
       } else {
-        stampToActiveTracksForPatch(api, n.id, playhead, 'transform', patch)
+        stampToActiveTracksForPatch(api, node.id, playhead, group, patch)
       }
     }
+  }
+  const patchTransformAll = (patch: Partial<Transform>) => {
+    api.doc.transact(() => {
+      for (const n of nodes) {
+        api.setNodeProperty(n.id, 'transform', { ...n.transform, ...patch })
+      }
+      stampPatchAll('transform', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchAppearanceAll = (patch: Partial<Appearance>) => {
-    for (const n of nodes) {
-      api.setNodeProperty(n.id, 'appearance', { ...n.appearance, ...patch })
-      if (recording) {
-        recordKeyframesForPatch(api, n.id, playhead, 'appearance', patch)
-      } else {
-        stampToActiveTracksForPatch(api, n.id, playhead, 'appearance', patch)
+    api.doc.transact(() => {
+      for (const n of nodes) {
+        api.setNodeProperty(n.id, 'appearance', { ...n.appearance, ...patch })
       }
-    }
+      stampPatchAll('appearance', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchSizeAll = (patch: Partial<Size>) => {
-    for (const n of nodes) {
-      if ('size' in n) {
-        api.setNodeProperty(n.id, 'size', { ...n.size, ...patch })
-        if (
-          n.kind === 'component' &&
-          (patch.width === 'hug' || patch.height === 'hug')
-        ) {
-          fitComponentToChildren(api, n.id, { preserveHug: true })
-        }
-        if (recording) {
-          recordKeyframesForPatch(api, n.id, playhead, 'size', patch)
-        } else {
-          stampToActiveTracksForPatch(api, n.id, playhead, 'size', patch)
+    api.doc.transact(() => {
+      for (const n of nodes) {
+        if ('size' in n) {
+          api.setNodeProperty(n.id, 'size', { ...n.size, ...patch })
+          if (
+            n.kind === 'component' &&
+            (patch.width === 'hug' || patch.height === 'hug')
+          ) {
+            fitComponentToChildren(api, n.id, { preserveHug: true })
+          }
         }
       }
-    }
+      stampPatchAll('size', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchLayoutAll = (patch: Partial<Layout>) => {
     const DEFAULT_FRAME_NAMES = new Set(['Auto layout', 'Grid', 'Frame'])
@@ -560,9 +618,17 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
 
   const cX = common(nodes, (n) => n.transform.x)
   const cY = common(nodes, (n) => n.transform.y)
+  const cZ = common(nodes, (n) => n.transform.z)
   const cRot = common(nodes, (n) => n.transform.rotation)
+  const cRotX = common(nodes, (n) => n.transform.rotationX)
+  const cRotY = common(nodes, (n) => n.transform.rotationY)
   const cSX = common(nodes, (n) => n.transform.scaleX)
   const cSY = common(nodes, (n) => n.transform.scaleY)
+  const cSpace = common(nodes, (n) => n.transform.space ?? 'local')
+  const cRenderMode =
+    renderModeNodes.length > 0
+      ? common(renderModeNodes, (n) => n.transform.renderMode ?? 'flat')
+      : null
 
   const cW = allHaveSize
     ? common(nodes, (n) => ('size' in n ? n.size.width : 0))
@@ -580,20 +646,6 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   // does structural JSON equality so two nodes with the same gradient
   // stops + angle still resolve to a non-mixed value.
   const cFill = common(nodes, (n) => n.appearance.fill)
-
-  // If EVERY selected node's parent has fill=null, disable the fill
-  // control for the selection — matches the single-node behavior where
-  // a child fill inside a fill-less parent has nowhere to paint. Root
-  // nodes (parent: null) don't participate in this check — they are the
-  // artboard and their fill-less-ness doesn't mean "no paintable
-  // surface." If even one selected node has a parent with a real fill,
-  // we leave the control enabled so editing the multi-selection still
-  // works against the non-null-parent subset.
-  const allParentsFillNull = nodes.every((n) => {
-    if (!n.parent) return false
-    const p = api.getNode(n.parent)
-    return !!p && p.appearance.fill === null
-  })
   const cStroke = common(nodes, (n) => n.appearance.stroke)
   const cCorner = common(nodes, (n) => n.appearance.cornerRadius)
   const cClip = allFrames
@@ -634,6 +686,10 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
           <span className="font-medium text-text-muted">mixed</span> have
           differing values.
         </div>
+        <div className="mt-1 text-[10px] text-text-dim">
+          Press S to arm Stagger. Each diamond adds that property across all
+          selected layers to the same stagger set.
+        </div>
       </div>
 
       <Section title="Node">
@@ -672,28 +728,30 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
         <div className="mb-3">
           <AlignTools api={api} selection={selection} />
         </div>
-        <FieldRow label="X">
-          <MixedCell mixed={cX.mixed}>
-            <NumberField
-              value={cX.value}
-              onCommit={(v) => patchTransformAll({ x: v })}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow label="Y">
-          <MixedCell mixed={cY.mixed}>
-            <NumberField
-              value={cY.value}
-              onCommit={(v) => patchTransformAll({ y: v })}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow label="Rotation">
-          <MixedCell mixed={cRot.mixed}>
-            <NumberField
-              value={cRot.value}
-              onCommit={(v) => patchTransformAll({ rotation: v })}
-              suffix="°"
+        {cRenderMode ? (
+          <FieldRow label="Render Mode">
+            <MixedCell mixed={cRenderMode.mixed}>
+              <SelectField<RenderMode>
+                value={cRenderMode.value}
+                options={RENDER_MODE_OPTIONS}
+                onCommit={(renderMode) =>
+                  applyRenderModeToSelection(api, nodes, renderMode)
+                }
+                width="w-full"
+              />
+            </MixedCell>
+          </FieldRow>
+        ) : null}
+        <FieldRow label="3D Space">
+          <MixedCell mixed={cSpace.mixed}>
+            <SelectField<NonNullable<Transform['space']>>
+              value={cSpace.value}
+              options={[
+                { value: 'local', label: 'Local plane' },
+                { value: 'world', label: 'World' },
+              ]}
+              onCommit={(space) => patchTransformAll({ space })}
+              width="w-full"
             />
           </MixedCell>
         </FieldRow>
@@ -706,6 +764,129 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             onCommitX={(v) => patchTransformAll({ scaleX: v })}
             onCommitY={(v) => patchTransformAll({ scaleY: v })}
           />
+        </FieldRow>
+      </Section>
+
+      <Section title="Position">
+        <FieldRow
+          label="Position X"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.x,
+              }))}
+              propertyId="transform.x"
+            />
+          }
+        >
+          <MixedCell mixed={cX.mixed}>
+            <NumberField
+              value={cX.value}
+              onCommit={(v) => patchTransformAll({ x: v })}
+            />
+          </MixedCell>
+        </FieldRow>
+        <FieldRow
+          label="Position Y"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.y,
+              }))}
+              propertyId="transform.y"
+            />
+          }
+        >
+          <MixedCell mixed={cY.mixed}>
+            <NumberField
+              value={cY.value}
+              onCommit={(v) => patchTransformAll({ y: v })}
+            />
+          </MixedCell>
+        </FieldRow>
+        <FieldRow
+          label="Position Z"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.z,
+              }))}
+              propertyId="transform.z"
+            />
+          }
+        >
+          <MixedCell mixed={cZ.mixed}>
+            <NumberField
+              value={cZ.value}
+              onCommit={(v) => patchTransformAll({ z: v })}
+            />
+          </MixedCell>
+        </FieldRow>
+      </Section>
+
+      <Section title="Rotation">
+        <FieldRow
+          label="Rotate X"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.rotationX,
+              }))}
+              propertyId="transform.rotationX"
+            />
+          }
+        >
+          <MixedCell mixed={cRotX.mixed}>
+            <NumberField
+              value={cRotX.value}
+              onCommit={(v) => patchTransformAll({ rotationX: v })}
+              suffix="°"
+            />
+          </MixedCell>
+        </FieldRow>
+        <FieldRow
+          label="Rotate Y"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.rotationY,
+              }))}
+              propertyId="transform.rotationY"
+            />
+          }
+        >
+          <MixedCell mixed={cRotY.mixed}>
+            <NumberField
+              value={cRotY.value}
+              onCommit={(v) => patchTransformAll({ rotationY: v })}
+              suffix="°"
+            />
+          </MixedCell>
+        </FieldRow>
+        <FieldRow
+          label="Rotate Z"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.rotation,
+              }))}
+              propertyId="transform.rotation"
+            />
+          }
+        >
+          <MixedCell mixed={cRot.mixed}>
+            <NumberField
+              value={cRot.value}
+              onCommit={(v) => patchTransformAll({ rotation: v })}
+              suffix="°"
+            />
+          </MixedCell>
         </FieldRow>
       </Section>
 
@@ -741,7 +922,18 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
       ) : null}
 
       <Section title="Appearance">
-        <FieldRow label="Opacity">
+        <FieldRow
+          label="Opacity"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.appearance.opacity,
+              }))}
+              propertyId="appearance.opacity"
+            />
+          }
+        >
           <MixedCell mixed={cOpacity.mixed}>
             <NumberField
               value={cOpacity.value}
@@ -771,9 +963,8 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             "keep Fill visible" rule from the solo multi-select fix. */}
         <FillField
           value={cFill.value ?? null}
+          mixed={cFill.mixed}
           onCommit={(fill) => patchAppearanceAll({ fill })}
-          disabled={allParentsFillNull}
-          disabledReason="Parent has no fill — child fill would be invisible"
         />
         <FieldRow label="Stroke">
           <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
@@ -1135,6 +1326,7 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
+  const playing = useUI((state) => state.playing)
   // Whether this node's parent is a frame with fill explicitly set to
   // null. When that's the case, a child fill would paint on top of a
   // parent that's invisible — so we dim the FillField to signal
@@ -1152,8 +1344,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // Editing a value here still writes the static + stamps the active
   // track via `patchTransform` / `stampForPatch`, so types are
   // consistent in both directions.
-  const animMap = useAnimatedValues([node.id])
-  const anim = animMap[node.id]
+  const inspectorAnimationIds = useMemo(
+    () => (playing ? [] : [node.id]),
+    [node.id, playing],
+  )
+  const animMap = useAnimatedValues(inspectorAnimationIds)
+  const anim = playing
+    ? getAnimEngine().getSnapshot()[node.id]
+    : animMap[node.id]
   const liveX = anim?.x ?? node.transform.x
   const liveY = anim?.y ?? node.transform.y
   const liveZ = anim?.z ?? node.transform.z
@@ -1202,6 +1400,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
   const liveFieldOfView =
     node.kind === 'camera' ? anim?.fieldOfView ?? node.fieldOfView ?? 35 : 35
+  const cameraScrollSensitivity =
+    node.kind === 'camera'
+      ? normalizeCameraScrollSensitivity(node.scrollSensitivity)
+      : 1
   const liveNearClip =
     node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
   const liveFarClip =
@@ -1237,6 +1439,28 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     patch: Record<string, unknown>,
   ) => {
     const ui = useUI.getState()
+    const activeSet = ui.activeStaggerSetId
+      ? api.getUiState().staggerSets[ui.activeStaggerSetId]
+      : undefined
+    if (ui.staggerOn && activeSet?.layerIds.includes(node.id)) {
+      const trackIds = stampStaggerSetPatch(
+        api,
+        ui.playhead,
+        group,
+        patch,
+        ui.recording ? 'record' : 'active-track',
+        {
+          setId: activeSet.id,
+          layerIds: activeSet.layerIds,
+          delay: activeSet.delay,
+          order: activeSet.order,
+        },
+      )
+      if (trackIds.length > 0) {
+        ui.setSelectedTrackIds(trackIds)
+      }
+      return
+    }
     if (ui.recording) {
       recordKeyframesForPatch(api, node.id, ui.playhead, group, patch)
     } else {
@@ -1251,23 +1475,66 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     // the second overwrites the first. Reading via api.getNode picks
     // up whatever the previous call just wrote.
     const current = api.getNode(node.id)?.transform ?? node.transform
-    api.setNodeProperty(node.id, 'transform', { ...current, ...patch })
-    stampForPatch('transform', patch)
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'transform', { ...current, ...patch })
+      stampForPatch('transform', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const previewCameraTransform = (patch: Partial<Transform>) => {
+    if (node.kind !== 'camera') return
+    cameraPreviewStore.set(
+      node.id,
+      cameraTransformPreview({
+        ...node.transform,
+        x: liveX,
+        y: liveY,
+        z: liveZ,
+        rotation: liveRot,
+        rotationX: liveRotX,
+        rotationY: liveRotY,
+        scaleX: liveSX,
+        scaleY: liveSY,
+        ...patch,
+      }),
+    )
+  }
+  const commitCameraTransformScrub = (patch: Partial<Transform>) => {
+    if (node.kind !== 'camera') return
+    patchTransform(patch)
+    cameraPreviewStore.clear(node.id)
+  }
+  const resetCameraGroup = (group: CameraTransformResetGroup) => {
+    if (node.kind !== 'camera') return
+    const ui = useUI.getState()
+    const playhead = ui.playing
+      ? getAnimEngine().getPlayhead()
+      : ui.playhead
+    // A stale number-field scrub preview must not visually override the
+    // neutral pose that this command writes into the scene and timeline.
+    cameraPreviewStore.clear(node.id)
+    resetCameraTransformGroup(api, node.id, group, playhead)
   }
   const patchAppearance = (patch: Partial<Appearance>) => {
-    api.setNodeProperty(node.id, 'appearance', { ...node.appearance, ...patch })
-    stampForPatch('appearance', patch)
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'appearance', {
+        ...node.appearance,
+        ...patch,
+      })
+      stampForPatch('appearance', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchSize = (patch: Partial<Size>) => {
     if (!('size' in node)) return
-    api.setNodeProperty(node.id, 'size', { ...node.size, ...patch })
-    if (
-      node.kind === 'component' &&
-      (patch.width === 'hug' || patch.height === 'hug')
-    ) {
-      fitComponentToChildren(api, node.id, { preserveHug: true })
-    }
-    stampForPatch('size', patch)
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'size', { ...node.size, ...patch })
+      if (
+        node.kind === 'component' &&
+        (patch.width === 'hug' || patch.height === 'hug')
+      ) {
+        fitComponentToChildren(api, node.id, { preserveHug: true })
+      }
+      stampForPatch('size', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchCamera = (
     patch: Partial<
@@ -1284,6 +1551,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focusFalloff'
         | 'focusTargetNodeId'
         | 'focalLength'
+        | 'scrollSensitivity'
         | 'aperture'
         | 'iso'
         | 'blurLevel'
@@ -1331,6 +1599,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.focalLength !== undefined) {
       api.setNodeProperty(node.id, 'focalLength', patch.focalLength)
+    }
+    if (patch.scrollSensitivity !== undefined) {
+      api.setNodeProperty(
+        node.id,
+        'scrollSensitivity',
+        normalizeCameraScrollSensitivity(patch.scrollSensitivity),
+      )
     }
     if (patch.aperture !== undefined) {
       api.setNodeProperty(node.id, 'aperture', patch.aperture)
@@ -1478,7 +1753,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
-          <Section title="Camera Position">
+          <Section
+            title="Camera Position"
+            action={
+              <CameraSectionResetButton
+                label="Reset position"
+                title="Reset camera position to the scene center and add or update its X, Y, and Z keyframes at the current playhead."
+                onClick={() => resetCameraGroup('position')}
+              />
+            }
+          >
             <FieldRow
               label="Position X"
               keyframe={
@@ -1492,6 +1776,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 	              <NumberField
 	                value={liveX}
 	                onCommit={(v) => patchTransform({ x: v })}
+	                onScrubPreview={(v) => previewCameraTransform({ x: v })}
+	                onScrubCommit={(v) => commitCameraTransformScrub({ x: v })}
+	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
 	                step={1}
 	                suffix="px"
 	              />
@@ -1509,6 +1796,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 	              <NumberField
 	                value={liveY}
 	                onCommit={(v) => patchTransform({ y: v })}
+	                onScrubPreview={(v) => previewCameraTransform({ y: v })}
+	                onScrubCommit={(v) => commitCameraTransformScrub({ y: v })}
+	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
 	                step={1}
 	                suffix="px"
 	              />
@@ -1526,13 +1816,37 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 	              <NumberField
 	                value={liveZ}
 	                onCommit={(v) => patchTransform({ z: v })}
+	                onScrubPreview={(v) => previewCameraTransform({ z: v })}
+	                onScrubCommit={(v) => commitCameraTransformScrub({ z: v })}
+	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
 	                step={1}
 	                suffix="px"
 	              />
             </FieldRow>
+            <FieldRow label="Scroll intensity">
+              <SliderField
+                value={Math.round(cameraScrollSensitivity * 100)}
+                onCommit={(percent) =>
+                  patchCamera({ scrollSensitivity: percent / 100 })
+                }
+                min={MIN_CAMERA_SCROLL_SENSITIVITY * 100}
+                max={MAX_CAMERA_SCROLL_SENSITIVITY * 100}
+                step={5}
+                suffix="%"
+              />
+            </FieldRow>
           </Section>
 
-          <Section title="Camera Rotation">
+          <Section
+            title="Camera Rotation"
+            action={
+              <CameraSectionResetButton
+                label="Reset rotation"
+                title="Reset all camera rotation axes to 0° and add or update their keyframes at the current playhead."
+                onClick={() => resetCameraGroup('rotation')}
+              />
+            }
+          >
             <FieldRow
               label="Rotate X"
               keyframe={
@@ -1546,6 +1860,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               <NumberField
                 value={liveRotX}
                 onCommit={(v) => patchTransform({ rotationX: v })}
+                onScrubPreview={(v) =>
+                  previewCameraTransform({ rotationX: v })
+                }
+                onScrubCommit={(v) =>
+                  commitCameraTransformScrub({ rotationX: v })
+                }
+                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
                 suffix="°"
               />
             </FieldRow>
@@ -1562,6 +1883,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               <NumberField
                 value={liveRotY}
                 onCommit={(v) => patchTransform({ rotationY: v })}
+                onScrubPreview={(v) =>
+                  previewCameraTransform({ rotationY: v })
+                }
+                onScrubCommit={(v) =>
+                  commitCameraTransformScrub({ rotationY: v })
+                }
+                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
                 suffix="°"
               />
             </FieldRow>
@@ -1578,6 +1906,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               <NumberField
                 value={liveRot}
                 onCommit={(v) => patchTransform({ rotation: v })}
+                onScrubPreview={(v) =>
+                  previewCameraTransform({ rotation: v })
+                }
+                onScrubCommit={(v) =>
+                  commitCameraTransformScrub({ rotation: v })
+                }
+                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
                 suffix="°"
               />
             </FieldRow>
@@ -1593,13 +1928,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           <AlignTools api={api} selection={[node.id]} />
         </div>
         <FieldRow label="Render Mode">
-          <SelectField<NonNullable<Transform['renderMode']>>
+          <SelectField<RenderMode>
             value={node.transform.renderMode ?? 'flat'}
-            options={[
-              { value: 'flat', label: 'Flat' },
-              { value: 'plane', label: '3D Plane' },
-              { value: 'group3d', label: '3D Group' },
-            ]}
+            options={RENDER_MODE_OPTIONS}
             onCommit={(renderMode) => patchTransform({ renderMode })}
             width="w-full"
           />
@@ -2061,7 +2392,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               value={node.background ?? null}
               onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
             />
-            <CameraResetActions node={node} api={api} />
+            <CameraAnimationActions node={node} api={api} />
           </Section>
         </>
       )}
@@ -2069,66 +2400,52 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   )
 }
 
+function CameraSectionResetButton({
+  label,
+  title,
+  onClick,
+}: {
+  label: string
+  title: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      onClick={onClick}
+      className="rounded border border-border bg-panel px-1.5 py-1 text-[10px] font-medium text-text-muted hover:border-border-strong hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      Reset scene
+    </button>
+  )
+}
+
 /**
- * Camera-only reset actions. Two buttons:
- *   - "Reset transform" sets transform to (W/2, H/2, 0, 1, 1) — the
- *     identity-view pose where the rendered scene appears unmodified.
- *   - "Clear all animation" removes every track on the camera. Cameras
- *     used to be invisible in the Timeline, so users would unknowingly
- *     leave Record-mode tracks on the camera that overrode their
- *     manual transform edits. Even now that Timeline shows them, an
- *     escape hatch is useful when the picker is buried in a deep scene.
+ * Clear every animation track on the camera. The neutral-pose reset commands
+ * now live beside their Position / Rotation section titles and intentionally
+ * keyframe their values, so keeping the old non-keyframing "Reset transform"
+ * button here would expose two conflicting reset behaviors.
  */
-function CameraResetActions({ node, api }: { node: Node; api: SceneAPI }) {
-  const meta = api.getMeta()
-  const targetTransform = {
-    x: meta.canvas.width / 2,
-    y: meta.canvas.height / 2,
-    z: 0,
-    rotation: 0,
-    rotationX: 0,
-    rotationY: 0,
-    scaleX: 1,
-    scaleY: 1,
-  }
+function CameraAnimationActions({ node, api }: { node: Node; api: SceneAPI }) {
   const tracks = api.getTracksForNode(node.id)
-  const hasNonIdentity =
-    node.transform.x !== targetTransform.x ||
-    node.transform.y !== targetTransform.y ||
-    node.transform.z !== 0 ||
-    node.transform.rotation !== 0 ||
-    node.transform.rotationX !== 0 ||
-    node.transform.rotationY !== 0 ||
-    node.transform.scaleX !== 1 ||
-    node.transform.scaleY !== 1
+  if (tracks.length === 0) return null
   return (
     <div className="mt-2 flex flex-col gap-1">
       <button
         type="button"
-        disabled={!hasNonIdentity}
-        onClick={() =>
-          api.setNodeProperty(node.id, 'transform', targetTransform)
-        }
-        title="Reset position / rotation / scale to the identity-view pose. The scene will render unmodified."
-        className="rounded border border-border bg-panel px-2 py-1.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={() => {
+          api.doc.transact(() => {
+            for (const t of tracks) removeTrack(api, t.id)
+          })
+        }}
+        title="Remove every animation track on the camera. Static transform stays."
+        className="rounded border border-border bg-panel px-2 py-1.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
       >
-        Reset transform
+        Clear animation ({tracks.length}{' '}
+        {tracks.length === 1 ? 'track' : 'tracks'})
       </button>
-      {tracks.length > 0 ? (
-        <button
-          type="button"
-          onClick={() => {
-            api.doc.transact(() => {
-              for (const t of tracks) removeTrack(api, t.id)
-            })
-          }}
-          title="Remove every animation track on the camera. Static transform stays."
-          className="rounded border border-border bg-panel px-2 py-1.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
-        >
-          Clear animation ({tracks.length}{' '}
-          {tracks.length === 1 ? 'track' : 'tracks'})
-        </button>
-      ) : null}
     </div>
   )
 }
@@ -4059,6 +4376,18 @@ function TypographySection({
           width="w-full"
         />
       </FieldRow>
+      <FieldRow label="Style">
+        <SelectField<'normal' | 'italic'>
+          value={node.fontStyle ?? 'normal'}
+          options={
+            [
+              { value: 'normal', label: 'Normal' },
+              { value: 'italic', label: 'Italic' },
+            ] as const
+          }
+          onCommit={(style) => api.setNodeProperty(node.id, 'fontStyle', style)}
+        />
+      </FieldRow>
       <FieldRow label="Size">
         <NumberField
           value={node.fontSize}
@@ -4096,16 +4425,72 @@ function TypographySection({
         />
       </FieldRow>
       <FieldRow label="Align">
-        <SelectField<'start' | 'center' | 'end'>
+        <SelectField<'start' | 'center' | 'end' | 'justify'>
           value={node.textAlign}
           options={
             [
               { value: 'start', label: 'Left' },
               { value: 'center', label: 'Center' },
               { value: 'end', label: 'Right' },
+              { value: 'justify', label: 'Justified' },
             ] as const
           }
           onCommit={(a) => api.setNodeProperty(node.id, 'textAlign', a)}
+        />
+      </FieldRow>
+      <FieldRow label="Vertical">
+        <SelectField<'top' | 'center' | 'bottom'>
+          value={node.textAlignVertical ?? 'top'}
+          options={
+            [
+              { value: 'top', label: 'Top' },
+              { value: 'center', label: 'Center' },
+              { value: 'bottom', label: 'Bottom' },
+            ] as const
+          }
+          onCommit={(a) =>
+            api.setNodeProperty(node.id, 'textAlignVertical', a)
+          }
+        />
+      </FieldRow>
+      <FieldRow label="Case">
+        <SelectField<
+          | 'original'
+          | 'upper'
+          | 'lower'
+          | 'title'
+          | 'small-caps'
+          | 'small-caps-forced'
+        >
+          value={node.textCase ?? 'original'}
+          options={
+            [
+              { value: 'original', label: 'Original' },
+              { value: 'upper', label: 'Uppercase' },
+              { value: 'lower', label: 'Lowercase' },
+              { value: 'title', label: 'Title Case' },
+              { value: 'small-caps', label: 'Small Caps' },
+              { value: 'small-caps-forced', label: 'All Small Caps' },
+            ] as const
+          }
+          onCommit={(textCase) =>
+            api.setNodeProperty(node.id, 'textCase', textCase)
+          }
+        />
+      </FieldRow>
+      <FieldRow label="Decoration">
+        <SelectField<'none' | 'underline' | 'strikethrough'>
+          value={node.textDecoration ?? 'none'}
+          options={
+            [
+              { value: 'none', label: 'None' },
+              { value: 'underline', label: 'Underline' },
+              { value: 'strikethrough', label: 'Strikethrough' },
+            ] as const
+          }
+          onCommit={(decoration) =>
+            api.setNodeProperty(node.id, 'textDecoration', decoration)
+          }
         />
       </FieldRow>
       <FieldRow label="Color">
@@ -5136,6 +5521,7 @@ function SliderField({
   min = 0,
   max = 100,
   step = 1,
+  suffix,
   disabled,
 }: {
   value: number
@@ -5143,6 +5529,7 @@ function SliderField({
   min?: number
   max?: number
   step?: number
+  suffix?: string
   disabled?: boolean
 }) {
   // Visual fill: percentage of the way from min to max. Capped to the
@@ -5163,6 +5550,7 @@ function SliderField({
         min={min}
         max={max}
         step={step}
+        suffix={suffix}
         width="w-16"
       />
       <input

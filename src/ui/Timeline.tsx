@@ -1,11 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
-import { removeKeyframe, moveKeyframe, removeTrack } from '@/anim'
+import { getAnimEngine, removeKeyframe, removeTrack } from '@/anim'
+import {
+  configureStaggerSet,
+  deleteStaggerSet,
+  deleteStaggerSetKeyframes,
+  detachStaggerSetKeyframes,
+  detachStaggerSetLayers,
+  removeStaggerSet,
+  renameStaggerSet,
+  resolveStaggerKeyframeBundle,
+  setStaggerSetDelayMetadata,
+  type StaggerSetMemberInput,
+} from '@/anim/staggerSets'
 import type { SceneNode, Section, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import {
   groupKeyframes as groupKeyframesHelper,
   ungroupKeyframeGroups as ungroupKeyframeGroupsHelper,
@@ -18,8 +39,22 @@ import {
   insertTracksIntoGroup as insertTracksIntoGroupHelper,
   toggleTrackGroupCollapsed as toggleTrackGroupCollapsedHelper,
   renameTrackGroup as renameTrackGroupHelper,
+  deleteAnimationTracks as deleteAnimationTracksHelper,
 } from '@/state/groupActions'
 import { importAudioFile } from '@/ui/importMedia'
+import {
+  createKeyframeDragSession,
+  keyframeDragPreviewStore,
+  type KeyframeDragMember,
+} from '@/ui/keyframeDragPreviewStore'
+import {
+  groupEdgeHitWidth,
+  SEGMENT_DRAG_HIT_HEIGHT,
+} from '@/ui/timelineDragHitArea'
+import {
+  createSectionDragSession,
+  sectionDragPreviewStore,
+} from '@/ui/sectionDragPreviewStore'
 
 /**
  * Keyframe multi-select keys are the compound `trackId:kfId` string.
@@ -30,6 +65,26 @@ import { importAudioFile } from '@/ui/importMedia'
  */
 const kfKey = (trackId: string, kfId: string) => `${trackId}:${kfId}`
 const TRACK_IDS_DRAG_TYPE = 'application/x-hypermotion-track-ids'
+
+function staggerMemberInputs(
+  members: ResolvedStaggerTimelineSet['members'],
+): StaggerSetMemberInput[] {
+  const grouped = new Map<string, StaggerSetMemberInput>()
+  for (const member of members) {
+    const key = `${member.nodeId}\u0000${member.propertyId}`
+    let input = grouped.get(key)
+    if (!input) {
+      input = {
+        nodeId: member.nodeId,
+        propertyId: member.propertyId,
+        keyframeIds: [],
+      }
+      grouped.set(key, input)
+    }
+    ;(input.keyframeIds as string[]).push(member.kfId)
+  }
+  return [...grouped.values()]
+}
 
 function setDraggedTrackIds(e: React.DragEvent, trackIds: string[]): void {
   const ids = [...new Set(trackIds)].filter(Boolean)
@@ -94,13 +149,105 @@ const ROW_HEIGHT = 24
 type TimelineMode = 'animated' | 'sound'
 type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
 
+type ResolvedStaggerTimelineSet = {
+  id: string
+  label: string
+  hostNodeId: string
+  sourceNodeId: string
+  layerIds: string[]
+  delay: number
+  order: 'forward' | 'reverse'
+  propertyIds: string[]
+  memberKeys: string[]
+  members: Array<{
+    trackId: string
+    kfId: string
+    time: number
+    nodeId: string
+    propertyId: Track['propertyId']
+  }>
+  start: number
+  end: number
+}
+
+type StaggerDetachAction = {
+  shortLabel: string
+  menuLabel: string
+  title: string
+  run: () => void
+}
+
+function useKeyframePreviewTime(
+  trackId: string,
+  kfId: string,
+  fallback: number,
+): number {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      keyframeDragPreviewStore.subscribe(trackId, kfId, listener),
+    [kfId, trackId],
+  )
+  const getSnapshot = useCallback(
+    () => keyframeDragPreviewStore.getTime(trackId, kfId, fallback),
+    [fallback, kfId, trackId],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function useKeyframePreviewRevision(
+  trackId: string,
+  keyframes: Track['keyframes'],
+): number {
+  const keys = useMemo(
+    () => keyframes.map((keyframe) => [trackId, keyframe.id] as const),
+    [keyframes, trackId],
+  )
+  return useKeyframeKeysPreviewRevision(keys)
+}
+
+function useKeyframeKeysPreviewRevision(
+  keys: ReadonlyArray<readonly [trackId: string, kfId: string]>,
+): number {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const unsubscribes = keys.map(([ownerId, keyframeId]) =>
+        keyframeDragPreviewStore.subscribe(ownerId, keyframeId, listener),
+      )
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe()
+      }
+    },
+    [keys],
+  )
+  const getSnapshot = useCallback(
+    () => keyframeDragPreviewStore.getRevision(),
+    [],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function useSectionPreview(section: Section): Section {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      sectionDragPreviewStore.subscribe(section.id, listener),
+    [section.id],
+  )
+  const getSnapshot = useCallback(
+    () => sectionDragPreviewStore.getSection(section.id, section),
+    [section],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
 export function Timeline() {
   // Version is read *and* used as a memo dep — without it, `tracksByNode`
   // stays cached across scene mutations, so keyframe drags only visually
   // settle on the next unrelated re-render (e.g. when you click outside).
   const version = useSceneVersion()
   const api = useSceneAPI()
-  const playhead = useUI((s) => s.playhead)
+  // Transport time is subscribed by tiny readout/marker leaves below. Keeping
+  // it out of this large component prevents the whole timeline from rebuilding
+  // every 66 ms during playback.
   const setPlayhead = useUI((s) => s.setPlayhead)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
@@ -118,6 +265,14 @@ export function Timeline() {
   const setTimelinePxPerSecond = useUI((s) => s.setTimelinePxPerSecond)
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   const setSelectedTrackIds = useUI((s) => s.setSelectedTrackIds)
+  const staggerDelay = useUI((s) => s.staggerDelay)
+  const setStaggerDelay = useUI((s) => s.setStaggerDelay)
+  const staggerOn = useUI((s) => s.staggerOn)
+  const setStaggerOn = useUI((s) => s.setStaggerOn)
+  const activateStaggerSet = useUI((s) => s.activateStaggerSet)
+  const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
+  const selectedStaggerSetId = useUI((s) => s.selectedStaggerSetId)
+  const setSelectedStaggerSetId = useUI((s) => s.setSelectedStaggerSetId)
   const isolatedRange = useUI((s) => s.isolatedRange)
   const setIsolatedRange = useUI((s) => s.setIsolatedRange)
   const workAreaRange = useUI((s) => s.workAreaRange)
@@ -136,8 +291,28 @@ export function Timeline() {
     [api, version],
   )
   const trackGroupsDict = uiSlab.trackGroups
-  const kfGroupsDict = uiSlab.kfGroups
-  const kfGroupCollapsedDict = uiSlab.kfGroupCollapsed
+  // Early stagger builds wrote one synthetic generic keyframe group per
+  // layer. Ignore those legacy records immediately so old scenes stop
+  // rendering the oversized blue GROUP rows before their next edit cleans
+  // the records from the document permanently.
+  const kfGroupsDict = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(uiSlab.kfGroups).filter(
+          ([groupId]) => !groupId.startsWith('stagger-set:'),
+        ),
+      ),
+    [uiSlab.kfGroups],
+  )
+  const kfGroupCollapsedDict = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(uiSlab.kfGroupCollapsed).filter(
+          ([groupId]) => !groupId.startsWith('stagger-set:'),
+        ),
+      ),
+    [uiSlab.kfGroupCollapsed],
+  )
   const groupTracksAction = useCallback(
     (ids: string[]) => groupTracksHelper(api, ids),
     [api],
@@ -299,6 +474,12 @@ export function Timeline() {
   // tests; the store sees a serializable array.
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
+  const [staggerSettingsSetId, setStaggerSettingsSetId] = useState<
+    string | null
+  >(null)
+  const [expandedStaggerSetIds, setExpandedStaggerSetIds] = useState<
+    Set<string>
+  >(() => new Set())
   const setSelectedKeyframes = useUI((s) => s.setSelectedKeyframes)
   useEffect(() => {
     setSelectedKeyframes(Array.from(selectedKfs))
@@ -328,6 +509,34 @@ export function Timeline() {
   const clearKfs = useCallback(() => {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
+  const toggleStaggerSetExpanded = useCallback((setId: string) => {
+    setExpandedStaggerSetIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(setId)) next.delete(setId)
+      else next.add(setId)
+      return next
+    })
+  }, [])
+  const selectTrackGroup = useCallback(
+    (trackIds: string[]) => {
+      clearKfs()
+      const ui = useUI.getState()
+      ui.setSelectedTrackIds(trackIds)
+      ui.setSelectedTrackId(null)
+      ui.setSelectedStaggerSetId(null)
+    },
+    [clearKfs],
+  )
+  const deleteTrackGroup = useCallback(
+    (trackIds: string[]) => {
+      deleteAnimationTracksHelper(api, trackIds)
+      const ui = useUI.getState()
+      ui.setSelectedTrackIds([])
+      ui.setSelectedTrackId(null)
+      clearKfs()
+    },
+    [api, clearKfs],
+  )
 
   const getTrackIdsForNodes = useCallback(
     (nodeIds: string[]) => {
@@ -414,6 +623,16 @@ export function Timeline() {
       }
       e.preventDefault()
       e.stopPropagation()
+      // If the selection is exactly one or more persisted keyframe groups,
+      // remove their records in the same transaction as their keyframes.
+      // Otherwise the rows disappear visually but leave orphaned group data
+      // behind in the scene.
+      const selectedGroupIds = Object.entries(api.getUiState().kfGroups)
+        .filter(([, members]) => {
+          if (members.length !== selectedKfs.size) return false
+          return members.every((member) => selectedKfs.has(member))
+        })
+        .map(([groupId]) => groupId)
       // Translate `${trackId}:${kfId}` keys into per-track removals.
       const byTrack = new Map<string, string[]>()
       for (const key of selectedKfs) {
@@ -428,6 +647,9 @@ export function Timeline() {
       api.doc.transact(() => {
         for (const [trackId, kfIds] of byTrack) {
           for (const kfId of kfIds) removeKeyframe(api, trackId, kfId)
+        }
+        if (selectedGroupIds.length > 0) {
+          ungroupKeyframeGroupsHelper(api, selectedGroupIds)
         }
       })
       clearKfs()
@@ -687,9 +909,57 @@ export function Timeline() {
         : false
     const nodeHasGroupedTracks =
       target.kind === 'node' ? tracksInsideAnyGroup(nodeTrackIds) : false
+    const targetTrack = target.kind === 'node' ? null : target.track
+    const activeStaggerTrack =
+      targetTrack &&
+      activeResolvedStaggerSet &&
+      targetTrack.nodeId === activeResolvedStaggerSet.sourceNodeId &&
+      activeStaggerMemberIdsByTrack.has(targetTrack.id)
+        ? activeResolvedStaggerSet
+        : null
+    const activePropertyMembers = activeStaggerTrack
+      ? activeStaggerTrack.members.filter(
+          (member) => member.propertyId === targetTrack!.propertyId,
+        )
+      : []
+    const activeKeyBundle =
+      target.kind === 'keyframe' && activeStaggerTrack
+        ? activeStaggerLinksBySourceKey.get(
+            kfKey(target.track.id, target.keyframeId),
+          ) ?? []
+        : []
+    const activeKeyBundleKeys = new Set(
+      activeKeyBundle.map((linked) => kfKey(linked.trackId, linked.kfId)),
+    )
     const items =
       target.kind === 'keyframe'
         ? [
+            ...(activeKeyBundle.length > 0
+              ? [
+                  {
+                    label: 'Detach keyframe from stagger (keep animation)',
+                    onClick: () =>
+                      detachStaggerSetKeyframes(
+                        api,
+                        activeStaggerTrack!.id,
+                        staggerMemberInputs(
+                          activeStaggerTrack!.members.filter((member) =>
+                            activeKeyBundleKeys.has(
+                              kfKey(member.trackId, member.kfId),
+                            ),
+                          ),
+                        ),
+                      ),
+                  },
+                  {
+                    label: 'Delete keyframe from stagger',
+                    danger: true,
+                    onClick: () =>
+                      deleteActiveStaggerMembers(activeKeyBundle),
+                  },
+                  { kind: 'separator' as const },
+                ]
+              : []),
             ...(trackIsGrouped
               ? [
                   {
@@ -700,12 +970,16 @@ export function Timeline() {
                   { kind: 'separator' as const },
                 ]
               : []),
-            {
-              label: `Delete keyframe @ ${target.time.toFixed(2)}s`,
-              danger: true,
-              onClick: () =>
-                removeKeyframe(api, target.track.id, target.keyframeId),
-            },
+            ...(!activeStaggerTrack
+              ? [
+                  {
+                    label: `Delete keyframe @ ${target.time.toFixed(2)}s`,
+                    danger: true,
+                    onClick: () =>
+                      removeKeyframe(api, target.track.id, target.keyframeId),
+                  },
+                ]
+              : []),
             { kind: 'separator' as const },
             {
               label: `Delete track (${humanProperty(target.track.propertyId)})`,
@@ -715,6 +989,32 @@ export function Timeline() {
           ]
         : target.kind === 'track'
           ? [
+              ...(activeStaggerTrack
+                ? [
+                    {
+                      label: `Detach ${humanProperty(target.track.propertyId)} from stagger (keep animation)`,
+                      onClick: () =>
+                        detachStaggerSetKeyframes(
+                          api,
+                          activeStaggerTrack.id,
+                          staggerMemberInputs(activePropertyMembers),
+                        ),
+                    },
+                    {
+                      label: `Remove ${humanProperty(target.track.propertyId)} from stagger`,
+                      danger: true,
+                      onClick: () =>
+                        deleteActiveStaggerMembers(
+                          activePropertyMembers.map((member) => ({
+                            trackId: member.trackId,
+                            kfId: member.kfId,
+                            startTime: member.time,
+                          })),
+                        ),
+                    },
+                    { kind: 'separator' as const },
+                  ]
+                : []),
               ...(trackIsGrouped
                 ? [
                     {
@@ -725,11 +1025,15 @@ export function Timeline() {
                     { kind: 'separator' as const },
                   ]
                 : []),
-              {
-                label: `Delete track (${humanProperty(target.track.propertyId)})`,
-                danger: true,
-                onClick: () => removeTrack(api, target.track.id),
-              },
+              ...(!activeStaggerTrack
+                ? [
+                    {
+                      label: `Delete track (${humanProperty(target.track.propertyId)})`,
+                      danger: true,
+                      onClick: () => removeTrack(api, target.track.id),
+                    },
+                  ]
+                : []),
             ]
           : [
               ...(nodeHasGroupedTracks
@@ -880,12 +1184,449 @@ export function Timeline() {
     () => tracksByNode.flatMap((g) => g.tracks),
     [tracksByNode],
   )
+  const resolvedStaggerSets = useMemo<ResolvedStaggerTimelineSet[]>(() => {
+    const trackByTarget = new Map<string, Track>()
+    const nodeOrder = new Map<string, number>()
+    tracksByNode.forEach((group, index) => nodeOrder.set(group.nodeId, index))
+    for (const track of flatTracks) {
+      trackByTarget.set(`${track.nodeId}\u0000${track.propertyId}`, track)
+    }
+
+    const resolved: ResolvedStaggerTimelineSet[] = []
+    let ordinal = 0
+    for (const [setId, set] of Object.entries(uiSlab.staggerSets)) {
+      ordinal++
+      const members: ResolvedStaggerTimelineSet['members'] = []
+      const propertyIds = new Set<string>()
+      for (const nodeId of set.layerIds) {
+        const properties = set.members[nodeId] ?? {}
+        for (const [propertyId, keyframeIds] of Object.entries(properties)) {
+          if (!keyframeIds?.length) continue
+          const track = trackByTarget.get(`${nodeId}\u0000${propertyId}`)
+          if (!track) continue
+          const wanted = new Set(keyframeIds)
+          for (const keyframe of track.keyframes) {
+            if (!wanted.has(keyframe.id)) continue
+            members.push({
+              trackId: track.id,
+              kfId: keyframe.id,
+              time: keyframe.time,
+              nodeId,
+              propertyId: track.propertyId,
+            })
+            propertyIds.add(track.propertyId)
+          }
+        }
+      }
+      if (members.length === 0) continue
+      members.sort((a, b) => a.time - b.time)
+      const liveLayerIds = set.layerIds.filter((nodeId) => !!api.getNode(nodeId))
+      const fallbackHostNodeId = [...new Set(members.map((member) => member.nodeId))]
+        .sort(
+          (a, b) =>
+            (nodeOrder.get(a) ?? Infinity) - (nodeOrder.get(b) ?? Infinity),
+        )[0]
+      const requestedSourceNodeId =
+        set.order === 'forward'
+          ? liveLayerIds[0]
+          : liveLayerIds[liveLayerIds.length - 1]
+      const sourceNodeId = members.some(
+        (member) => member.nodeId === requestedSourceNodeId,
+      )
+        ? requestedSourceNodeId
+        : fallbackHostNodeId
+      if (!sourceNodeId) continue
+      resolved.push({
+        id: setId,
+        label: set.name?.trim() || `Stagger ${ordinal}`,
+        hostNodeId: sourceNodeId,
+        sourceNodeId,
+        layerIds: liveLayerIds,
+        delay: set.delay,
+        order: set.order,
+        propertyIds: [...propertyIds],
+        memberKeys: members.map((member) =>
+          kfKey(member.trackId, member.kfId),
+        ),
+        members,
+        start: members[0]!.time,
+        end: members[members.length - 1]!.time,
+      })
+    }
+    return resolved
+  }, [api, flatTracks, tracksByNode, uiSlab.staggerSets])
+  const staggerSetsByHost = useMemo(() => {
+    const byHost = new Map<string, ResolvedStaggerTimelineSet[]>()
+    for (const set of resolvedStaggerSets) {
+      const hosted = byHost.get(set.hostNodeId) ?? []
+      hosted.push(set)
+      byHost.set(set.hostNodeId, hosted)
+    }
+    return byHost
+  }, [resolvedStaggerSets])
+  const staggerSetOfKey = useMemo(() => {
+    const lookup = new Map<string, string>()
+    for (const set of resolvedStaggerSets) {
+      for (const memberKey of set.memberKeys) lookup.set(memberKey, set.id)
+    }
+    return lookup
+  }, [resolvedStaggerSets])
+  const staggerSettingsSet = staggerSettingsSetId
+    ? resolvedStaggerSets.find((set) => set.id === staggerSettingsSetId) ?? null
+    : null
+  const activeResolvedStaggerSet =
+    staggerOn && activeStaggerSetId
+      ? resolvedStaggerSets.find((set) => set.id === activeStaggerSetId) ?? null
+      : null
+  const collapsedStaggerTrackIds = useMemo(() => {
+    const hidden = new Set<string>()
+    for (const set of resolvedStaggerSets) {
+      if (set.id === activeStaggerSetId && staggerOn) continue
+      if (expandedStaggerSetIds.has(set.id)) continue
+      for (const member of set.members) hidden.add(member.trackId)
+    }
+    return hidden
+  }, [activeStaggerSetId, expandedStaggerSetIds, resolvedStaggerSets, staggerOn])
+  const activeStaggerMemberIdsByTrack = useMemo(() => {
+    const byTrack = new Map<string, Set<string>>()
+    if (!activeResolvedStaggerSet) return byTrack
+    for (const member of activeResolvedStaggerSet.members) {
+      const ids = byTrack.get(member.trackId) ?? new Set<string>()
+      ids.add(member.kfId)
+      byTrack.set(member.trackId, ids)
+    }
+    return byTrack
+  }, [activeResolvedStaggerSet])
+  const activeStaggerLinksBySourceKey = useMemo(() => {
+    const links = new Map<string, KeyframeDragMember[]>()
+    const set = activeResolvedStaggerSet
+    if (!set) return links
+    const sourceMembers = set.members.filter(
+      (member) => member.nodeId === set.sourceNodeId,
+    )
+    for (const source of sourceMembers) {
+      const bundle = resolveStaggerKeyframeBundle(
+        api,
+        source.trackId,
+        source.kfId,
+      )
+      if (!bundle || bundle.setId !== set.id) continue
+      const linked = bundle.members.map((member) => ({
+        trackId: member.trackId,
+        kfId: member.keyframeId,
+        startTime: member.time,
+      }))
+      if (linked.length > 0) {
+        links.set(kfKey(source.trackId, source.kfId), linked)
+      }
+    }
+    return links
+  }, [activeResolvedStaggerSet, api])
+  const timelineTrackForStaggerEdit = useCallback(
+    (track: Track): Track | null => {
+      const memberIds = activeStaggerMemberIdsByTrack.get(track.id)
+      if (!activeResolvedStaggerSet || !memberIds) return track
+      if (expandedStaggerSetIds.has(activeResolvedStaggerSet.id)) return track
+      if (track.nodeId !== activeResolvedStaggerSet.sourceNodeId) return null
+      return {
+        ...track,
+        keyframes: track.keyframes.filter((keyframe) =>
+          memberIds.has(keyframe.id),
+        ),
+      }
+    },
+    [
+      activeResolvedStaggerSet,
+      activeStaggerMemberIdsByTrack,
+      expandedStaggerSetIds,
+    ],
+  )
+  const deleteActiveStaggerMembers = useCallback(
+    (members: readonly KeyframeDragMember[]) => {
+      const set = activeResolvedStaggerSet
+      if (!set || members.length === 0) return
+      const deleting = new Set(
+        members.map((member) => kfKey(member.trackId, member.kfId)),
+      )
+      deleteStaggerSetKeyframes(
+        api,
+        set.id,
+        staggerMemberInputs(
+          set.members.filter((member) =>
+            deleting.has(kfKey(member.trackId, member.kfId)),
+          ),
+        ),
+      )
+      if (!api.getUiState().staggerSets[set.id]) {
+        setStaggerOn(false)
+        setSelectedStaggerSetId(null)
+      }
+    },
+    [
+      activeResolvedStaggerSet,
+      api,
+      setSelectedStaggerSetId,
+      setStaggerOn,
+    ],
+  )
   const selectedNodeSet = useMemo(() => new Set(selection), [selection])
   const trackNodeById = useMemo(() => {
     const m = new Map<string, string>()
     for (const track of flatTracks) m.set(track.id, track.nodeId)
     return m
   }, [flatTracks])
+  const activeStaggerSet = activeStaggerSetId
+    ? uiSlab.staggerSets[activeStaggerSetId]
+    : undefined
+  // A fresh S session has an id immediately, but no persisted stagger set
+  // until the first property keyframe is authored. Render it as a draft row
+  // so the armed state is never invisible during that gap.
+  const draftStaggerActive = Boolean(
+    staggerOn && activeStaggerSetId && !activeStaggerSet,
+  )
+  const draftStaggerLayerCount = useMemo(
+    () =>
+      selection.filter((nodeId) => {
+        const node = api.getNode(nodeId)
+        return Boolean(node && node.kind !== 'camera')
+      }).length,
+    [api, selection, version],
+  )
+  useEffect(() => {
+    if (!staggerOn || !activeStaggerSet) return
+    // The authored delay lives in the undoable scene document. Mirror it back
+    // into the lightweight toolbar store whenever undo/redo or a remote edit
+    // changes the document, without fighting the transient scrub preview.
+    setStaggerDelay(activeStaggerSet.delay)
+  }, [activeStaggerSet?.delay, activeStaggerSetId, setStaggerDelay, staggerOn])
+  useEffect(() => {
+    if (!selectedStaggerSetId) return
+    const selectedSet = uiSlab.staggerSets[selectedStaggerSetId]
+    if (!selectedSet) {
+      setSelectedStaggerSetId(null)
+      return
+    }
+    if (staggerOn) return
+    // The group is its own timeline selection. Selecting a real canvas layer
+    // later exits that group selection, but an empty layer selection is what
+    // keeps the Inspector from exposing every stagger participant on click.
+    if (selection.length > 0) setSelectedStaggerSetId(null)
+  }, [
+    selectedStaggerSetId,
+    selection,
+    setSelectedStaggerSetId,
+    staggerOn,
+    uiSlab.staggerSets,
+  ])
+  const selectTimelineStagger = useCallback(
+    (set: ResolvedStaggerTimelineSet) => {
+      if (staggerOn && activeStaggerSetId !== set.id) setStaggerOn(false)
+      setSelectedStaggerSetId(set.id)
+      setSelection([])
+      setSelectedTrackIds([])
+      clearKfs()
+      setInspectorMode('animate')
+    },
+    [
+      activeStaggerSetId,
+      clearKfs,
+      setInspectorMode,
+      setSelectedStaggerSetId,
+      setSelectedTrackIds,
+      setSelection,
+      setStaggerOn,
+      staggerOn,
+    ],
+  )
+  const activateTimelineStagger = useCallback(
+    (set: ResolvedStaggerTimelineSet) => {
+      activateStaggerSet(set.id, set.delay)
+      setSelection([set.sourceNodeId])
+      clearKfs()
+      setInspectorMode('animate')
+    },
+    [activateStaggerSet, clearKfs, setInspectorMode, setSelection],
+  )
+  const deleteTimelineStagger = useCallback(
+    (set: ResolvedStaggerTimelineSet) => {
+      deleteStaggerSet(api, set.id)
+      if (activeStaggerSetId === set.id) setStaggerOn(false)
+      if (selectedStaggerSetId === set.id) setSelectedStaggerSetId(null)
+      setSelectedTrackIds([])
+      clearKfs()
+    },
+    [
+      activeStaggerSetId,
+      api,
+      clearKfs,
+      selectedStaggerSetId,
+      setSelectedStaggerSetId,
+      setSelectedTrackIds,
+      setStaggerOn,
+    ],
+  )
+  const detachSelectionForStagger = useCallback(
+    (set: ResolvedStaggerTimelineSet): StaggerDetachAction | null => {
+      const finishDetach = () => {
+        if (
+          activeStaggerSetId === set.id &&
+          !api.getUiState().staggerSets[set.id]
+        ) {
+          setStaggerOn(false)
+        }
+        if (
+          selectedStaggerSetId === set.id &&
+          !api.getUiState().staggerSets[set.id]
+        ) {
+          setSelectedStaggerSetId(null)
+        }
+      }
+      const selectedMembers = set.members.filter((member) =>
+        selectedKfs.has(kfKey(member.trackId, member.kfId)),
+      )
+      if (
+        selectedMembers.length > 0 &&
+        selectedMembers.length < set.members.length
+      ) {
+        return {
+          shortLabel: `Detach ${selectedMembers.length}K`,
+          menuLabel: `Detach ${selectedMembers.length} selected keyframe${selectedMembers.length === 1 ? '' : 's'} (keep animation)`,
+          title:
+            'Remove the selected keyframes from this stagger relationship without deleting them',
+          run: () => {
+            detachStaggerSetKeyframes(
+              api,
+              set.id,
+              staggerMemberInputs(selectedMembers),
+            )
+            finishDetach()
+          },
+        }
+      }
+
+      const selectedTrackSet = new Set(selectedTrackIds)
+      const selectedTrackMembers = set.members.filter((member) =>
+        selectedTrackSet.has(member.trackId),
+      )
+      const selectedMemberTrackCount = new Set(
+        selectedTrackMembers.map((member) => member.trackId),
+      ).size
+      if (
+        selectedTrackMembers.length > 0 &&
+        selectedTrackMembers.length < set.members.length
+      ) {
+        return {
+          shortLabel: `Detach ${selectedMemberTrackCount}P`,
+          menuLabel: `Detach ${selectedMemberTrackCount} selected propert${selectedMemberTrackCount === 1 ? 'y' : 'ies'} (keep animation)`,
+          title:
+            'Remove the selected property tracks from this stagger relationship without deleting their keys',
+          run: () => {
+            detachStaggerSetKeyframes(
+              api,
+              set.id,
+              staggerMemberInputs(selectedTrackMembers),
+            )
+            finishDetach()
+          },
+        }
+      }
+
+      const selectedLayers = set.layerIds.filter((nodeId) =>
+        selection.includes(nodeId),
+      )
+      if (
+        selectedLayers.length > 0 &&
+        selectedLayers.length < set.layerIds.length
+      ) {
+        return {
+          shortLabel: `Detach ${selectedLayers.length}L`,
+          menuLabel: `Detach ${selectedLayers.length} selected layer${selectedLayers.length === 1 ? '' : 's'} (keep animation)`,
+          title:
+            'Remove the selected layers from this stagger relationship without deleting their animation',
+          run: () => {
+            detachStaggerSetLayers(api, set.id, selectedLayers)
+            finishDetach()
+          },
+        }
+      }
+      return null
+    },
+    [
+      activeStaggerSetId,
+      api,
+      selectedKfs,
+      selectedStaggerSetId,
+      selectedTrackIds,
+      selection,
+      setSelectedStaggerSetId,
+      setStaggerOn,
+    ],
+  )
+  const openStaggerTimelineMenu = useCallback(
+    (event: React.MouseEvent, set: ResolvedStaggerTimelineSet) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const detachAction = detachSelectionForStagger(set)
+      openContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: 'Edit Stagger',
+            onClick: () => activateTimelineStagger(set),
+          },
+          {
+            label: 'Change Stagger Settings…',
+            onClick: () => setStaggerSettingsSetId(set.id),
+          },
+          { kind: 'separator' },
+          {
+            label: 'Select member keyframes',
+            onClick: () => replaceKfs(set.memberKeys),
+          },
+          ...(detachAction
+            ? [
+                { kind: 'separator' as const },
+                {
+                  label: detachAction.menuLabel,
+                  onClick: detachAction.run,
+                },
+              ]
+            : []),
+          { kind: 'separator' },
+          {
+            label: 'Dissolve stagger (keep keyframes)',
+            danger: true,
+            onClick: () => {
+              removeStaggerSet(api, set.id)
+              if (activeStaggerSetId === set.id) setStaggerOn(false)
+              if (selectedStaggerSetId === set.id) {
+                setSelectedStaggerSetId(null)
+              }
+            },
+          },
+          {
+            label: 'Delete stagger and keyframes',
+            danger: true,
+            onClick: () => deleteTimelineStagger(set),
+          },
+        ],
+      })
+    },
+    [
+      activeStaggerSetId,
+      activateTimelineStagger,
+      api,
+      detachSelectionForStagger,
+      deleteTimelineStagger,
+      openContextMenu,
+      replaceKfs,
+      selectedStaggerSetId,
+      setSelectedStaggerSetId,
+      setStaggerSettingsSetId,
+      setStaggerOn,
+    ],
+  )
 
   /**
    * Resolve every persistent track-group into a render shape.
@@ -1170,7 +1911,8 @@ export function Timeline() {
       setWorkAreaRange(null)
       return
     }
-    const start = clamp(playhead, 0, Math.max(0, duration - minWorkArea))
+    const currentPlayhead = useUI.getState().playhead
+    const start = clamp(currentPlayhead, 0, Math.max(0, duration - minWorkArea))
     const end = Math.min(duration, start + Math.min(2, duration - start))
     setWorkAreaRange({ start, end: Math.max(start + minWorkArea, end) })
   }
@@ -1186,6 +1928,7 @@ export function Timeline() {
     const anchor = timeFromWorkAreaClientX(e.clientX)
     const base = normalizedWorkArea
     const span = base.end - base.start
+    const dragPlayhead = useUI.getState().playhead
     const onMove = (ev: PointerEvent) => {
       const t = timeFromWorkAreaClientX(ev.clientX)
       if (mode === 'start') {
@@ -1197,13 +1940,15 @@ export function Timeline() {
       if (mode === 'end') {
         const nextEnd = clamp(t, base.start + minWorkArea, duration)
         setWorkAreaRange({ start: base.start, end: nextEnd })
-        setPlayheadImmediate(Math.min(playhead, nextEnd))
+        setPlayheadImmediate(Math.min(dragPlayhead, nextEnd))
         return
       }
       const delta = t - anchor
       const nextStart = clamp(base.start + delta, 0, duration - span)
       setWorkAreaRange({ start: nextStart, end: nextStart + span })
-      setPlayheadImmediate(clamp(playhead + delta, nextStart, nextStart + span))
+      setPlayheadImmediate(
+        clamp(dragPlayhead + delta, nextStart, nextStart + span),
+      )
     }
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
@@ -1503,26 +2248,12 @@ export function Timeline() {
             time/frame is part of "where is playback right now," not a
             comp-level property. Duration is decoupled and pushed to
             the far right (After Effects pattern). */}
-        <button
-          type="button"
-          onClick={cycleRulerLabels}
-          title={`Showing ${rulerLabels} · click to cycle Both / Time / Frames`}
-          className="ml-1 flex shrink-0 flex-col items-end leading-tight hover:opacity-80"
-        >
-          {rulerLabels !== 'frames' && (
-            <span className="font-mono text-[11px] text-text tabular-nums">
-              {Math.floor(playhead)}s
-            </span>
-          )}
-          {rulerLabels !== 'time' && (
-            <span className="font-mono text-[9px] text-text-dim tabular-nums">
-              {Math.min(
-                Math.max(0, Math.round(duration * frameRate) - 1),
-                Math.round(playhead * frameRate),
-              )}f
-            </span>
-          )}
-        </button>
+        <TimelinePlayheadReadout
+          rulerLabels={rulerLabels}
+          duration={duration}
+          frameRate={frameRate}
+          onCycle={cycleRulerLabels}
+        />
 
         {/* Spacer — pushes everything below to the right end. */}
         <div className="flex-1" />
@@ -1702,6 +2433,13 @@ export function Timeline() {
           {normalizedWorkArea && (
             <div className="h-5 border-b border-border/50 bg-panel" />
           )}
+          {timelineMode === 'animated' && draftStaggerActive && (
+            <StaggerDraftLeftRow
+              layerCount={draftStaggerLayerCount}
+              delay={staggerDelay}
+              onCancel={() => setStaggerOn(false)}
+            />
+          )}
           {timelineMode === 'sound' ? (
             mediaClips.length === 0 ? (
               <div className="space-y-3 px-4 py-5 text-[11px] leading-relaxed text-text-dim">
@@ -1747,20 +2485,43 @@ export function Timeline() {
               // tracks already hidden inside a collapsed keyframe-group
               // AND tracks that have been bundled into a track-group
               // (those render under their group row instead).
-              const visibleTracks = group.tracks.filter(
-                (t) =>
-                  !tracksFullyInCollapsedGroup.has(t.id) &&
-                  !trackToGroupId.has(t.id),
+              const visibleTracks = group.tracks
+                .filter((track) => !tracksFullyInCollapsedGroup.has(track.id))
+                .filter((track) => !collapsedStaggerTrackIds.has(track.id))
+                .map(timelineTrackForStaggerEdit)
+                .filter((track): track is Track => !!track)
+                .filter(
+                  (track) =>
+                    !trackToGroupId.has(track.id) ||
+                    activeStaggerMemberIdsByTrack.has(track.id),
+                )
+              const hostedGroups = (groupsByHost.get(group.nodeId) ?? []).filter(
+                (keyframeGroup) =>
+                  !activeResolvedStaggerSet ||
+                  !keyframeGroup.members.some(
+                    (member) =>
+                      staggerSetOfKey.get(kfKey(member.trackId, member.kfId)) ===
+                      activeResolvedStaggerSet.id,
+                  ),
               )
-              const hostedGroups = groupsByHost.get(group.nodeId) ?? []
               // Composed / Sequence track-groups anchored on this layer.
-              const hostedTrackGroups =
+              const hostedTrackGroups = (
                 trackGroupsByHost.get(group.nodeId) ?? []
+              ).filter(
+                (trackGroup) =>
+                  !activeResolvedStaggerSet ||
+                  !trackGroup.memberTracks.some((track) =>
+                    activeStaggerMemberIdsByTrack.has(track.id),
+                  ),
+              )
+              const hostedStaggerSets =
+                staggerSetsByHost.get(group.nodeId) ?? []
               // Skip a node entirely when there's nothing to show.
               if (
                 visibleTracks.length === 0 &&
                 hostedGroups.length === 0 &&
-                hostedTrackGroups.length === 0
+                hostedTrackGroups.length === 0 &&
+                hostedStaggerSets.length === 0
               ) {
                 return null
               }
@@ -1769,6 +2530,26 @@ export function Timeline() {
               const showNodeHeader = visibleTracks.length > 0
               return (
                 <div key={group.nodeId}>
+                  {hostedStaggerSets.map((set) => (
+                    <StaggerSetLeftRow
+                      key={set.id}
+                      set={set}
+                      selected={selectedStaggerSetId === set.id}
+                      active={staggerOn && activeStaggerSetId === set.id}
+                      expanded={expandedStaggerSetIds.has(set.id)}
+                      onSelect={() => selectTimelineStagger(set)}
+                      onToggleExpanded={() =>
+                        toggleStaggerSetExpanded(set.id)
+                      }
+                      onDelete={() => deleteTimelineStagger(set)}
+                      onRename={(name) =>
+                        renameStaggerSet(api, set.id, name)
+                      }
+                      onContextMenu={(event) =>
+                        openStaggerTimelineMenu(event, set)
+                      }
+                    />
+                  ))}
                   {showNodeHeader && (
                     <div
                       onClick={(e) =>
@@ -1824,6 +2605,13 @@ export function Timeline() {
                     return (
                       <div
                         key={g.groupId}
+                        tabIndex={0}
+                        role="button"
+                        aria-selected={isActive}
+                        data-timeline-selection-surface="1"
+                        onPointerDown={(event) =>
+                          event.currentTarget.focus()
+                        }
                         onClick={(e) => {
                           // Single-click selects every member keyframe.
                           // Without this, the user has no way to "have"
@@ -1940,7 +2728,12 @@ export function Timeline() {
                             toggleTrackGroupCollapsed(tg.groupId)
                           }
                           onSelectMembers={() =>
-                            setSelectedTrackIds(
+                            selectTrackGroup(
+                              tg.memberTracks.map((t) => t.id),
+                            )
+                          }
+                          onDelete={() =>
+                            deleteTrackGroup(
                               tg.memberTracks.map((t) => t.id),
                             )
                           }
@@ -2161,6 +2954,13 @@ export function Timeline() {
               <div className="h-5 border-b border-border/50 bg-panel" />
             )}
 
+            {timelineMode === 'animated' && draftStaggerActive && (
+              <StaggerDraftRightRow
+                layerCount={draftStaggerLayerCount}
+                totalWidth={totalWidth}
+              />
+            )}
+
             {/* Track rows */}
             {timelineMode === 'sound' ? (
               mediaClips.length === 0 ? (
@@ -2189,26 +2989,75 @@ export function Timeline() {
             ) : tracksByNode.length === 0 ? (
               <div className="h-20" />
             ) : (
-              tracksByNode.map((group) => {
+              <>
+              {tracksByNode.map((group) => {
                 const isSelected = selection.includes(group.nodeId)
-                const visibleTracks = group.tracks.filter(
-                  (t) =>
-                    !tracksFullyInCollapsedGroup.has(t.id) &&
-                    !trackToGroupId.has(t.id),
+                const visibleTracks = group.tracks
+                  .filter(
+                    (track) => !tracksFullyInCollapsedGroup.has(track.id),
+                  )
+                  .filter((track) => !collapsedStaggerTrackIds.has(track.id))
+                  .map(timelineTrackForStaggerEdit)
+                  .filter((track): track is Track => !!track)
+                  .filter(
+                    (track) =>
+                      !trackToGroupId.has(track.id) ||
+                      activeStaggerMemberIdsByTrack.has(track.id),
+                  )
+                const hostedGroups = (
+                  groupsByHost.get(group.nodeId) ?? []
+                ).filter(
+                  (keyframeGroup) =>
+                    !activeResolvedStaggerSet ||
+                    !keyframeGroup.members.some(
+                      (member) =>
+                        staggerSetOfKey.get(
+                          kfKey(member.trackId, member.kfId),
+                        ) === activeResolvedStaggerSet.id,
+                    ),
                 )
-                const hostedGroups = groupsByHost.get(group.nodeId) ?? []
-                const hostedTrackGroups =
+                const hostedTrackGroups = (
                   trackGroupsByHost.get(group.nodeId) ?? []
+                ).filter(
+                  (trackGroup) =>
+                    !activeResolvedStaggerSet ||
+                    !trackGroup.memberTracks.some((track) =>
+                      activeStaggerMemberIdsByTrack.has(track.id),
+                    ),
+                )
+                const hostedStaggerSets =
+                  staggerSetsByHost.get(group.nodeId) ?? []
                 if (
                   visibleTracks.length === 0 &&
                   hostedGroups.length === 0 &&
-                  hostedTrackGroups.length === 0
+                  hostedTrackGroups.length === 0 &&
+                  hostedStaggerSets.length === 0
                 ) {
                   return null
                 }
                 const showNodeHeader = visibleTracks.length > 0
                 return (
                 <div key={group.nodeId}>
+                  {hostedStaggerSets.map((set) => (
+                    <StaggerSetRightRow
+                      key={set.id}
+                      set={set}
+                      duration={duration}
+                      totalWidth={totalWidth}
+                      api={api}
+                      selected={selectedStaggerSetId === set.id}
+                      active={staggerOn && activeStaggerSetId === set.id}
+                      expanded={expandedStaggerSetIds.has(set.id)}
+                      onSelect={() => selectTimelineStagger(set)}
+                      onToggleExpanded={() =>
+                        toggleStaggerSetExpanded(set.id)
+                      }
+                      onDelete={() => deleteTimelineStagger(set)}
+                      onContextMenu={(event) =>
+                        openStaggerTimelineMenu(event, set)
+                      }
+                    />
+                  ))}
                   {showNodeHeader && (
                     <div
                       className={
@@ -2230,6 +3079,13 @@ export function Timeline() {
                     return (
                       <div
                         key={g.groupId}
+                        tabIndex={0}
+                        role="button"
+                        aria-selected={isActive}
+                        data-timeline-selection-surface="1"
+                        onPointerDownCapture={(event) =>
+                          event.currentTarget.focus()
+                        }
                         onContextMenu={(e) => {
                           // Same right-click menu as the left column so
                           // the user can ungroup from either side. The
@@ -2301,6 +3157,16 @@ export function Timeline() {
                         layerRelated={tg.memberTracks.some((t) =>
                           selectedNodeSet.has(t.nodeId),
                         )}
+                        onSelectMembers={() =>
+                          selectTrackGroup(
+                            tg.memberTracks.map((t) => t.id),
+                          )
+                        }
+                        onDelete={() =>
+                          deleteTrackGroup(
+                            tg.memberTracks.map((t) => t.id),
+                          )
+                        }
                         onDropTracks={(trackIds) =>
                           addDroppedTracksToGroup(tg.groupId, trackIds)
                         }
@@ -2381,9 +3247,14 @@ export function Timeline() {
                           })
                           items.push({
                             label: 'Ungroup',
-                            danger: true,
                             onClick: () =>
                               ungroupTracksHelper(api, groupTrackIds),
+                          })
+                          items.push({ kind: 'separator' })
+                          items.push({
+                            label: 'Delete group and animation',
+                            danger: true,
+                            onClick: () => deleteTrackGroup(groupTrackIds),
                           })
                           openContextMenu({
                             x: e.clientX,
@@ -2407,6 +3278,11 @@ export function Timeline() {
                             clearKfs={clearKfs}
                             kfGroupOf={kfGroupOf}
                             kfGroupKeys={kfGroupKeys}
+                            staggerSetOfKey={staggerSetOfKey}
+                            staggerEditLinksByKey={activeStaggerLinksBySourceKey}
+                            onDeleteLinkedStaggerKeys={
+                              deleteActiveStaggerMembers
+                            }
                             hiddenByGroupCollapse={hiddenByGroupCollapse}
                             onScrub={(time) => {
                               setPlaying(false)
@@ -2449,6 +3325,9 @@ export function Timeline() {
                       clearKfs={clearKfs}
                       kfGroupOf={kfGroupOf}
                       kfGroupKeys={kfGroupKeys}
+                      staggerSetOfKey={staggerSetOfKey}
+                      staggerEditLinksByKey={activeStaggerLinksBySourceKey}
+                      onDeleteLinkedStaggerKeys={deleteActiveStaggerMembers}
                       hiddenByGroupCollapse={hiddenByGroupCollapse}
                       onScrub={(time) => {
                         setPlaying(false)
@@ -2470,18 +3349,12 @@ export function Timeline() {
                   ))}
                 </div>
                 )
-              })
+              })}
+              </>
             )}
 
             {/* Playhead line */}
-            <div
-              className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-playhead"
-              style={{ left: playhead * PX_PER_SECOND }}
-            >
-              <div className="absolute top-1 left-1/2 -translate-x-1/2 rounded-full bg-playhead px-2.5 py-1 font-mono text-[10px] leading-none whitespace-nowrap text-white">
-                {playhead.toFixed(1)} s
-              </div>
-            </div>
+            <TimelinePlayheadMarker pxPerSecond={pxPerSecond} />
 
             {/* Isolation dim overlays — when the user has isolated a
                 section, paint translucent panels over the bands
@@ -2542,7 +3415,395 @@ export function Timeline() {
         </div> {/* /right wrapper */}
         </div> {/* /flex min-w-max */}
       </div> {/* /outer scroller */}
+      {staggerSettingsSet ? (
+        <StaggerSettingsModal
+          key={staggerSettingsSet.id}
+          set={staggerSettingsSet}
+          api={api}
+          onClose={() => setStaggerSettingsSetId(null)}
+          onApply={({ name, layerIds, delay, order }) => {
+            api.doc.transact(() => {
+              renameStaggerSet(api, staggerSettingsSet.id, name)
+              configureStaggerSet(api, staggerSettingsSet.id, {
+                layerIds,
+                delay,
+                order,
+              })
+            }, UNDOABLE_GESTURE_ORIGIN)
+            const remaining = api.getUiState().staggerSets[staggerSettingsSet.id]
+            if (selectedStaggerSetId === staggerSettingsSet.id) {
+              if (remaining) {
+                setSelectedStaggerSetId(staggerSettingsSet.id)
+                setSelection(remaining.layerIds)
+              } else {
+                setSelectedStaggerSetId(null)
+              }
+            }
+            if (activeStaggerSetId === staggerSettingsSet.id) {
+              if (remaining) {
+                activateStaggerSet(staggerSettingsSet.id, remaining.delay)
+                setSelection(remaining.layerIds)
+              } else {
+                setStaggerOn(false)
+                setSelectedStaggerSetId(null)
+              }
+            }
+            setStaggerSettingsSetId(null)
+          }}
+          onDissolve={() => {
+            removeStaggerSet(api, staggerSettingsSet.id)
+            if (activeStaggerSetId === staggerSettingsSet.id) {
+              setStaggerOn(false)
+            }
+            if (selectedStaggerSetId === staggerSettingsSet.id) {
+              setSelectedStaggerSetId(null)
+            }
+            setStaggerSettingsSetId(null)
+          }}
+        />
+      ) : null}
     </section>
+  )
+}
+
+function StaggerSettingsModal({
+  set,
+  api,
+  onClose,
+  onApply,
+  onDissolve,
+}: {
+  set: ResolvedStaggerTimelineSet
+  api: SceneAPI
+  onClose: () => void
+  onApply: (settings: {
+    name: string
+    layerIds: string[]
+    delay: number
+    order: 'forward' | 'reverse'
+  }) => void
+  onDissolve: () => void
+}) {
+  const [name, setName] = useState(set.label)
+  const [delay, setDelay] = useState(set.delay)
+  const [order, setOrder] = useState(set.order)
+  const [checked, setChecked] = useState<Set<string>>(
+    () => new Set(set.layerIds),
+  )
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  const checkedIds = set.layerIds.filter((nodeId) => checked.has(nodeId))
+  const sourceNodeId =
+    order === 'forward'
+      ? checkedIds[0]
+      : checkedIds[checkedIds.length - 1]
+  const willDissolve = checkedIds.length < 2
+
+  return (
+    <div
+      role="presentation"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-6 backdrop-blur-[2px]"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="stagger-settings-title"
+        className="w-full max-w-[460px] overflow-hidden rounded-xl border border-border-strong bg-panel-raised text-text shadow-2xl"
+      >
+        <header className="border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-stagger/65 bg-stagger-soft text-[10px] font-bold text-stagger">
+              S
+            </span>
+            <h2
+              id="stagger-settings-title"
+              className="text-[12px] font-semibold tracking-wide uppercase"
+            >
+              Stagger settings
+            </h2>
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
+            Checked layers follow the source animation. Unchecking a layer
+            removes only the stagger relationship; its existing keyframes stay
+            in place.
+          </p>
+        </header>
+
+        <div className="space-y-4 px-5 py-4">
+          <label className="block">
+            <span className="mb-1.5 block text-[9px] font-semibold tracking-wider text-text-dim uppercase">
+              Name
+            </span>
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="h-8 w-full rounded-md border border-border bg-panel px-2.5 text-[11px] outline-none focus:border-stagger"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1.5 block text-[9px] font-semibold tracking-wider text-text-dim uppercase">
+                Delay
+              </span>
+              <div className="flex h-8 items-center rounded-md border border-border bg-panel focus-within:border-stagger">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={delay}
+                  onChange={(event) =>
+                    setDelay(Math.max(0, Number(event.target.value) || 0))
+                  }
+                  className="min-w-0 flex-1 bg-transparent px-2.5 text-[11px] outline-none"
+                />
+                <span className="pr-2.5 text-[9px] text-text-dim">S</span>
+              </div>
+            </label>
+            <div>
+              <span className="mb-1.5 block text-[9px] font-semibold tracking-wider text-text-dim uppercase">
+                Order
+              </span>
+              <div className="grid h-8 grid-cols-2 rounded-md border border-border bg-panel p-0.5">
+                {(['forward', 'reverse'] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setOrder(value)}
+                    className={[
+                      'rounded-[4px] text-[9px] font-medium tracking-wide uppercase',
+                      order === value
+                        ? 'bg-stagger-soft text-stagger'
+                        : 'text-text-dim hover:text-text',
+                    ].join(' ')}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <section>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[9px] font-semibold tracking-wider text-text-dim uppercase">
+                Affected layers · {checkedIds.length}/{set.layerIds.length}
+              </span>
+              <div className="flex items-center gap-2 text-[9px]">
+                <button
+                  type="button"
+                  onClick={() => setChecked(new Set(set.layerIds))}
+                  className="text-text-muted hover:text-stagger"
+                >
+                  Check all
+                </button>
+                <span className="text-border-strong">·</span>
+                <button
+                  type="button"
+                  onClick={() => setChecked(new Set())}
+                  className="text-text-muted hover:text-stagger"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-panel">
+              {set.layerIds.map((nodeId, index) => {
+                const node = api.getNode(nodeId)
+                const enabled = checked.has(nodeId)
+                return (
+                  <label
+                    key={nodeId}
+                    className="flex h-9 cursor-pointer items-center gap-2.5 border-b border-border/60 px-3 last:border-b-0 hover:bg-panel-raised/70"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() =>
+                        setChecked((current) => {
+                          const next = new Set(current)
+                          if (next.has(nodeId)) next.delete(nodeId)
+                          else next.add(nodeId)
+                          return next
+                        })
+                      }
+                      className="h-3.5 w-3.5 accent-[var(--color-stagger)]"
+                    />
+                    <span
+                      className={[
+                        'min-w-0 flex-1 truncate text-[10px]',
+                        enabled ? 'text-text' : 'text-text-dim line-through',
+                      ].join(' ')}
+                    >
+                      {node?.name ?? `Layer ${index + 1}`}
+                    </span>
+                    {enabled && nodeId === sourceNodeId ? (
+                      <span className="rounded bg-stagger-soft px-1.5 py-0.5 text-[8px] font-semibold tracking-wider text-stagger uppercase">
+                        Source
+                      </span>
+                    ) : null}
+                  </label>
+                )
+              })}
+            </div>
+            {willDissolve ? (
+              <p className="mt-2 text-[9px] leading-relaxed text-stagger">
+                A stagger needs at least two layers. Applying this selection
+                will dissolve the relationship and keep every keyframe.
+              </p>
+            ) : null}
+          </section>
+        </div>
+
+        <footer className="flex items-center gap-2 border-t border-border bg-panel px-5 py-3">
+          <button
+            type="button"
+            onClick={onDissolve}
+            className="mr-auto text-[9px] text-text-dim hover:text-red-400"
+          >
+            Dissolve stagger
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-8 rounded-md border border-border px-3 text-[10px] text-text-muted hover:border-border-strong hover:text-text"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onApply({
+                name: name.trim() || set.label,
+                layerIds: checkedIds,
+                delay,
+                order,
+              })
+            }
+            className="h-8 rounded-md border border-stagger/60 bg-stagger-soft px-3 text-[10px] font-semibold text-stagger hover:brightness-110"
+          >
+            {willDissolve ? 'Apply & dissolve' : 'Apply changes'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+function TimelinePlayheadReadout({
+  rulerLabels,
+  duration,
+  frameRate,
+  onCycle,
+}: {
+  rulerLabels: 'both' | 'time' | 'frames'
+  duration: number
+  frameRate: number
+  onCycle: () => void
+}) {
+  const playing = useUI((state) => state.playing)
+  const pausedPlayhead = useUI((state) =>
+    state.playing ? null : state.playhead,
+  )
+  const timeRef = useRef<HTMLSpanElement | null>(null)
+  const frameRef = useRef<HTMLSpanElement | null>(null)
+  useEffect(() => {
+    let frame = 0
+    let previousTimeText = ''
+    let previousFrameText = ''
+    const update = () => {
+      const playhead = playing
+        ? getAnimEngine().getPlayhead()
+        : (pausedPlayhead ?? 0)
+      const timeText = `${Math.floor(playhead)}s`
+      if (timeRef.current && timeText !== previousTimeText) {
+        timeRef.current.textContent = timeText
+        previousTimeText = timeText
+      }
+      const frameText = `${Math.min(
+        Math.max(0, Math.round(duration * frameRate) - 1),
+        Math.round(playhead * frameRate),
+      )}f`
+      if (frameRef.current && frameText !== previousFrameText) {
+        frameRef.current.textContent = frameText
+        previousFrameText = frameText
+      }
+      if (playing) frame = requestAnimationFrame(update)
+    }
+    update()
+    return () => cancelAnimationFrame(frame)
+  }, [duration, frameRate, pausedPlayhead, playing])
+  return (
+    <button
+      type="button"
+      onClick={onCycle}
+      title={`Showing ${rulerLabels} · click to cycle Both / Time / Frames`}
+      className="ml-1 flex shrink-0 flex-col items-end leading-tight hover:opacity-80"
+    >
+      {rulerLabels !== 'frames' && (
+        <span
+          ref={timeRef}
+          className="font-mono text-[11px] text-text tabular-nums"
+        />
+      )}
+      {rulerLabels !== 'time' && (
+        <span
+          ref={frameRef}
+          className="font-mono text-[9px] text-text-dim tabular-nums"
+        />
+      )}
+    </button>
+  )
+}
+
+function TimelinePlayheadMarker({ pxPerSecond }: { pxPerSecond: number }) {
+  const playing = useUI((state) => state.playing)
+  const pausedPlayhead = useUI((state) =>
+    state.playing ? null : state.playhead,
+  )
+  const lineRef = useRef<HTMLDivElement | null>(null)
+  const labelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    let frame = 0
+    let previousLabelText = ''
+    const update = () => {
+      const playhead = playing
+        ? getAnimEngine().getPlayhead()
+        : (pausedPlayhead ?? 0)
+      if (lineRef.current) {
+        lineRef.current.style.transform = `translate3d(${playhead * pxPerSecond}px, 0, 0)`
+      }
+      const labelText = `${playhead.toFixed(1)} s`
+      if (labelRef.current && labelText !== previousLabelText) {
+        labelRef.current.textContent = labelText
+        previousLabelText = labelText
+      }
+      if (playing) frame = requestAnimationFrame(update)
+    }
+    update()
+    return () => cancelAnimationFrame(frame)
+  }, [pausedPlayhead, playing, pxPerSecond])
+  return (
+    <div
+      ref={lineRef}
+      className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-playhead"
+      style={{ left: 0, willChange: 'transform' }}
+    >
+      <div
+        ref={labelRef}
+        className="absolute top-1 left-1/2 -translate-x-1/2 rounded-full bg-playhead px-2.5 py-1 font-mono text-[10px] leading-none whitespace-nowrap text-white"
+      />
+    </div>
   )
 }
 
@@ -3120,6 +4381,518 @@ function formatMediaDuration(node: MediaTimelineNode): string {
   return `${seconds.toFixed(seconds < 10 ? 2 : 1)}S`
 }
 
+/** Visible placeholder for the interval after S is pressed and before the
+ * first property keyframe turns the session into a persistent stagger set. */
+function StaggerDraftLeftRow({
+  layerCount,
+  delay,
+  onCancel,
+}: {
+  layerCount: number
+  delay: number
+  onCancel: () => void
+}) {
+  const ready = layerCount > 1
+  return (
+    <div className="flex h-10 items-center border-t border-stagger/35 bg-stagger-soft/55 px-3 text-stagger ring-1 ring-inset ring-stagger/25">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-stagger shadow-[0_0_0_3px_var(--color-stagger-soft)]" />
+          <span className="truncate text-[10px] font-semibold">
+            New stagger
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[8px] text-text-dim">
+            {layerCount}L · {Math.round(delay * 1000)}MS
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 pl-3.5">
+          <span className="rounded-[3px] border border-stagger/70 bg-stagger px-1.5 py-px font-mono text-[8px] font-semibold tracking-wide text-panel uppercase">
+            S · Armed
+          </span>
+          <span className="truncate text-[8px] text-text-dim">
+            {ready ? 'Add property keyframes' : 'Select 2+ layers'}
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="ml-2 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[13px] text-text-dim hover:bg-stagger-soft hover:text-stagger"
+        title="Turn stagger off (S)"
+        aria-label="Turn stagger off"
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
+function StaggerDraftRightRow({
+  layerCount,
+  totalWidth,
+}: {
+  layerCount: number
+  totalWidth: number
+}) {
+  const ready = layerCount > 1
+  return (
+    <div
+      className="relative flex h-10 items-center border-t border-stagger/35 bg-stagger-soft/25 px-3"
+      style={{ width: totalWidth }}
+      aria-label="Stagger authoring is armed"
+    >
+      <div className="h-px w-16 border-t border-dashed border-stagger/65" />
+      <span className="ml-2 font-mono text-[8px] tracking-wide text-stagger uppercase">
+        {ready ? 'Waiting for keyframes' : 'Select at least 2 layers'}
+      </span>
+    </div>
+  )
+}
+
+/** Compact persistent relationship row. It lives inside the timeline's
+ * ordinary row stack, rather than floating above the editor like a tool mode. */
+function StaggerSetLeftRow({
+  set,
+  selected,
+  active,
+  expanded,
+  onSelect,
+  onToggleExpanded,
+  onDelete,
+  onRename,
+  onContextMenu,
+}: {
+  set: ResolvedStaggerTimelineSet
+  selected: boolean
+  active: boolean
+  expanded: boolean
+  onSelect: () => void
+  onToggleExpanded: () => void
+  onDelete: () => void
+  onRename: (name: string) => void
+  onContextMenu: (event: React.MouseEvent) => void
+}) {
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(set.label)
+
+  useEffect(() => {
+    if (!renaming) setDraft(set.label)
+  }, [renaming, set.label])
+
+  const commitRename = () => {
+    const next = draft.trim()
+    if (next && next !== set.label) onRename(next)
+    setRenaming(false)
+  }
+
+  return (
+    <div
+      tabIndex={0}
+      role="button"
+      aria-selected={selected}
+      onPointerDown={(event) => event.currentTarget.focus()}
+      onClick={() => {
+        if (!renaming) onSelect()
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return
+        event.preventDefault()
+        event.stopPropagation()
+        onDelete()
+      }}
+      onDoubleClick={(event) => {
+        if (renaming) return
+        event.preventDefault()
+        event.stopPropagation()
+        onToggleExpanded()
+      }}
+      onContextMenu={onContextMenu}
+      className={[
+        'flex h-10 cursor-pointer items-center border-t border-stagger/25 px-3',
+        active
+          ? 'bg-stagger-soft text-stagger'
+          : selected
+            ? 'bg-stagger-soft/70 text-stagger'
+            : 'bg-stagger-soft/35 text-text-muted hover:bg-stagger-soft/60 hover:text-stagger',
+      ].join(' ')}
+      title="Click to select group · double-click to show or hide member layers · press S to edit"
+    >
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation()
+          onToggleExpanded()
+        }}
+        className="mr-1.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-stagger hover:bg-stagger/15"
+        title={expanded ? 'Hide stagger layers' : 'Show stagger layers'}
+        aria-label={expanded ? 'Collapse stagger group' : 'Expand stagger group'}
+      >
+        <Chevron collapsed={!expanded} />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          {renaming ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commitRename()
+                if (event.key === 'Escape') {
+                  setDraft(set.label)
+                  setRenaming(false)
+                }
+              }}
+              className="min-w-0 flex-1 rounded border border-stagger/50 bg-panel px-1 py-0.5 text-[10px] text-text outline-none"
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-[10px] font-semibold">
+              {set.label}
+            </span>
+          )}
+          <span className="shrink-0 font-mono text-[8px] text-text-dim">
+            {set.layerIds.length}L · {set.propertyIds.length}P ·{' '}
+            {Math.round(set.delay * 1000)}MS
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center">
+          <span
+            className={[
+              'rounded-[3px] border px-1.5 py-px font-mono text-[8px] font-semibold tracking-wide uppercase',
+              active
+                ? 'border-stagger/70 bg-stagger text-panel'
+                : selected
+                  ? 'border-stagger/55 bg-stagger-soft text-stagger'
+                  : 'border-stagger/30 bg-panel/50 text-text-dim',
+            ].join(' ')}
+          >
+            {active ? 'Stagger · On' : selected ? 'Press S to edit' : 'Stagger'}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** One editable overview lane for an entire stagger relationship. The body
+ * shifts every member together while preserving the authored offsets. */
+function StaggerSetRightRow({
+  set,
+  duration,
+  totalWidth,
+  api,
+  selected,
+  active,
+  expanded,
+  onSelect,
+  onToggleExpanded,
+  onDelete,
+  onContextMenu,
+}: {
+  set: ResolvedStaggerTimelineSet
+  duration: number
+  totalWidth: number
+  api: SceneAPI
+  selected: boolean
+  active: boolean
+  expanded: boolean
+  onSelect: () => void
+  onToggleExpanded: () => void
+  onDelete: () => void
+  onContextMenu: (event: React.MouseEvent) => void
+}) {
+  const previewKeys = useMemo(
+    () =>
+      set.members.map(
+        (member) => [member.trackId, member.kfId] as const,
+      ),
+    [set.members],
+  )
+  useKeyframeKeysPreviewRevision(previewKeys)
+
+  let previewStart = Infinity
+  let previewEnd = -Infinity
+  const markerTimes = new Map<string, number>()
+  for (const member of set.members) {
+    const previewTime = keyframeDragPreviewStore.getTime(
+      member.trackId,
+      member.kfId,
+      member.time,
+    )
+    previewStart = Math.min(previewStart, previewTime)
+    previewEnd = Math.max(previewEnd, previewTime)
+    // Properties authored at the same layer/time collapse to one marker;
+    // later property-keyframe bundles remain visible as another run of ticks.
+    markerTimes.set(previewTime.toFixed(4), previewTime)
+  }
+  if (!Number.isFinite(previewStart)) previewStart = set.start
+  if (!Number.isFinite(previewEnd)) previewEnd = set.end
+  const left = previewStart * PX_PER_SECOND
+  const width = Math.max(6, (previewEnd - previewStart) * PX_PER_SECOND)
+
+  const onScalePointerDown =
+    (side: 'left' | 'right') =>
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button === 2) return
+      event.preventDefault()
+      event.stopPropagation()
+      onSelect()
+      const startX = event.clientX
+      const oldStart = set.start
+      const oldEnd = set.end
+      const oldSpan = oldEnd - oldStart
+      if (oldSpan < 0.001) return
+      const anchor = side === 'left' ? oldEnd : oldStart
+      const drag = createKeyframeDragSession(
+        api,
+        set.members.map((member) => ({
+          trackId: member.trackId,
+          kfId: member.kfId,
+          startTime: member.time,
+        })),
+      )
+      let moved = false
+      let lastRatio = 1
+      ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+
+      const onMove = (nextEvent: PointerEvent) => {
+        const dx = nextEvent.clientX - startX
+        if (Math.abs(dx) < 2 && !moved) return
+        moved = true
+        let nextStart = oldStart
+        let nextEnd = oldEnd
+        if (side === 'left') {
+          nextStart = clamp(
+            oldStart + dx / PX_PER_SECOND,
+            0,
+            oldEnd - 0.01,
+          )
+        } else {
+          nextEnd = clamp(
+            oldEnd + dx / PX_PER_SECOND,
+            oldStart + 0.01,
+            duration,
+          )
+        }
+        lastRatio = (nextEnd - nextStart) / oldSpan
+        drag.previewTimes(
+          set.members.map((member) => ({
+            trackId: member.trackId,
+            kfId: member.kfId,
+            time: clamp(
+              anchor + (member.time - anchor) * lastRatio,
+              0,
+              duration,
+            ),
+          })),
+        )
+      }
+      const cleanup = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+      }
+      const onUp = (nextEvent: PointerEvent) => {
+        onMove(nextEvent)
+        cleanup()
+        if (!moved) {
+          drag.cancel()
+          return
+        }
+        const nextDelay = set.delay * lastRatio
+        api.doc.transact(() => {
+          drag.commit()
+          setStaggerSetDelayMetadata(api, set.id, nextDelay)
+        }, UNDOABLE_GESTURE_ORIGIN)
+        if (active) useUI.getState().setStaggerDelay(nextDelay)
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+    }
+
+  const onBarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button === 2) return
+    event.preventDefault()
+    event.stopPropagation()
+    onSelect()
+    const startX = event.clientX
+    const earliest = set.start
+    const latest = set.end
+    const drag = createKeyframeDragSession(
+      api,
+      set.members.map((member) => ({
+        trackId: member.trackId,
+        kfId: member.kfId,
+        startTime: member.time,
+      })),
+    )
+    let moved = false
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+
+    const onMove = (nextEvent: PointerEvent) => {
+      const dx = nextEvent.clientX - startX
+      if (Math.abs(dx) < 2 && !moved) return
+      moved = true
+      drag.preview(
+        clamp(dx / PX_PER_SECOND, -earliest, duration - latest),
+      )
+    }
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = (nextEvent: PointerEvent) => {
+      onMove(nextEvent)
+      cleanup()
+      if (moved) drag.commit()
+      else drag.cancel()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  return (
+    <div
+      tabIndex={0}
+      role="button"
+      aria-selected={selected}
+      onPointerDownCapture={(event) => event.currentTarget.focus()}
+      onKeyDown={(event) => {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return
+        event.preventDefault()
+        event.stopPropagation()
+        onDelete()
+      }}
+      onDoubleClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onToggleExpanded()
+      }}
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).dataset.staggerBar) return
+        onSelect()
+      }}
+      onContextMenu={onContextMenu}
+      className={[
+        'relative h-10 border-t border-stagger/25',
+        active
+          ? 'bg-stagger-soft'
+          : selected
+            ? 'bg-stagger-soft/70'
+            : 'bg-stagger-soft/30',
+      ].join(' ')}
+      style={{ width: totalWidth }}
+    >
+      <div
+        data-stagger-bar="1"
+        data-timeline-selection-surface="1"
+        onPointerDown={onBarPointerDown}
+        className="absolute top-1/2 z-[2] h-3 -translate-y-1/2 cursor-grab touch-none rounded-[3px] border border-stagger-ring bg-stagger/75 shadow-sm active:cursor-grabbing"
+        style={{ left, width, willChange: 'left, width' }}
+        title={`${set.label} · ${set.layerIds.length} layers · ${set.propertyIds.length} properties · drag to shift · double-click to ${expanded ? 'collapse' : 'expand'}`}
+      >
+        {Array.from(markerTimes.entries()).map(([markerId, time]) => (
+          <span
+            key={markerId}
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 h-2 w-px -translate-y-1/2 bg-panel/90"
+            style={{ left: (time - previewStart) * PX_PER_SECOND }}
+          />
+        ))}
+        <div
+          data-stagger-handle="left"
+          onPointerDown={onScalePointerDown('left')}
+          className="absolute inset-y-[-4px] left-0 w-2 -translate-x-1/2 cursor-ew-resize"
+          title="Drag to scale stagger from its start"
+        >
+          <span className="absolute top-1/2 left-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border border-stagger-ring bg-panel" />
+        </div>
+        <div
+          data-stagger-handle="right"
+          onPointerDown={onScalePointerDown('right')}
+          className="absolute inset-y-[-4px] right-0 w-2 translate-x-1/2 cursor-ew-resize"
+          title="Drag to scale stagger from its end"
+        >
+          <span className="absolute top-1/2 left-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border border-stagger-ring bg-panel" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SegmentPreviewBar({
+  track,
+  segmentClassName,
+  beadClassName,
+  onPointerDown,
+  onContextMenu,
+}: {
+  track: Track
+  segmentClassName: string
+  beadClassName: string
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  onContextMenu: (e: React.MouseEvent<HTMLDivElement>) => void
+}) {
+  // This is the only row-level subscriber used by a drag. It updates the
+  // connector endpoints without rebuilding SegmentRow or the full Timeline.
+  useKeyframePreviewRevision(track.id, track.keyframes)
+  if (track.keyframes.length === 0) return null
+
+  let firstTime = Infinity
+  let lastTime = -Infinity
+  for (const keyframe of track.keyframes) {
+    const previewTime = keyframeDragPreviewStore.getTime(
+      track.id,
+      keyframe.id,
+      keyframe.time,
+    )
+    firstTime = Math.min(firstTime, previewTime)
+    lastTime = Math.max(lastTime, previewTime)
+  }
+  const hasSpan = track.keyframes.length >= 2 && lastTime > firstTime
+
+  return hasSpan ? (
+    <div
+      data-segment-bar="1"
+      data-timeline-selection-surface="1"
+      onPointerDown={onPointerDown}
+      onContextMenu={onContextMenu}
+      title={`${firstTime.toFixed(2)}s → ${lastTime.toFixed(2)}s — drag to shift, right-click for options`}
+      className="group absolute top-1/2 z-[1] -translate-y-1/2 cursor-grab touch-none select-none active:cursor-grabbing"
+      style={{
+        left: firstTime * PX_PER_SECOND,
+        width: (lastTime - firstTime) * PX_PER_SECOND,
+        height: SEGMENT_DRAG_HIT_HEIGHT,
+        willChange: 'left, width',
+      }}
+    >
+      <div
+        aria-hidden
+        className={`${segmentClassName} pointer-events-none group-hover:brightness-110`}
+      />
+    </div>
+  ) : (
+    <div
+      className={beadClassName}
+      style={{ left: firstTime * PX_PER_SECOND, willChange: 'left' }}
+    />
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Segment row (right side, per track)
 // ---------------------------------------------------------------------------
@@ -3152,6 +4925,9 @@ function SegmentRow({
   clearKfs,
   kfGroupOf,
   kfGroupKeys,
+  staggerSetOfKey,
+  staggerEditLinksByKey,
+  onDeleteLinkedStaggerKeys,
   hiddenByGroupCollapse,
   onScrub,
   onFocus,
@@ -3176,6 +4952,13 @@ function SegmentRow({
   kfGroupOf: Map<string, string>
   /** Map from group id → set of member keys. */
   kfGroupKeys: Map<string, Set<string>>
+  /** Persistent stagger membership, styled independently from manual groups. */
+  staggerSetOfKey: Map<string, string>
+  /** Source key → the source/follower bundle moved together in edit mode. */
+  staggerEditLinksByKey: Map<string, KeyframeDragMember[]>
+  onDeleteLinkedStaggerKeys: (
+    members: readonly KeyframeDragMember[],
+  ) => void
   /** Keys hidden because they belong to a collapsed group. */
   hiddenByGroupCollapse: Set<string>
   onScrub: (time: number) => void
@@ -3212,10 +4995,9 @@ function SegmentRow({
   const kfs = track.keyframes
   const first = kfs[0]
   const last = kfs[kfs.length - 1]
-  const hasSpan = kfs.length >= 2 && first && last && last.time > first.time
   const segmentClassName = nodeSelected
-    ? 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-accent ring-1 ring-accent/70 shadow-[0_0_0_2px_var(--color-accent-soft)] hover:brightness-110'
-    : 'absolute top-1/2 h-1.5 -translate-y-1/2 cursor-grab rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 hover:bg-segment-bar-hover'
+    ? 'absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-accent ring-1 ring-accent/70 shadow-[0_0_0_2px_var(--color-accent-soft)]'
+    : 'absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-segment-bar/70 ring-1 ring-segment-bar-ring/60 group-hover:bg-segment-bar-hover'
   const beadClassName = nodeSelected
     ? 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
     : 'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-segment-bar-hover'
@@ -3225,9 +5007,21 @@ function SegmentRow({
     // Right-clicks go through onContextMenu; skip the drag handler.
     if (e.button === 2) return
     e.stopPropagation()
+    e.preventDefault()
+    const linkedStaggerMembers = new Map<string, KeyframeDragMember>()
+    for (const keyframe of kfs) {
+      for (const member of
+        staggerEditLinksByKey.get(kfKey(track.id, keyframe.id)) ?? []) {
+        linkedStaggerMembers.set(kfKey(member.trackId, member.kfId), member)
+      }
+    }
     if (e.altKey) {
       // Alt-drag on the bar = delete whole track.
-      removeTrack(api, track.id)
+      if (linkedStaggerMembers.size > 0) {
+        onDeleteLinkedStaggerKeys([...linkedStaggerMembers.values()])
+      } else {
+        removeTrack(api, track.id)
+      }
       return
     }
     // Shift / Cmd / Ctrl-click on a segment bar = extend the selection
@@ -3250,6 +5044,45 @@ function SegmentRow({
       return
     }
     onFocus()
+
+    // In stagger edit mode the visible source property is a proxy for the
+    // same property on every follower. Moving its segment therefore shifts
+    // all linked keys, while the timeline continues to show only the source.
+    if (linkedStaggerMembers.size > 0) {
+      replaceKfs(kfs.map((keyframe) => kfKey(track.id, keyframe.id)))
+      const members = [...linkedStaggerMembers.values()]
+      const earliest = Math.min(...members.map((member) => member.startTime))
+      const latest = Math.max(...members.map((member) => member.startTime))
+      const startX = e.clientX
+      const drag = createKeyframeDragSession(api, members)
+      const onMove = (event: PointerEvent) => {
+        drag.preview(
+          clamp(
+            (event.clientX - startX) / PX_PER_SECOND,
+            -earliest,
+            duration - latest,
+          ),
+        )
+      }
+      const cleanup = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+      }
+      const onUp = (event: PointerEvent) => {
+        onMove(event)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+      return
+    }
 
     // Two batch sources fold into the same drag, mirroring the
     // diamond handler:
@@ -3283,10 +5116,9 @@ function SegmentRow({
     ;(e.currentTarget as HTMLElement).setPointerCapture(pointerId)
 
     if (isBatch) {
-      // Snapshot start times of every keyframe in the union of the
-      // two selection sources. Reading flatTracks inside the move
-      // handler would race with the moveKeyframe writes we're about
-      // to issue.
+      // Snapshot start times of every keyframe in the union of the two
+      // selection sources. The transient preview and final transaction both
+      // derive from this immutable drag-start state.
       const trackSet = new Set(ui.selectedTrackIds)
       const seen = new Set<string>()
       const snap: Array<{ trackId: string; kfId: string; startTime: number }> =
@@ -3321,22 +5153,32 @@ function SegmentRow({
         // that's the segment edge the user actually grabbed, which
         // is what they expect to align cleanly to neighbors.
         const leaderStart = kfs[0]!.time
+        const drag = createKeyframeDragSession(api, snap)
         const onMove = (ev: PointerEvent) => {
           const dx = (ev.clientX - startX) / PX_PER_SECOND
           const cd = clamp(dx, minDelta, maxDelta)
           const proposed = leaderStart + cd
           const snapped = snapTime(proposed, flatTracks, excludeBatch, ev.altKey)
           const finalDx = snapped - leaderStart
-          for (const s of snap) {
-            moveKeyframe(api, s.trackId, s.kfId, s.startTime + finalDx)
-          }
+          drag.preview(finalDx)
         }
-        const onUp = () => {
+        const cleanup = () => {
           window.removeEventListener('pointermove', onMove)
           window.removeEventListener('pointerup', onUp)
+          window.removeEventListener('pointercancel', onCancel)
+        }
+        const onUp = (ev: PointerEvent) => {
+          onMove(ev)
+          cleanup()
+          drag.commit()
+        }
+        const onCancel = () => {
+          cleanup()
+          drag.cancel()
         }
         window.addEventListener('pointermove', onMove)
         window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onCancel)
         return
       }
     }
@@ -3355,6 +5197,12 @@ function SegmentRow({
     // snap on the LEADING (earliest) kf's proposed new time so the
     // segment's start lines up with neighboring boundaries.
     const excludeOwn = new Set(kfs.map((k) => kfKey(track.id, k.id)))
+    const members: KeyframeDragMember[] = kfs.map((keyframe, index) => ({
+      trackId: track.id,
+      kfId: keyframe.id,
+      startTime: startTimes[index]!,
+    }))
+    const drag = createKeyframeDragSession(api, members)
     const onMove = (ev: PointerEvent) => {
       const dxSeconds = (ev.clientX - startX) / PX_PER_SECOND
       const minDelta = -earliest
@@ -3363,18 +5211,25 @@ function SegmentRow({
       const proposedLead = earliest + delta
       const snappedLead = snapTime(proposedLead, flatTracks, excludeOwn, ev.altKey)
       const finalDelta = snappedLead - earliest
-      const next = kfs.map((k, i) => ({
-        ...k,
-        time: startTimes[i]! + finalDelta,
-      }))
-      api.setTrack({ ...track, keyframes: next })
+      drag.preview(finalDelta)
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = (ev: PointerEvent) => {
+      onMove(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   return (
@@ -3411,29 +5266,13 @@ function SegmentRow({
           move-all-keyframes drag. The bar is only a quiet connector;
           grouped "keyframe set" handles render on group rows instead. */}
       {first && last ? (
-        hasSpan ? (
-          <div
-            data-segment-bar="1"
-            data-timeline-selection-surface="1"
-            draggable
-            onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
-            onPointerDown={onBarPointerDown}
-            onContextMenu={onBarContextMenu}
-            title={`${first.time.toFixed(2)}s → ${last.time.toFixed(2)}s — drag to shift, right-click for options`}
-            className={segmentClassName}
-            style={{
-              left: first.time * PX_PER_SECOND,
-              width: (last.time - first.time) * PX_PER_SECOND,
-            }}
-          />
-        ) : (
-          <div
-            draggable
-            onDragStart={(e) => setDraggedTrackIds(e, dragTrackIdsFor(track.id))}
-            className={beadClassName}
-            style={{ left: first.time * PX_PER_SECOND }}
-          />
-        )
+        <SegmentPreviewBar
+          track={track}
+          segmentClassName={segmentClassName}
+          beadClassName={beadClassName}
+          onPointerDown={onBarPointerDown}
+          onContextMenu={onBarContextMenu}
+        />
       ) : null}
 
       {/* Keyframe diamonds on top of the bar. Still individually
@@ -3459,8 +5298,17 @@ function SegmentRow({
             replaceKfs={replaceKfs}
             kfGroupOf={kfGroupOf}
             kfGroupKeys={kfGroupKeys}
-            onDelete={() => removeKeyframe(api, track.id, kf.id)}
-            onRetime={(next) => moveKeyframe(api, track.id, kf.id, next)}
+            staggerSetOfKey={staggerSetOfKey}
+            linkedStaggerMembers={
+              staggerEditLinksByKey.get(kfKey(track.id, kf.id))
+            }
+            onDelete={() => {
+              const linked = staggerEditLinksByKey.get(
+                kfKey(track.id, kf.id),
+              )
+              if (linked?.length) onDeleteLinkedStaggerKeys(linked)
+              else removeKeyframe(api, track.id, kf.id)
+            }}
             onFocus={onFocus}
             onContextMenu={(e) => onKeyframeContextMenu(e, kf)}
           />
@@ -3482,8 +5330,9 @@ function KeyframeDiamond({
   replaceKfs,
   kfGroupOf,
   kfGroupKeys,
+  staggerSetOfKey,
+  linkedStaggerMembers,
   onDelete,
-  onRetime,
   onFocus,
   onContextMenu,
 }: {
@@ -3498,8 +5347,9 @@ function KeyframeDiamond({
   replaceKfs: (keys: string[]) => void
   kfGroupOf: Map<string, string>
   kfGroupKeys: Map<string, Set<string>>
+  staggerSetOfKey: Map<string, string>
+  linkedStaggerMembers?: KeyframeDragMember[]
   onDelete: () => void
-  onRetime: (next: number) => void
   onFocus: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
@@ -3508,6 +5358,8 @@ function KeyframeDiamond({
   const groupId = kfGroupOf.get(myKey)
   const groupMembers = groupId ? kfGroupKeys.get(groupId) : undefined
   const inGroup = !!groupMembers && groupMembers.size > 1
+  const staggerSetId = staggerSetOfKey.get(myKey)
+  const inStaggerSet = !!staggerSetId
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Right-clicks fall through to onContextMenu; don't start a drag.
@@ -3559,6 +5411,53 @@ function KeyframeDiamond({
     }
     onFocus()
 
+    // The source key is the editable proxy for this stagger bundle. Its
+    // followers stay hidden in edit mode, but move in the same drag session.
+    if (linkedStaggerMembers && linkedStaggerMembers.length > 1) {
+      replaceKfs([myKey])
+      const startX = e.clientX
+      const earliest = Math.min(
+        ...linkedStaggerMembers.map((member) => member.startTime),
+      )
+      const latest = Math.max(
+        ...linkedStaggerMembers.map((member) => member.startTime),
+      )
+      const exclude = new Set(
+        linkedStaggerMembers.map((member) =>
+          kfKey(member.trackId, member.kfId),
+        ),
+      )
+      const drag = createKeyframeDragSession(api, linkedStaggerMembers)
+      const onMove = (event: PointerEvent) => {
+        const delta = clamp(
+          (event.clientX - startX) / PX_PER_SECOND,
+          -earliest,
+          duration - latest,
+        )
+        const proposed = time + delta
+        const snapped = snapTime(proposed, flatTracks, exclude, event.altKey)
+        drag.preview(snapped - time)
+      }
+      const cleanup = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+      }
+      const onUp = (event: PointerEvent) => {
+        onMove(event)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+      return
+    }
+
     // Two batch sources fold into the same drag: a multi-keyframe
     // selection (selectedKfs) and a multi-track selection
     // (selectedTrackIds). Either one drives a batch drag; if both
@@ -3575,12 +5474,9 @@ function KeyframeDiamond({
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 
     if (isBatch) {
-      // Snapshot starting times for every keyframe in the batch at
-      // drag-start. Reading from flatTracks inside the move handler
-      // would race with the scene mutations we're about to issue
-      // (each moveKeyframe bumps the scene version, which re-renders
-      // and rebuilds flatTracks — but React state updates are async,
-      // so the snapshot keeps us stable per-frame).
+      // Snapshot starting times for every keyframe in the batch at drag-start.
+      // Preview frames stay outside the scene document, then pointer-up uses
+      // this same immutable state for its single durable transaction.
       const trackSet = new Set(ui.selectedTrackIds)
       const seen = new Set<string>()
       const snap: Array<{ trackId: string; kfId: string; startTime: number }> = []
@@ -3612,22 +5508,32 @@ function KeyframeDiamond({
       // resulting delta uniformly so the batch keeps its spacing.
       const excludeBatch = new Set(snap.map((s) => kfKey(s.trackId, s.kfId)))
       const leaderStart = time
+      const drag = createKeyframeDragSession(api, snap)
       const onMove = (ev: PointerEvent) => {
         const dx = (ev.clientX - startX) / PX_PER_SECOND
         const clampedDx = clamp(dx, minDelta, maxDelta)
         const proposed = leaderStart + clampedDx
         const snapped = snapTime(proposed, flatTracks, excludeBatch, ev.altKey)
         const finalDx = snapped - leaderStart
-        for (const s of snap) {
-          moveKeyframe(api, s.trackId, s.kfId, s.startTime + finalDx)
-        }
+        drag.preview(finalDx)
       }
-      const onUp = () => {
+      const cleanup = () => {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+      }
+      const onUp = (ev: PointerEvent) => {
+        onMove(ev)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
       }
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
       return
     }
 
@@ -3639,19 +5545,35 @@ function KeyframeDiamond({
     replaceKfs([myKey])
     const startTime = time
     const excludeSelf = new Set([myKey])
+    const drag = createKeyframeDragSession(api, [
+      { trackId, kfId, startTime },
+    ])
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
       const proposed = clamp(startTime + dx / PX_PER_SECOND, 0, duration)
       const next = snapTime(proposed, flatTracks, excludeSelf, ev.altKey)
-      onRetime(next)
+      drag.preview(next - startTime)
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = (ev: PointerEvent) => {
+      onMove(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
+
+  const previewTime = useKeyframePreviewTime(trackId, kfId, time)
 
   return (
     <>
@@ -3662,9 +5584,11 @@ function KeyframeDiamond({
         data-track-id={trackId}
         data-timeline-selection-surface="1"
         title={
-          inGroup
-            ? `${time.toFixed(2)}s — grouped (${groupMembers!.size}). Click selects group, alt-click deletes one, Cmd+Shift+G ungroups.`
-            : `${time.toFixed(2)}s — shift-click to multi-select, alt-click to delete this one, Delete for selection, right-click for options`
+          inStaggerSet
+            ? `${previewTime.toFixed(2)}s — member of a persistent stagger set. Select the amber stagger row to edit the full set.`
+            : inGroup
+            ? `${previewTime.toFixed(2)}s — grouped (${groupMembers!.size}). Click selects group, alt-click deletes one, Cmd+Shift+G ungroups.`
+            : `${previewTime.toFixed(2)}s — shift-click to multi-select, alt-click to delete this one, Delete for selection, right-click for options`
         }
         // Selection feedback is load-bearing here: the user has reported
         // that the old subtle color shift felt like nothing was happening.
@@ -3674,14 +5598,22 @@ function KeyframeDiamond({
         className={
           'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full transition-[width,height,box-shadow] ' +
           (isSelected
-            ? 'z-[2] h-3 w-3 bg-white ring-2 ring-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
-            : inGroup
+            ? inStaggerSet
+              ? 'z-[2] h-3 w-3 bg-white ring-2 ring-stagger shadow-[0_0_0_2px_var(--color-stagger-soft)]'
+              : 'z-[2] h-3 w-3 bg-white ring-2 ring-accent shadow-[0_0_0_2px_var(--color-accent-soft)]'
+            : inStaggerSet
+              ? 'z-[1] h-2.5 w-2.5 bg-stagger ring-1 ring-stagger-ring hover:brightness-110'
+              : inGroup
               ? // Grouped + not selected: keep the keyframe color but
                 // swap the ring to accent so groups read at a glance.
                 'z-[1] h-2.5 w-2.5 bg-keyframe ring-1 ring-accent hover:brightness-125'
               : 'z-[1] h-2.5 w-2.5 bg-keyframe ring-1 ring-keyframe-ring hover:brightness-125')
         }
-        style={{ left: time * PX_PER_SECOND }}
+        style={{
+          left: time * PX_PER_SECOND,
+          transform: `translate3d(${(previewTime - time) * PX_PER_SECOND}px, 0, 0)`,
+          willChange: 'transform',
+        }}
       />
       {/* Group indicator dot below the diamond. Tiny, accent-colored,
           purely decorative — but enough to spot which keyframes share
@@ -3691,7 +5623,12 @@ function KeyframeDiamond({
         <span
           aria-hidden="true"
           className="pointer-events-none absolute h-1 w-1 -translate-x-1/2 rounded-full bg-accent"
-          style={{ left: time * PX_PER_SECOND, bottom: 2 }}
+          style={{
+            left: time * PX_PER_SECOND,
+            bottom: 2,
+            transform: `translate3d(${(previewTime - time) * PX_PER_SECOND}px, 0, 0)`,
+            willChange: 'transform',
+          }}
         />
       )}
     </>
@@ -3715,9 +5652,10 @@ function KeyframeDiamond({
  *   - bar body    → uniform shift; every member moves by the same
  *                   delta. Same math as the existing batch-drag.
  *
- * Per-frame writes go through `moveKeyframe` so undo coalesces
- * naturally and the engine re-snapshots once. Pointer captured on
- * the dragged element so leaving the bar mid-drag doesn't drop it.
+ * Pointer packets publish through the transient drag store at display rate;
+ * pointer-up persists every member in one transaction. Pointer capture keeps
+ * the gesture live when it leaves the slim bar, and pointer-cancel rolls the
+ * preview back without touching the scene document.
  *
  * Edge cases:
  *   - Zero-width groups (all members at same time): we skip the
@@ -3752,6 +5690,7 @@ function TrackGroupLeftRow({
   layerRelated = false,
   onToggle,
   onSelectMembers,
+  onDelete,
   onUngroup,
   onRename,
   selectedLayerTracksToAdd,
@@ -3766,6 +5705,7 @@ function TrackGroupLeftRow({
   layerRelated?: boolean
   onToggle: () => void
   onSelectMembers: () => void
+  onDelete: () => void
   onUngroup: () => void
   onRename: (name: string) => void
   selectedLayerTracksToAdd: number
@@ -3777,6 +5717,10 @@ function TrackGroupLeftRow({
 }) {
   const collapsed = group.collapsed
   const api = useSceneAPI()
+  const selectedTrackIds = useUI((state) => state.selectedTrackIds)
+  const selected =
+    group.memberTracks.length > 0 &&
+    group.memberTracks.every((track) => selectedTrackIds.includes(track.id))
   const [editingName, setEditingName] = useState(false)
   const [draftName, setDraftName] = useState(group.label)
   useEffect(() => {
@@ -3789,7 +5733,18 @@ function TrackGroupLeftRow({
   return (
     <>
       <div
+        tabIndex={0}
+        role="button"
+        aria-selected={selected}
+        data-timeline-selection-surface="1"
+        onPointerDown={(event) => event.currentTarget.focus()}
         onClick={onSelectMembers}
+        onKeyDown={(event) => {
+          if (event.key !== 'Delete' && event.key !== 'Backspace') return
+          event.preventDefault()
+          event.stopPropagation()
+          onDelete()
+        }}
         onDoubleClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -3798,6 +5753,7 @@ function TrackGroupLeftRow({
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
+          onSelectMembers()
           openContextMenu({
             x: e.clientX,
             y: e.clientY,
@@ -3826,7 +5782,12 @@ function TrackGroupLeftRow({
                   ]
                 : []),
               { kind: 'separator' as const },
-              { label: 'Ungroup (⌘⇧G)', danger: true, onClick: onUngroup },
+              { label: 'Ungroup (⌘⇧G)', onClick: onUngroup },
+              {
+                label: 'Delete group and animation',
+                danger: true,
+                onClick: onDelete,
+              },
             ],
           })
         }}
@@ -3849,7 +5810,11 @@ function TrackGroupLeftRow({
         }
         className={[
           'flex h-6 cursor-pointer items-center gap-1.5 border-t border-border/50 px-3 pl-2 text-accent hover:bg-accent-soft/70',
-          layerRelated ? 'bg-accent-soft/65' : 'bg-accent-soft/50',
+          selected
+            ? 'bg-accent-soft/80 ring-1 ring-inset ring-accent/45'
+            : layerRelated
+              ? 'bg-accent-soft/65'
+              : 'bg-accent-soft/50',
         ].join(' ')}
       >
         <button
@@ -3979,6 +5944,8 @@ function TrackGroupRightRow({
   duration,
   api,
   layerRelated = false,
+  onSelectMembers,
+  onDelete,
   onDropTracks,
   onContextMenu,
 }: {
@@ -3987,24 +5954,42 @@ function TrackGroupRightRow({
   duration: number
   api: SceneAPI
   layerRelated?: boolean
+  onSelectMembers: () => void
+  onDelete: () => void
   onDropTracks: (trackIds: string[]) => void
   /** Right-click on the span bar — parent builds the menu so it can
    *  reach the live track selection and the openContextMenu handle. */
   onContextMenu?: (e: React.MouseEvent, group: ResolvedTrackGroup) => void
 }) {
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
+  const previewKeys = useMemo(
+    () =>
+      group.memberTracks.flatMap((track) =>
+        track.keyframes.map(
+          (keyframe) => [track.id, keyframe.id] as const,
+        ),
+      ),
+    [group.memberTracks],
+  )
+  useKeyframeKeysPreviewRevision(previewKeys)
   // Compute the time span across all member keyframes.
   let start = Infinity
   let end = -Infinity
   for (const t of group.memberTracks) {
     for (const kf of t.keyframes) {
-      if (kf.time < start) start = kf.time
-      if (kf.time > end) end = kf.time
+      const previewTime = keyframeDragPreviewStore.getTime(
+        t.id,
+        kf.id,
+        kf.time,
+      )
+      if (previewTime < start) start = previewTime
+      if (previewTime > end) end = previewTime
     }
   }
   const hasSpan = start !== Infinity && end !== -Infinity && end > start
   const left = hasSpan ? start * PX_PER_SECOND : 0
   const width = hasSpan ? (end - start) * PX_PER_SECOND : 0
+  const edgeHitWidth = groupEdgeHitWidth(width)
   const allSelected =
     group.memberTracks.length > 0 &&
     group.memberTracks.every((track) => selectedTrackIds.includes(track.id))
@@ -4032,6 +6017,7 @@ function TrackGroupRightRow({
    */
   const onBodyPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).dataset.groupHandle) return
+    onSelectMembers()
     if (!hasSpan) return
     e.stopPropagation()
     e.preventDefault()
@@ -4040,19 +6026,36 @@ function TrackGroupRightRow({
     const snap = collectMembers()
     const minDelta = -start
     const maxDelta = duration - end
-    const onMove = (ev: PointerEvent) => {
+    const drag = createKeyframeDragSession(
+      api,
+      snap.map((member) => ({
+        trackId: member.trackId,
+        kfId: member.kfId,
+        startTime: member.time,
+      })),
+    )
+    const previewAt = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) / PX_PER_SECOND
       const cd = clamp(dx, minDelta, maxDelta)
-      for (const m of snap) {
-        moveKeyframe(api, m.trackId, m.kfId, m.time + cd)
-      }
+      drag.preview(cd)
     }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
+    const cleanup = () => {
+      window.removeEventListener('pointermove', previewAt)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
-    window.addEventListener('pointermove', onMove)
+    const onUp = (ev: PointerEvent) => {
+      previewAt(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
+    }
+    window.addEventListener('pointermove', previewAt)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   /**
@@ -4067,6 +6070,7 @@ function TrackGroupRightRow({
       if (!hasSpan) return
       e.stopPropagation()
       e.preventDefault()
+      onSelectMembers()
       const startX = e.clientX
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
       const snap = collectMembers()
@@ -4074,8 +6078,16 @@ function TrackGroupRightRow({
       const oldEnd = end
       const oldSpan = oldEnd - oldStart
       const anchor = side === 'left' ? oldEnd : oldStart
+      const drag = createKeyframeDragSession(
+        api,
+        snap.map((member) => ({
+          trackId: member.trackId,
+          kfId: member.kfId,
+          startTime: member.time,
+        })),
+      )
 
-      const onMove = (ev: PointerEvent) => {
+      const previewAt = (ev: PointerEvent) => {
         const dx = (ev.clientX - startX) / PX_PER_SECOND
         let newStart = oldStart
         let newEnd = oldEnd
@@ -4087,22 +6099,57 @@ function TrackGroupRightRow({
         const newSpan = newEnd - newStart
         if (oldSpan < 0.001) return
         const ratio = newSpan / oldSpan
-        for (const m of snap) {
-          const nt = clamp(anchor + (m.time - anchor) * ratio, 0, duration)
-          moveKeyframe(api, m.trackId, m.kfId, nt)
-        }
+        drag.previewTimes(
+          snap.map((member) => ({
+            trackId: member.trackId,
+            kfId: member.kfId,
+            time: clamp(
+              anchor + (member.time - anchor) * ratio,
+              0,
+              duration,
+            ),
+          })),
+        )
       }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
+      const cleanup = () => {
+        window.removeEventListener('pointermove', previewAt)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
       }
-      window.addEventListener('pointermove', onMove)
+      const onUp = (ev: PointerEvent) => {
+        previewAt(ev)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', previewAt)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
     }
 
   return (
     <>
       <div
+        tabIndex={0}
+        role="button"
+        aria-selected={allSelected}
+        data-timeline-selection-surface="1"
+        onPointerDownCapture={(event) => event.currentTarget.focus()}
+        onPointerDown={(event) => {
+          if ((event.target as HTMLElement).closest('[data-track-group-bar]')) {
+            return
+          }
+          onSelectMembers()
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Delete' && event.key !== 'Backspace') return
+          event.preventDefault()
+          event.stopPropagation()
+          onDelete()
+        }}
         className={[
           'relative h-6 border-t border-border/50',
           layerRelated ? 'bg-accent-soft/45' : 'bg-accent-soft/30',
@@ -4120,10 +6167,14 @@ function TrackGroupRightRow({
           e.stopPropagation()
           onDropTracks(ids)
         }}
-        onContextMenu={(e) => onContextMenu?.(e, group)}
+        onContextMenu={(e) => {
+          onSelectMembers()
+          onContextMenu?.(e, group)
+        }}
       >
         {hasSpan && (
           <div
+            data-track-group-bar="1"
             data-timeline-selection-surface="1"
             onPointerDown={onBodyPointerDown}
             onContextMenu={(e) => onContextMenu?.(e, group)}
@@ -4132,6 +6183,7 @@ function TrackGroupRightRow({
             style={{
               left,
               width: Math.max(2, width),
+              touchAction: 'none',
               background: fill,
               boxShadow: '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
               '--tw-ring-color': 'var(--color-group-bar-ring)',
@@ -4144,7 +6196,8 @@ function TrackGroupRightRow({
               data-group-handle="left"
               onPointerDown={onScalePointerDown('left')}
               title="Drag to scale group from the left"
-              className="absolute top-0 bottom-0 left-0 w-4 cursor-ew-resize rounded-l hover:bg-white/10"
+              className="absolute top-0 bottom-0 left-0 cursor-ew-resize rounded-l hover:bg-white/10"
+              style={{ width: edgeHitWidth }}
             >
               <span className="absolute top-1/2 left-[5px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
             </div>
@@ -4152,7 +6205,8 @@ function TrackGroupRightRow({
               data-group-handle="right"
               onPointerDown={onScalePointerDown('right')}
               title="Drag to scale group from the right"
-              className="absolute top-0 right-0 bottom-0 w-4 cursor-ew-resize rounded-r hover:bg-white/10"
+              className="absolute top-0 right-0 bottom-0 cursor-ew-resize rounded-r hover:bg-white/10"
+              style={{ width: edgeHitWidth }}
             >
               <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
             </div>
@@ -4409,6 +6463,7 @@ function StateDiamond({
     const isBatch = effectiveSize > memberKeys.length
 
     const startX = e.clientX
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 
     if (isBatch) {
       // Snapshot every selected kf's start time. Any kf in selectedKfs
@@ -4436,8 +6491,9 @@ function StateDiamond({
       const maxDelta = duration - latest
       const excludeBatch = new Set(snap.map((s) => kfKey(s.trackId, s.kfId)))
       const leaderStart = time
+      const drag = createKeyframeDragSession(api, snap)
 
-      const onMove = (ev: PointerEvent) => {
+      const previewAt = (ev: PointerEvent) => {
         const dxSeconds = (ev.clientX - startX) / PX_PER_SECOND
         const delta = clamp(dxSeconds, minDelta, maxDelta)
         const proposedLead = leaderStart + delta
@@ -4448,16 +6504,25 @@ function StateDiamond({
           ev.altKey,
         )
         const finalDelta = snappedLead - leaderStart
-        for (const s of snap) {
-          moveKeyframe(api, s.trackId, s.kfId, s.startTime + finalDelta)
-        }
+        drag.preview(finalDelta)
       }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
+      const cleanup = () => {
+        window.removeEventListener('pointermove', previewAt)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
       }
-      window.addEventListener('pointermove', onMove)
+      const onUp = (ev: PointerEvent) => {
+        previewAt(ev)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', previewAt)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
       return
     }
 
@@ -4466,24 +6531,47 @@ function StateDiamond({
     const minDelta = -time
     const maxDelta = duration - time
     const excludeOwn = new Set(memberKeys)
+    const drag = createKeyframeDragSession(
+      api,
+      members.map((member) => ({
+        trackId: member.trackId,
+        kfId: member.kfId,
+        startTime: time,
+      })),
+    )
 
-    const onMove = (ev: PointerEvent) => {
+    const previewAt = (ev: PointerEvent) => {
       const dxSeconds = (ev.clientX - startX) / PX_PER_SECOND
       const delta = clamp(dxSeconds, minDelta, maxDelta)
       const proposed = clamp(time + delta, 0, duration)
       const nextTime = snapTime(proposed, flatTracks, excludeOwn, ev.altKey)
-      for (const m of members) {
-        moveKeyframe(api, m.trackId, m.kfId, nextTime)
-      }
+      drag.preview(nextTime - time)
     }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
+    const cleanup = () => {
+      window.removeEventListener('pointermove', previewAt)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
-    window.addEventListener('pointermove', onMove)
+    const onUp = (ev: PointerEvent) => {
+      previewAt(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
+    }
+    window.addEventListener('pointermove', previewAt)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
+  const previewMember = members[0]
+  const previewTime = useKeyframePreviewTime(
+    previewMember?.trackId ?? '',
+    previewMember?.kfId ?? '',
+    time,
+  )
   const propertyNames = members
     .map((m) => humanProperty(m.propertyId))
     .join(', ')
@@ -4494,7 +6582,7 @@ function StateDiamond({
       data-state-diamond="1"
       data-state-keys={memberKeys.join('|')}
       onPointerDown={onPointerDown}
-      title={`${time.toFixed(2)}s · ${propertyCount} ${
+      title={`${previewTime.toFixed(2)}s · ${propertyCount} ${
         propertyCount === 1 ? 'property' : 'properties'
       }: ${propertyNames}`}
       className={
@@ -4503,7 +6591,11 @@ function StateDiamond({
           ? 'h-3.5 w-3.5 bg-white ring-2 ring-accent shadow-[0_0_0_3px_var(--color-accent-soft)] z-[1]'
           : 'h-3 w-3 bg-keyframe ring-1 ring-keyframe-ring hover:brightness-125')
       }
-      style={{ left: time * PX_PER_SECOND }}
+      style={{
+        left: time * PX_PER_SECOND,
+        transform: `translate3d(${(previewTime - time) * PX_PER_SECOND}px, 0, 0)`,
+        willChange: 'transform',
+      }}
     >
       {/* Tiny count badge so the user can tell "this is 1 property" vs
           "this is 4 properties" at a glance. Only when multi-property. */}
@@ -4540,9 +6632,31 @@ function GroupSpanBar({
   layerRelated?: boolean
   replaceKfs: (keys: string[]) => void
 }) {
-  const span = group.end - group.start
-  const left = group.start * PX_PER_SECOND
+  const previewKeys = useMemo(
+    () =>
+      group.members.map(
+        (member) => [member.trackId, member.kfId] as const,
+      ),
+    [group.members],
+  )
+  useKeyframeKeysPreviewRevision(previewKeys)
+  let previewStart = Infinity
+  let previewEnd = -Infinity
+  for (const member of group.members) {
+    const previewTime = keyframeDragPreviewStore.getTime(
+      member.trackId,
+      member.kfId,
+      member.time,
+    )
+    previewStart = Math.min(previewStart, previewTime)
+    previewEnd = Math.max(previewEnd, previewTime)
+  }
+  if (previewStart === Infinity) previewStart = group.start
+  if (previewEnd === -Infinity) previewEnd = group.end
+  const span = previewEnd - previewStart
+  const left = previewStart * PX_PER_SECOND
   const width = Math.max(2, span * PX_PER_SECOND)
+  const edgeHitWidth = groupEdgeHitWidth(width)
   const memberKeys = group.members.map((m) => kfKey(m.trackId, m.kfId))
   const allSelected = memberKeys.every((key) => selectedKfs.has(key))
   const leftSelected = group.members.some(
@@ -4581,8 +6695,16 @@ function GroupSpanBar({
       const oldEnd = group.end
       const oldSpan = oldEnd - oldStart
       const anchor = side === 'left' ? oldEnd : oldStart
+      const drag = createKeyframeDragSession(
+        api,
+        snap.map((member) => ({
+          trackId: member.trackId,
+          kfId: member.kfId,
+          startTime: member.time,
+        })),
+      )
 
-      const onMove = (ev: PointerEvent) => {
+      const previewAt = (ev: PointerEvent) => {
         const dx = (ev.clientX - startX) / PX_PER_SECOND
         // The dragged edge moves by dx. The anchor stays put. Compute
         // the new span and the resulting scale factor.
@@ -4601,26 +6723,38 @@ function GroupSpanBar({
         // edge so the user can re-spread by widening the bar.
         if (oldSpan < 0.001) return
         const ratio = newSpan / oldSpan
-        for (const m of snap) {
-          // newTime = anchor + (oldTime - anchor) * ratio
-          // For a left-edge drag with anchor=oldEnd, this maps oldEnd
-          // to oldEnd (unchanged) and oldStart to oldEnd - oldSpan*ratio
-          // = oldEnd - newSpan = newStart. Interior kfs land
-          // proportionally between.
-          const nt = clamp(
-            anchor + (m.time - anchor) * ratio,
-            0,
-            duration,
-          )
-          moveKeyframe(api, m.trackId, m.kfId, nt)
-        }
+        drag.previewTimes(
+          snap.map((member) => ({
+            trackId: member.trackId,
+            kfId: member.kfId,
+            // newTime = anchor + (oldTime - anchor) * ratio. The
+            // opposite edge remains fixed and interior points stay
+            // proportional.
+            time: clamp(
+              anchor + (member.time - anchor) * ratio,
+              0,
+              duration,
+            ),
+          })),
+        )
       }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
+      const cleanup = () => {
+        window.removeEventListener('pointermove', previewAt)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
       }
-      window.addEventListener('pointermove', onMove)
+      const onUp = (ev: PointerEvent) => {
+        previewAt(ev)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
+      }
+      window.addEventListener('pointermove', previewAt)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
     }
 
   /**
@@ -4648,32 +6782,50 @@ function GroupSpanBar({
     const snap = group.members.map((m) => ({ ...m }))
     const minDelta = -group.start
     const maxDelta = duration - group.end
-    const onMove = (ev: PointerEvent) => {
+    const drag = createKeyframeDragSession(
+      api,
+      snap.map((member) => ({
+        trackId: member.trackId,
+        kfId: member.kfId,
+        startTime: member.time,
+      })),
+    )
+    const previewAt = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) / PX_PER_SECOND
       const cd = clamp(dx, minDelta, maxDelta)
-      for (const m of snap) {
-        moveKeyframe(api, m.trackId, m.kfId, m.time + cd)
-      }
+      drag.preview(cd)
     }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
+    const cleanup = () => {
+      window.removeEventListener('pointermove', previewAt)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
-    window.addEventListener('pointermove', onMove)
+    const onUp = (ev: PointerEvent) => {
+      previewAt(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
+    }
+    window.addEventListener('pointermove', previewAt)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   return (
     <div
       data-timeline-selection-surface="1"
       onPointerDown={onBodyPointerDown}
-      title={`Group of ${group.members.length} keyframes — drag to shift, drag edges to scale`}
+      title={`Group of ${group.members.length} keyframes · ${previewStart.toFixed(2)}s–${previewEnd.toFixed(2)}s — drag to shift, drag edges to scale`}
       className="absolute z-20 h-4 cursor-grab rounded-[4px] ring-1 hover:brightness-110"
       style={
         {
           left,
           top: 4,
           width,
+          touchAction: 'none',
           background: fill,
           boxShadow:
             '0 0 0 0 color-mix(in oklab, var(--color-group-bar-ring) 60%, transparent)',
@@ -4684,7 +6836,8 @@ function GroupSpanBar({
       <div
         data-group-handle="left"
         onPointerDown={onScalePointerDown('left')}
-        className="absolute top-0 bottom-0 left-0 w-4 cursor-ew-resize rounded-l hover:bg-white/10"
+        className="absolute top-0 bottom-0 left-0 cursor-ew-resize rounded-l hover:bg-white/10"
+        style={{ width: edgeHitWidth }}
         title="Drag to scale group's start"
       >
         <span className="absolute top-1/2 left-[5px] h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
@@ -4692,7 +6845,8 @@ function GroupSpanBar({
       <div
         data-group-handle="right"
         onPointerDown={onScalePointerDown('right')}
-        className="absolute top-0 right-0 bottom-0 w-4 cursor-ew-resize rounded-r hover:bg-white/10"
+        className="absolute top-0 right-0 bottom-0 cursor-ew-resize rounded-r hover:bg-white/10"
+        style={{ width: edgeHitWidth }}
         title="Drag to scale group's end"
       >
         <span className="absolute top-1/2 right-1 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-white mix-blend-overlay" />
@@ -4863,8 +7017,12 @@ function SectionPill({
     menu: import('@/state/ui').ContextMenuState,
   ) => void
 }) {
-  const left = section.start * PX_PER_SECOND
-  const width = Math.max(2, (section.end - section.start) * PX_PER_SECOND)
+  const displayedSection = useSectionPreview(section)
+  const left = displayedSection.start * PX_PER_SECOND
+  const width = Math.max(
+    2,
+    (displayedSection.end - displayedSection.start) * PX_PER_SECOND,
+  )
 
   // Neighbor-aware bounds. Sections are always attached: each one's
   // left edge can't pass its left neighbor's start (and vice versa
@@ -4880,12 +7038,22 @@ function SectionPill({
     e.stopPropagation()
     e.preventDefault()
     const startX = e.clientX
-    const span = section.end - section.start
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     // Snapshot prev/next at drag-start so each pointermove issues a
-    // consistent set of mutations even as the scene version bumps.
-    const startSec = section.start
-    const startPrev = prev ? { ...prev } : null
-    const startNext = next ? { ...next } : null
+    // consistent preview from an immutable base. A preceding commit may still
+    // be held for one paint, so read that visible value before the durable prop.
+    const startSection = sectionDragPreviewStore.getSection(
+      section.id,
+      section,
+    )
+    const span = startSection.end - startSection.start
+    const startSec = startSection.start
+    const startPrev = prev
+      ? { ...sectionDragPreviewStore.getSection(prev.id, prev) }
+      : null
+    const startNext = next
+      ? { ...sectionDragPreviewStore.getSection(next.id, next) }
+      : null
     // Body drag of an attached section moves the BOUNDARIES with it.
     // Dragging right grows the right neighbor's left edge by the
     // same delta (i.e. shrinks the right neighbor); dragging left
@@ -4895,6 +7063,7 @@ function SectionPill({
       (startPrev ? startPrev.start + MIN_SECTION : 0) - startSec
     const maxDelta =
       (startNext ? startNext.end - MIN_SECTION : duration) - startSec - span
+    const drag = createSectionDragSession(api)
     const onMove = (ev: PointerEvent) => {
       const dx = clamp(
         (ev.clientX - startX) / PX_PER_SECOND,
@@ -4903,22 +7072,36 @@ function SectionPill({
       )
       const newStart = startSec + dx
       const newEnd = newStart + span
-      api.setSection({ ...section, start: newStart, end: newEnd })
+      const targets: Section[] = [
+        { ...startSection, start: newStart, end: newEnd },
+      ]
       // Neighbors share boundaries — push their matching edges in
       // lockstep so we never gap or overlap.
       if (startPrev) {
-        api.setSection({ ...startPrev, end: newStart })
+        targets.push({ ...startPrev, end: newStart })
       }
       if (startNext) {
-        api.setSection({ ...startNext, start: newEnd })
+        targets.push({ ...startNext, start: newEnd })
       }
+      drag.preview(targets)
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = (ev: PointerEvent) => {
+      onMove(ev)
+      cleanup()
+      drag.commit()
+    }
+    const onCancel = () => {
+      cleanup()
+      drag.cancel()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   const onEdgePointerDown =
@@ -4927,13 +7110,23 @@ function SectionPill({
       e.stopPropagation()
       e.preventDefault()
       const startX = e.clientX
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
       // Snapshot the neighbor at drag-start. The user's mental model
       // is "I'm grabbing the boundary between two sections" — both
       // edges need to move in lockstep against a stable starting
       // pair, otherwise quick drags can race scene mutations.
-      const startSection = { ...section }
+      const startSection = {
+        ...sectionDragPreviewStore.getSection(section.id, section),
+      }
       const startNeighbor =
-        side === 'left' ? (prev ? { ...prev } : null) : next ? { ...next } : null
+        side === 'left'
+          ? prev
+            ? { ...sectionDragPreviewStore.getSection(prev.id, prev) }
+            : null
+          : next
+            ? { ...sectionDragPreviewStore.getSection(next.id, next) }
+            : null
+      const drag = createSectionDragSession(api)
 
       const onMove = (ev: PointerEvent) => {
         const dx = (ev.clientX - startX) / PX_PER_SECOND
@@ -4943,10 +7136,13 @@ function SectionPill({
           const lo = startNeighbor ? startNeighbor.start + MIN_SECTION : 0
           const hi = startSection.end - MIN_SECTION
           const nextStart = clamp(startSection.start + dx, lo, hi)
-          api.setSection({ ...section, start: nextStart })
+          const targets: Section[] = [
+            { ...startSection, start: nextStart },
+          ]
           if (startNeighbor) {
-            api.setSection({ ...startNeighbor, end: nextStart })
+            targets.push({ ...startNeighbor, end: nextStart })
           }
+          drag.preview(targets)
         } else {
           // Boundary between section and next. Mirror.
           const lo = startSection.start + MIN_SECTION
@@ -4954,18 +7150,30 @@ function SectionPill({
             ? startNeighbor.end - MIN_SECTION
             : duration
           const nextEnd = clamp(startSection.end + dx, lo, hi)
-          api.setSection({ ...section, end: nextEnd })
+          const targets: Section[] = [{ ...startSection, end: nextEnd }]
           if (startNeighbor) {
-            api.setSection({ ...startNeighbor, start: nextEnd })
+            targets.push({ ...startNeighbor, start: nextEnd })
           }
+          drag.preview(targets)
         }
       }
-      const onUp = () => {
+      const cleanup = () => {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+      }
+      const onUp = (ev: PointerEvent) => {
+        onMove(ev)
+        cleanup()
+        drag.commit()
+      }
+      const onCancel = () => {
+        cleanup()
+        drag.cancel()
       }
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
     }
   // Reference both bounds even if a refactor temporarily removes use,
   // so the linter's no-unused-vars doesn't flag them. They're surfaced
@@ -5035,7 +7243,7 @@ function SectionPill({
         if (next != null) api.setSection({ ...section, name: next })
       }}
       onContextMenu={onContextMenu}
-      title={`${section.name} · ${section.start.toFixed(2)}s → ${section.end.toFixed(
+      title={`${displayedSection.name} · ${displayedSection.start.toFixed(2)}s → ${displayedSection.end.toFixed(
         2,
       )}s — drag to move, edges to resize, click the focus icon to isolate, right-click for more`}
       className={[
@@ -5045,12 +7253,12 @@ function SectionPill({
       style={{
         left,
         width,
-        background: section.color,
+        background: displayedSection.color,
         color: 'white',
       }}
     >
       <span className="flex-1 truncate text-[11px] font-medium">
-        {section.name}
+        {displayedSection.name}
       </span>
       {/* Isolate toggle. Sits on the right end of the pill so it
           doesn't compete with the label for left-side real estate.

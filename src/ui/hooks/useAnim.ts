@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
 import { useUI } from '@/state/ui'
@@ -32,6 +32,8 @@ export function useAnim() {
   const isolatedRange = useUI((s) => s.isolatedRange)
   const workAreaRange = useUI((s) => s.workAreaRange)
   const workAreaPlaybackMode = useUI((s) => s.workAreaPlaybackMode)
+  const wasPlayingRef = useRef(false)
+  const previousUiPlayheadRef = useRef(playhead)
 
   // Attach engine to scene once.
   useEffect(() => {
@@ -63,8 +65,32 @@ export function useAnim() {
 
   // UI → engine: sync playhead when NOT playing (during scrub / fields).
   useEffect(() => {
-    if (!playing) getAnimEngine().seek(playhead)
-  }, [playhead, playing])
+    const previousUiPlayhead = previousUiPlayheadRef.current
+    previousUiPlayheadRef.current = playhead
+    if (playing) {
+      wasPlayingRef.current = true
+      return
+    }
+    const engine = getAnimEngine()
+    if (wasPlayingRef.current) {
+      wasPlayingRef.current = false
+      // A transport action may pause and explicitly seek in the same React
+      // batch (go-to-start/end, preview scrub). Preserve that target. For a
+      // pure pause, keep the exact rAF-owned time instead of snapping back to
+      // the UI mirror, which is intentionally sampled only every 66 ms.
+      const explicitSeek = Math.abs(playhead - previousUiPlayhead) > 0.0001
+      if (explicitSeek) {
+        engine.seek(playhead)
+        return
+      }
+      const exactPlayhead = engine.getPlayhead()
+      if (Math.abs(exactPlayhead - playhead) > 0.0001) {
+        setPlayhead(exactPlayhead)
+      }
+      return
+    }
+    engine.seek(playhead)
+  }, [playhead, playing, setPlayhead])
 
   // Play / pause control.
   useEffect(() => {

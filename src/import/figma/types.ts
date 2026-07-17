@@ -74,9 +74,9 @@ interface FigmaCapturedNodeBase {
   strokes: FigmaCapturedFill[]
   strokeWeight: number
   /**
-   * Per-side widths from Figma's `individualStrokeWeights`. Undefined
-   * when all four sides match `strokeWeight` (uniform border) — the
-   * common case stays compact in the payload.
+   * Per-side widths from Figma's strokeTop/Right/Bottom/LeftWeight
+   * properties. Undefined when all four sides match `strokeWeight`
+   * (uniform border) — the common case stays compact in the payload.
    */
   strokeWidths?: { top: number; right: number; bottom: number; left: number }
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
@@ -119,11 +119,18 @@ export interface FigmaCapturedFrame extends FigmaCapturedNodeBase {
   primaryAxisAlignItems: 'MIN' | 'MAX' | 'CENTER' | 'SPACE_BETWEEN'
   counterAxisAlignItems: 'MIN' | 'MAX' | 'CENTER' | 'BASELINE'
   itemSpacing: number
+  /** Exact GRID dimensions/gutters. Missing on older plugin captures. */
+  gridColumnCount?: number
+  gridRowCount?: number
+  gridColumnGap?: number
+  gridRowGap?: number
   paddingLeft: number
   paddingRight: number
   paddingTop: number
   paddingBottom: number
   layoutWrap: 'NO_WRAP' | 'WRAP'
+  /** Whether Figma includes the frame's stroke in its layout bounds. */
+  strokesIncludedInLayout?: boolean
   clipsContent: boolean
   children: FigmaCapturedNode[]
 }
@@ -149,6 +156,15 @@ export interface FigmaCapturedText extends FigmaCapturedNodeBase {
   letterSpacingPx: number
   textAlignHorizontal: 'LEFT' | 'CENTER' | 'RIGHT' | 'JUSTIFIED'
   textAlignVertical: 'TOP' | 'CENTER' | 'BOTTOM'
+  /** Text transforms are presentation metadata; `characters` stays unchanged. */
+  textCase?:
+    | 'ORIGINAL'
+    | 'UPPER'
+    | 'LOWER'
+    | 'TITLE'
+    | 'SMALL_CAPS'
+    | 'SMALL_CAPS_FORCED'
+  textDecoration?: 'NONE' | 'UNDERLINE' | 'STRIKETHROUGH'
   textAutoResize: 'NONE' | 'HEIGHT' | 'WIDTH_AND_HEIGHT'
   /**
    * Modern auto-layout sizing — populated by recent plugin captures

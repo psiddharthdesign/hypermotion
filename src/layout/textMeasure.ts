@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Yoga, MeasureFunction } from 'yoga-layout/load'
-import type { TextNode } from '@/scene'
+import { displayedText, type TextNode } from '@/scene'
 
 /**
  * Text intrinsic measurement for Yoga.
@@ -44,7 +44,12 @@ function fontString(node: TextNode): string {
   // CSS shorthand: `<weight> <size>px/<line-height> <family>`. We omit
   // line-height from the shorthand because Canvas2D ignores it during
   // measureText anyway — line height only matters for our height math.
-  return `${node.fontWeight} ${node.fontSize}px ${node.fontFamily}`
+  const style = node.fontStyle ?? 'normal'
+  const variant =
+    node.textCase === 'small-caps' || node.textCase === 'small-caps-forced'
+      ? 'small-caps'
+      : 'normal'
+  return `${style} ${variant} ${node.fontWeight} ${node.fontSize}px ${node.fontFamily}`
 }
 
 function measureTextWidth(
@@ -103,14 +108,15 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
     void _height
     void _heightMode
     const ctx = getCtx()
+    const text = displayedText(node)
     if (!ctx) {
       // No canvas available — fall back to a rough estimate so we don't
       // collapse to 0. 0.6em per glyph is a reasonable average for
       // proportional fonts.
       const charW = node.fontSize * 0.6 + Math.max(0, node.letterSpacing)
-      const lines = node.text.split('\n').length || 1
+      const lines = text.split('\n').length || 1
       return {
-        width: Math.max(1, node.text.length * charW),
+        width: Math.max(1, text.length * charW),
         height: Math.max(1, lines * node.fontSize * node.lineHeight),
       }
     }
@@ -119,13 +125,13 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
     let lines: string[]
     if (widthMode === yoga.MEASURE_MODE_UNDEFINED) {
       // Natural single-line measurement per source line. No wrap.
-      lines = node.text.split('\n')
+      lines = text.split('\n')
     } else {
       // Exactly + AtMost both wrap to the given width budget. The
       // difference matters for Yoga's internal sizing decisions, not
       // for what we report back.
       const budget = Math.max(1, width)
-      lines = wrapToWidthWithTracking(ctx, node.text, budget, node.letterSpacing)
+      lines = wrapToWidthWithTracking(ctx, text, budget, node.letterSpacing)
     }
 
     const lineCount = Math.max(1, lines.length)
