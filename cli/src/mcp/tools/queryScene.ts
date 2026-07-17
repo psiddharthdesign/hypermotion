@@ -17,10 +17,10 @@ type LayerInputData = z.infer<typeof LayerInput>
 type TrackInputData = z.infer<typeof TrackInput>
 type QuerySceneToolName = 'list_layers' | 'get_layer' | 'list_tracks' | 'list_cameras'
 type QuerySceneSnapshot = {
-  root?: unknown
-  activeCameraId?: unknown
-  nodes?: unknown
-  tracks?: unknown
+  readonly root?: unknown
+  readonly activeCameraId?: unknown
+  readonly nodes?: unknown
+  readonly tracks?: unknown
 }
 type ReadSceneResult =
   | { ok: true; scene: QuerySceneSnapshot }
