@@ -257,6 +257,11 @@ export interface NodeJson {
   focusRadius?: number
   focusFalloff?: number
   aperture?: number
+  fStop?: number
+  bladeCount?: number
+  bladeRotation?: number
+  bokehRatio?: number
+  dofPreviewQuality?: 'draft' | 'balanced' | 'high'
   iso?: number
   blurLevel?: number
   blurQuality?: number
@@ -333,6 +338,10 @@ export const PROPERTY_IDS = [
   'camera.nearClip',
   'camera.farClip',
   'camera.aperture',
+  'camera.fStop',
+  'camera.bladeCount',
+  'camera.bladeRotation',
+  'camera.bokehRatio',
   'camera.iso',
   'camera.blurLevel',
   'camera.blurQuality',
@@ -821,9 +830,14 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('focusRadius', node.focusRadius ?? 160)
       y.set('focusFalloff', node.focusFalloff ?? 180)
       y.set('aperture', node.aperture ?? 0)
+      y.set('fStop', node.fStop ?? 2.8)
+      y.set('bladeCount', node.bladeCount ?? 7)
+      y.set('bladeRotation', node.bladeRotation ?? 0)
+      y.set('bokehRatio', node.bokehRatio ?? 1)
+      y.set('dofPreviewQuality', node.dofPreviewQuality ?? 'balanced')
       y.set('iso', node.iso ?? 100)
       y.set('blurLevel', node.blurLevel ?? 1)
-      y.set('blurQuality', node.blurQuality ?? 8)
+      y.set('blurQuality', node.blurQuality ?? 24)
       y.set('showFocusPlane', node.showFocusPlane ?? false)
     }
 
@@ -1327,6 +1341,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'focusRadius',
       'focusFalloff',
       'aperture',
+      'fStop',
+      'bladeCount',
+      'bladeRotation',
+      'bokehRatio',
+      'dofPreviewQuality',
       'iso',
       'blurLevel',
       'blurQuality',
@@ -1362,9 +1381,14 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('focusRadius', node.focusRadius ?? 160)
     y.set('focusFalloff', node.focusFalloff ?? 180)
     y.set('aperture', node.aperture ?? 0)
+    y.set('fStop', node.fStop ?? 2.8)
+    y.set('bladeCount', node.bladeCount ?? 7)
+    y.set('bladeRotation', node.bladeRotation ?? 0)
+    y.set('bokehRatio', node.bokehRatio ?? 1)
+    y.set('dofPreviewQuality', node.dofPreviewQuality ?? 'balanced')
     y.set('iso', node.iso ?? 100)
     y.set('blurLevel', node.blurLevel ?? 1)
-    y.set('blurQuality', node.blurQuality ?? 8)
+    y.set('blurQuality', node.blurQuality ?? 24)
     y.set('showFocusPlane', node.showFocusPlane ?? false)
   }
   for (const [k, v] of Object.entries(node)) {

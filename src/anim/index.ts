@@ -32,13 +32,21 @@ export {
   findKeyframeAt,
   toggleKeyframe,
 } from './tracks'
-export { PRESETS, applyPreset, type AnimPresetId } from './presets'
+export {
+  PRESETS,
+  applyPreset,
+  planLayerPresetTargets,
+  type AnimPresetId,
+  type LayerPresetTargetPlan,
+} from './presets'
 export {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
 } from './recordKeyframes'
 export {
   EASING_PRESETS,
+  MAX_EASING_STRENGTH,
+  clampEasingStrength,
   findEasingPreset,
   bezierOf,
   type EasingPresetId,

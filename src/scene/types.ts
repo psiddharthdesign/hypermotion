@@ -726,11 +726,25 @@ export interface CameraNode extends NodeBase {
   focusFalloff: number
   /** Lens opening multiplier. Larger values blur out-of-focus layers more. */
   aperture: number
+  /**
+   * Physical lens f-stop. Lower values create a shallower depth of field.
+   * Kept separate from the legacy `aperture` strength so older scenes retain
+   * their authored blur while new cameras can use a familiar lens model.
+   */
+  fStop: number
+  /** Number of diaphragm blades used to shape out-of-focus highlights. */
+  bladeCount: number
+  /** Rotation of the diaphragm polygon, in degrees. */
+  bladeRotation: number
+  /** Anamorphic bokeh aspect ratio. 1 is circular; >1 stretches horizontally. */
+  bokehRatio: number
+  /** Interactive viewport sampling tier. Final export uses blurQuality. */
+  dofPreviewQuality: 'draft' | 'balanced' | 'high'
   /** Sensor sensitivity. Higher values add stronger camera grain. */
   iso: number
   /** Global blur multiplier in pixels. */
   blurLevel: number
-  /** Preview/final DOF quality hint. Higher values allow more samples. */
+  /** Final DOF sample budget (24-48). Higher values produce smoother bokeh. */
   blurQuality: number
   /** Whether editor helpers should draw the focus plane. */
   showFocusPlane: boolean
@@ -949,6 +963,10 @@ export type PropertyId =
   | 'camera.nearClip'
   | 'camera.farClip'
   | 'camera.aperture'
+  | 'camera.fStop'
+  | 'camera.bladeCount'
+  | 'camera.bladeRotation'
+  | 'camera.bokehRatio'
   | 'camera.iso'
   | 'camera.blurLevel'
   | 'camera.blurQuality'

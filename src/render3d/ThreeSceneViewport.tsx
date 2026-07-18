@@ -12,12 +12,17 @@ import {
   cameraSpaceDepth,
   cameraFrustumCorners,
   depthBlurAmount,
+  effectiveApertureStrength,
   resolveCamera3D,
   type PlaneClip3D,
   type Plane3D,
   type ResolvedCamera3D,
 } from '@/render3d/scene3d'
-import { dot3, sub3 } from '@/render3d/math'
+import {
+  depthOfFieldSampleCount,
+  installDepthOfFieldShader,
+  updateDepthOfFieldShader,
+} from '@/render3d/depthOfFieldShader'
 import {
   shouldRasterizePlaneTexture,
   textureScaleForRect,
@@ -43,11 +48,15 @@ interface ThreeSceneViewportProps {
   showPlanes?: boolean
   focusWorldPoint?: { x: number; y: number; z: number } | null
   exportable?: boolean
+  /** Use the authored final-render sample budget instead of preview quality. */
+  finalRender?: boolean
+  /** Explicit WebGL drawing-buffer ratio. Editor previews derive this from zoom. */
+  renderPixelRatio?: number
   playing?: boolean
   playhead?: number
   sceneVersion?: number
   onAvailabilityChange?: (available: boolean) => void
-  /** Camera gesture/scrub is transient; defer depth-of-field reraster to commit. */
+  /** Camera gesture/scrub is transient; keep GPU DOF on its realtime budget. */
   interactiveCameraPreview?: boolean
 }
 
@@ -59,6 +68,7 @@ interface PlaneRecord {
   video?: HTMLVideoElement
   textureRevision: PlaneTextureRevision | null
   textureSignature: string
+  clipSignature: string
 }
 
 interface PlaneTextureRevision {
@@ -70,13 +80,6 @@ interface PlaneTextureRevision {
 interface PlayheadDrivenTextureRange {
   start: number
   end: number
-}
-
-interface PlaneFocusMask {
-  x: number
-  y: number
-  radius: number
-  falloff: number
 }
 
 interface Matrix2D {
@@ -99,11 +102,22 @@ interface SubtreeTransformContext {
   matrix: Matrix2D
 }
 
+interface HelperBundle {
+  width: number
+  height: number
+  camera: THREE.PerspectiveCamera
+  frustum: THREE.CameraHelper
+  focusPlane: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  focusLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  marker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+}
+
 const IMAGE_TEXTURE_LOADED_EVENT = 'hypermotion:render3d-image-loaded'
 const RENDER3D_VIDEO_REGISTRY = '__hypermotionRender3dVideos'
 const EMPTY_PLANES: Plane3D[] = []
 const imageCache = new Map<string, HTMLImageElement>()
 const parsedCanvasColorCache = new Map<string, string | null>()
+const helperBundles = new WeakMap<THREE.Group, HelperBundle>()
 let canvasColorParserContext: CanvasRenderingContext2D | null | undefined
 const IDENTITY_MATRIX_2D: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
 const IDENTITY_SUBTREE_TRANSFORM: SubtreeTransformContext = {
@@ -133,7 +147,6 @@ function createPlaneTexture(
 
 function createVideoTexture(
   video: HTMLVideoElement,
-  _renderer: THREE.WebGLRenderer,
 ): THREE.VideoTexture {
   const texture = new THREE.VideoTexture(video)
   texture.colorSpace = THREE.SRGBColorSpace
@@ -263,6 +276,8 @@ export function ThreeSceneViewport({
   showPlanes = true,
   focusWorldPoint = null,
   exportable = false,
+  finalRender = false,
+  renderPixelRatio,
   playing = false,
   playhead = 0,
   sceneVersion = 0,
@@ -385,7 +400,7 @@ export function ThreeSceneViewport({
       onAvailabilityChange?.(false)
       return
     }
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+    renderer.setPixelRatio(1)
     renderer.setSize(width, height, false)
     renderer.localClippingEnabled = true
     renderer.sortObjects = true
@@ -434,10 +449,17 @@ export function ThreeSceneViewport({
     const renderer = rendererRef.current
     const perspective = cameraRef.current
     if (!renderer || !perspective) return
+    const nextPixelRatio = Math.max(
+      0.25,
+      Math.min(4, renderPixelRatio ?? Math.min(2, window.devicePixelRatio || 1)),
+    )
+    if (Math.abs(renderer.getPixelRatio() - nextPixelRatio) > 0.001) {
+      renderer.setPixelRatio(nextPixelRatio)
+    }
     renderer.setSize(width, height, false)
     perspective.aspect = width / Math.max(1, height)
     perspective.updateProjectionMatrix()
-  }, [webglUnavailable, width, height])
+  }, [webglUnavailable, width, height, renderPixelRatio])
 
   useLayoutEffect(() => {
     if (webglUnavailable) return
@@ -451,9 +473,11 @@ export function ThreeSceneViewport({
     const previousPlaneSync = planeSyncRef.current
     const hasVideoPlane = planes.some((plane) => plane.node.kind === 'video')
     const hasDynamicDepthOfField =
-      !interactiveCameraPreview &&
       resolvedCamera.depthOfField &&
-      resolvedCamera.aperture > 0 &&
+      effectiveApertureStrength(
+        resolvedCamera.aperture,
+        resolvedCamera.fStop,
+      ) > 0 &&
       resolvedCamera.blurLevel > 0
     const playheadDrivenTextureChanged = previousPlaneSync
       ? playheadDrivenTextureNeedsSync(
@@ -473,8 +497,7 @@ export function ThreeSceneViewport({
           previousPlaneSync.playhead !== playhead)) ||
       playheadDrivenTextureChanged ||
       hasDynamicDepthOfField ||
-      (!interactiveCameraPreview &&
-        previousPlaneSync.dynamicDepthOfField !== hasDynamicDepthOfField)
+      previousPlaneSync.dynamicDepthOfField !== hasDynamicDepthOfField
 
     if (planeStateChanged) {
       if (showPlanes) {
@@ -485,9 +508,7 @@ export function ThreeSceneViewport({
           layout,
           planes,
           selectedIds,
-          interactiveCameraPreview
-            ? { ...resolvedCamera, depthOfField: false }
-            : resolvedCamera,
+          resolvedCamera,
           renderer,
           perspective,
           animated,
@@ -495,15 +516,16 @@ export function ThreeSceneViewport({
           playhead,
           textureRevision,
           playheadDrivenTextureRanges,
+          interactiveCameraPreview,
+          finalRender,
         )
       } else {
         clearPlanes(scene, planesRef.current)
       }
     }
     // Keep the comparison snapshot current even when a camera-only preview
-    // reused every plane. In particular, remember the active→inactive DOF
-    // transition without forcing a bitmap repaint, then repaint once when the
-    // interaction commits and full-quality DOF becomes active again.
+    // reused every plane. GPU DOF changes uniforms only; sharp plane textures
+    // stay cached while timeline and camera gestures run.
     planeSyncRef.current = {
       planes,
       selectedIds,
@@ -542,6 +564,7 @@ export function ThreeSceneViewport({
     textureRevision,
     playheadDrivenTextureRanges,
     interactiveCameraPreview,
+    finalRender,
   ])
 
   if (webglUnavailable) return null
@@ -629,11 +652,11 @@ const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
 /**
  * Return only animated values that alter this plane's bitmap.
  *
- * The plane root's transform and (for self planes) opacity are represented by
- * the Three mesh, so those values must not trigger a multi-megapixel Canvas2D
- * repaint. Descendant animation inside a flattened subtree does affect its
- * pixels and is included. Extracted 3D/video stacks own separate planes and
- * are skipped exactly as the subtree painter skips them.
+ * The plane root's transform and opacity are represented by the Three mesh,
+ * so those values must not trigger a multi-megapixel Canvas2D repaint.
+ * Descendant animation inside a flattened subtree does affect its pixels and
+ * is included. Extracted 3D/video stacks own separate planes and are skipped
+ * exactly as the subtree painter skips them.
  */
 function planeTextureAnimationSignature(
   api: SceneAPI,
@@ -661,8 +684,7 @@ function planeTextureAnimationSignature(
         if (key === 'textAnimation') continue
         if (
           isRoot &&
-          !SELF_TEXTURE_ANIMATION_KEYS.has(key as keyof AnimatedValue) &&
-          !(plane.contentMode === 'subtree' && key === 'opacity')
+          !SELF_TEXTURE_ANIMATION_KEYS.has(key as keyof AnimatedValue)
         ) {
           continue
         }
@@ -704,34 +726,73 @@ function syncPlanes(
   playhead: number,
   textureRevision: PlaneTextureRevision,
   playheadDrivenTextureRanges: ReadonlyMap<NodeId, PlayheadDrivenTextureRange>,
+  interactiveCameraPreview: boolean,
+  finalRender: boolean,
 ) {
   const active = new Set<NodeId>()
   const selected = new Set(selectedIds)
+  const apertureStrength = effectiveApertureStrength(
+    camera.aperture,
+    camera.fStop,
+  )
+  // `blurLevel` is exposed as Max Blur in the Inspector, so it must remain a
+  // hard ceiling. The f-stop changes how quickly depth error reaches that
+  // ceiling; multiplying the ceiling itself made f/0.1 turn 3px into 18px and
+  // exposed the individual aperture taps as ghosted copies of text.
+  const maximumBlurLevel = camera.blurLevel
+  const pointBlurLevel =
+    maximumBlurLevel * Math.max(0, Math.min(1, apertureStrength))
+  const sampleCount = depthOfFieldSampleCount(
+    camera.dofPreviewQuality,
+    camera.blurQuality,
+    {
+      playing,
+      interactive: interactiveCameraPreview,
+      finalRender,
+    },
+  )
+  const viewportSize = renderer.getSize(new THREE.Vector2())
+  const screenPixelRatio = renderer.getPixelRatio()
+  // Point focus is a screen-space lens field. Every composited plane must use
+  // the same field; gating it by an approximate world point made tilted cards
+  // jump straight to full blur even when they sat underneath the visible dot.
+  const focusMask =
+    camera.focusMode === 'screen' &&
+    camera.depthOfField &&
+    apertureStrength > 0 &&
+    maximumBlurLevel > 0
   for (const plane of planes) {
     active.add(plane.nodeId)
     let record = records.get(plane.nodeId)
-    const blur = depthBlurAmount(
+    const depthBlur = depthBlurAmount(
       cameraSpaceDepth(plane.center, camera),
       plane.center,
       camera.focusWorld,
       camera.focusDistance,
       camera.focusRadius,
       camera.focusFalloff,
-      camera.aperture,
-      camera.blurLevel,
+      apertureStrength,
+      maximumBlurLevel,
       camera.focalLength,
       camera.depthOfField,
+      false,
     )
-    const focusMask = focusMaskForPlane(plane, camera)
+    const blur =
+      camera.focusMode === 'screen' &&
+      camera.depthOfField &&
+      apertureStrength > 0
+        ? pointBlurLevel
+        : depthBlur
+    // Point focus is an explicit sharp region around the picked world point.
+    // A tilted plane's center can sit at a different depth than that picked
+    // point; carrying the center-derived blur into the mask would leave the
+    // exact point the user focused on visibly soft.
+    const minimumBlur = focusMask ? 0 : blur
     const videoNode = plane.node.kind === 'video' ? plane.node : null
     const textureSignature = [
       plane.contentMode,
       Number(plane.rect.width.toFixed(3)),
       Number(plane.rect.height.toFixed(3)),
-      Number(blur.toFixed(3)),
-      focusMask
-        ? `${Number(focusMask.x.toFixed(3))},${Number(focusMask.y.toFixed(3))},${Number(focusMask.radius.toFixed(3))},${Number(focusMask.falloff.toFixed(3))}`
-        : 'no-focus-mask',
       planeTextureAnimationSignature(
         api,
         plane,
@@ -750,12 +811,12 @@ function syncPlanes(
       textureSignature,
     )
     const canvas = needsCanvasRaster
-      ? renderPlaneCanvas(api, layout, plane, blur, focusMask, animated, playhead)
+      ? renderPlaneCanvas(api, layout, plane, animated, playhead)
       : null
     if (!record) {
       const geometry = new THREE.PlaneGeometry(plane.rect.width, plane.rect.height)
       const texture = videoNode
-        ? createVideoTexture(createVideoElement(videoNode), renderer)
+        ? createVideoTexture(createVideoElement(videoNode))
         : createPlaneTexture(canvas!, renderer)
       const material = new THREE.MeshBasicMaterial({
         map: texture,
@@ -764,6 +825,7 @@ function syncPlanes(
         depthTest: false,
         depthWrite: false,
       })
+      installDepthOfFieldShader(material)
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = plane.node.name
       const outline = makePlaneOutline(plane.rect.width, plane.rect.height)
@@ -777,6 +839,7 @@ function syncPlanes(
         video: videoNode ? texture.image as HTMLVideoElement : undefined,
         textureRevision: videoNode ? null : textureRevision,
         textureSignature,
+        clipSignature: '',
       }
       records.set(plane.nodeId, record)
     } else {
@@ -789,11 +852,30 @@ function syncPlanes(
       }
     }
     const material = record.mesh.material as THREE.MeshBasicMaterial
+    updateDepthOfFieldShader(material, {
+      enabled: camera.depthOfField && apertureStrength > 0,
+      blurPx: blur,
+      minimumBlurPx: minimumBlur,
+      planeWidth: plane.rect.width,
+      planeHeight: plane.rect.height,
+      focusMask,
+      focusX: focusMask ? camera.focusScreen.x : 0,
+      // gl_FragCoord uses a bottom-left origin; authored canvas coordinates
+      // and the editor focus overlay use top-left.
+      focusY: focusMask ? viewportSize.y - camera.focusScreen.y : 0,
+      focusRadius: focusMask ? camera.focusRadius : 0,
+      focusFalloff: focusMask ? camera.focusFalloff : 1,
+      screenPixelRatio,
+      sampleCount,
+      bladeCount: camera.bladeCount,
+      bladeRotation: camera.bladeRotation,
+      bokehRatio: camera.bokehRatio,
+    })
     if (videoNode) {
       if (record.textureKind !== 'video' || record.video?.src !== videoNode.src) {
         record.texture.dispose()
         const video = createVideoElement(videoNode)
-        record.texture = createVideoTexture(video, renderer)
+        record.texture = createVideoTexture(video)
         record.textureKind = 'video'
         record.video = video
         material.map = record.texture
@@ -835,9 +917,7 @@ function syncPlanes(
     record.mesh.renderOrder = plane.paintOrder
     record.outline.renderOrder = 100000 + plane.paintOrder
     applyMaterialBlendMode(record.mesh.material, plane.node.appearance.blendMode)
-    record.mesh.material.clippingPlanes = clippingPlanesForPlane(plane)
-    record.mesh.material.clipIntersection = true
-    record.mesh.material.needsUpdate = true
+    syncMaterialClipping(record, plane)
     record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
     record.mesh.visible = plane.node.visible
     record.outline.visible = selected.has(plane.nodeId)
@@ -883,19 +963,11 @@ function renderPlaneCanvas(
   api: SceneAPI,
   layout: SolvedLayout,
   plane: Plane3D,
-  blurPx: number,
-  focusMask: PlaneFocusMask | null,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
 ): HTMLCanvasElement {
-  const sharp = renderSharpPlaneCanvas(api, layout, plane, animated, playhead)
-  const clippedSharp = applyPlaneClipMask(sharp, plane)
-  if (blurPx <= 0.05) return clippedSharp
-  const blurred = renderBlurredPlaneCanvas(api, layout, plane, blurPx, animated, playhead)
-  const clippedBlurred = applyPlaneClipMask(blurred, plane)
-  if (!focusMask) return clippedBlurred
   return applyPlaneClipMask(
-    compositeFocusedPlaneTexture(clippedBlurred, clippedSharp, focusMask),
+    renderSharpPlaneCanvas(api, layout, plane, animated, playhead),
     plane,
   )
 }
@@ -908,28 +980,11 @@ function renderSharpPlaneCanvas(
   playhead: number,
 ): HTMLCanvasElement {
   if (plane.contentMode === 'self') {
-    return renderPlaneTexture(plane.node, plane.rect, 0, animated[plane.nodeId], playhead)
+    return renderPlaneTexture(plane.node, plane.rect, animated[plane.nodeId], playhead)
   }
   return (
-    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, 0, plane, animated, playhead) ??
-    renderPlaneTexture(plane.node, plane.rect, 0, animated[plane.nodeId], playhead)
-  )
-}
-
-function renderBlurredPlaneCanvas(
-  api: SceneAPI,
-  layout: SolvedLayout,
-  plane: Plane3D,
-  blurPx: number,
-  animated: Record<NodeId, AnimatedValue>,
-  playhead: number,
-): HTMLCanvasElement {
-  if (plane.contentMode === 'self') {
-    return renderPlaneTexture(plane.node, plane.rect, blurPx, animated[plane.nodeId], playhead)
-  }
-  return (
-    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, blurPx, plane, animated, playhead) ??
-    renderPlaneTexture(plane.node, plane.rect, blurPx, animated[plane.nodeId], playhead)
+    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, plane, animated, playhead) ??
+    renderPlaneTexture(plane.node, plane.rect, animated[plane.nodeId], playhead)
   )
 }
 
@@ -942,14 +997,12 @@ function applyPlaneClipMask(canvas: HTMLCanvasElement, plane: Plane3D): HTMLCanv
     empty.width = canvas.width
     empty.height = canvas.height
     empty.dataset.textureScale = String(scale)
-    empty.dataset.blur = canvas.dataset.blur || '0'
     return empty
   }
   const output = document.createElement('canvas')
   output.width = canvas.width
   output.height = canvas.height
   output.dataset.textureScale = String(scale)
-  output.dataset.blur = canvas.dataset.blur || '0'
   const ctx = output.getContext('2d')
   if (!ctx) return canvas
   ctx.drawImage(canvas, 0, 0)
@@ -1024,74 +1077,6 @@ function localPlanePointToWorld(plane: Plane3D, point: LocalPoint2D): THREE.Vect
     .addScaledVector(down, (point.y - plane.rect.height / 2) * plane.scaleY)
 }
 
-function focusMaskForPlane(
-  plane: Plane3D,
-  camera: ResolvedCamera3D,
-): PlaneFocusMask | null {
-  if (!camera.depthOfField || camera.aperture <= 0 || camera.blurLevel <= 0) return null
-  const rel = sub3(camera.focusWorld, plane.center)
-  const sx = Math.max(0.0001, Math.abs(plane.scaleX))
-  const sy = Math.max(0.0001, Math.abs(plane.scaleY))
-  const x = dot3(rel, plane.right) / sx + plane.rect.width / 2
-  const y = dot3(rel, plane.down) / sy + plane.rect.height / 2
-  const scale = Math.max(0.0001, (sx + sy) / 2)
-  const radius = camera.focusRadius / scale
-  const falloff = camera.focusFalloff / scale
-  const margin = radius + falloff
-  if (
-    x < -margin ||
-    x > plane.rect.width + margin ||
-    y < -margin ||
-    y > plane.rect.height + margin
-  ) {
-    return null
-  }
-  return { x, y, radius, falloff }
-}
-
-function compositeFocusedPlaneTexture(
-  blurred: HTMLCanvasElement,
-  sharp: HTMLCanvasElement,
-  focus: PlaneFocusMask,
-): HTMLCanvasElement {
-  const width = blurred.width
-  const height = blurred.height
-  const scale = Number(blurred.dataset.textureScale || '1') || 1
-  const output = document.createElement('canvas')
-  output.width = width
-  output.height = height
-  output.dataset.textureScale = String(scale)
-  const ctx = output.getContext('2d')
-  if (!ctx) return blurred
-  ctx.drawImage(blurred, 0, 0)
-
-  const sharpLayer = document.createElement('canvas')
-  sharpLayer.width = width
-  sharpLayer.height = height
-  sharpLayer.dataset.textureScale = String(scale)
-  const sharpCtx = sharpLayer.getContext('2d')
-  if (!sharpCtx) return blurred
-  sharpCtx.drawImage(sharp, 0, 0)
-  sharpCtx.globalCompositeOperation = 'destination-in'
-  const gradient = sharpCtx.createRadialGradient(
-    focus.x * scale,
-    focus.y * scale,
-    Math.max(0, focus.radius * scale),
-    focus.x * scale,
-    focus.y * scale,
-    Math.max((focus.radius + focus.falloff) * scale, (focus.radius + 1) * scale),
-  )
-  gradient.addColorStop(0, 'rgba(0,0,0,1)')
-  gradient.addColorStop(0.75, 'rgba(0,0,0,1)')
-  gradient.addColorStop(1, 'rgba(0,0,0,0)')
-  sharpCtx.fillStyle = gradient
-  sharpCtx.fillRect(0, 0, width, height)
-  sharpCtx.globalCompositeOperation = 'source-over'
-
-  ctx.drawImage(sharpLayer, 0, 0)
-  return output
-}
-
 function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
   object.position.set(plane.center.x, plane.center.y, plane.center.z)
   object.rotation.set(
@@ -1108,6 +1093,8 @@ function applyMaterialBlendMode(
   blendMode: BlendMode | undefined,
 ) {
   const mode = blendMode ?? 'normal'
+  if (material.userData.hyperMotionBlendMode === mode) return
+  material.userData.hyperMotionBlendMode = mode
   material.transparent = true
   material.premultipliedAlpha = false
   material.blendEquation = THREE.AddEquation
@@ -1153,6 +1140,39 @@ function applyMaterialBlendMode(
       break
   }
   material.needsUpdate = true
+}
+
+function syncMaterialClipping(record: PlaneRecord, plane: Plane3D) {
+  const signature = clippingSignatureForPlane(plane)
+  if (record.clipSignature === signature) return
+  const material = record.mesh.material
+  const previousCount = material.clippingPlanes?.length ?? 0
+  const clippingPlanes = clippingPlanesForPlane(plane)
+  material.clippingPlanes = clippingPlanes
+  material.clipIntersection = true
+  record.clipSignature = signature
+  if (previousCount !== (clippingPlanes?.length ?? 0)) {
+    material.needsUpdate = true
+  }
+}
+
+function clippingSignatureForPlane(plane: Plane3D): string {
+  if (!plane.clips?.length) return 'none'
+  return plane.clips
+    .map((clip) => [
+      clip.center.x,
+      clip.center.y,
+      clip.center.z,
+      clip.right.x,
+      clip.right.y,
+      clip.right.z,
+      clip.down.x,
+      clip.down.y,
+      clip.down.z,
+      clip.width,
+      clip.height,
+    ].map((value) => Number(value.toFixed(4))).join(','))
+    .join('|')
 }
 
 function clippingPlanesForPlane(plane: Plane3D): THREE.Plane[] | null {
@@ -1209,64 +1229,115 @@ function syncHelpers(
 ) {
   if (!group) return
   group.visible = show
-  if (!show) {
-    if (group.children.length > 0) clearHelperGroup(group)
-    return
+  if (!show) return
+  const bundle = ensureHelperBundle(group, width, height)
+  syncThreeCamera(bundle.camera, camera, width, height)
+  bundle.frustum.update()
+
+  const corners = cameraFrustumCorners(camera, { width, height }, camera.focusDistance)
+  updateLinePositions(bundle.focusPlane.geometry, [
+    corners[0]!,
+    corners[1]!,
+    corners[2]!,
+    corners[3]!,
+    corners[0]!,
+  ])
+  const focusCenter = focusWorldPoint ?? {
+    x: (corners[0]!.x + corners[2]!.x) / 2,
+    y: (corners[0]!.y + corners[2]!.y) / 2,
+    z: (corners[0]!.z + corners[2]!.z) / 2,
   }
-  clearHelperGroup(group)
+  updateLinePositions(bundle.focusLine.geometry, [camera.position, focusCenter])
+  bundle.marker.position.set(focusCenter.x, focusCenter.y, focusCenter.z)
+}
+
+function ensureHelperBundle(
+  group: THREE.Group,
+  width: number,
+  height: number,
+): HelperBundle {
+  const existing = helperBundles.get(group)
+  if (existing && existing.width === width && existing.height === height) {
+    return existing
+  }
+  if (existing) clearHelperGroup(group)
+
   const grid = new THREE.GridHelper(Math.max(width, height), 24, 0x9ca3af, 0xd1d5db)
   grid.rotation.x = Math.PI / 2
   grid.position.set(width / 2, height / 2, -400)
+  grid.renderOrder = 200000
+  for (const material of Array.isArray(grid.material) ? grid.material : [grid.material]) {
+    material.depthTest = false
+  }
   group.add(grid)
 
   const helperCamera = new THREE.PerspectiveCamera(
-    camera.fieldOfView,
+    35,
     width / Math.max(1, height),
-    camera.nearClip,
-    Math.min(camera.farClip, 2400),
+    1,
+    2400,
   )
-  syncThreeCamera(helperCamera, camera, width, height)
   const frustum = new THREE.CameraHelper(helperCamera)
   ;(frustum.material as THREE.LineBasicMaterial).color.set(0x94a3b8)
+  ;(frustum.material as THREE.LineBasicMaterial).depthTest = false
+  frustum.renderOrder = 200001
   group.add(frustum)
 
-  const corners = cameraFrustumCorners(camera, { width, height }, camera.focusDistance)
-  const focusGeometry = new THREE.BufferGeometry().setFromPoints([
-    toThreeVector(corners[0]!),
-    toThreeVector(corners[1]!),
-    toThreeVector(corners[2]!),
-    toThreeVector(corners[3]!),
-    toThreeVector(corners[0]!),
-  ])
+  const focusGeometry = geometryWithPointCapacity(5)
   const focusPlane = new THREE.Line(
     focusGeometry,
     new THREE.LineBasicMaterial({ color: 0x0a84ff, depthTest: false, transparent: true, opacity: 0.8 }),
   )
+  focusPlane.frustumCulled = false
+  focusPlane.renderOrder = 200002
   group.add(focusPlane)
 
-  const focusCenter =
-    focusWorldPoint ??
-    {
-      x: (corners[0]!.x + corners[2]!.x) / 2,
-      y: (corners[0]!.y + corners[2]!.y) / 2,
-      z: (corners[0]!.z + corners[2]!.z) / 2,
-    }
-  const lineGeometry = new THREE.BufferGeometry().setFromPoints([
-    toThreeVector(camera.position),
-    toThreeVector(focusCenter),
-  ])
-  group.add(
-    new THREE.Line(
-      lineGeometry,
-      new THREE.LineBasicMaterial({ color: 0x0a84ff, depthTest: false }),
-    ),
+  const focusLine = new THREE.Line(
+    geometryWithPointCapacity(2),
+    new THREE.LineBasicMaterial({ color: 0x0a84ff, depthTest: false }),
   )
+  focusLine.frustumCulled = false
+  focusLine.renderOrder = 200002
+  group.add(focusLine)
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(8, 24, 12),
     new THREE.MeshBasicMaterial({ color: 0x0a84ff, depthTest: false }),
   )
-  marker.position.copy(toThreeVector(focusCenter))
+  marker.frustumCulled = false
+  marker.renderOrder = 200003
   group.add(marker)
+
+  const bundle = {
+    width,
+    height,
+    camera: helperCamera,
+    frustum,
+    focusPlane,
+    focusLine,
+    marker,
+  }
+  helperBundles.set(group, bundle)
+  return bundle
+}
+
+function geometryWithPointCapacity(pointCount: number): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(pointCount * 3), 3),
+  )
+  return geometry
+}
+
+function updateLinePositions(
+  geometry: THREE.BufferGeometry,
+  points: Array<{ x: number; y: number; z: number }>,
+) {
+  const attribute = geometry.getAttribute('position') as THREE.BufferAttribute
+  points.forEach((point, index) => {
+    attribute.setXYZ(index, point.x, point.y, point.z)
+  })
+  attribute.needsUpdate = true
 }
 
 function clearHelperGroup(group: THREE.Group) {
@@ -1283,12 +1354,12 @@ function clearHelperGroup(group: THREE.Group) {
     }
   })
   group.clear()
+  helperBundles.delete(group)
 }
 
 function renderPlaneTexture(
   node: Node,
   rect: Rect,
-  blurPx: number,
   anim: AnimatedValue | undefined,
   playhead: number,
 ): HTMLCanvasElement {
@@ -1299,13 +1370,9 @@ function renderPlaneTexture(
   canvas.width = Math.max(1, Math.ceil(w * scale))
   canvas.height = Math.max(1, Math.ceil(h * scale))
   canvas.dataset.textureScale = String(scale)
-  canvas.dataset.blur = String(Number(blurPx.toFixed(2)))
   const ctx = canvas.getContext('2d')!
   ctx.scale(scale, scale)
   ctx.clearRect(0, 0, w, h)
-  if (blurPx > 0.05) {
-    ctx.filter = `blur(${Number((blurPx * scale).toFixed(2))}px)`
-  }
   const cornerRadius =
     node.kind === 'ellipse'
       ? Math.min(w, h) / 2
@@ -1319,7 +1386,6 @@ function renderPlaneTexture(
   if (node.kind === 'text') {
     paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
   }
-  ctx.filter = 'none'
   const stroke = node.appearance.stroke
   if (stroke && stroke.width > 0) {
     ctx.save()
@@ -1345,7 +1411,6 @@ function renderSubtreeTexture(
   layout: SolvedLayout,
   rootId: NodeId,
   rootRect: Rect,
-  blurPx: number,
   rootPlane?: Plane3D,
   animated: Record<NodeId, AnimatedValue> = {},
   playhead = 0,
@@ -1358,14 +1423,10 @@ function renderSubtreeTexture(
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
   canvas.dataset.textureScale = String(scale)
-  canvas.dataset.blur = String(Number(blurPx.toFixed(2)))
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
   ctx.scale(scale, scale)
   ctx.clearRect(0, 0, width, height)
-  if (blurPx > 0.05) {
-    ctx.filter = `blur(${Number((blurPx * scale).toFixed(2))}px)`
-  }
   const paint = (id: NodeId, context: SubtreeTransformContext) => {
     const node = api.getNode(id)
     const rect = layout[id]
@@ -1397,7 +1458,6 @@ function renderSubtreeTexture(
     for (const child of node.children) paint(child, childContext)
   }
   paint(rootId, IDENTITY_SUBTREE_TRANSFORM)
-  ctx.filter = 'none'
   return canvas
 }
 
@@ -1555,7 +1615,14 @@ function paintNodeIntoSubtree(
   const scaleX = applyOwnTransform ? anim?.scaleX ?? node.transform.scaleX ?? 1 : 1
   const scaleY = applyOwnTransform ? anim?.scaleY ?? node.transform.scaleY ?? 1 : 1
   ctx.save()
-  ctx.globalAlpha *= (anim?.opacity ?? node.appearance.opacity ?? 1) * inherited.opacity
+  // The emitted plane root's opacity is a GPU material uniform. Applying it
+  // here as well would double the fade, while changing this bitmap every frame
+  // defeats the realtime material path. Descendant nodes still compose their
+  // own opacity into the flattened texture normally.
+  const ownOpacity = applyOwnTransform
+    ? anim?.opacity ?? node.appearance.opacity ?? 1
+    : 1
+  ctx.globalAlpha *= ownOpacity * inherited.opacity
   const previousComposite = ctx.globalCompositeOperation
   ctx.globalCompositeOperation = canvasCompositeForBlendMode(
     node.appearance.blendMode,

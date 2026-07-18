@@ -69,6 +69,10 @@ test('create_scene description lists supported camera property ids', () => {
     'camera.nearClip',
     'camera.farClip',
     'camera.aperture',
+    'camera.fStop',
+    'camera.bladeCount',
+    'camera.bladeRotation',
+    'camera.bokehRatio',
     'camera.iso',
     'camera.blurLevel',
     'camera.blurQuality',
@@ -77,6 +81,7 @@ test('create_scene description lists supported camera property ids', () => {
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
   }
   assert.match(description, /focusMode/)
+  assert.match(description, /dofPreviewQuality/)
 })
 
 test('create_scene description keeps camera nodes optional', () => {

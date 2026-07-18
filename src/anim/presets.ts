@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EasingKind, NodeId, PropertyId } from '@/scene'
-import type { SceneAPI } from '@/scene/doc'
+import type { SceneAPI, StaggerPropertySet } from '@/scene/doc'
 import { addKeyframe, clearPresetKeyframes } from './tracks'
 
 /**
@@ -46,6 +46,43 @@ export interface AnimPreset {
   /** Default duration in seconds. */
   duration: number
   easing: EasingKind
+}
+
+export interface LayerPresetTargetPlan {
+  /** The exact layers that receive preset-authored keyframes. */
+  targets: NodeId[]
+  /** Whether the targets should be offset and linked as a stagger set. */
+  staggerActive: boolean
+  delay: number
+  order: StaggerPropertySet['order']
+}
+
+/**
+ * Resolve layer-preset targets without inferring descendants.
+ *
+ * A selected container is a real animation target, not shorthand for its
+ * children. The only time a preset expands beyond the explicit selection is
+ * while editing an existing stagger relationship, whose saved members are the
+ * explicit scope of that edit mode.
+ */
+export function planLayerPresetTargets(
+  selection: readonly NodeId[],
+  staggerOn: boolean,
+  staggerDelay: number,
+  activeSet?: StaggerPropertySet | null,
+): LayerPresetTargetPlan {
+  const editingSet = staggerOn && activeSet && activeSet.layerIds.length > 1
+    ? activeSet
+    : null
+  const targets = editingSet
+    ? [...editingSet.layerIds]
+    : [...selection]
+  return {
+    targets,
+    staggerActive: staggerOn && targets.length > 1,
+    delay: editingSet?.delay ?? Math.max(0, staggerDelay),
+    order: editingSet?.order ?? 'forward',
+  }
 }
 
 export const PRESETS: AnimPreset[] = [

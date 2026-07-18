@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { EasingKind, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
 import { patchStaggerKeyframeBundle } from '@/anim/staggerSets'
+import {
+  describeGraphTarget,
+  graphBezierCoords,
+  graphValueBounds,
+} from './graphEditorMath'
 
 /**
  * After-Effects-style value-over-time graph editor.
@@ -45,62 +50,6 @@ const PAD_T = 12
 const PAD_B = 28
 
 type Pt = { x: number; y: number }
-
-/**
- * Look up the keyframe's easing — falls back to the track default,
- * then to a flat ease-in-out — and decompose it into the four bezier
- * coordinates used by the curve solver. Only cubic-bezier presets
- * and explicit `{ bezier }` values produce real curves; spring +
- * 'linear' fall through to identity-ish defaults.
- */
-function bezierCoords(
-  easing: EasingKind | undefined,
-): [number, number, number, number] {
-  const PRESETS: Record<string, [number, number, number, number]> = {
-    'ease-in': [0.42, 0, 1, 1],
-    'ease-out': [0, 0, 0.58, 1],
-    'ease-in-out': [0.42, 0, 0.58, 1],
-    linear: [0, 0, 1, 1],
-  }
-  if (!easing) return PRESETS['ease-in-out']!
-  if (typeof easing === 'string') return PRESETS[easing] ?? PRESETS.linear!
-  if ('bezier' in easing) return easing.bezier
-  // Spring stub — engine treats as ease-out, surface that here too.
-  return PRESETS['ease-out']!
-}
-
-/**
- * Decide which keyframes the panel should show curves for. Returns
- * a single {track, keyframes} when:
- *   - the live keyframe selection is non-empty AND
- *   - every selected keyframe lives on the same track AND
- *   - the underlying track is numeric (we can't graph variants).
- *
- * Returns null in every other case (so the panel can fall back to
- * "select keyframes from one track to edit the curve").
- */
-export function describeGraphTarget(
-  api: SceneAPI,
-  selectedKeys: string[],
-): { track: Track; keyframes: Track['keyframes'] } | null {
-  if (selectedKeys.length === 0) return null
-  let trackId: string | null = null
-  for (const key of selectedKeys) {
-    const sep = key.indexOf(':')
-    if (sep < 0) return null
-    const tid = key.slice(0, sep)
-    if (trackId === null) trackId = tid
-    else if (trackId !== tid) return null
-  }
-  if (!trackId) return null
-  const track = api.getTrack(trackId)
-  if (!track) return null
-  const numeric = track.keyframes.every((k) => typeof k.value === 'number')
-  if (!numeric) return null
-  // Need at least 2 keyframes to have a segment to ease.
-  if (track.keyframes.length < 2) return null
-  return { track, keyframes: track.keyframes }
-}
 
 export function GraphEditor() {
   // Re-render whenever scene changes so live track edits show up.
@@ -165,23 +114,19 @@ export function GraphEditor() {
  */
 function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const [dragBounds, setDragBounds] = useState<{
+    min: number
+    max: number
+  } | null>(null)
   const kfs = track.keyframes
-  // Numeric-only is enforced upstream; this is a safe cast.
-  const values = kfs.map((k) => k.value as number)
 
-  // Time + value extents. We pad a hair on the value axis so a flat
-  // track (all values equal) still shows a visible curve baseline.
+  // Time + value extents. Value bounds include easing control points so
+  // high-strength overshoot handles remain visible and draggable.
   const tMin = kfs[0]!.time
   const tMax = kfs[kfs.length - 1]!.time
   const tSpan = Math.max(1e-6, tMax - tMin)
-  const vMin = Math.min(...values)
-  const vMax = Math.max(...values)
-  const vSpan = Math.max(1e-6, vMax - vMin)
-  const flat = vSpan < 1e-3
-  // Visual padding — leave room above and below the curve so handles
-  // aren't clipped at the box edges when a segment is steep.
-  const vMinPad = flat ? vMin - 1 : vMin - vSpan * 0.15
-  const vMaxPad = flat ? vMax + 1 : vMax + vSpan * 0.15
+  const fittedBounds = graphValueBounds(track)
+  const { min: vMinPad, max: vMaxPad } = dragBounds ?? fittedBounds
 
   const innerW = VIEW_W - PAD_L - PAD_R
   const innerH = VIEW_H - PAD_T - PAD_B
@@ -230,7 +175,7 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
       const tB = b.time
       const dt = tB - tA
       const dv = bv - av
-      const bz = bezierCoords(a.easingOut ?? track.defaultEasing)
+      const bz = graphBezierCoords(a.easingOut ?? track.defaultEasing)
       // Bezier control coords in time/value space.
       const p1Time = tA + bz[0] * dt
       const p1Val = av + bz[1] * dv
@@ -296,8 +241,12 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
     const tB = b.time
     const dt = Math.max(1e-6, tB - tA)
     const dv = bv - av
-    const startBz = bezierCoords(a.easingOut ?? track.defaultEasing)
+    const startBz = graphBezierCoords(a.easingOut ?? track.defaultEasing)
     const trackId = track.id
+    // Keep the viewport stationary while the handle moves. Auto-fitting on
+    // every pointer event makes the graph zoom away from the cursor; release
+    // refits once to reveal the newly extended curve.
+    setDragBounds(fittedBounds)
 
     const onMove = (ev: PointerEvent) => {
       ev.preventDefault()
@@ -344,6 +293,7 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      setDragBounds(null)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)

@@ -33,11 +33,19 @@ export interface ResolvedCamera3D {
   nearClip: number
   farClip: number
   depthOfField: boolean
+  focusMode: CameraNode['focusMode']
+  /** Authored point-focus center in top-left-origin composition pixels. */
+  focusScreen: { x: number; y: number }
   focusWorld: Vec3
   focusDistance: number
   focusRadius: number
   focusFalloff: number
   aperture: number
+  fStop: number
+  bladeCount: number
+  bladeRotation: number
+  bokehRatio: number
+  dofPreviewQuality: CameraNode['dofPreviewQuality']
   blurLevel: number
   blurQuality: number
 }
@@ -162,7 +170,23 @@ export function resolveCamera3D(
   }
   const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
   const position = add3(pointOfInterest, orbitOffset)
+  const basis = cameraBasisFromPosition(position, pointOfInterest, -rotation.z)
+  const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
+  const focusScreen = {
+    x:
+      animated?.focusX ??
+      animated?.focusWorldX ??
+      camera.focusX ??
+      camera.focusWorldX ??
+      camera.transform.x,
+    y:
+      animated?.focusY ??
+      animated?.focusWorldY ??
+      camera.focusY ??
+      camera.focusWorldY ??
+      camera.transform.y,
+  }
   const authoredFocusWorld = {
     x:
       animated?.focusWorldX ??
@@ -188,14 +212,18 @@ export function resolveCamera3D(
       camera.pointOfInterestZ ??
       0,
   }
-  const focusWorld =
-    focusWorldOverride ??
-    (focusMode === 'plane' ? pointOfInterest : authoredFocusWorld)
-  const basis = cameraBasisFromPosition(position, pointOfInterest, -rotation.z)
+  const authoredPlaneDistance = animated?.focusDistance ?? camera.focusDistance ?? 0
+  const planeFocusDepth = authoredPlaneDistance > 0
+    ? authoredPlaneDistance
+    : targetDepth
+  const focusWorld = focusWorldOverride ?? (
+    focusMode === 'plane'
+      ? add3(position, mul3(basis.forward, planeFocusDepth))
+      : authoredFocusWorld
+  )
   const focusDepth = Math.max(0.001, dot3(sub3(focusWorld, position), basis.forward))
   const nearClip = Math.max(0.001, animated?.nearClip ?? camera.nearClip ?? 1)
   const authoredFarClip = Math.max(1, animated?.farClip ?? camera.farClip ?? 100000)
-  const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const farClip = Math.max(
     authoredFarClip,
     targetDepth + Math.max(viewport.width, viewport.height) * 2,
@@ -211,14 +239,34 @@ export function resolveCamera3D(
     nearClip,
     farClip,
     depthOfField: camera.depthOfField ?? false,
+    focusMode,
+    focusScreen,
     focusWorld,
     focusDistance: focusDepth,
     focusRadius: Math.max(1, animated?.focusRadius ?? camera.focusRadius ?? 160),
     focusFalloff: Math.max(1, animated?.focusFalloff ?? camera.focusFalloff ?? 180),
     aperture: Math.max(0, animated?.aperture ?? camera.aperture ?? 0),
+    fStop: Math.max(0.1, animated?.fStop ?? camera.fStop ?? 2.8),
+    bladeCount: Math.max(
+      3,
+      Math.min(16, Math.round(animated?.bladeCount ?? camera.bladeCount ?? 7)),
+    ),
+    bladeRotation: animated?.bladeRotation ?? camera.bladeRotation ?? 0,
+    bokehRatio: Math.max(
+      0.25,
+      Math.min(4, animated?.bokehRatio ?? camera.bokehRatio ?? 1),
+    ),
+    dofPreviewQuality: camera.dofPreviewQuality ?? 'balanced',
     blurLevel: Math.max(0, animated?.blurLevel ?? camera.blurLevel ?? 0),
-    blurQuality: Math.max(1, animated?.blurQuality ?? camera.blurQuality ?? 8),
+    blurQuality: Math.max(24, animated?.blurQuality ?? camera.blurQuality ?? 24),
   }
+}
+
+/** Preserve legacy aperture=0 scenes while giving f-stop physical direction. */
+export function effectiveApertureStrength(aperture: number, fStop: number): number {
+  const legacyStrength = Math.max(0, Number.isFinite(aperture) ? aperture : 0)
+  const physicalFStop = Math.max(0.1, Number.isFinite(fStop) ? fStop : 2.8)
+  return legacyStrength * (2.8 / physicalFStop)
 }
 
 function rotateAroundAxis(v: Vec3, axis: Vec3, deg: number): Vec3 {
@@ -473,7 +521,14 @@ export function buildWorldPlanes(
         rect,
         contentMode,
         paintOrder: planes.length,
-        opacity: contentMode === 'subtree' ? inherited.opacity : nextInherited.opacity,
+        // Opacity belongs to the emitted plane, irrespective of whether its
+        // pixels come from the node itself or a flattened subtree. Baking a
+        // subtree root's animated opacity into a CanvasTexture forced a full
+        // bitmap repaint/upload on every fade frame and could visibly jump
+        // from the first value to the last. Descendant opacity still paints
+        // into the subtree texture; the emitted root + ancestor chain is
+        // represented once by this material opacity.
+        opacity: nextInherited.opacity,
         center,
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
@@ -553,16 +608,22 @@ export function depthBlurAmount(
   blurLevel: number,
   focalLength: number,
   enabled = true,
+  pointFocus = true,
 ): number {
   if (!enabled || aperture <= 0 || blurLevel <= 0) return 0
   const depthDelta = Math.abs(cameraDepth - focusDistance)
   const depthScale = Math.max(80, focalLength * 0.35)
   const depthBlur = 1 - Math.exp(-(depthDelta / depthScale) * aperture * 1.6)
-  const pointDelta = len3(sub3(planeCenter, focusWorld))
-  const pointBlur = Math.max(
-    0,
-    Math.min(1, (pointDelta - focusRadius) / Math.max(1, focusFalloff)),
-  )
+  const pointBlur = pointFocus
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          (len3(sub3(planeCenter, focusWorld)) - focusRadius) /
+            Math.max(1, focusFalloff),
+        ),
+      )
+    : 0
   const combined = Math.max(depthBlur, pointBlur)
   return Math.max(0, Math.min(blurLevel, blurLevel * combined))
 }

@@ -356,6 +356,10 @@ function writeProperty(
     case 'camera.nearClip': into.nearClip = value; break
     case 'camera.farClip': into.farClip = value; break
     case 'camera.aperture': into.aperture = value; break
+    case 'camera.fStop': into.fStop = value; break
+    case 'camera.bladeCount': into.bladeCount = value; break
+    case 'camera.bladeRotation': into.bladeRotation = value; break
+    case 'camera.bokehRatio': into.bokehRatio = value; break
     case 'camera.iso': into.iso = value; break
     case 'camera.blurLevel': into.blurLevel = value; break
     case 'camera.blurQuality': into.blurQuality = value; break

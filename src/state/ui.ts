@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from 'zustand'
-import type { EasingPresetId } from '@/anim/easingPresets'
+import {
+  clampEasingStrength,
+  type EasingPresetId,
+} from '@/anim/easingPresets'
 
 /**
  * UI-only state for the motion tool.
@@ -205,7 +208,7 @@ interface UIState {
    * generated tracks.
    */
   easingPresetId: EasingPresetId
-  /** Strength 0–100 for the active easing preset. */
+  /** Strength 0–200 for the active easing preset. */
   easingStrength: number
   /**
    * Timeline panel height in pixels. Drives the timeline section's
@@ -654,7 +657,10 @@ export const useUI = create<UIState>((set) => ({
       return { layersCollapsed: next }
     }),
   setEasing: (preset, strength) =>
-    set({ easingPresetId: preset, easingStrength: strength }),
+    set({
+      easingPresetId: preset,
+      easingStrength: clampEasingStrength(strength),
+    }),
   setTimelineHeight: (px) =>
     // 120 keeps the transport bar + ruler + at least one row visible.
     // The upper cap is derived from the viewport at call time so the

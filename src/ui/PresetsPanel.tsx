@@ -14,6 +14,7 @@ import {
   bezierOf,
   TEXT_ANIMATION_PRESETS,
   applyTextAnimation,
+  planLayerPresetTargets,
   normalizeTextAnimation,
   stampTextAnimationKeyframes,
   textAnimationDefaults,
@@ -35,6 +36,7 @@ import {
   registerStaggerSetKeyframes,
   resolveStaggerKeyframeBundle,
   retimeStaggerSet,
+  staggerLayerOffset,
 } from '@/anim/staggerSets'
 
 const TEXT_EASING_PRESETS = [
@@ -60,14 +62,12 @@ const TEXT_ANIMATION_PREVIEW_WORD = 'HYPER'
  *
  * Multi-select: clicking a preset applies it to every selected layer.
  *
- * Stagger: when the toggle is on, the preset spreads across multiple
- * targets with a per-target time offset. Targets are chosen "smartly":
- *   - If exactly one node is selected AND it has direct children → use
- *     those children in layer order. This is the "select a parent, let
- *     its children animate in sequence" flow the user described.
- *   - Otherwise → use the selection itself. This lets the user lasso a
- *     few siblings directly and still get a stagger.
- * Each target `i` starts at `playhead + i * staggerDelay`.
+ * Stagger: when the toggle is on, the preset spreads across the explicitly
+ * selected layers with a per-target time offset. Editing an existing stagger
+ * uses that relationship's saved members. A selected container is never
+ * silently replaced by its children; users select those children explicitly
+ * when they want a child stagger.
+ * Each target starts at the playhead plus its configured stagger offset.
  *
  * Sections:
  *   IN  — the layer enters (fade in, slide up, pop, etc.)
@@ -169,11 +169,16 @@ export function PresetsPanel() {
 
   const easing = findEasingPreset(easingPresetId).build(easingStrength)
 
-  // Resolve the current stagger target set. Leaves of the tree in the
-  // "smart single-parent" branch fall through to the selection itself —
-  // no children means no stagger, but the preset still applies.
-  const targets = resolveTargets(api, selection, staggerOn)
-  const isStaggerActive = staggerOn && targets.length > 1
+  const activeStaggerSet = activeStaggerSetId
+    ? api.getUiState().staggerSets[activeStaggerSetId]
+    : undefined
+  const targetPlan = planLayerPresetTargets(
+    selection,
+    staggerOn,
+    staggerDelay,
+    activeStaggerSet,
+  )
+  const { targets, staggerActive: isStaggerActive } = targetPlan
 
   const clearAll = () => {
     for (const id of selection) {
@@ -190,10 +195,14 @@ export function PresetsPanel() {
   // the easing sweep so "click preset, slide easing" feels coherent.
   const stampPreset = (id: AnimPresetId) => {
     const presetDirection = PRESETS.find((preset) => preset.id === id)?.direction
-    for (let i = 0; i < targets.length; i++) {
-      const targetId = targets[i]!
+    for (const targetId of targets) {
       const startTime = isStaggerActive
-        ? playhead + i * staggerDelay
+        ? playhead + staggerLayerOffset(
+            targets,
+            targetId,
+            targetPlan.delay,
+            targetPlan.order,
+          )
         : playhead
       applyPreset(api, targetId, id, startTime)
     }
@@ -203,8 +212,8 @@ export function PresetsPanel() {
         {
           setId: activeStaggerSetId,
           layerIds: targets,
-          delay: staggerDelay,
-          order: 'forward',
+          delay: targetPlan.delay,
+          order: targetPlan.order,
         },
         targets.flatMap((nodeId) =>
           api.getTracksForNode(nodeId).flatMap((track) => {
@@ -1633,40 +1642,11 @@ function StaggerControls({
   )
 }
 
-/**
- * Figure out which nodes a preset click should stamp onto.
- *
- * - Stagger off → always the selection verbatim.
- * - Stagger on + single selection with children → the children, in
- *   layer order. The selected parent gets nothing, which matches the
- *   mental model of "parent orchestrates, children dance".
- * - Stagger on + any other selection → the selection itself, in the
- *   order it was supplied (which, for layer-panel selections, is
- *   already layer order).
- */
-function resolveTargets(
-  api: SceneAPI,
-  selection: NodeId[],
-  staggerOn: boolean,
-): NodeId[] {
-  if (!staggerOn) return selection
-  if (selection.length === 1) {
-    const only = selection[0]!
-    const kids = api.getChildren(only).map((c) => c.id)
-    if (kids.length > 0) return kids
-  }
-  return selection
-}
-
 function describeTargets(
   selection: NodeId[],
   targets: NodeId[],
   staggerActive: boolean,
 ): string {
-  if (staggerActive && selection.length === 1 && targets !== selection) {
-    // Children-of-parent branch.
-    return `Staggering ${targets.length} children`
-  }
   if (staggerActive) {
     return `Staggering ${targets.length} layers`
   }

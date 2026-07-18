@@ -12,6 +12,7 @@ import {
   detachStaggerSetKeyframes,
   detachStaggerSetLayers,
   inspectStaggerSetProperty,
+  inspectStaggerSetPropertyFromMember,
   patchStaggerKeyframeBundle,
   removeStaggerSet,
   renameStaggerSet,
@@ -20,6 +21,7 @@ import {
   stampStaggerSetPatch,
   staggerSetPropertyIds,
   toggleStaggerSetPropertyKeyframes,
+  toggleStaggerSetPropertyFromMember,
   type StaggerPropertyTarget,
 } from './staggerSets'
 
@@ -96,6 +98,7 @@ describe('stagger property keyframe sets', () => {
       0,
       options,
     )
+
     toggleStaggerSetPropertyKeyframes(
       api,
       targets,
@@ -122,6 +125,255 @@ describe('stagger property keyframe sets', () => {
     // Stagger membership stays in the dedicated stagger-set model; it no
     // longer produces synthetic generic keyframe groups in the timeline.
     expect(api.getUiState().kfGroups).toEqual({})
+  })
+
+  it('authors a newly introduced leader property exactly on every member', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      0,
+      options,
+    )
+
+    toggleStaggerSetPropertyFromMember(
+      api,
+      options.setId,
+      layers[0]!,
+      'appearance.opacity',
+      2,
+      0,
+    )
+    toggleStaggerSetPropertyFromMember(
+      api,
+      options.setId,
+      layers[0]!,
+      'appearance.opacity',
+      3,
+      1,
+    )
+
+    expect(times(api, layers[0]!, 'appearance.opacity')).toEqual([2, 3])
+    expect(times(api, layers[1]!, 'appearance.opacity')).toEqual([2.1, 3.1])
+    expect(times(api, layers[2]!, 'appearance.opacity')).toEqual([2.2, 3.2])
+    for (const nodeId of layers) {
+      expect(
+        findTrack(api, nodeId, 'appearance.opacity')?.keyframes.map(
+          (keyframe) => keyframe.value,
+        ),
+      ).toEqual([0, 1])
+    }
+  })
+
+  it('adopts a complete leader property track across the stagger and undoes atomically', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      0,
+      options,
+    )
+
+    const followerOpacities = [0, 0.4, 0.7]
+    layers.forEach((nodeId, index) => {
+      const node = api.getNode(nodeId)!
+      api.setNodeProperty(nodeId, 'appearance', {
+        ...node.appearance,
+        opacity: followerOpacities[index]!,
+      })
+    })
+
+    const curve = {
+      bezier: [0.12, 0.7, 0.28, 1] as [number, number, number, number],
+    }
+    // This is the pre-fix path: both keys exist only on the visible leader and
+    // the stagger relationship has no opacity membership at all.
+    addKeyframe(api, layers[0]!, 'appearance.opacity', 2, 0, curve)
+    addKeyframe(api, layers[0]!, 'appearance.opacity', 3, 1)
+    const sourceTrack = findTrack(api, layers[0]!, 'appearance.opacity')!
+    api.setTrack({ ...sourceTrack, defaultEasing: 'ease-out' })
+    expect(times(api, layers[0]!, 'appearance.opacity')).toEqual([2, 3])
+    expect(times(api, layers[1]!, 'appearance.opacity')).toBeUndefined()
+
+    const scene = api.doc.getMap('scene')
+    const tracks = scene.get('tracks') as Y.Map<unknown>
+    const uiState = scene.get('uiState') as Y.Map<unknown>
+    const undo = new Y.UndoManager([scene, tracks, uiState], {
+      captureTimeout: 500,
+      trackedOrigins: new Set([null, UNDOABLE_GESTURE_ORIGIN]),
+    })
+    const closeGestureCapture = (transaction: Y.Transaction) => {
+      if (transaction.origin === UNDOABLE_GESTURE_ORIGIN) {
+        undo.stopCapturing()
+      }
+    }
+    api.doc.on('afterTransaction', closeGestureCapture)
+
+    expect(
+      toggleStaggerSetPropertyFromMember(
+        api,
+        options.setId,
+        layers[0]!,
+        'appearance.opacity',
+        2,
+        0,
+      )?.action,
+    ).toBe('added')
+
+    expect(times(api, layers[0]!, 'appearance.opacity')).toEqual([2, 3])
+    expect(times(api, layers[1]!, 'appearance.opacity')).toEqual([2.1, 3.1])
+    expect(times(api, layers[2]!, 'appearance.opacity')).toEqual([2.2, 3.2])
+    const adoptedSet = api.getUiState().staggerSets['set-1']!
+    for (const nodeId of layers) {
+      const track = findTrack(api, nodeId, 'appearance.opacity')!
+      expect(track.keyframes.map((keyframe) => keyframe.value)).toEqual([0, 1])
+      expect(track.keyframes[0]?.easingOut).toEqual(curve)
+      expect(track.defaultEasing).toBe('ease-out')
+      expect(adoptedSet.members[nodeId]?.['appearance.opacity']).toEqual(
+        track.keyframes.map((keyframe) => keyframe.id),
+      )
+    }
+    expect(
+      inspectStaggerSetPropertyFromMember(
+        api,
+        options.setId,
+        layers[0]!,
+        'appearance.opacity',
+        2,
+      )?.state,
+    ).toBe('at')
+    expect(
+      inspectStaggerSetPropertyFromMember(
+        api,
+        options.setId,
+        layers[0]!,
+        'appearance.opacity',
+        3,
+      )?.state,
+    ).toBe('at')
+    expect(
+      new Set(
+        staggerSetPropertyIds(api.getUiState().staggerSets['set-1']),
+      ),
+    ).toEqual(new Set(['transform.x', 'appearance.opacity']))
+
+    undo.undo()
+    expect(times(api, layers[0]!, 'appearance.opacity')).toEqual([2, 3])
+    expect(times(api, layers[1]!, 'appearance.opacity')).toBeUndefined()
+    expect(times(api, layers[2]!, 'appearance.opacity')).toBeUndefined()
+    expect(
+      staggerSetPropertyIds(api.getUiState().staggerSets['set-1']),
+    ).toEqual(['transform.x'])
+
+    undo.redo()
+    expect(times(api, layers[1]!, 'appearance.opacity')).toEqual([2.1, 3.1])
+    expect(times(api, layers[2]!, 'appearance.opacity')).toEqual([2.2, 3.2])
+
+    api.doc.off('afterTransaction', closeGestureCapture)
+    undo.destroy()
+  })
+
+  it('rebases a leader-only property track for reverse stagger order', () => {
+    const { api, layers, targets, options } = setup()
+    const reverse = { ...options, order: 'reverse' as const }
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      0,
+      reverse,
+    )
+    addKeyframe(api, layers[2]!, 'appearance.opacity', 2, 0)
+    addKeyframe(api, layers[2]!, 'appearance.opacity', 3, 1)
+
+    expect(
+      toggleStaggerSetPropertyFromMember(
+        api,
+        reverse.setId,
+        layers[2]!,
+        'appearance.opacity',
+        2,
+        0,
+      )?.action,
+    ).toBe('added')
+
+    expect(times(api, layers[0]!, 'appearance.opacity')).toEqual([2.2, 3.2])
+    expect(times(api, layers[1]!, 'appearance.opacity')).toEqual([2.1, 3.1])
+    expect(times(api, layers[2]!, 'appearance.opacity')).toEqual([2, 3])
+    for (const nodeId of layers) {
+      expect(
+        findTrack(api, nodeId, 'appearance.opacity')?.keyframes.map(
+          (keyframe) => keyframe.value,
+        ),
+      ).toEqual([0, 1])
+    }
+  })
+
+  it('does not silently reattach a property detached from the stagger', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      0,
+      options,
+    )
+    toggleStaggerSetPropertyFromMember(
+      api,
+      options.setId,
+      layers[0]!,
+      'appearance.opacity',
+      2,
+      0,
+    )
+    toggleStaggerSetPropertyFromMember(
+      api,
+      options.setId,
+      layers[0]!,
+      'appearance.opacity',
+      3,
+      1,
+    )
+    const opacityMembers = layers.map((nodeId) => {
+      const track = findTrack(api, nodeId, 'appearance.opacity')!
+      return {
+        nodeId,
+        propertyId: 'appearance.opacity' as const,
+        keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+      }
+    })
+    const before = layers.map((nodeId) =>
+      findTrack(api, nodeId, 'appearance.opacity')?.keyframes,
+    )
+
+    expect(
+      detachStaggerSetKeyframes(api, options.setId, opacityMembers),
+    ).toBe(true)
+    expect(
+      staggerSetPropertyIds(api.getUiState().staggerSets['set-1']),
+    ).toEqual(['transform.x'])
+
+    const trackIds = stampStaggerSetPatch(
+      api,
+      3,
+      'appearance',
+      { opacity: 0.75 },
+      'active-track',
+      options,
+    )
+
+    expect(trackIds).toEqual([])
+    expect(
+      layers.map(
+        (nodeId) =>
+          findTrack(api, nodeId, 'appearance.opacity')?.keyframes,
+      ),
+    ).toEqual(before)
+    expect(
+      staggerSetPropertyIds(api.getUiState().staggerSets['set-1']),
+    ).toEqual(['transform.x'])
   })
 
   it('appends later property edits at the same per-layer offsets', () => {

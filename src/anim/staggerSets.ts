@@ -20,6 +20,7 @@ import {
 } from './recordKeyframes'
 import {
   addKeyframe,
+  ensureTrack,
   findKeyframeAt,
   findTrack,
   removeKeyframe,
@@ -48,6 +49,11 @@ export interface StaggerSetMutationResult {
   action: 'added' | 'removed'
   trackIds: TrackId[]
   set: StaggerPropertySet | null
+}
+
+interface AdoptedStaggerPropertyTrack {
+  trackIds: TrackId[]
+  maxTime: number
 }
 
 export interface StaggerSetMemberInput {
@@ -178,12 +184,19 @@ export function toggleStaggerSetPropertyKeyframes(
           staggerLayerOffset(layerIds, nodeId, set.delay, set.order),
       )
       if (action === 'added') {
+        const existingKeyframe = findKeyframeAt(
+          api,
+          nodeId,
+          propertyId,
+          time,
+        )
         const keyframe = addKeyframe(
           api,
           nodeId,
           propertyId,
           time,
           target.currentValue,
+          existingKeyframe?.easingOut,
         )
         addMember(set, nodeId, propertyId, keyframe.id)
         const track = findTrack(api, nodeId, propertyId)
@@ -217,6 +230,158 @@ export function toggleStaggerSetPropertyKeyframes(
 }
 
 /**
+ * Adopt a property track created by the old single-layer Inspector path.
+ *
+ * Adoption is deliberately limited to properties with zero membership in the
+ * stagger. Once even one bundle belongs to the set, missing keys may have been
+ * intentionally detached and must never be reconstructed implicitly.
+ */
+function adoptStaggerSetPropertyTrackFromMember(
+  api: SceneAPI,
+  setId: string,
+  memberNodeId: NodeId,
+  propertyId: PropertyId,
+): StaggerSetMutationResult | null {
+  const existing = api.getUiState().staggerSets[setId]
+  if (
+    !existing ||
+    !existing.layerIds.includes(memberNodeId) ||
+    staggerSetHasPropertyMembers(existing, propertyId)
+  ) {
+    return null
+  }
+
+  const set = cloneSet(existing)
+  const outcome: { adoption: AdoptedStaggerPropertyTrack | null } = {
+    adoption: null,
+  }
+  api.doc.transact(() => {
+    outcome.adoption = adoptStaggerPropertyTrackIntoSet(
+      api,
+      set,
+      memberNodeId,
+      propertyId,
+    )
+    if (!outcome.adoption) return
+    writeStaggerSet(api, setId, set)
+    if (outcome.adoption.maxTime > api.getMeta().duration) {
+      api.setMeta({ duration: outcome.adoption.maxTime })
+    }
+  }, UNDOABLE_GESTURE_ORIGIN)
+
+  if (!outcome.adoption) return null
+  return {
+    action: 'added',
+    trackIds: outcome.adoption.trackIds,
+    set,
+  }
+}
+
+/**
+ * Author one property while an existing stagger set is in source-layer edit
+ * mode. The visible member is the canonical animation template: its exact
+ * value is stamped onto every member at that member's configured offset.
+ *
+ * `memberTime` is the visible keyframe time on the member being edited. In the
+ * normal source-layer flow its offset is zero. Subtracting the member offset
+ * also keeps the operation correct if a follower is selected directly.
+ */
+export function toggleStaggerSetPropertyFromMember(
+  api: SceneAPI,
+  setId: string,
+  memberNodeId: NodeId,
+  propertyId: PropertyId,
+  memberTime: number,
+  currentValue: KeyframeValue,
+): StaggerSetMutationResult | null {
+  const set = api.getUiState().staggerSets[setId]
+  if (!set || !set.layerIds.includes(memberNodeId)) return null
+
+  const baseTime = normalizeTime(
+    memberTime -
+      staggerLayerOffset(
+        set.layerIds,
+        memberNodeId,
+        set.delay,
+        set.order,
+      ),
+  )
+  const existingSourceKeyframe = findKeyframeAt(
+    api,
+    memberNodeId,
+    propertyId,
+    memberTime,
+  )
+  const targets = set.layerIds.map((nodeId) => ({
+    nodeId,
+    currentValue,
+  }))
+  let result: StaggerSetMutationResult | null = null
+  api.doc.transact(() => {
+    const adopted = adoptStaggerSetPropertyTrackFromMember(
+      api,
+      setId,
+      memberNodeId,
+      propertyId,
+    )
+    // A click on an existing, formerly source-only key means "bring this
+    // property into the stagger", not "adopt it and immediately delete it".
+    if (adopted && existingSourceKeyframe) {
+      result = adopted
+      return
+    }
+    result = toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      propertyId,
+      baseTime,
+      {
+        setId: set.id,
+        layerIds: set.layerIds,
+        delay: set.delay,
+        order: set.order,
+      },
+    )
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return result
+}
+
+/** Inspect the relationship-wide state for a source-layer property diamond. */
+export function inspectStaggerSetPropertyFromMember(
+  api: SceneAPI,
+  setId: string,
+  memberNodeId: NodeId,
+  propertyId: PropertyId,
+  memberTime: number,
+): StaggerPropertySummary | null {
+  const set = api.getUiState().staggerSets[setId]
+  if (!set || !set.layerIds.includes(memberNodeId)) return null
+
+  const baseTime = normalizeTime(
+    memberTime -
+      staggerLayerOffset(
+        set.layerIds,
+        memberNodeId,
+        set.delay,
+        set.order,
+      ),
+  )
+  const targets = set.layerIds.map((nodeId) => ({
+    nodeId,
+    // Inspection only needs membership in the target map; the value is never
+    // read. A valid KeyframeValue keeps this helper aligned with the authoring
+    // target shape without reaching into each node's static property model.
+    currentValue: 0,
+  }))
+  return inspectStaggerSetProperty(api, targets, propertyId, baseTime, {
+    setId: set.id,
+    layerIds: set.layerIds,
+    delay: set.delay,
+    order: set.order,
+  })
+}
+
+/**
  * Stamp a committed multi-layer property edit into an existing stagger set.
  * Used after the initial diamonds so later keyframes retain each layer offset.
  */
@@ -243,16 +408,39 @@ export function stampStaggerSetPatch(
   let maxTime = api.getMeta().duration
 
   api.doc.transact(() => {
+    const propagateToAll = new Set<PropertyId>()
+    for (const { propertyId } of values) {
+      if (mode === 'record' || staggerSetHasPropertyMembers(set, propertyId)) {
+        propagateToAll.add(propertyId)
+      }
+    }
+
     for (const nodeId of layerIds) {
       const time = normalizeTime(
         baseTime +
           staggerLayerOffset(layerIds, nodeId, set.delay, set.order),
       )
       for (const { propertyId, value } of values) {
-        if (mode === 'active-track' && !findTrack(api, nodeId, propertyId)) {
+        if (
+          mode === 'active-track' &&
+          !propagateToAll.has(propertyId)
+        ) {
           continue
         }
-        const keyframe = addKeyframe(api, nodeId, propertyId, time, value)
+        const existingKeyframe = findKeyframeAt(
+          api,
+          nodeId,
+          propertyId,
+          time,
+        )
+        const keyframe = addKeyframe(
+          api,
+          nodeId,
+          propertyId,
+          time,
+          value,
+          existingKeyframe?.easingOut,
+        )
         addMember(set, nodeId, propertyId, keyframe.id)
         const track = findTrack(api, nodeId, propertyId)
         if (track) trackIds.push(track.id)
@@ -875,6 +1063,91 @@ function dedupeTargets(
 
 function dedupeIds(ids: readonly NodeId[]): NodeId[] {
   return [...new Set(ids)]
+}
+
+function staggerSetHasPropertyMembers(
+  set: StaggerPropertySet,
+  propertyId: PropertyId,
+): boolean {
+  return Object.values(set.members).some(
+    (properties) => (properties[propertyId]?.length ?? 0) > 0,
+  )
+}
+
+/**
+ * Clone one canonical member's complete property track into a stagger set.
+ * The source keyframes themselves are never rewritten, so custom curves and
+ * other metadata survive adoption byte-for-byte.
+ */
+function adoptStaggerPropertyTrackIntoSet(
+  api: SceneAPI,
+  set: StaggerPropertySet,
+  sourceNodeId: NodeId,
+  propertyId: PropertyId,
+): AdoptedStaggerPropertyTrack | null {
+  if (
+    !set.layerIds.includes(sourceNodeId) ||
+    staggerSetHasPropertyMembers(set, propertyId)
+  ) {
+    return null
+  }
+  const sourceTrack = findTrack(api, sourceNodeId, propertyId)
+  if (!sourceTrack?.keyframes.length) return null
+
+  const sourceOffset = staggerLayerOffset(
+    set.layerIds,
+    sourceNodeId,
+    set.delay,
+    set.order,
+  )
+  const trackIds: TrackId[] = [sourceTrack.id]
+  let maxTime = api.getMeta().duration
+
+  for (const sourceKeyframe of sourceTrack.keyframes) {
+    addMember(set, sourceNodeId, propertyId, sourceKeyframe.id)
+    maxTime = Math.max(maxTime, sourceKeyframe.time)
+  }
+
+  for (const nodeId of set.layerIds) {
+    if (nodeId === sourceNodeId || !api.getNode(nodeId)) continue
+    const targetOffset = staggerLayerOffset(
+      set.layerIds,
+      nodeId,
+      set.delay,
+      set.order,
+    )
+    const targetTrack = ensureTrack(
+      api,
+      nodeId,
+      propertyId,
+      sourceTrack.defaultEasing,
+    )
+    // A key without easingOut falls back to its track default, so matching the
+    // source default is necessary for exact curve replication.
+    api.setTrack({
+      ...targetTrack,
+      defaultEasing: sourceTrack.defaultEasing,
+    })
+    for (const sourceKeyframe of sourceTrack.keyframes) {
+      const baseTime = sourceKeyframe.time - sourceOffset
+      const time = normalizeTime(baseTime + targetOffset)
+      const keyframe = addKeyframe(
+        api,
+        nodeId,
+        propertyId,
+        time,
+        sourceKeyframe.value,
+        sourceKeyframe.easingOut,
+        sourceKeyframe.presetOrigin,
+      )
+      addMember(set, nodeId, propertyId, keyframe.id)
+      maxTime = Math.max(maxTime, time)
+    }
+    const liveTrack = findTrack(api, nodeId, propertyId)
+    if (liveTrack) trackIds.push(liveTrack.id)
+  }
+
+  return { trackIds: [...new Set(trackIds)], maxTime }
 }
 
 function normalizeDelay(delay: number): number {

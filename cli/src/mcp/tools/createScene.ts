@@ -110,8 +110,10 @@ export const createSceneTool: Tool = {
     "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut? }], defaultEasing?, textAnimation? } — omitted keyframes default to [].\n" +
     "Text animation tracks can include textAnimation with mode, applyTo ('layer'|'letters'|'words'|'lines'), order, delay, smoothing, duration, startTime, acceleration, easingPresetId, easingStrength, direction, travelDistance, and blurRadius.\n" +
     "Camera nodes can include focalLength, scrollSensitivity (0.1-2, default 1), fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
-    "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture, iso, blurLevel, " +
-    "blurQuality, and showFocusPlane. Hyper Motion currently supports only one camera node per scene; " +
+    "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture (legacy strength), " +
+    "fStop (default 2.8; lower values create more blur), bladeCount (3-16), bladeRotation, bokehRatio (0.25-4), " +
+    "dofPreviewQuality ('draft'|'balanced'|'high'), iso, blurLevel, blurQuality (24-48 effective final export samples; default/minimum 24), and showFocusPlane. " +
+    "Hyper Motion currently supports only one camera node per scene; " +
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
     "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
     `Property IDs you can keyframe: ${KEYFRAMEABLE_PROPERTY_DESCRIPTION}.\n\n` +
