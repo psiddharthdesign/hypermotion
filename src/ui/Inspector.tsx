@@ -2490,7 +2490,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       />
                     </FieldRow>
                     <FieldRow
-                      label="Falloff"
+                      label="Blur falloff"
                       keyframe={
                         <KeyframeButton
                           nodeId={node.id}
@@ -2510,6 +2510,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                         suffix="px"
                       />
                     </FieldRow>
+                    <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                      Sharp inside Point radius. Blur grows progressively across
+                      Blur falloff, reaching Max blur beyond the outer ring.
+                    </p>
                   </>
                 ) : null}
 

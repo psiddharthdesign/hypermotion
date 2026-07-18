@@ -23,6 +23,8 @@ export interface PlaneDepthOfFieldShaderState {
   focusY: number
   focusRadius: number
   focusFalloff: number
+  /** Drawing-buffer pixels per composition pixel. */
+  screenPixelRatio: number
   sampleCount: number
   bladeCount: number
   bladeRotation: number
@@ -38,12 +40,13 @@ interface DofShaderUniforms {
   hmFocusCenter: { value: THREE.Vector2 }
   hmFocusRadius: { value: number }
   hmFocusFalloff: { value: number }
+  hmScreenPixelRatio: { value: number }
   hmSampleCount: { value: number }
   hmApertureStretch: { value: number }
   hmDofKernel: { value: THREE.Vector2[] }
 }
 
-const DOF_SHADER_KEY = 'hypermotion-gpu-dof-v7'
+const DOF_SHADER_KEY = 'hypermotion-gpu-dof-v10'
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const kernelCache = new Map<string, THREE.Vector2[]>()
 
@@ -57,7 +60,15 @@ export function depthOfFieldSampleCount(
   blurQuality: number,
   context: DofSampleBudgetContext,
 ): number {
-  if (context.playing || context.interactive) return 6
+  if (context.playing || context.interactive) {
+    // Playback stays bounded, but higher preview tiers spend enough samples to
+    // preserve a continuous blur at moving high-contrast text edges.
+    return previewQuality === 'high'
+      ? 12
+      : previewQuality === 'balanced'
+        ? 8
+        : 6
+  }
   if (context.finalRender) {
     // Final output must never fall below the Balanced paused-preview budget.
     // Older scenes may still carry the legacy default (8), so enforce the
@@ -136,6 +147,7 @@ export function installDepthOfFieldShader(material: THREE.MeshBasicMaterial) {
     hmFocusCenter: { value: new THREE.Vector2(0.5, 0.5) },
     hmFocusRadius: { value: 0 },
     hmFocusFalloff: { value: 1 },
+    hmScreenPixelRatio: { value: 1 },
     hmSampleCount: { value: 1 },
     hmApertureStretch: { value: 1 },
     hmDofKernel: {
@@ -159,6 +171,7 @@ uniform float hmFocusMask;
 uniform vec2 hmFocusCenter;
 uniform float hmFocusRadius;
 uniform float hmFocusFalloff;
+uniform float hmScreenPixelRatio;
 uniform float hmSampleCount;
 uniform float hmApertureStretch;
 uniform vec2 hmDofKernel[${MAX_DOF_KERNEL_SAMPLES}];`,
@@ -170,7 +183,10 @@ uniform vec2 hmDofKernel[${MAX_DOF_KERNEL_SAMPLES}];`,
   vec4 sampledDiffuseColor = texture2D( map, vMapUv );
   float hmFocusBlend = 1.0;
   if ( hmFocusMask > 0.5 ) {
-    vec2 hmFocusDelta = ( vMapUv - hmFocusCenter ) * hmPlaneSize;
+    // Point focus is authored in composition pixels and must stay circular in
+    // camera space. Measuring it in plane UVs sheared the mask on tilted cards.
+    vec2 hmFragmentPosition = gl_FragCoord.xy / max(hmScreenPixelRatio, 0.001);
+    vec2 hmFocusDelta = hmFragmentPosition - hmFocusCenter;
     hmFocusBlend = smoothstep(
       hmFocusRadius,
       hmFocusRadius + max( hmFocusFalloff, 0.001 ),
@@ -179,39 +195,53 @@ uniform vec2 hmDofKernel[${MAX_DOF_KERNEL_SAMPLES}];`,
   }
 
   float hmLocalBlur = mix( hmDofMinBlur, hmDofBlur, hmFocusBlend );
-  if ( hmDofEnabled > 0.5 && hmLocalBlur > 0.05 && hmSampleCount > 0.5 ) {
+  // Circle of confusion grows continuously across the authored falloff: zero
+  // inside the sharp radius, progressively wider through the transition, and
+  // equal to Max Blur beyond the outer radius.
+  float hmKernelBlur = hmLocalBlur;
+  // Derivatives must be evaluated in uniform control flow. hmKernelBlur varies
+  // across the focus falloff, so computing them inside the blur branch leaves
+  // results undefined at the sharp/blur boundary on some GPUs.
+  vec2 hmUvDx = dFdx(vMapUv);
+  vec2 hmUvDy = dFdy(vMapUv);
+  if ( hmDofEnabled > 0.5 && hmKernelBlur > 0.05 && hmSampleCount > 0.5 ) {
     // The authored sample count is the whole aperture kernel. Keeping an
     // additional unblurred texel here left a visible sharp copy in the middle
     // of defocused text, particularly in the six-sample playback budget.
     vec3 hmPremultiplied = vec3( 0.0 );
     float hmAlpha = 0.0;
     float hmWeight = 0.0;
-    vec2 hmUvRadius = vec2(
-      hmLocalBlur / max( hmPlaneSize.x, 1.0 ),
-      hmLocalBlur / max( hmPlaneSize.y, 1.0 )
-    );
-    // Large bokeh radii can place sparse taps many texels apart. Select a
-    // progressively softer mip for each tap so those gaps blend into a
-    // continuous aperture convolution without adding more texture reads.
-    // Use the Balanced preview density as a fixed reference: sample-count
-    // changes should alter aperture smoothness, not the perceived blur radius.
-    // Small blur radii stay on mip zero and retain crisp focus transitions.
+    float hmKernelRadiusPx = hmKernelBlur * max(hmScreenPixelRatio, 0.001);
+    // Approximate the continuous aperture area represented by every discrete
+    // tap. Sparse realtime kernels receive a wider prefilter than 48-tap still
+    // previews, closing the gaps that otherwise appear as repeated glyphs.
+    float hmSampleSpacing =
+      hmKernelRadiusPx * hmApertureStretch /
+      sqrt(max(hmSampleCount, 1.0));
     float hmMipBias = clamp(
-      log2(max(
-        1.0,
-        hmLocalBlur * hmApertureStretch / sqrt(24.0)
-      )) + 0.5,
+      log2(max(1.0, hmSampleSpacing)) + 0.75,
       0.0,
       6.0
     );
+    float hmGradientScale = exp2(hmMipBias);
     for ( int hmIndex = 0; hmIndex < ${MAX_DOF_KERNEL_SAMPLES}; hmIndex ++ ) {
       if ( float( hmIndex ) < hmSampleCount ) {
-        vec2 hmRawUv = vMapUv + hmDofKernel[hmIndex] * hmUvRadius;
+        vec2 hmScreenOffset = hmDofKernel[hmIndex] * hmKernelRadiusPx;
+        // Convert camera/screen-pixel aperture offsets into this fragment's UV
+        // basis. The lens shape now stays stable under plane tilt/perspective.
+        vec2 hmRawUv = vMapUv +
+          hmUvDx * hmScreenOffset.x +
+          hmUvDy * hmScreenOffset.y;
         float hmInside =
           step(0.0, hmRawUv.x) * step(hmRawUv.x, 1.0) *
           step(0.0, hmRawUv.y) * step(hmRawUv.y, 1.0);
         vec2 hmUv = clamp(hmRawUv, vec2( 0.0 ), vec2( 1.0 ));
-        vec4 hmTap = texture2D( map, hmUv, hmMipBias );
+        vec4 hmTap = texture2DGradEXT(
+          map,
+          hmUv,
+          hmUvDx * hmGradientScale,
+          hmUvDy * hmGradientScale
+        );
         hmTap *= hmInside;
         hmPremultiplied += hmTap.rgb * hmTap.a;
         hmAlpha += hmTap.a;
@@ -249,6 +279,7 @@ function hasCurrentUniformSchema(value: unknown): value is DofShaderUniforms {
     'hmFocusCenter',
     'hmFocusRadius',
     'hmFocusFalloff',
+    'hmScreenPixelRatio',
     'hmSampleCount',
     'hmApertureStretch',
     'hmDofKernel',
@@ -273,11 +304,12 @@ export function updateDepthOfFieldShader(
   )
   uniforms.hmFocusMask.value = state.focusMask ? 1 : 0
   uniforms.hmFocusCenter.value.set(
-    state.focusX / Math.max(1, state.planeWidth),
-    state.focusY / Math.max(1, state.planeHeight),
+    state.focusX,
+    state.focusY,
   )
   uniforms.hmFocusRadius.value = Math.max(0, state.focusRadius)
   uniforms.hmFocusFalloff.value = Math.max(0.001, state.focusFalloff)
+  uniforms.hmScreenPixelRatio.value = Math.max(0.001, state.screenPixelRatio)
   const sampleCount = clampInt(
     state.sampleCount,
     1,

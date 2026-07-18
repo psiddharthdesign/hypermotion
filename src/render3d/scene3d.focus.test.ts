@@ -9,6 +9,19 @@ import {
 } from './scene3d'
 
 describe('physical camera focus resolution', () => {
+  it('keeps the animated point-focus center in composition screen space', () => {
+    const api = createSceneAPI()
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolved = resolveCamera3D(
+      { ...camera, focusMode: 'screen', focusX: 100, focusY: 80 },
+      { focusX: 320, focusY: 190 },
+      { width: 960, height: 540 },
+    )
+
+    expect(resolved.focusScreen).toEqual({ x: 320, y: 190 })
+  })
+
   it('resolves distance focus as a camera-space plane', () => {
     const api = createSceneAPI()
     const camera = api.getActiveCamera()

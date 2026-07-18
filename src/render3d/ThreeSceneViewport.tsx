@@ -23,7 +23,6 @@ import {
   installDepthOfFieldShader,
   updateDepthOfFieldShader,
 } from '@/render3d/depthOfFieldShader'
-import { dot3, sub3 } from '@/render3d/math'
 import {
   shouldRasterizePlaneTexture,
   textureScaleForRect,
@@ -81,13 +80,6 @@ interface PlaneTextureRevision {
 interface PlayheadDrivenTextureRange {
   start: number
   end: number
-}
-
-interface PlaneFocusMask {
-  x: number
-  y: number
-  radius: number
-  falloff: number
 }
 
 interface Matrix2D {
@@ -760,10 +752,19 @@ function syncPlanes(
       finalRender,
     },
   )
+  const viewportSize = renderer.getSize(new THREE.Vector2())
+  const screenPixelRatio = renderer.getPixelRatio()
+  // Point focus is a screen-space lens field. Every composited plane must use
+  // the same field; gating it by an approximate world point made tilted cards
+  // jump straight to full blur even when they sat underneath the visible dot.
+  const focusMask =
+    camera.focusMode === 'screen' &&
+    camera.depthOfField &&
+    apertureStrength > 0 &&
+    maximumBlurLevel > 0
   for (const plane of planes) {
     active.add(plane.nodeId)
     let record = records.get(plane.nodeId)
-    const focusMask = focusMaskForPlane(plane, camera)
     const depthBlur = depthBlurAmount(
       cameraSpaceDepth(plane.center, camera),
       plane.center,
@@ -858,11 +859,14 @@ function syncPlanes(
       minimumBlurPx: minimumBlur,
       planeWidth: plane.rect.width,
       planeHeight: plane.rect.height,
-      focusMask: !!focusMask,
-      focusX: focusMask?.x ?? 0,
-      focusY: focusMask?.y ?? 0,
-      focusRadius: focusMask?.radius ?? 0,
-      focusFalloff: focusMask?.falloff ?? 1,
+      focusMask,
+      focusX: focusMask ? camera.focusScreen.x : 0,
+      // gl_FragCoord uses a bottom-left origin; authored canvas coordinates
+      // and the editor focus overlay use top-left.
+      focusY: focusMask ? viewportSize.y - camera.focusScreen.y : 0,
+      focusRadius: focusMask ? camera.focusRadius : 0,
+      focusFalloff: focusMask ? camera.focusFalloff : 1,
+      screenPixelRatio,
       sampleCount,
       bladeCount: camera.bladeCount,
       bladeRotation: camera.bladeRotation,
@@ -1072,38 +1076,6 @@ function localPlanePointToWorld(plane: Plane3D, point: LocalPoint2D): THREE.Vect
   return toThreeVector(plane.center)
     .addScaledVector(right, (point.x - plane.rect.width / 2) * plane.scaleX)
     .addScaledVector(down, (point.y - plane.rect.height / 2) * plane.scaleY)
-}
-
-function focusMaskForPlane(
-  plane: Plane3D,
-  camera: ResolvedCamera3D,
-): PlaneFocusMask | null {
-  if (
-    camera.focusMode !== 'screen' ||
-    !camera.depthOfField ||
-    effectiveApertureStrength(camera.aperture, camera.fStop) <= 0 ||
-    camera.blurLevel <= 0
-  ) {
-    return null
-  }
-  const rel = sub3(camera.focusWorld, plane.center)
-  const sx = Math.max(0.0001, Math.abs(plane.scaleX))
-  const sy = Math.max(0.0001, Math.abs(plane.scaleY))
-  const x = dot3(rel, plane.right) / sx + plane.rect.width / 2
-  const y = dot3(rel, plane.down) / sy + plane.rect.height / 2
-  const scale = Math.max(0.0001, (sx + sy) / 2)
-  const radius = camera.focusRadius / scale
-  const falloff = camera.focusFalloff / scale
-  const margin = radius + falloff
-  if (
-    x < -margin ||
-    x > plane.rect.width + margin ||
-    y < -margin ||
-    y > plane.rect.height + margin
-  ) {
-    return null
-  }
-  return { x, y, radius, falloff }
 }
 
 function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {

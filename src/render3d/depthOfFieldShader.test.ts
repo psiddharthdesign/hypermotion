@@ -18,14 +18,21 @@ describe('GPU depth-of-field policy', () => {
         interactive: false,
         finalRender: false,
       }),
-    ).toBe(6)
+    ).toBe(12)
     expect(
       depthOfFieldSampleCount('high', 32, {
         playing: false,
         interactive: true,
         finalRender: false,
       }),
-    ).toBe(6)
+    ).toBe(12)
+    expect(
+      depthOfFieldSampleCount('balanced', 32, {
+        playing: true,
+        interactive: false,
+        finalRender: false,
+      }),
+    ).toBe(8)
   })
 
   it('uses progressively larger paused-preview and bounded export budgets', () => {
@@ -105,6 +112,7 @@ describe('GPU depth-of-field policy', () => {
       focusY: 120,
       focusRadius: 40,
       focusFalloff: 80,
+      screenPixelRatio: 2,
       sampleCount: 10,
       bladeCount: 7,
       bladeRotation: 15,
@@ -124,13 +132,51 @@ describe('GPU depth-of-field policy', () => {
     expect(shader.fragmentShader).toContain('float hmWeight = 0.0')
     expect(shader.fragmentShader).toContain('float hmMipBias')
     expect(shader.fragmentShader).toContain('hmApertureStretch')
-    expect(shader.fragmentShader).toContain('/ sqrt(24.0)')
-    expect(shader.fragmentShader).not.toContain('sqrt(max(hmSampleCount')
+    expect(shader.fragmentShader).toContain(
+      'sqrt(max(hmSampleCount, 1.0))',
+    )
+    expect(shader.fragmentShader).toContain('gl_FragCoord.xy')
+    expect(shader.fragmentShader).toContain('vec2 hmUvDx = dFdx(vMapUv)')
+    expect(shader.fragmentShader).toContain('vec2 hmUvDy = dFdy(vMapUv)')
+    expect(shader.fragmentShader).toContain('float hmKernelBlur = hmLocalBlur')
+    expect(shader.fragmentShader).toContain('texture2DGradEXT')
+    expect(shader.fragmentShader).not.toContain(
+      'hmLocalBlur / max( hmPlaneSize',
+    )
     expect(shader.fragmentShader).toContain('float hmInside')
     expect(shader.fragmentShader).toContain('hmTap *= hmInside')
-    expect(shader.fragmentShader).toContain('texture2D( map, hmUv, hmMipBias )')
+    expect(shader.fragmentShader).not.toContain(
+      'texture2D( map, hmUv, hmMipBias )',
+    )
     expect(shader.fragmentShader).not.toContain('#include <map_fragment>')
     expect(Object.keys(shader.uniforms)).toContain('hmDofBlur')
+  })
+
+  it('keeps point-focus uniforms in composition screen pixels', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, {
+      enabled: true,
+      blurPx: 12,
+      minimumBlurPx: 0,
+      planeWidth: 400,
+      planeHeight: 240,
+      focusMask: true,
+      focusX: 200,
+      focusY: 120,
+      focusRadius: 40,
+      focusFalloff: 80,
+      screenPixelRatio: 2,
+      sampleCount: 10,
+      bladeCount: 7,
+      bladeRotation: 0,
+      bokehRatio: 1,
+    })
+
+    const uniforms = material.userData.hyperMotionDofUniforms
+    expect(uniforms.hmFocusCenter.value.toArray()).toEqual([200, 120])
+    expect(uniforms.hmFocusRadius.value).toBe(40)
+    expect(uniforms.hmFocusFalloff.value).toBe(80)
+    expect(uniforms.hmScreenPixelRatio.value).toBe(2)
   })
 
   it('reinstalls uniforms after Fast Refresh leaves an older shader schema', () => {
@@ -154,6 +200,7 @@ describe('GPU depth-of-field policy', () => {
         focusY: 0,
         focusRadius: 0,
         focusFalloff: 1,
+        screenPixelRatio: 1,
         sampleCount: 6,
         bladeCount: 7,
         bladeRotation: 0,

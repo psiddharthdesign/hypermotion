@@ -34,6 +34,8 @@ export interface ResolvedCamera3D {
   farClip: number
   depthOfField: boolean
   focusMode: CameraNode['focusMode']
+  /** Authored point-focus center in top-left-origin composition pixels. */
+  focusScreen: { x: number; y: number }
   focusWorld: Vec3
   focusDistance: number
   focusRadius: number
@@ -171,6 +173,20 @@ export function resolveCamera3D(
   const basis = cameraBasisFromPosition(position, pointOfInterest, -rotation.z)
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
+  const focusScreen = {
+    x:
+      animated?.focusX ??
+      animated?.focusWorldX ??
+      camera.focusX ??
+      camera.focusWorldX ??
+      camera.transform.x,
+    y:
+      animated?.focusY ??
+      animated?.focusWorldY ??
+      camera.focusY ??
+      camera.focusWorldY ??
+      camera.transform.y,
+  }
   const authoredFocusWorld = {
     x:
       animated?.focusWorldX ??
@@ -224,6 +240,7 @@ export function resolveCamera3D(
     farClip,
     depthOfField: camera.depthOfField ?? false,
     focusMode,
+    focusScreen,
     focusWorld,
     focusDistance: focusDepth,
     focusRadius: Math.max(1, animated?.focusRadius ?? camera.focusRadius ?? 160),
