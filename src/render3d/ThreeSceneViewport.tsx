@@ -652,11 +652,11 @@ const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
 /**
  * Return only animated values that alter this plane's bitmap.
  *
- * The plane root's transform and (for self planes) opacity are represented by
- * the Three mesh, so those values must not trigger a multi-megapixel Canvas2D
- * repaint. Descendant animation inside a flattened subtree does affect its
- * pixels and is included. Extracted 3D/video stacks own separate planes and
- * are skipped exactly as the subtree painter skips them.
+ * The plane root's transform and opacity are represented by the Three mesh,
+ * so those values must not trigger a multi-megapixel Canvas2D repaint.
+ * Descendant animation inside a flattened subtree does affect its pixels and
+ * is included. Extracted 3D/video stacks own separate planes and are skipped
+ * exactly as the subtree painter skips them.
  */
 function planeTextureAnimationSignature(
   api: SceneAPI,
@@ -684,8 +684,7 @@ function planeTextureAnimationSignature(
         if (key === 'textAnimation') continue
         if (
           isRoot &&
-          !SELF_TEXTURE_ANIMATION_KEYS.has(key as keyof AnimatedValue) &&
-          !(plane.contentMode === 'subtree' && key === 'opacity')
+          !SELF_TEXTURE_ANIMATION_KEYS.has(key as keyof AnimatedValue)
         ) {
           continue
         }
@@ -1616,7 +1615,14 @@ function paintNodeIntoSubtree(
   const scaleX = applyOwnTransform ? anim?.scaleX ?? node.transform.scaleX ?? 1 : 1
   const scaleY = applyOwnTransform ? anim?.scaleY ?? node.transform.scaleY ?? 1 : 1
   ctx.save()
-  ctx.globalAlpha *= (anim?.opacity ?? node.appearance.opacity ?? 1) * inherited.opacity
+  // The emitted plane root's opacity is a GPU material uniform. Applying it
+  // here as well would double the fade, while changing this bitmap every frame
+  // defeats the realtime material path. Descendant nodes still compose their
+  // own opacity into the flattened texture normally.
+  const ownOpacity = applyOwnTransform
+    ? anim?.opacity ?? node.appearance.opacity ?? 1
+    : 1
+  ctx.globalAlpha *= ownOpacity * inherited.opacity
   const previousComposite = ctx.globalCompositeOperation
   ctx.globalCompositeOperation = canvasCompositeForBlendMode(
     node.appearance.blendMode,

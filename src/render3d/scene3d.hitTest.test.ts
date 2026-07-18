@@ -188,3 +188,114 @@ describe('hierarchical WebGL visibility', () => {
     expect(buildWorldPlanes(api, layout, {}, resolvedCamera)).toEqual([])
   })
 })
+
+describe('hierarchical WebGL opacity', () => {
+  it.each([
+    ['flat', 'flat'],
+    ['3D plane', 'plane'],
+    ['3D group', 'group3d'],
+  ] as const)(
+    'keeps animated opacity on the %s plane material',
+    (_label, renderMode) => {
+      const api = createSceneAPI()
+      const rootId = api.createNode('frame', null, {
+        name: 'Root',
+        size: { width: 960, height: 540 },
+      })
+      const cardId = api.createNode('frame', rootId, {
+        name: 'Card',
+        size: { width: 300, height: 200 },
+        transform: {
+          x: 0,
+          y: 0,
+          z: 0,
+          rotation: 0,
+          rotationX: 0,
+          rotationY: 0,
+          scaleX: 1,
+          scaleY: 1,
+          anchorX: 0.5,
+          anchorY: 0.5,
+          anchorZ: 0,
+          renderMode,
+        },
+      })
+      const layout: SolvedLayout = {
+        [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+        [cardId]: { x: 100, y: 100, width: 300, height: 200 },
+      }
+      const camera = api.getActiveCamera()
+      if (!camera) throw new Error('Expected the default camera')
+      const resolvedCamera = resolveCamera3D(camera, undefined, {
+        width: 960,
+        height: 540,
+      })
+
+      const opacityAt = (opacity: number) =>
+        buildWorldPlanes(
+          api,
+          layout,
+          { [cardId]: { opacity } },
+          resolvedCamera,
+        ).find((plane) => plane.nodeId === cardId)?.opacity
+
+      expect(opacityAt(0)).toBe(0)
+      expect(opacityAt(0.5)).toBe(0.5)
+      expect(opacityAt(1)).toBe(1)
+    },
+  )
+
+  it('multiplies a 3D group fade through each independently emitted child', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const groupId = api.createNode('frame', rootId, {
+      name: 'Group',
+      size: { width: 300, height: 200 },
+      transform: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rotation: 0,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+        anchorX: 0.5,
+        anchorY: 0.5,
+        anchorZ: 0,
+        renderMode: 'group3d',
+      },
+    })
+    const cardId = api.createNode('rect', groupId, {
+      name: 'Nested card',
+      size: { width: 120, height: 80 },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [groupId]: { x: 100, y: 100, width: 300, height: 200 },
+      [cardId]: { x: 140, y: 140, width: 120, height: 80 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+
+    const planes = buildWorldPlanes(
+      api,
+      layout,
+      {
+        [groupId]: { opacity: 0.5 },
+        [cardId]: { opacity: 0.4 },
+      },
+      resolvedCamera,
+    )
+
+    expect(planes.find((plane) => plane.nodeId === groupId)?.opacity).toBe(0.5)
+    expect(planes.find((plane) => plane.nodeId === cardId)?.opacity).toBeCloseTo(0.2)
+  })
+})

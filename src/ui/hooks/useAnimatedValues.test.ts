@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from 'vitest'
+import { getAnimEngine } from '@/anim/engine'
+import { createSceneAPI } from '@/scene/doc'
 import { createAnimatedSnapshotSelector } from './useAnimatedValues'
 
 describe('animated snapshot selection', () => {
@@ -22,6 +24,37 @@ describe('animated snapshot selection', () => {
     expect(held).toBe(first)
     expect(changed).not.toBe(first)
     expect(changed['scene-node']?.opacity).toBe(0.75)
+  })
+
+  it('exposes every intermediate engine opacity snapshot to a scene leaf', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('frame', null)
+    api.setTrack({
+      id: 'opacity-track',
+      nodeId,
+      propertyId: 'appearance.opacity',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'start', time: 0, value: 0 },
+        { id: 'end', time: 1, value: 1 },
+      ],
+    })
+    const engine = getAnimEngine()
+    const selectNode = createAnimatedSnapshotSelector([nodeId])
+    engine.attach(api)
+
+    engine.seek(0.25)
+    const first = selectNode(engine.getSnapshot())
+    engine.seek(0.5)
+    const middle = selectNode(engine.getSnapshot())
+    engine.seek(0.75)
+    const last = selectNode(engine.getSnapshot())
+
+    expect(first[nodeId]?.opacity).toBeCloseTo(0.25)
+    expect(middle[nodeId]?.opacity).toBeCloseTo(0.5)
+    expect(last[nodeId]?.opacity).toBeCloseTo(0.75)
+    expect(middle).not.toBe(first)
+    expect(last).not.toBe(middle)
   })
 
   it('publishes every intermediate camera focus position to overlay leaves', () => {

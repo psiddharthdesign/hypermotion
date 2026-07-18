@@ -6,6 +6,33 @@ import type { Track } from '@/scene'
 import { getAnimEngine } from '@/anim/engine'
 
 describe('animation engine track preview', () => {
+  it('publishes intermediate opacity for a 0 to 1 fade track', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('frame', null)
+    api.setTrack({
+      id: 'opacity-track',
+      nodeId,
+      propertyId: 'appearance.opacity',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'start', time: 0, value: 0 },
+        { id: 'end', time: 1, value: 1 },
+      ],
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+
+    engine.seek(0)
+    expect(engine.getSnapshot()[nodeId]?.opacity).toBe(0)
+    engine.seek(0.25)
+    expect(engine.getSnapshot()[nodeId]?.opacity).toBeCloseTo(0.25)
+    engine.seek(0.5)
+    expect(engine.getSnapshot()[nodeId]?.opacity).toBeCloseTo(0.5)
+    engine.seek(1)
+    expect(engine.getSnapshot()[nodeId]?.opacity).toBe(1)
+  })
+
   it('evaluates transient keyframe timing without mutating the scene', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('rect', null)

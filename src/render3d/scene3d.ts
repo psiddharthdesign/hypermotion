@@ -521,7 +521,14 @@ export function buildWorldPlanes(
         rect,
         contentMode,
         paintOrder: planes.length,
-        opacity: contentMode === 'subtree' ? inherited.opacity : nextInherited.opacity,
+        // Opacity belongs to the emitted plane, irrespective of whether its
+        // pixels come from the node itself or a flattened subtree. Baking a
+        // subtree root's animated opacity into a CanvasTexture forced a full
+        // bitmap repaint/upload on every fade frame and could visibly jump
+        // from the first value to the last. Descendant opacity still paints
+        // into the subtree texture; the emitted root + ancestor chain is
+        // represented once by this material opacity.
+        opacity: nextInherited.opacity,
         center,
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
