@@ -122,4 +122,39 @@ describe('camera depth-of-field model', () => {
       bokehRatio: 1,
     })
   })
+
+  it('evaluates every intermediate point-focus position', () => {
+    const { api, camera } = activeCamera()
+    api.doc.transact(() => {
+      api.setTrack({
+        id: 'focus-x',
+        nodeId: camera.id,
+        propertyId: 'camera.focusX',
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: 'focus-x-start', time: 0, value: 100 },
+          { id: 'focus-x-end', time: 2, value: 500 },
+        ],
+      })
+      api.setTrack({
+        id: 'focus-y',
+        nodeId: camera.id,
+        propertyId: 'camera.focusY',
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: 'focus-y-start', time: 0, value: 80 },
+          { id: 'focus-y-end', time: 2, value: 280 },
+        ],
+      })
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(1)
+
+    expect(engine.getSnapshot()[camera.id]).toMatchObject({
+      focusX: 300,
+      focusY: 180,
+    })
+  })
 })

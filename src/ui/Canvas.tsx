@@ -82,6 +82,7 @@ import type { TextAnimationConfig } from '@/anim'
 import {
   cameraPreviewStore,
   cameraTransformPreview,
+  mergeCameraAnimationPreview,
 } from '@/ui/cameraPreviewStore'
 import { cameraWheelStartZ, cameraZFromWheel } from '@/ui/cameraWheel'
 
@@ -100,6 +101,31 @@ const EMPTY_SCENE_ANIMATION_IDS: NodeId[] = []
 const subscribeToNothing = () => () => {}
 const getNoCameraPreview = () => undefined
 
+/**
+ * Subscribe one small render leaf to the camera engine + transient gesture
+ * preview. Canvas intentionally avoids these per-frame subscriptions because
+ * reconciling the whole editor at 60fps is expensive; camera-owned overlays
+ * must opt in directly instead.
+ */
+function useLiveCameraAnimatedValue(cameraId: NodeId) {
+  const cameraAnimationIds = useMemo(() => [cameraId], [cameraId])
+  const cameraAnimated = useAnimatedValues(cameraAnimationIds)
+  const cameraPreviewSnapshot = useSyncExternalStore(
+    cameraPreviewStore.subscribe,
+    cameraPreviewStore.getSnapshot,
+    cameraPreviewStore.getSnapshot,
+  )
+  const cameraPreview =
+    cameraPreviewSnapshot?.cameraId === cameraId
+      ? cameraPreviewSnapshot.value
+      : undefined
+  const cameraAnim = useMemo<AnimatedValue | undefined>(() => {
+    const engineValue = cameraAnimated[cameraId]
+    return mergeCameraAnimationPreview(engineValue, cameraPreview)
+  }, [cameraId, cameraPreview, cameraAnimated])
+  return { cameraAnim, cameraPreview }
+}
+
 /** Keep camera rAF updates inside the tiny WebGL leaf, not all of Canvas. */
 const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   camera,
@@ -107,25 +133,10 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   ...props
 }: AnimatedThreeSceneViewportProps) {
   const sceneAnimated = useAnimatedValues(animationIds)
-  const cameraAnimationIds = useMemo(() => [camera.id], [camera.id])
-  const cameraAnimated = useAnimatedValues(cameraAnimationIds)
+  const { cameraAnim, cameraPreview } = useLiveCameraAnimatedValue(camera.id)
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
   )
-  const cameraPreviewSnapshot = useSyncExternalStore(
-    cameraPreviewStore.subscribe,
-    cameraPreviewStore.getSnapshot,
-    cameraPreviewStore.getSnapshot,
-  )
-  const cameraPreview =
-    cameraPreviewSnapshot?.cameraId === camera.id
-      ? cameraPreviewSnapshot.value
-      : undefined
-  const cameraAnim = useMemo<AnimatedValue | undefined>(() => {
-    const engineValue = cameraAnimated[camera.id]
-    if (!cameraPreview) return engineValue
-    return { ...engineValue, ...cameraPreview }
-  }, [camera.id, cameraPreview, cameraAnimated])
   // Camera tracks already publish one animation snapshot per engine frame.
   // Read the engine-owned time during that render instead of subscribing this
   // WebGL leaf to the slower 15 Hz UI mirror as a second render source.
@@ -1075,8 +1086,22 @@ export function Canvas() {
     cameraId: NodeId
     startX: number
     startY: number
+    startPointerViewportX: number
+    startPointerViewportY: number
+    startPointerCanvasX: number
+    startPointerCanvasY: number
+    startPatch: Record<string, number>
     latestPatch: Record<string, number>
+    startPlayhead: number
+    startPerfTime: number
+    lastSampleTime: number
+    didStampStart: boolean
     moved: boolean
+    samples: Array<{
+      time: number
+      patch: Record<string, number>
+      mode: 'record' | 'active-track'
+    }>
   } | null>(null)
   const lastCanvasPressRef = useRef<CanvasPress | null>(null)
 
@@ -1187,9 +1212,52 @@ export function Canvas() {
     ],
   )
 
+  const maybeStampFocusMaskSample = useCallback(
+    (
+      drag: NonNullable<typeof focusMaskDragRef.current>,
+      nextPatch: Record<string, number>,
+    ) => {
+      const ui = useUI.getState()
+      if (!ui.recording && !ui.playing) return
+
+      if (ui.recording && !drag.didStampStart) {
+        drag.samples.push({
+          time: drag.startPlayhead,
+          patch: drag.startPatch,
+          mode: 'record',
+        })
+        drag.didStampStart = true
+      }
+
+      const sampleTime = ui.playing
+        ? currentAnimationAuthorTime()
+        : Math.min(
+            duration,
+            drag.startPlayhead +
+              (performance.now() - drag.startPerfTime) / 1000,
+          )
+      // Pointer packets can be much faster than the composition frame rate.
+      // Preserve the authored path without creating redundant sub-frame keys.
+      if (Math.abs(sampleTime - drag.lastSampleTime) < frameStep * 0.75) {
+        return
+      }
+      drag.samples.push({
+        time: sampleTime,
+        patch: nextPatch,
+        mode: ui.recording ? 'record' : 'active-track',
+      })
+      drag.lastSampleTime = sampleTime
+    },
+    [currentAnimationAuthorTime, duration, frameStep],
+  )
+
   const stampCanvasCameraPatch = useCallback(
-    (nodeId: NodeId, patch: Record<string, unknown>) => {
-      stampCanvasPatch(nodeId, 'camera', patch)
+    (
+      nodeId: NodeId,
+      patch: Record<string, unknown>,
+      time?: number,
+    ) => {
+      stampCanvasPatch(nodeId, 'camera', patch, time)
     },
     [stampCanvasPatch],
   )
@@ -1539,71 +1607,96 @@ export function Canvas() {
     ],
   )
 
-  const focusPatchFromClientPoint = useCallback(
+  const focusPatchFromDragPoint = useCallback(
     (
-      cameraNode: CameraNode,
+      drag: NonNullable<typeof focusMaskDragRef.current>,
       clientX: number,
       clientY: number,
     ): Record<string, number> | null => {
       const viewportPoint = clientToViewport(clientX, clientY)
       const canvasPoint = clientToCanvas(clientX, clientY)
       if (!viewportPoint || !canvasPoint) return null
-      const focusWorld = {
-        x: canvasPoint.x,
-        y: canvasPoint.y,
-        z: cameraNode.focusWorldZ ?? cameraNode.focusDistance ?? 0,
-      }
       return {
-        focusX: viewportPoint.x,
-        focusY: viewportPoint.y,
-        focusWorldX: focusWorld.x,
-        focusWorldY: focusWorld.y,
-        focusWorldZ: focusWorld.z,
-        focusDistance: focusWorld.z,
+        focusX:
+          drag.startPatch.focusX +
+          viewportPoint.x -
+          drag.startPointerViewportX,
+        focusY:
+          drag.startPatch.focusY +
+          viewportPoint.y -
+          drag.startPointerViewportY,
+        focusWorldX:
+          drag.startPatch.focusWorldX +
+          canvasPoint.x -
+          drag.startPointerCanvasX,
+        focusWorldY:
+          drag.startPatch.focusWorldY +
+          canvasPoint.y -
+          drag.startPointerCanvasY,
       }
     },
     [clientToCanvas, clientToViewport],
   )
 
-  const applyFocusMaskPatch = useCallback(
+  const persistFocusMaskPatch = useCallback(
     (cameraNode: CameraNode, patch: Record<string, number>) => {
-      api.doc.transact(() => {
-        api.setNodeProperty(cameraNode.id, 'focusX', patch.focusX)
-        api.setNodeProperty(cameraNode.id, 'focusY', patch.focusY)
-        api.setNodeProperty(cameraNode.id, 'focusWorldX', patch.focusWorldX)
-        api.setNodeProperty(cameraNode.id, 'focusWorldY', patch.focusWorldY)
-        api.setNodeProperty(cameraNode.id, 'focusWorldZ', patch.focusWorldZ)
-        api.setNodeProperty(cameraNode.id, 'focusDistance', patch.focusDistance)
-        api.setNodeProperty(cameraNode.id, 'focusMode', 'screen')
-        api.setNodeProperty(cameraNode.id, 'focusTargetNodeId', null)
-      })
+      api.setNodeProperty(cameraNode.id, 'focusX', patch.focusX)
+      api.setNodeProperty(cameraNode.id, 'focusY', patch.focusY)
+      api.setNodeProperty(cameraNode.id, 'focusWorldX', patch.focusWorldX)
+      api.setNodeProperty(cameraNode.id, 'focusWorldY', patch.focusWorldY)
+      api.setNodeProperty(cameraNode.id, 'focusMode', 'screen')
+      api.setNodeProperty(cameraNode.id, 'focusTargetNodeId', null)
     },
     [api],
   )
 
   const onFocusMaskPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>) => {
+    (
+      e: React.PointerEvent<HTMLButtonElement>,
+      focus: Pick<
+        CameraDepthOfField,
+        'focusX' | 'focusY' | 'focusWorldX' | 'focusWorldY'
+      >,
+    ) => {
       if (e.button !== 0 || !camera || camera.kind !== 'camera') return
-      const patch = focusPatchFromClientPoint(camera, e.clientX, e.clientY)
-      if (!patch) return
+      const viewportPoint = clientToViewport(e.clientX, e.clientY)
+      const canvasPoint = clientToCanvas(e.clientX, e.clientY)
+      if (!viewportPoint || !canvasPoint) return
+      const startPatch = {
+        focusX: focus.focusX,
+        focusY: focus.focusY,
+        focusWorldX: focus.focusWorldX,
+        focusWorldY: focus.focusWorldY,
+      }
+      const authorTime = currentAnimationAuthorTime()
       focusMaskDragRef.current = {
         pointerId: e.pointerId,
         cameraId: camera.id,
         startX: e.clientX,
         startY: e.clientY,
-        latestPatch: patch,
+        startPointerViewportX: viewportPoint.x,
+        startPointerViewportY: viewportPoint.y,
+        startPointerCanvasX: canvasPoint.x,
+        startPointerCanvasY: canvasPoint.y,
+        startPatch,
+        latestPatch: startPatch,
+        startPlayhead: authorTime,
+        startPerfTime: performance.now(),
+        lastSampleTime: authorTime,
+        didStampStart: false,
         moved: false,
+        samples: [],
       }
-      applyFocusMaskPatch(camera, patch)
       setSelection([camera.id])
       e.currentTarget.setPointerCapture(e.pointerId)
       e.preventDefault()
       e.stopPropagation()
     },
     [
-      applyFocusMaskPatch,
       camera,
-      focusPatchFromClientPoint,
+      clientToCanvas,
+      clientToViewport,
+      currentAnimationAuthorTime,
       setSelection,
     ],
   )
@@ -1617,35 +1710,96 @@ export function Canvas() {
       const dx = e.clientX - drag.startX
       const dy = e.clientY - drag.startY
       if (!drag.moved && Math.hypot(dx, dy) < 1) return
-      const patch = focusPatchFromClientPoint(focusCamera, e.clientX, e.clientY)
+      const patch = focusPatchFromDragPoint(drag, e.clientX, e.clientY)
       if (!patch) return
       drag.moved = true
       drag.latestPatch = patch
-      applyFocusMaskPatch(focusCamera, patch)
+      maybeStampFocusMaskSample(drag, patch)
+      cameraPreviewStore.set(focusCamera.id, patch)
       e.preventDefault()
       e.stopPropagation()
     },
-    [api, applyFocusMaskPatch, focusPatchFromClientPoint],
+    [api, focusPatchFromDragPoint, maybeStampFocusMaskSample],
   )
 
   const onFocusMaskPointerUp = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
+    (e: React.PointerEvent<HTMLElement>) => {
       const drag = focusMaskDragRef.current
       if (!drag || e.pointerId !== drag.pointerId) return
       const focusCamera = api.getNode(drag.cameraId)
       if (drag.moved && focusCamera?.kind === 'camera') {
-        stampCanvasCameraPatch(focusCamera.id, drag.latestPatch)
+        const ui = useUI.getState()
+        const releaseTime = ui.playing
+          ? currentAnimationAuthorTime()
+          : ui.recording
+            ? Math.min(
+                duration,
+                drag.startPlayhead +
+                  (performance.now() - drag.startPerfTime) / 1000,
+              )
+            : ui.playhead
+        // The entire gesture stays outside Yjs until release. This one durable
+        // transaction prevents every pointer packet from invalidating Yoga,
+        // scene planes, textures, and the animation engine track cache.
+        api.doc.transact(() => {
+          persistFocusMaskPatch(focusCamera, drag.latestPatch)
+          for (const sample of drag.samples) {
+            if (sample.mode === 'record') {
+              recordKeyframesForPatch(
+                api,
+                focusCamera.id,
+                sample.time,
+                'camera',
+                sample.patch,
+              )
+            } else {
+              stampToActiveTracksForPatch(
+                api,
+                focusCamera.id,
+                sample.time,
+                'camera',
+                sample.patch,
+              )
+            }
+          }
+          stampCanvasCameraPatch(
+            focusCamera.id,
+            drag.latestPatch,
+            releaseTime,
+          )
+        })
+        cameraPreviewStore.finish(focusCamera.id)
+      } else {
+        cameraPreviewStore.clear(drag.cameraId)
       }
       focusMaskDragRef.current = null
       try {
-        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+        e.currentTarget.releasePointerCapture(e.pointerId)
       } catch {
         /* already released */
       }
       e.preventDefault()
       e.stopPropagation()
     },
-    [api, stampCanvasCameraPatch],
+    [
+      api,
+      currentAnimationAuthorTime,
+      duration,
+      persistFocusMaskPatch,
+      stampCanvasCameraPatch,
+    ],
+  )
+
+  const onFocusMaskPointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const drag = focusMaskDragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+      focusMaskDragRef.current = null
+      cameraPreviewStore.clear(drag.cameraId)
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [],
   )
 
 	  const onBackgroundPointerDown = useCallback(
@@ -2917,15 +3071,15 @@ export function Canvas() {
             ) : null}
           </div>
         </div>
-        {previewCameraDepthOfField?.enabled &&
-        camera &&
+        {camera &&
         camera.kind === 'camera' &&
+        camera.depthOfField &&
         (camera.focusMode ?? 'screen') === 'screen' &&
         (selection.includes(camera.id) ||
           focusPickingCameraId === camera.id ||
           camera.showFocusPlane) ? (
-          <CameraFocusMaskOverlay
-            cameraDepthOfField={previewCameraDepthOfField}
+          <AnimatedCameraFocusMaskOverlay
+            camera={camera}
             canvasWidth={canvasWidth}
             canvasHeight={canvasHeight}
             zoom={view.zoom}
@@ -2935,6 +3089,7 @@ export function Canvas() {
             onHandlePointerDown={onFocusMaskPointerDown}
             onHandlePointerMove={onFocusMaskPointerMove}
             onHandlePointerUp={onFocusMaskPointerUp}
+            onHandlePointerCancel={onFocusMaskPointerCancel}
           />
         ) : null}
       </div>
@@ -3626,6 +3781,74 @@ function ScenePostProcessLayerImpl({
 export const ScenePostProcessLayer = memo(ScenePostProcessLayerImpl)
 ScenePostProcessLayer.displayName = 'ScenePostProcessLayer'
 
+/**
+ * The editor focus control follows camera tracks at the same rAF cadence as
+ * the WebGL blur. Keeping this subscription in a tiny leaf avoids reconciling
+ * Canvas, layout, selection, and the timeline for every animation frame.
+ */
+const AnimatedCameraFocusMaskOverlay = memo(
+  function AnimatedCameraFocusMaskOverlay({
+    camera,
+    canvasWidth,
+    canvasHeight,
+    ...overlayProps
+  }: {
+    camera: CameraNode
+    canvasWidth: number
+    canvasHeight: number
+    zoom: number
+    sceneCorner: number
+    onPointerMove: (e: React.PointerEvent<HTMLElement>) => void
+    onPointerUp: (e: React.PointerEvent<HTMLElement>) => void
+    onHandlePointerDown: (
+      e: React.PointerEvent<HTMLButtonElement>,
+      focus: Pick<
+        CameraDepthOfField,
+        'focusX' | 'focusY' | 'focusWorldX' | 'focusWorldY'
+      >,
+    ) => void
+    onHandlePointerMove: (e: React.PointerEvent<HTMLElement>) => void
+    onHandlePointerUp: (e: React.PointerEvent<HTMLElement>) => void
+    onHandlePointerCancel: (e: React.PointerEvent<HTMLElement>) => void
+  }) {
+    const { cameraAnim } = useLiveCameraAnimatedValue(camera.id)
+    const cameraScale = useMemo(() => {
+      const focalLength = Math.max(50, camera.focalLength ?? 1000)
+      const cameraDollyZ =
+        (cameraAnim?.z ?? camera.transform.z) / 100
+      return focalLength / Math.max(1, focalLength - cameraDollyZ)
+    }, [camera, cameraAnim?.z])
+    const depthOfField = useMemo(
+      () =>
+        computeCameraDepthOfField(
+          camera,
+          cameraAnim,
+          cameraScale,
+          canvasWidth,
+          canvasHeight,
+        ),
+      [
+        camera,
+        cameraAnim,
+        cameraScale,
+        canvasWidth,
+        canvasHeight,
+      ],
+    )
+    if (!depthOfField?.enabled || depthOfField.mode !== 'screen') return null
+
+    return (
+      <CameraFocusMaskOverlay
+        {...overlayProps}
+        cameraDepthOfField={depthOfField}
+        canvasWidth={canvasWidth}
+        canvasHeight={canvasHeight}
+      />
+    )
+  },
+)
+AnimatedCameraFocusMaskOverlay.displayName = 'AnimatedCameraFocusMaskOverlay'
+
 function CameraFocusMaskOverlay({
   cameraDepthOfField,
   canvasWidth,
@@ -3637,6 +3860,7 @@ function CameraFocusMaskOverlay({
   onHandlePointerDown,
   onHandlePointerMove,
   onHandlePointerUp,
+  onHandlePointerCancel,
 }: {
   cameraDepthOfField: CameraDepthOfField
   canvasWidth: number
@@ -3645,9 +3869,16 @@ function CameraFocusMaskOverlay({
   sceneCorner: number
   onPointerMove: (e: React.PointerEvent<HTMLElement>) => void
   onPointerUp: (e: React.PointerEvent<HTMLElement>) => void
-  onHandlePointerDown: (e: React.PointerEvent<HTMLButtonElement>) => void
+  onHandlePointerDown: (
+    e: React.PointerEvent<HTMLButtonElement>,
+    focus: Pick<
+      CameraDepthOfField,
+      'focusX' | 'focusY' | 'focusWorldX' | 'focusWorldY'
+    >,
+  ) => void
   onHandlePointerMove: (e: React.PointerEvent<HTMLElement>) => void
   onHandlePointerUp: (e: React.PointerEvent<HTMLElement>) => void
+  onHandlePointerCancel: (e: React.PointerEvent<HTMLElement>) => void
 }) {
   const safeZoom = Math.max(zoom, 0.001)
   const radius = Math.max(1, cameraDepthOfField.focusRadius)
@@ -3701,9 +3932,18 @@ function CameraFocusMaskOverlay({
         aria-label="Move camera focus"
         title="Move camera focus"
         className="pointer-events-auto absolute cursor-grab rounded-full border-0 bg-accent p-0 shadow-lg active:cursor-grabbing"
-        onPointerDown={onHandlePointerDown}
+        onPointerDown={(event) =>
+          onHandlePointerDown(event, {
+            focusX: cameraDepthOfField.focusX,
+            focusY: cameraDepthOfField.focusY,
+            focusWorldX: cameraDepthOfField.focusWorldX,
+            focusWorldY: cameraDepthOfField.focusWorldY,
+          })
+        }
         onPointerMove={onHandlePointerMove}
         onPointerUp={onHandlePointerUp}
+        onPointerCancel={onHandlePointerCancel}
+        onLostPointerCapture={onHandlePointerCancel}
         style={{
           left: x,
           top: y,

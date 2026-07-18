@@ -102,6 +102,15 @@ export function createCameraPreviewStore(): CameraPreviewStore {
 
 export const cameraPreviewStore = createCameraPreviewStore()
 
+/** A live gesture must win over an authored track until it is committed. */
+export function mergeCameraAnimationPreview(
+  engineValue: AnimatedValue | undefined,
+  previewValue: AnimatedValue | undefined,
+): AnimatedValue | undefined {
+  if (!previewValue) return engineValue
+  return { ...engineValue, ...previewValue }
+}
+
 export function cameraTransformPreview(
   transform: CameraNode['transform'],
 ): AnimatedValue {

@@ -23,4 +23,15 @@ describe('animated snapshot selection', () => {
     expect(changed).not.toBe(first)
     expect(changed['scene-node']?.opacity).toBe(0.75)
   })
+
+  it('publishes every intermediate camera focus position to overlay leaves', () => {
+    const selectCamera = createAnimatedSnapshotSelector(['camera'])
+    const start = selectCamera({ camera: { focusX: 100, focusY: 80 } })
+    const middle = selectCamera({ camera: { focusX: 300, focusY: 180 } })
+    const end = selectCamera({ camera: { focusX: 500, focusY: 280 } })
+
+    expect(middle).not.toBe(start)
+    expect(end).not.toBe(middle)
+    expect(middle.camera).toMatchObject({ focusX: 300, focusY: 180 })
+  })
 })
