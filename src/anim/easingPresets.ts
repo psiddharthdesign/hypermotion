@@ -5,16 +5,17 @@ import type { EasingKind } from '@/scene'
 /**
  * Named easing presets, Jitter-style.
  *
- * Each preset is a recipe that maps a single "strength" slider (0–100)
+ * Each preset is a recipe that maps a single "strength" slider (0–200)
  * onto a concrete EasingKind. The slider lets a designer dial the
  * feeling of an animation without ever touching bezier handles — they
  * pick a character ("Bounce", "Elastic") and slide to taste.
  *
  * How the endpoints were chosen: each preset has a "soft" curve at
- * strength=0 and a "strong" curve at strength=100. Bezier presets linearly
- * interpolate control points between the two; overshoot presets scale
- * their past-1.0 overshoot amount with strength. Calibrated against
- * Jitter's feel by eyeballing, not measured — refine as users complain.
+ * strength=0 and a "strong" curve at strength=100. The 100–200 range
+ * deliberately extrapolates that character for more extreme motion while
+ * keeping bezier time controls valid. Overshoot presets continue scaling
+ * beyond their old ceiling. Calibrated against Jitter's feel by eyeballing,
+ * not measured — refine as users complain.
  *
  * `None` is the linear escape hatch. `Custom` is a stub for a future
  * hand-editable bezier editor; for now it behaves like Smooth.
@@ -38,28 +39,46 @@ export interface EasingPresetDef {
   label: string
   /** Short tag shown in the preset tile. */
   hint: string
-  /** Builds an EasingKind from a 0–100 strength. */
+  /** Builds an EasingKind from a 0–200 strength. */
   build: (strength: number) => EasingKind
 }
 
-/** Lerp a 4-tuple bezier by factor t in [0, 1]. */
+export const MAX_EASING_STRENGTH = 200
+
+export function clampEasingStrength(strength: number): number {
+  if (!Number.isFinite(strength)) return 0
+  return Math.max(0, Math.min(MAX_EASING_STRENGTH, strength))
+}
+
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
+
+/** Lerp/extrapolate a 4-tuple bezier by factor t in [0, 2]. */
 function lerpBezier(
   a: [number, number, number, number],
   b: [number, number, number, number],
   t: number,
 ): [number, number, number, number] {
+  const lerp = (start: number, end: number) => start + (end - start) * t
+  const timeControl = (soft: number, strong: number) => {
+    if (t <= 1) return clamp01(lerp(soft, strong))
+    if (soft === strong) return clamp01(strong)
+    // Use the whole 100–200 range instead of hitting 0/1 early and then
+    // plateauing. At 200 the control reaches its directional boundary.
+    const boundary = strong > soft ? 1 : 0
+    return clamp01(strong + (boundary - strong) * (t - 1))
+  }
   return [
-    a[0] + (b[0] - a[0]) * t,
-    a[1] + (b[1] - a[1]) * t,
-    a[2] + (b[2] - a[2]) * t,
-    a[3] + (b[3] - a[3]) * t,
+    // Cubic-bezier time controls must remain within 0..1. Value controls
+    // intentionally remain unbounded so strength >100 can overshoot.
+    timeControl(a[0], b[0]),
+    lerp(a[1], b[1]),
+    timeControl(a[2], b[2]),
+    lerp(a[3], b[3]),
   ]
 }
 
-const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
-
-/** Strength 0–100 → 0–1 interp factor. */
-const s = (strength: number) => clamp01(strength / 100)
+/** Strength 0–200 → 0–2 interpolation/extrapolation factor. */
+const s = (strength: number) => clampEasingStrength(strength) / 100
 
 export const EASING_PRESETS: EasingPresetDef[] = [
   {

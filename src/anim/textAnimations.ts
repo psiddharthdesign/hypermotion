@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Fill } from '@/scene/types'
-import { findEasingPreset, type EasingPresetId } from './easingPresets'
+import {
+  clampEasingStrength,
+  findEasingPreset,
+  type EasingPresetId,
+} from './easingPresets'
 import type { SceneAPI } from '@/scene/doc'
 import type { EasingKind, Keyframe, NodeId, Track, TrackId } from '@/scene/types'
 
@@ -298,7 +302,9 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
     startTime: Math.max(0, finiteNumber(value.startTime, base.startTime)),
     acceleration: isAcceleration(value.acceleration) ? value.acceleration : base.acceleration,
     easingPresetId: isEasingPresetId(value.easingPresetId) ? value.easingPresetId : base.easingPresetId,
-    easingStrength: Math.max(0, Math.min(100, finiteNumber(value.easingStrength, base.easingStrength))),
+    easingStrength: clampEasingStrength(
+      finiteNumber(value.easingStrength, base.easingStrength),
+    ),
     customEasing: isEasingKind(value.customEasing) ? value.customEasing : base.customEasing,
     direction: isDirection(value.direction) ? value.direction : base.direction,
     travelDistance: Math.max(0, finiteNumber(value.travelDistance, base.travelDistance)),

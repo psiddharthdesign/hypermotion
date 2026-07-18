@@ -3,7 +3,9 @@
 import { useMemo } from 'react'
 import {
   EASING_PRESETS,
+  MAX_EASING_STRENGTH,
   bezierOf,
+  clampEasingStrength,
   type EasingPresetId,
 } from '@/anim'
 import type { EasingKind } from '@/scene'
@@ -12,14 +14,14 @@ import type { EasingKind } from '@/scene'
  * Jitter-style easing picker.
  *
  * Presented as a grid of preset tiles + a detail strip showing the
- * selected preset's curve preview and a strength slider (0–100).
+ * selected preset's curve preview and a strength slider (0–200).
  *
  * Design choices:
  *   - Preset choice lives OUTSIDE the picker (owner decides what to do
  *     with the resulting EasingKind — it could write to the selected
  *     keyframe's easingOut, or a track's defaultEasing, or a preset
  *     application's default). That keeps the picker reusable.
- *   - Strength is always a 0–100 integer. Each preset interprets it
+ *   - Strength is always a 0–200 integer. Each preset interprets it
  *     differently (see easingPresets.ts); from the picker's POV the
  *     only contract is "build(strength) → EasingKind".
  *   - Curve preview is a 60×60 SVG drawn from the bezier control points.
@@ -58,16 +60,21 @@ export function EasingPicker({
     [allowedKey],
   )
   const current = presets.find((p) => p.id === presetId) ?? presets[0] ?? EASING_PRESETS[0]!
-  const easing = current.build(strength)
+  const safeStrength = clampEasingStrength(strength)
+  const easing = current.build(safeStrength)
   const curve = bezierOf(easing)
 
   const pickPreset = (id: EasingPresetId) => {
     const def = presets.find((p) => p.id === id) ?? current
-    onChange({ presetId: id, strength, easing: def.build(strength) })
+    onChange({
+      presetId: id,
+      strength: safeStrength,
+      easing: def.build(safeStrength),
+    })
   }
 
   const pickStrength = (n: number) => {
-    const clamped = Math.max(0, Math.min(100, n))
+    const clamped = clampEasingStrength(n)
     onChange({ presetId, strength: clamped, easing: current.build(clamped) })
   }
 
@@ -85,7 +92,7 @@ export function EasingPicker({
       <div className="grid grid-cols-3 gap-1 p-2">
         {presets.map((p) => {
           const active = p.id === presetId
-          const curveForTile = bezierOf(p.build(strength))
+          const curveForTile = bezierOf(p.build(safeStrength))
           return (
             <button
               key={p.id}
@@ -117,23 +124,23 @@ export function EasingPicker({
                 {current.label}
               </span>
               <span className="font-mono text-[10px] text-text-dim tabular-nums">
-                {strengthDisabled ? '—' : Math.round(strength)}
+                {strengthDisabled ? '—' : `${Math.round(safeStrength)}%`}
               </span>
             </div>
             <div className="mt-2">
               <input
                 type="range"
                 min={0}
-                max={100}
+                max={MAX_EASING_STRENGTH}
                 step={1}
-                value={strengthDisabled ? 0 : strength}
+                value={strengthDisabled ? 0 : safeStrength}
                 disabled={strengthDisabled}
                 onChange={(e) => pickStrength(parseInt(e.currentTarget.value, 10))}
                 className="h-1 w-full appearance-none rounded-full bg-border accent-accent disabled:opacity-40"
               />
               <div className="mt-1 flex justify-between font-mono text-[9px] text-text-dim">
                 <span>Soft</span>
-                <span>Strong</span>
+                <span>Extreme</span>
               </div>
             </div>
           </div>
@@ -162,11 +169,12 @@ function CurvePreview({
   const [ex, ey] = map(1, 1)
   const [c1x, c1y] = map(x1, y1)
   const [c2x, c2y] = map(x2, y2)
+  const viewBox = curveViewBox(curve, W, H, 0.2, 0.12)
   return (
     <svg
       width={W}
       height={H}
-      viewBox={`${-W * 0.2} ${-H * 0.2} ${W * 1.4} ${H * 1.4}`}
+      viewBox={viewBox}
       className="flex-shrink-0 rounded border border-border bg-panel"
     >
       {/* Bounding box and baseline. */}
@@ -238,11 +246,12 @@ function CurveMini({
   const [ex, ey] = map(1, 1)
   const [c1x, c1y] = map(x1, y1)
   const [c2x, c2y] = map(x2, y2)
+  const viewBox = curveViewBox(curve, W, H, 0.15, 0.18)
   return (
     <svg
       width="100%"
       height={H}
-      viewBox={`${-W * 0.15} ${-H * 0.4} ${W * 1.3} ${H * 1.8}`}
+      viewBox={viewBox}
       preserveAspectRatio="none"
       className="h-5 w-full"
     >
@@ -256,4 +265,25 @@ function CurveMini({
       />
     </svg>
   )
+}
+
+/** Keep endpoints and unbounded value handles visible at strengths up to 200. */
+function curveViewBox(
+  curve: [number, number, number, number],
+  width: number,
+  height: number,
+  xPadding: number,
+  yPadding: number,
+): string {
+  const [, y1, , y2] = curve
+  const ys = [height, 0, height * (1 - y1), height * (1 - y2)]
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const padY = Math.max(height * yPadding, (maxY - minY) * 0.06)
+  return [
+    -width * xPadding,
+    minY - padY,
+    width * (1 + xPadding * 2),
+    maxY - minY + padY * 2,
+  ].join(' ')
 }

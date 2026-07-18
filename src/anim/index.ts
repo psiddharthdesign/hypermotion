@@ -45,6 +45,8 @@ export {
 } from './recordKeyframes'
 export {
   EASING_PRESETS,
+  MAX_EASING_STRENGTH,
+  clampEasingStrength,
   findEasingPreset,
   bezierOf,
   type EasingPresetId,
