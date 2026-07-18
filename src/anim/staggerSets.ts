@@ -252,25 +252,27 @@ function adoptStaggerSetPropertyTrackFromMember(
   }
 
   const set = cloneSet(existing)
-  let adoption: AdoptedStaggerPropertyTrack | null = null
+  const outcome: { adoption: AdoptedStaggerPropertyTrack | null } = {
+    adoption: null,
+  }
   api.doc.transact(() => {
-    adoption = adoptStaggerPropertyTrackIntoSet(
+    outcome.adoption = adoptStaggerPropertyTrackIntoSet(
       api,
       set,
       memberNodeId,
       propertyId,
     )
-    if (!adoption) return
+    if (!outcome.adoption) return
     writeStaggerSet(api, setId, set)
-    if (adoption.maxTime > api.getMeta().duration) {
-      api.setMeta({ duration: adoption.maxTime })
+    if (outcome.adoption.maxTime > api.getMeta().duration) {
+      api.setMeta({ duration: outcome.adoption.maxTime })
     }
   }, UNDOABLE_GESTURE_ORIGIN)
 
-  if (!adoption) return null
+  if (!outcome.adoption) return null
   return {
     action: 'added',
-    trackIds: adoption.trackIds,
+    trackIds: outcome.adoption.trackIds,
     set,
   }
 }

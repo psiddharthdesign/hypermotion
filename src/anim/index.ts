@@ -32,7 +32,13 @@ export {
   findKeyframeAt,
   toggleKeyframe,
 } from './tracks'
-export { PRESETS, applyPreset, type AnimPresetId } from './presets'
+export {
+  PRESETS,
+  applyPreset,
+  planLayerPresetTargets,
+  type AnimPresetId,
+  type LayerPresetTargetPlan,
+} from './presets'
 export {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
