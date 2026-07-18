@@ -10,7 +10,9 @@ import {
   type MultiKeyframeTarget,
 } from '@/anim/multiKeyframes'
 import {
+  inspectStaggerSetPropertyFromMember,
   inspectStaggerSetProperty,
+  toggleStaggerSetPropertyFromMember,
   toggleStaggerSetPropertyKeyframes,
 } from '@/anim/staggerSets'
 
@@ -60,15 +62,26 @@ export function KeyframeButton({
   )
   const playhead = pausedPlayhead ?? getAnimEngine().getPlayhead()
 
+  const staggerOn = useUI((state) => state.staggerOn)
+  const activeStaggerSetId = useUI((state) => state.activeStaggerSetId)
+  const staggerSummary =
+    staggerOn && activeStaggerSetId
+      ? inspectStaggerSetPropertyFromMember(
+          api,
+          activeStaggerSetId,
+          nodeId,
+          propertyId,
+          playhead,
+        )
+      : null
+
   const track = findTrack(api, nodeId, propertyId)
   const hasTrack = !!track && track.keyframes.length > 0
   const atPlayhead = findKeyframeAt(api, nodeId, propertyId, playhead)
 
-  const state: 'at' | 'track' | 'none' = atPlayhead
-    ? 'at'
-    : hasTrack
-      ? 'track'
-      : 'none'
+  const state: 'at' | 'partial' | 'track' | 'none' =
+    staggerSummary?.state ??
+    (atPlayhead ? 'at' : hasTrack ? 'track' : 'none')
 
   const disabled = currentValue === null || currentValue === undefined
 
@@ -77,16 +90,39 @@ export function KeyframeButton({
     const currentPlayhead = useUI.getState().playing
       ? getAnimEngine().getPlayhead()
       : useUI.getState().playhead
+    const ui = useUI.getState()
+    if (ui.staggerOn && ui.activeStaggerSetId) {
+      const result = toggleStaggerSetPropertyFromMember(
+        api,
+        ui.activeStaggerSetId,
+        nodeId,
+        propertyId,
+        currentPlayhead,
+        currentValue,
+      )
+      if (result) {
+        ui.setSelectedTrackIds(result.trackIds)
+        return
+      }
+    }
     toggleKeyframe(api, nodeId, propertyId, currentPlayhead, currentValue)
   }
 
   const title = disabled
     ? 'Set a numeric value to keyframe'
     : state === 'at'
-      ? `Remove keyframe at ${playhead.toFixed(2)}s`
-      : state === 'track'
-        ? `Add keyframe at ${playhead.toFixed(2)}s`
-        : `Add first keyframe (creates track)`
+      ? staggerSummary
+        ? `Remove ${propertyId} from all ${staggerSummary.targetCount} stagger layers at ${playhead.toFixed(2)}s`
+        : `Remove keyframe at ${playhead.toFixed(2)}s`
+      : state === 'partial'
+        ? `Complete ${propertyId} across all ${staggerSummary?.targetCount ?? 0} stagger layers at ${playhead.toFixed(2)}s`
+        : state === 'track'
+          ? staggerSummary
+            ? `Add ${propertyId} across all ${staggerSummary.targetCount} stagger layers at ${playhead.toFixed(2)}s`
+            : `Add keyframe at ${playhead.toFixed(2)}s`
+          : staggerSummary
+            ? `Add ${propertyId} to all ${staggerSummary.targetCount} stagger layers`
+            : `Add first keyframe (creates track)`
 
   // Diamond = 45deg rotated square. `border` on all four sides renders
   // the outlined state uniformly; solid state swaps to `bg-*`. We keep
@@ -106,9 +142,11 @@ export function KeyframeButton({
           'block h-[9px] w-[9px] rotate-45 border transition-colors',
           state === 'at'
             ? 'border-keyframe bg-keyframe group-hover:brightness-125'
-            : state === 'track'
-              ? 'border-keyframe bg-transparent group-hover:bg-keyframe/40'
-              : 'border-text-dim/50 bg-transparent group-hover:border-keyframe group-hover:bg-keyframe/20',
+            : state === 'partial'
+              ? 'border-keyframe bg-keyframe/35 group-hover:bg-keyframe/55'
+              : state === 'track'
+                ? 'border-keyframe bg-transparent group-hover:bg-keyframe/40'
+                : 'border-text-dim/50 bg-transparent group-hover:border-keyframe group-hover:bg-keyframe/20',
           disabled ? 'opacity-40' : '',
         ].join(' ')}
       />
