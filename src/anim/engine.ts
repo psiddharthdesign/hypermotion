@@ -136,6 +136,11 @@ export interface AnimEngine {
   getSnapshot: () => Record<NodeId, AnimatedValue>
 }
 
+interface CompiledTextTrackGroup {
+  nodeId: NodeId
+  tracks: Track[]
+}
+
 // Module-scope singleton. Multiple components call `getAnimEngine`; the
 // engine is a lightweight coordinator, not something we want per-mount.
 let SINGLETON: AnimEngine | null = null
@@ -151,6 +156,7 @@ function createAnimEngine(): AnimEngine {
   let playing = false
   let rafHandle = 0
   let lastTick = 0
+  let snapshotElapsedMs = 0
   // Restrict play looping to a sub-range of the comp. Null = full
   // duration (the default). Set by useAnim to mirror UI-side
   // isolation. tick() wraps modulo this range when set.
@@ -168,11 +174,16 @@ function createAnimEngine(): AnimEngine {
   const evaluatorCache = new Map<string, EasingEvaluator>()
   let cachedVersion = -1
   let compiledTracks: Track[] = []
+  let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
   let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
   const tick = (now: number) => {
+    // The callback represented by this handle is running now, so there is no
+    // pending frame to cancel until we explicitly schedule the next one.
+    rafHandle = 0
     if (!playing || !api) return
-    const dt = lastTick === 0 ? 0 : (now - lastTick) / 1000
+    const dtMs = Math.max(0, now - lastTick)
+    const dt = dtMs / 1000
     lastTick = now
     const meta = api.getMeta()
     const next = playhead + dt
@@ -186,8 +197,6 @@ function createAnimEngine(): AnimEngine {
         if (playbackRange.mode === 'stop') {
           p = playbackRange.end
           playing = false
-          if (rafHandle) cancelAnimationFrame(rafHandle)
-          rafHandle = 0
         } else {
           const over = (p - playbackRange.start) % span
           p = playbackRange.start + over
@@ -197,8 +206,24 @@ function createAnimEngine(): AnimEngine {
     } else {
       playhead = next > meta.duration ? next % meta.duration : next
     }
-    recompute()
-    rafHandle = requestAnimationFrame(tick)
+    // The playhead follows the display clock exactly, but rebuilding React +
+    // WebGL more often than the composition can contain a distinct frame only
+    // duplicates work. On a 120 Hz monitor that previously rendered a 60 fps
+    // scene twice per frame and made complex text/DOF previews miss deadlines.
+    // Coalesce snapshot notifications to the authored frame rate (capped at
+    // the editor's 60 fps realtime budget); timeline markers continue reading
+    // the exact playhead from getPlayhead() on every display rAF.
+    snapshotElapsedMs += dtMs
+    const previewFrameRate = Math.max(
+      1,
+      Math.min(60, Number.isFinite(meta.frameRate) ? meta.frameRate : 60),
+    )
+    const snapshotIntervalMs = 1000 / previewFrameRate
+    if (!playing || snapshotElapsedMs + 0.25 >= snapshotIntervalMs) {
+      snapshotElapsedMs %= snapshotIntervalMs
+      recompute()
+    }
+    if (playing) rafHandle = requestAnimationFrame(tick)
   }
 
   const recompute = () => {
@@ -217,12 +242,29 @@ function createAnimEngine(): AnimEngine {
       // Track topology and keyframes only change with the scene version.
       // Compile once here instead of scanning every scene node and sorting
       // every keyframe array on every animation frame.
-      compiledTracks = api
-        .getAllTracks()
+      const nextTracks: Track[] = []
+      const textTracksByNode = new Map<NodeId, Track[]>()
+      for (const authoredTrack of api.getAllTracks()) {
         // Preserve the previous engine semantics: tracks targeting deleted
         // nodes are inert and must not reappear in the animated snapshot.
-        .filter((track) => !!api!.getNode(track.nodeId))
-        .map(compileTrack)
+        if (!api.getNode(authoredTrack.nodeId)) continue
+        const track = compileTrack(authoredTrack)
+        if (track.propertyId !== 'text.progress') {
+          nextTracks.push(track)
+          continue
+        }
+        let nodeTracks = textTracksByNode.get(track.nodeId)
+        if (!nodeTracks) {
+          nodeTracks = []
+          textTracksByNode.set(track.nodeId, nodeTracks)
+        }
+        nodeTracks.push(track)
+      }
+      compiledTracks = nextTracks
+      compiledTextTrackGroups = []
+      for (const [nodeId, tracks] of textTracksByNode) {
+        compiledTextTrackGroups.push({ nodeId, tracks })
+      }
     }
     const out: Record<NodeId, AnimatedValue> = {}
     for (const authoredTrack of compiledTracks) {
@@ -230,6 +272,17 @@ function createAnimEngine(): AnimEngine {
       const value = out[track.nodeId] ?? { ...EMPTY_VALUE }
       applyTrack(track, playhead, value, evaluatorCache)
       out[track.nodeId] = value
+    }
+    for (const group of compiledTextTrackGroups) {
+      const track = selectTextProgressTrack(
+        group.tracks,
+        trackPreview,
+        playhead,
+      )
+      if (!track) continue
+      const value = out[group.nodeId] ?? { ...EMPTY_VALUE }
+      applyTextProgressTrack(track, playhead, value, evaluatorCache)
+      out[group.nodeId] = value
     }
     snapshot = out
     notify()
@@ -244,6 +297,7 @@ function createAnimEngine(): AnimEngine {
       api = a
       cachedVersion = -1
       compiledTracks = []
+      compiledTextTrackGroups = []
       trackPreview = null
       // On any scene mutation (including track edits), refresh the
       // snapshot so the render layer stays coherent with the data.
@@ -267,7 +321,11 @@ function createAnimEngine(): AnimEngine {
         }
       }
       playing = true
-      lastTick = 0
+      // rAF timestamps and performance.now() share the same monotonic clock.
+      // Starting here preserves the real time before the first callback
+      // instead of repeating the starting pose for one display frame.
+      lastTick = performance.now()
+      snapshotElapsedMs = 0
       rafHandle = requestAnimationFrame(tick)
     },
     pause() {
@@ -275,10 +333,16 @@ function createAnimEngine(): AnimEngine {
       playing = false
       if (rafHandle) cancelAnimationFrame(rafHandle)
       rafHandle = 0
+      // The display-rate playhead can sit between two authored-frame snapshot
+      // publications. Flush that exact time before going idle so the paused
+      // canvas, inspector, and timeline never disagree by one frame.
+      snapshotElapsedMs = 0
+      recompute()
     },
     isPlaying: () => playing,
     seek(t) {
       playhead = Math.max(0, t)
+      snapshotElapsedMs = 0
       recompute()
     },
     setLoopRange(range) {
@@ -308,6 +372,58 @@ function createAnimEngine(): AnimEngine {
     },
     getSnapshot: () => snapshot,
   }
+}
+
+/**
+ * Pick the one semantic text clip that owns a node at `t`.
+ *
+ * Text effects are authored as separate `text.progress` tracks so an In,
+ * Return, and Out can coexist on the same layer. Applying every track makes
+ * document iteration order decide the result because semantic text tracks
+ * hold their endpoint outside their authored range. Ownership instead moves
+ * forward chronologically: the latest clip that has started wins, and before
+ * the first clip starts the earliest upcoming clip supplies its initial pose.
+ * Once a later clip starts it keeps ownership after ending, so a completed Out
+ * cannot snap back to an older, overlapping In.
+ *
+ * Groups are compiled only when the scene version changes. This selector does
+ * one allocation-free linear pass per animated text node and reads drag
+ * previews in place, avoiding per-frame filtering or sorting.
+ */
+function selectTextProgressTrack(
+  authoredTracks: readonly Track[],
+  trackPreview: ReadonlyMap<TrackId, Track> | null,
+  t: number,
+): Track | null {
+  let started: Track | null = null
+  let startedAt = Number.NEGATIVE_INFINITY
+  let upcoming: Track | null = null
+  let upcomingAt = Number.POSITIVE_INFINITY
+
+  for (const authoredTrack of authoredTracks) {
+    const track = trackPreview?.get(authoredTrack.id) ?? authoredTrack
+    if (track.keyframes.length < 2) continue
+    const start = track.keyframes[0]!.time
+    if (start <= t) {
+      if (
+        start > startedAt ||
+        (start === startedAt && (!started || track.id > started.id))
+      ) {
+        started = track
+        startedAt = start
+      }
+      continue
+    }
+    if (
+      start < upcomingAt ||
+      (start === upcomingAt && (!upcoming || track.id > upcoming.id))
+    ) {
+      upcoming = track
+      upcomingAt = start
+    }
+  }
+
+  return started ?? upcoming
 }
 
 function compileTrack(track: Track): Track {

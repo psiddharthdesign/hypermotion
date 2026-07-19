@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_TEXT_ANIMATION } from '@/anim/textAnimations'
+import {
+  DEFAULT_TEXT_ANIMATION,
+  applyTextAnimation,
+} from '@/anim/textAnimations'
 import { defaultTextMotionPath } from '@/anim/textMotionPath'
 import { createSceneAPI } from '@/scene/doc'
 import type { SolvedLayout } from '@/layout'
@@ -76,7 +79,89 @@ describe('direct nested-layer hit testing', () => {
   })
 })
 
-describe('stable spatial-text plane topology', () => {
+describe('stable animated-text plane topology', () => {
+  it('extracts stock letter staggers onto the atlas-backed segment path', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const cardId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const textId = api.createNode('text', cardId, {
+      name: 'Staggered label',
+      text: 'Smooth letters',
+      size: { width: 220, height: 48 },
+    })
+    const config = applyTextAnimation(api, textId, 'slide-up', 0)
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [cardId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 220, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+
+    expect(config).toMatchObject({
+      applyTo: 'letters',
+      motionVector: null,
+      motionPath: null,
+    })
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
+    expect(createPlaneBuildContext(api).segmentTextNodeIds.has(textId)).toBe(
+      true,
+    )
+
+    const planes = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+    expect(planes.map((plane) => plane.nodeId)).toEqual([cardId, textId])
+    expect(planes.find((plane) => plane.nodeId === textId)).toMatchObject({
+      renderKind: 'segment-text',
+      contentMode: 'self',
+      extractedFromParent: true,
+    })
+  })
+
+  it('extracts whole-layer text effects onto the atlas-backed segment path', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const textId = api.createNode('text', rootId, {
+      name: 'Layer fade',
+      text: 'Smooth layer',
+      size: { width: 220, height: 48 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        id: 'fade',
+        applyTo: 'layer',
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [textId]: { x: 140, y: 120, width: 220, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
+    expect(
+      buildWorldPlanes(
+        api,
+        layout,
+        {},
+        resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+      ).find((plane) => plane.nodeId === textId),
+    ).toMatchObject({ renderKind: 'segment-text' })
+  })
+
   it('extracts a Curve Drop path even without a straight XYZ vector', () => {
     const api = createSceneAPI()
     const rootId = api.createNode('frame', null, {
@@ -214,7 +299,7 @@ describe('stable spatial-text plane topology', () => {
     ])
   })
 
-  it('stays extracted while a legacy config is active if any stacked track has a vector', () => {
+  it('stays extracted after a stacked spatial track is removed', () => {
     const api = createSceneAPI()
     const rootId = api.createNode('frame', null, {
       name: 'Root',
@@ -228,7 +313,11 @@ describe('stable spatial-text plane topology', () => {
       name: 'Stacked label',
       text: 'Stacked label',
       size: { width: 180, height: 40 },
-      textAnimation: { ...DEFAULT_TEXT_ANIMATION, motionVector: null },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        applyTo: 'layer',
+        motionVector: null,
+      },
     })
     api.setTrack({
       id: 'spatial-text-track',
@@ -258,6 +347,7 @@ describe('stable spatial-text plane topology', () => {
     })
     const activeLegacyAnimation = {
       ...DEFAULT_TEXT_ANIMATION,
+      applyTo: 'layer' as const,
       motionVector: null,
     }
 
@@ -280,12 +370,12 @@ describe('stable spatial-text plane topology', () => {
     })
 
     api.deleteTrack('spatial-text-track')
-    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(false)
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
     expect(
       buildWorldPlanes(api, layout, {}, resolvedCamera).map(
         (plane) => plane.nodeId,
       ),
-    ).toEqual([parentId])
+    ).toEqual([parentId, textId])
   })
 
 })
@@ -622,10 +712,9 @@ describe('cached plane-build topology', () => {
       size: { width: 300, height: 200 },
     })
     const textId = api.createNode('text', cardId, {
-      name: 'Legacy label',
-      text: 'Legacy label',
+      name: 'Static label',
+      text: 'Static label',
       size: { width: 180, height: 40 },
-      textAnimation: { ...DEFAULT_TEXT_ANIMATION, motionVector: null },
     })
     const layout: SolvedLayout = {
       [rootId]: { x: 0, y: 0, width: 960, height: 540 },

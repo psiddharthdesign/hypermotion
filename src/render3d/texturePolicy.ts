@@ -6,6 +6,7 @@ const MAX_TEXTURE_SCALE = 2
 const MAX_TEXTURE_DIMENSION = 4096
 const MAX_EDITOR_FRAMEBUFFER_DIMENSION = 4096
 const MAX_EDITOR_FRAMEBUFFER_PIXELS = 12_000_000
+const MAX_PLAYBACK_FRAMEBUFFER_PIXELS = 2_500_000
 const VIEWPORT_PIXEL_RATIO_BUCKETS = [0.25, 0.5, 0.75, 1, 1.5, 2] as const
 
 export interface CachedPlaneTextureState {
@@ -53,6 +54,35 @@ export function viewportPixelRatioForZoom(
     [...VIEWPORT_PIXEL_RATIO_BUCKETS]
       .reverse()
       .find((bucket) => bucket <= boundedTarget) ?? 0.25
+  )
+}
+
+/**
+ * Bound the realtime drawing buffer independently of paused-preview quality.
+ * A full-resolution 4K framebuffer multiplied by text blur/DOF taps can block
+ * the compositor even when JavaScript is comfortably inside its frame budget.
+ * Playback therefore uses the closest lower density bucket at or below a
+ * ~2.5 MP target, then restores the authored zoom density as soon as it stops.
+ * Export never calls this policy and remains full quality.
+ */
+export function playbackPixelRatio(
+  previewPixelRatio: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): number {
+  const safeRatio = Number.isFinite(previewPixelRatio)
+    ? Math.max(0.25, Math.min(2, previewPixelRatio))
+    : 1
+  const safeWidth = Number.isFinite(canvasWidth) ? Math.max(1, canvasWidth) : 1
+  const safeHeight = Number.isFinite(canvasHeight) ? Math.max(1, canvasHeight) : 1
+  const pixelCapRatio = Math.sqrt(
+    MAX_PLAYBACK_FRAMEBUFFER_PIXELS / (safeWidth * safeHeight),
+  )
+  const target = Math.max(0.25, Math.min(safeRatio, pixelCapRatio))
+  return (
+    [...VIEWPORT_PIXEL_RATIO_BUCKETS]
+      .reverse()
+      .find((bucket) => bucket <= target) ?? 0.25
   )
 }
 

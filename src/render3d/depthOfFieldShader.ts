@@ -61,8 +61,15 @@ export function depthOfFieldSampleCount(
   context: DofSampleBudgetContext,
 ): number {
   if (context.playing || context.interactive) {
-    // Playback stays bounded, but higher preview tiers spend enough samples to
-    // preserve a continuous blur at moving high-contrast text edges.
+    if (context.playing) {
+      // Motion clarity wins while the clock is advancing. Paused preview and
+      // export immediately restore their larger authored-quality budgets.
+      return previewQuality === 'high'
+        ? 6
+        : previewQuality === 'balanced'
+          ? 4
+          : 3
+    }
     return previewQuality === 'high'
       ? 12
       : previewQuality === 'balanced'

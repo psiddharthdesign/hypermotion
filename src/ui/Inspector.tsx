@@ -472,15 +472,19 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   const staggerOn = useUI((s) => s.staggerOn)
   const staggerDelay = useUI((s) => s.staggerDelay)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
+  const activeStaggerSet = activeStaggerSetId
+    ? api.getUiState().staggerSets[activeStaggerSetId]
+    : undefined
   const count = nodes.length
   const staggerActive =
     staggerOn && activeStaggerSetId !== null && nodes.length > 1
   const staggerOptions = activeStaggerSetId
     ? {
         setId: activeStaggerSetId,
-        layerIds: nodes.map((node) => node.id),
-        delay: staggerDelay,
-        order: 'forward' as const,
+        layerIds:
+          activeStaggerSet?.layerIds ?? nodes.map((node) => node.id),
+        delay: activeStaggerSet?.delay ?? staggerDelay,
+        order: activeStaggerSet?.order ?? ('forward' as const),
       }
     : null
 

@@ -62,7 +62,10 @@ import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
-import { viewportPixelRatioForZoom } from '@/render3d/texturePolicy'
+import {
+  playbackPixelRatio,
+  viewportPixelRatioForZoom,
+} from '@/render3d/texturePolicy'
 import { splitDomTextAnimationSegments } from '@/ui/textAnimationSegments'
 import {
   canvasTextEditPresentation,
@@ -812,12 +815,19 @@ export function Canvas() {
   // keyed by node id. Empty object while no tracks exist, which is the
   // current default — the engine is wired but untouched until Step 5.
   const cameraId = api.getActiveCameraId()
-  const webglPreviewPixelRatio = viewportPixelRatioForZoom(
+  const pausedWebglPreviewPixelRatio = viewportPixelRatioForZoom(
     view.zoom,
     undefined,
     canvasWidth,
     canvasHeight,
   )
+  const webglPreviewPixelRatio = playing
+    ? playbackPixelRatio(
+        pausedWebglPreviewPixelRatio,
+        canvasWidth,
+        canvasHeight,
+      )
+    : pausedWebglPreviewPixelRatio
   const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
   const textEditPresentation = canvasTextEditPresentation(
     threeCameraAvailable,
@@ -2882,6 +2892,7 @@ export function Canvas() {
                       sceneFill={sceneFill}
                       selectedIds={selection}
                       renderPixelRatio={webglPreviewPixelRatio}
+                      texturePixelRatio={pausedWebglPreviewPixelRatio}
                       showHelpers={
                         !isEditingText &&
                         (focusPickingCameraId === camera.id ||

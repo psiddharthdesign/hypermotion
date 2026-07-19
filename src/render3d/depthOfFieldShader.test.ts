@@ -18,7 +18,7 @@ describe('GPU depth-of-field policy', () => {
         interactive: false,
         finalRender: false,
       }),
-    ).toBe(12)
+    ).toBe(6)
     expect(
       depthOfFieldSampleCount('high', 32, {
         playing: false,
@@ -32,7 +32,7 @@ describe('GPU depth-of-field policy', () => {
         interactive: false,
         finalRender: false,
       }),
-    ).toBe(8)
+    ).toBe(4)
   })
 
   it('uses progressively larger paused-preview and bounded export budgets', () => {

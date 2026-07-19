@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  playbackPixelRatio,
   shouldRasterizePlaneTexture,
   textureScaleForRect,
   viewportPixelRatioForZoom,
@@ -20,6 +21,13 @@ describe('WebGL plane texture policy', () => {
     expect(viewportPixelRatioForZoom(0.71, 2, 3840, 2160)).toBe(1)
     expect(viewportPixelRatioForZoom(1, 2, 3840, 2160)).toBe(1)
     expect(viewportPixelRatioForZoom(1, 2, 1104, 908)).toBe(2)
+  })
+
+  it('uses a bounded realtime framebuffer and restores preview density outside playback', () => {
+    expect(playbackPixelRatio(1, 3840, 2160)).toBe(0.5)
+    expect(playbackPixelRatio(2, 1920, 1080)).toBe(1)
+    expect(playbackPixelRatio(2, 1104, 908)).toBe(1.5)
+    expect(playbackPixelRatio(0.5, 3840, 2160)).toBe(0.5)
   })
 
   it('matches a Retina framebuffer without the previous 4x oversampling', () => {

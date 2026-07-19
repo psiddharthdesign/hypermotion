@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TEXT_ANIMATION } from './textAnimations'
-import { scrambleTextForSegment } from './textScramble'
+import {
+  scrambleCharacterForSegment,
+  scrambleTextForSegment,
+} from './textScramble'
 import { normalizeTextStaggerCurve } from './textStaggerCurve'
 
 const config = {
@@ -31,6 +34,23 @@ describe('shared text scramble', () => {
     expect(
       scrambleTextForSegment('Depth', config, 2.401, undefined, 0, 1),
     ).toBe(scrambleTextForSegment('Depth', config, 2.42, undefined, 0, 1))
+  })
+
+  it('selects the same pre-baked letter as the string renderer', () => {
+    for (const playhead of [2.01, 2.2, 2.42, 2.8, 3]) {
+      expect(
+        scrambleCharacterForSegment(
+          'D',
+          config,
+          playhead,
+          undefined,
+          0,
+          1,
+        ),
+      ).toBe(
+        scrambleTextForSegment('D', config, playhead, undefined, 0, 1),
+      )
+    }
   })
 
   it('keeps the glyph cadence stable when the stagger curve is smooth', () => {

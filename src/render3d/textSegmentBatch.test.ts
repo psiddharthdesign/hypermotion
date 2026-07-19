@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Plane3D } from './scene3d'
 import {
+  TEXT_SEGMENT_BUFFER_CHANGE,
   cameraSpaceTextMotionOffset,
   createTextSegmentBuffers,
   textSegmentWorldUnitsPerScreenPixel,
@@ -112,7 +113,8 @@ describe('text segment batch geometry', () => {
       entries: [entry(10, 0)],
       states: [state(-80, 0.4)],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
     expect(Array.from(buffers.positions.slice(0, 3))).toEqual([10, 20, -80])
@@ -128,16 +130,39 @@ describe('text segment batch geometry', () => {
 
   it('sorts transparent quad indices from far to near', () => {
     const buffers = createTextSegmentBuffers(2)
-    writeTextSegmentBuffers({
+    const firstChanges = writeTextSegmentBuffers({
       buffers,
       entries: [entry(10, 0), entry(40, 1)],
       states: [state(10), state(100)],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
+    expect(firstChanges & TEXT_SEGMENT_BUFFER_CHANGE.indices).not.toBe(0)
     expect(Array.from(buffers.indices.slice(0, 6))).toEqual([4, 6, 5, 6, 7, 5])
     expect(Array.from(buffers.indices.slice(6))).toEqual([0, 2, 1, 2, 3, 1])
+
+    const unchanged = writeTextSegmentBuffers({
+      buffers,
+      entries: [entry(10, 0), entry(40, 1)],
+      states: [state(10), state(100)],
+      plane,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
+    })
+    expect(unchanged).toBe(0)
+
+    const crossedAgain = writeTextSegmentBuffers({
+      buffers,
+      entries: [entry(10, 0), entry(40, 1)],
+      states: [state(100), state(10)],
+      plane,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
+    })
+    expect(crossedAgain & TEXT_SEGMENT_BUFFER_CHANGE.indices).not.toBe(0)
+    expect(Array.from(buffers.indices.slice(0, 6))).toEqual([0, 2, 1, 2, 3, 1])
   })
 
   it('crops geometry and UVs together for mask effects', () => {
@@ -147,7 +172,8 @@ describe('text segment batch geometry', () => {
       entries: [entry(10, 0)],
       states: [{ ...state(0), cropTop: 0.25 }],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
     expect(buffers.positions[1]).toBe(30)
@@ -163,7 +189,8 @@ describe('text segment batch geometry', () => {
       entries: [{ ...entry(10, 0), padding: 20 }],
       states: [{ ...state(0), cropTop: 0.25 }],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
     expect(buffers.positions[1]).toBe(30)
@@ -185,7 +212,8 @@ describe('text segment batch geometry', () => {
       entries: [{ ...entry(10, 0), padding: 20 }],
       states: [{ ...state(0), cropTop: 1 }],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
     expect(buffers.positions[1]).toBe(60)
@@ -200,10 +228,75 @@ describe('text segment batch geometry', () => {
       entries: [entry(10, 0)],
       states: [{ ...state(0), rotationX: -Math.PI / 4 }],
       plane,
-      cameraDepth: (point) => point.z,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
     })
 
     expect(buffers.positions[2]).toBeLessThan(0)
     expect(buffers.positions[8]).toBeGreaterThan(0)
+  })
+
+  it('does not report false changes from Float32 rounding', () => {
+    const buffers = createTextSegmentBuffers(1)
+    const entries = [
+      {
+        ...entry(10.123, 0),
+        uv: { minX: 0.1, minY: 0.2, maxX: 0.7, maxY: 0.9 },
+      },
+    ]
+    const states = [
+      {
+        ...state(0.789, 0.4),
+        offset: { x: 0.123, y: 0.456, z: 0.789 },
+        effectBlur: 2.3,
+        dofBlur: 1.7,
+        scale: 0.913,
+        skew: 0.137,
+      },
+    ]
+    const input = {
+      buffers,
+      entries,
+      states,
+      plane,
+      cameraPosition: { x: 0.1, y: 0.2, z: 0.3 },
+      cameraForward: { x: 0, y: 0, z: 1 },
+    }
+
+    expect(writeTextSegmentBuffers(input)).not.toBe(0)
+    expect(writeTextSegmentBuffers(input)).toBe(0)
+  })
+
+  it('skips static texture-coordinate work between ordinary stagger frames', () => {
+    const buffers = createTextSegmentBuffers(1)
+    const entries = [entry(10, 0)]
+    const states = [state(0)]
+    writeTextSegmentBuffers({
+      buffers,
+      entries,
+      states,
+      plane,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
+    })
+    const originalUvs = buffers.uvs.slice()
+    const originalBounds = buffers.uvBounds.slice()
+
+    states[0] = { ...states[0]!, cropTop: 0.5, offset: { x: 5, y: 0, z: 0 } }
+    const changes = writeTextSegmentBuffers({
+      buffers,
+      entries,
+      states,
+      plane,
+      cameraPosition: { x: 0, y: 0, z: 0 },
+      cameraForward: { x: 0, y: 0, z: 1 },
+      updateTextureCoordinates: false,
+    })
+
+    expect(changes & TEXT_SEGMENT_BUFFER_CHANGE.positions).not.toBe(0)
+    expect(changes & TEXT_SEGMENT_BUFFER_CHANGE.uvs).toBe(0)
+    expect(changes & TEXT_SEGMENT_BUFFER_CHANGE.uvBounds).toBe(0)
+    expect(buffers.uvs).toEqual(originalUvs)
+    expect(buffers.uvBounds).toEqual(originalBounds)
   })
 })
