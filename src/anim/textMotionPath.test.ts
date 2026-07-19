@@ -7,7 +7,9 @@ import {
   evaluateTextMotionPath,
   normalizeTextMotionPath,
   removeTextMotionPathPoint,
+  setTextMotionPathDistance,
   splitTextMotionPathAt,
+  textMotionPathDistance,
 } from './textMotionPath'
 
 describe('text motion path', () => {
@@ -20,6 +22,29 @@ describe('text motion path', () => {
     expect(middle.x).toBeLessThan(-1)
     expect(middle.y).toBeLessThan(-1)
     expect(middle.y).toBeGreaterThan(-3)
+  })
+
+  it('retargets XYZ distance while preserving the authored curve', () => {
+    const path = splitTextMotionPathAt(
+      defaultTextMotionPath(),
+      0.4,
+      'middle',
+    )
+    const before = [0, 0.25, 0.5, 0.75, 1].map((amount) =>
+      evaluateTextMotionPath(amount, path),
+    )
+
+    const next = setTextMotionPathDistance(path, { x: 2, y: -6, z: 3 })
+
+    expect(textMotionPathDistance(path)).toEqual({ x: 0, y: -4, z: 0 })
+    expect(textMotionPathDistance(next)).toEqual({ x: 2, y: -6, z: 3 })
+    expect(textMotionPathDistance(path)).toEqual({ x: 0, y: -4, z: 0 })
+    for (const [index, amount] of [0, 0.25, 0.5, 0.75, 1].entries()) {
+      const moved = evaluateTextMotionPath(amount, next)
+      expect(moved.x).toBeCloseTo(before[index]!.x + 2 * amount)
+      expect(moved.y).toBeCloseTo(before[index]!.y - 2 * amount)
+      expect(moved.z).toBeCloseTo(before[index]!.z + 3 * amount)
+    }
   })
 
   it('rejects unsupported versions and paths with fewer than two anchors', () => {

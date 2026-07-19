@@ -17,13 +17,17 @@ import {
   type Ray3,
   type Vec3,
 } from '@/render3d/math'
+import {
+  normalizeCameraPostEffects,
+  type CameraPostEffectsState,
+} from '@/render3d/postEffects'
 
 export interface ViewportSize {
   width: number
   height: number
 }
 
-export interface ResolvedCamera3D {
+export interface ResolvedCamera3D extends CameraPostEffectsState {
   nodeId: NodeId
   position: Vec3
   rotation: Vec3
@@ -306,6 +310,20 @@ export function resolveCamera3D(
   viewport: ViewportSize,
   focusWorldOverride?: Vec3 | null,
 ): ResolvedCamera3D {
+  const postEffects = normalizeCameraPostEffects({
+    chromaticAberrationEnabled: camera.chromaticAberrationEnabled,
+    chromaticAberrationAmount:
+      animated?.chromaticAberrationAmount ?? camera.chromaticAberrationAmount,
+    chromaticAberrationAngle:
+      animated?.chromaticAberrationAngle ?? camera.chromaticAberrationAngle,
+    bloomEnabled: camera.bloomEnabled,
+    bloomStrength:
+      animated?.bloomStrength ?? camera.bloomStrength,
+    bloomRadius:
+      animated?.bloomRadius ?? camera.bloomRadius,
+    bloomThreshold:
+      animated?.bloomThreshold ?? camera.bloomThreshold,
+  })
   const fieldOfView =
     animated?.fieldOfView ??
     camera.fieldOfView ??
@@ -399,6 +417,7 @@ export function resolveCamera3D(
     focusDepth + Math.max(viewport.width, viewport.height),
   )
   return {
+    ...postEffects,
     nodeId: camera.id,
     position,
     rotation,

@@ -401,6 +401,8 @@ camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ,
 camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip,
 camera.aperture, camera.fStop, camera.bladeCount, camera.bladeRotation,
 camera.bokehRatio, camera.iso, camera.blurLevel, camera.blurQuality,
+camera.chromaticAberrationAmount, camera.chromaticAberrationAngle,
+camera.bloomStrength, camera.bloomRadius, camera.bloomThreshold,
 appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
@@ -413,6 +415,14 @@ size.width, size.height, variant
 defaults to 24 (Balanced), has an effective range of 24-48 samples, and clamps
 legacy lower values to 24 at render time. Higher values produce smoother bokeh
 at greater render cost.
+
+Camera-wide post effects are authored on the active camera. Set
+`chromaticAberrationEnabled: true` to split red and blue around the centered
+green channel; `chromaticAberrationAmount` is each channel's offset in
+composition pixels (0-64) and `chromaticAberrationAngle` sets its direction in
+degrees. Set `bloomEnabled: true` to glow bright pixels, then tune
+`bloomStrength` (0-4), `bloomRadius` (0-1), and `bloomThreshold` (0-1). The five
+numeric fields are keyframeable; the enable flags are static scene settings.
 
 EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
 

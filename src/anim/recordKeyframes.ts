@@ -82,6 +82,11 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   iso: 'camera.iso',
   blurLevel: 'camera.blurLevel',
   blurQuality: 'camera.blurQuality',
+  chromaticAberrationAmount: 'camera.chromaticAberrationAmount',
+  chromaticAberrationAngle: 'camera.chromaticAberrationAngle',
+  bloomStrength: 'camera.bloomStrength',
+  bloomRadius: 'camera.bloomRadius',
+  bloomThreshold: 'camera.bloomThreshold',
 }
 
 export type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'

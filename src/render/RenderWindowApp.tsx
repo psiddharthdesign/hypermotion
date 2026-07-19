@@ -21,6 +21,7 @@ import {
   resolveCameraFocusTargetPoint,
 } from '@/ui/Canvas'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { getAnimEngine } from '@/anim'
 import {
   createElectronCapture,
@@ -333,6 +334,14 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     [api, cameraId, version],
   )
   const cameraAnim = cameraId ? cameraAnimated[cameraId] : undefined
+  const cameraPostEffects = useMemo(
+    () =>
+      resolveFallbackCameraPostEffects(
+        camera && camera.kind === 'camera' ? camera : null,
+        cameraAnim,
+      ),
+    [camera, cameraAnim],
+  )
 
   const cameraBackgroundFill =
     camera && camera.kind === 'camera' ? camera.background ?? null : null
@@ -489,6 +498,9 @@ function RenderCanvas({ job }: { job: RenderJob }) {
                 animated={animated}
                 inherited={inherited}
                 cameraDepthOfField={threeCameraAvailable ? null : cameraDepthOfField}
+                cameraPostEffects={
+                  threeCameraAvailable ? null : cameraPostEffects
+                }
                 sceneFill={sceneFill}
                 canvasWidth={canvasWidth}
                 canvasHeight={canvasHeight}

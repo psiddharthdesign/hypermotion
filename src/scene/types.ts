@@ -746,6 +746,20 @@ export interface CameraNode extends NodeBase {
   blurLevel: number
   /** Final DOF sample budget (24-48). Higher values produce smoother bokeh. */
   blurQuality: number
+  /** Enables the camera-wide RGB channel separation pass. */
+  chromaticAberrationEnabled: boolean
+  /** Per-channel offset: red/blue move +/- this many composition pixels. */
+  chromaticAberrationAmount: number
+  /** Direction of the channel split, in degrees. */
+  chromaticAberrationAngle: number
+  /** Enables the camera-wide bright-pixel bloom pass. */
+  bloomEnabled: boolean
+  /** Additive bloom gain. 0 disables the visible contribution. */
+  bloomStrength: number
+  /** Normalized bloom spread used by the post-process blur kernel. */
+  bloomRadius: number
+  /** Normalized luminance threshold above which pixels bloom. */
+  bloomThreshold: number
   /** Whether editor helpers should draw the focus plane. */
   showFocusPlane: boolean
 }
@@ -970,6 +984,11 @@ export type PropertyId =
   | 'camera.iso'
   | 'camera.blurLevel'
   | 'camera.blurQuality'
+  | 'camera.chromaticAberrationAmount'
+  | 'camera.chromaticAberrationAngle'
+  | 'camera.bloomStrength'
+  | 'camera.bloomRadius'
+  | 'camera.bloomThreshold'
   // appearance group — post-layout, cheap
   | 'appearance.opacity'
   | 'appearance.cornerRadius'

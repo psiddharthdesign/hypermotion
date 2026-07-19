@@ -23,6 +23,7 @@ import {
   removeStaggerSet,
   renameStaggerSet,
   resolveStaggerKeyframeBundle,
+  resolveStaggerSetSourceNodeId,
   reverseStaggerSetInPlace,
   setStaggerSetDelayMetadata,
   type StaggerSetMemberInput,
@@ -58,6 +59,7 @@ import {
   createSectionDragSession,
   sectionDragPreviewStore,
 } from '@/ui/sectionDragPreviewStore'
+import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
 
 /**
  * Keyframe multi-select keys are the compound `trackId:kfId` string.
@@ -272,7 +274,6 @@ export function Timeline() {
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
   const staggerOn = useUI((s) => s.staggerOn)
   const setStaggerOn = useUI((s) => s.setStaggerOn)
-  const activateStaggerSet = useUI((s) => s.activateStaggerSet)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
   const selectedStaggerSetId = useUI((s) => s.selectedStaggerSetId)
   const setSelectedStaggerSetId = useUI((s) => s.setSelectedStaggerSetId)
@@ -1234,15 +1235,8 @@ export function Timeline() {
           (a, b) =>
             (nodeOrder.get(a) ?? Infinity) - (nodeOrder.get(b) ?? Infinity),
         )[0]
-      const requestedSourceNodeId =
-        set.order === 'forward'
-          ? liveLayerIds[0]
-          : liveLayerIds[liveLayerIds.length - 1]
-      const sourceNodeId = members.some(
-        (member) => member.nodeId === requestedSourceNodeId,
-      )
-        ? requestedSourceNodeId
-        : fallbackHostNodeId
+      const sourceNodeId =
+        resolveStaggerSetSourceNodeId(api, set) ?? fallbackHostNodeId
       if (!sourceNodeId) continue
       resolved.push({
         id: setId,
@@ -1428,6 +1422,10 @@ export function Timeline() {
   ])
   const selectTimelineStagger = useCallback(
     (set: ResolvedStaggerTimelineSet) => {
+      if (staggerOn && activeStaggerSetId === set.id) {
+        activateStaggerSetForEditing(api, set.id)
+        return
+      }
       if (staggerOn && activeStaggerSetId !== set.id) setStaggerOn(false)
       setSelectedStaggerSetId(set.id)
       setSelection([])
@@ -1437,6 +1435,7 @@ export function Timeline() {
     },
     [
       activeStaggerSetId,
+      api,
       clearKfs,
       setInspectorMode,
       setSelectedStaggerSetId,
@@ -1448,19 +1447,9 @@ export function Timeline() {
   )
   const activateTimelineStagger = useCallback(
     (set: ResolvedStaggerTimelineSet) => {
-      activateStaggerSet(set.id, set.delay)
-      setSelection([set.sourceNodeId])
-      setSelectedTrackIds([])
-      clearKfs()
-      setInspectorMode('animate')
+      activateStaggerSetForEditing(api, set.id)
     },
-    [
-      activateStaggerSet,
-      clearKfs,
-      setInspectorMode,
-      setSelectedTrackIds,
-      setSelection,
-    ],
+    [api],
   )
   const deleteTimelineStagger = useCallback(
     (set: ResolvedStaggerTimelineSet) => {
@@ -3479,23 +3468,19 @@ export function Timeline() {
               })
             }, UNDOABLE_GESTURE_ORIGIN)
             const remaining = api.getUiState().staggerSets[staggerSettingsSet.id]
-            if (selectedStaggerSetId === staggerSettingsSet.id) {
-              if (remaining) {
-                setSelectedStaggerSetId(staggerSettingsSet.id)
-                // A local stagger row is its own Inspector selection. Keep
-                // canvas layers clear so the new relationship-level panel
-                // remains visible after applying settings.
-                setSelection([])
-              } else {
-                setSelectedStaggerSetId(null)
-              }
-            }
             if (activeStaggerSetId === staggerSettingsSet.id) {
               if (remaining) {
-                activateStaggerSet(staggerSettingsSet.id, remaining.delay)
-                setSelection(remaining.layerIds)
+                activateStaggerSetForEditing(api, staggerSettingsSet.id)
               } else {
                 setStaggerOn(false)
+                setSelectedStaggerSetId(null)
+              }
+            } else if (selectedStaggerSetId === staggerSettingsSet.id) {
+              if (remaining) {
+                setSelectedStaggerSetId(staggerSettingsSet.id)
+                // An inactive row remains a relationship-only selection.
+                setSelection([])
+              } else {
                 setSelectedStaggerSetId(null)
               }
             }

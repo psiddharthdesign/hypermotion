@@ -294,7 +294,7 @@ export function TextMotionPathEditor({
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
-            Motion path <span className="text-accent">· XY</span>
+            Motion path <span className="text-accent">· XYZ</span>
           </div>
           <div className="mt-0.5 font-mono text-[9px] text-text-dim">
             {displayed.points.length} points · line-height units

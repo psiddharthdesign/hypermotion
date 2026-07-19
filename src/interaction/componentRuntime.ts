@@ -363,6 +363,11 @@ function writeProperty(
     case 'camera.iso': into.iso = value; break
     case 'camera.blurLevel': into.blurLevel = value; break
     case 'camera.blurQuality': into.blurQuality = value; break
+    case 'camera.chromaticAberrationAmount': into.chromaticAberrationAmount = value; break
+    case 'camera.chromaticAberrationAngle': into.chromaticAberrationAngle = value; break
+    case 'camera.bloomStrength': into.bloomStrength = value; break
+    case 'camera.bloomRadius': into.bloomRadius = value; break
+    case 'camera.bloomThreshold': into.bloomThreshold = value; break
     default: break
   }
 }

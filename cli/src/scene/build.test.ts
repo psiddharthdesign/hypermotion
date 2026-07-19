@@ -1925,6 +1925,13 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     iso: 100,
     blurLevel: 1,
     blurQuality: 24,
+    chromaticAberrationEnabled: false,
+    chromaticAberrationAmount: 4,
+    chromaticAberrationAngle: 0,
+    bloomEnabled: false,
+    bloomStrength: 0.8,
+    bloomRadius: 0.35,
+    bloomThreshold: 0.75,
     showFocusPlane: false,
   })
 })
@@ -2520,6 +2527,13 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   assert.equal(camera.iso, 100)
   assert.equal(camera.blurLevel, 1)
   assert.equal(camera.blurQuality, 24)
+  assert.equal(camera.chromaticAberrationEnabled, false)
+  assert.equal(camera.chromaticAberrationAmount, 4)
+  assert.equal(camera.chromaticAberrationAngle, 0)
+  assert.equal(camera.bloomEnabled, false)
+  assert.equal(camera.bloomStrength, 0.8)
+  assert.equal(camera.bloomRadius, 0.35)
+  assert.equal(camera.bloomThreshold, 0.75)
   assert.equal(camera.showFocusPlane, false)
 })
 
@@ -2542,6 +2556,13 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   camera.iso = 400
   camera.blurLevel = 3
   camera.blurQuality = 12
+  camera.chromaticAberrationEnabled = true
+  camera.chromaticAberrationAmount = 9
+  camera.chromaticAberrationAngle = 35
+  camera.bloomEnabled = true
+  camera.bloomStrength = 1.4
+  camera.bloomRadius = 0.6
+  camera.bloomThreshold = 0.45
 
   const data = inspectScene(buildSceneBytes(scene))
   const nodes = data.nodes as PlainSceneMap
@@ -2562,6 +2583,13 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   assert.equal(cameraNode.iso, 400)
   assert.equal(cameraNode.blurLevel, 3)
   assert.equal(cameraNode.blurQuality, 12)
+  assert.equal(cameraNode.chromaticAberrationEnabled, true)
+  assert.equal(cameraNode.chromaticAberrationAmount, 9)
+  assert.equal(cameraNode.chromaticAberrationAngle, 35)
+  assert.equal(cameraNode.bloomEnabled, true)
+  assert.equal(cameraNode.bloomStrength, 1.4)
+  assert.equal(cameraNode.bloomRadius, 0.6)
+  assert.equal(cameraNode.bloomThreshold, 0.45)
 })
 
 test('buildSceneBytes derives camera point of interest x/y from transform', () => {

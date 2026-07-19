@@ -265,6 +265,13 @@ export interface NodeJson {
   iso?: number
   blurLevel?: number
   blurQuality?: number
+  chromaticAberrationEnabled?: boolean
+  chromaticAberrationAmount?: number
+  chromaticAberrationAngle?: number
+  bloomEnabled?: boolean
+  bloomStrength?: number
+  bloomRadius?: number
+  bloomThreshold?: number
   showFocusPlane?: boolean
 }
 
@@ -387,6 +394,11 @@ export const PROPERTY_IDS = [
   'camera.iso',
   'camera.blurLevel',
   'camera.blurQuality',
+  'camera.chromaticAberrationAmount',
+  'camera.chromaticAberrationAngle',
+  'camera.bloomStrength',
+  'camera.bloomRadius',
+  'camera.bloomThreshold',
   'appearance.opacity',
   'appearance.cornerRadius',
   'appearance.cornerRadii',
@@ -880,6 +892,13 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('iso', node.iso ?? 100)
       y.set('blurLevel', node.blurLevel ?? 1)
       y.set('blurQuality', node.blurQuality ?? 24)
+      y.set('chromaticAberrationEnabled', node.chromaticAberrationEnabled ?? false)
+      y.set('chromaticAberrationAmount', node.chromaticAberrationAmount ?? 4)
+      y.set('chromaticAberrationAngle', node.chromaticAberrationAngle ?? 0)
+      y.set('bloomEnabled', node.bloomEnabled ?? false)
+      y.set('bloomStrength', node.bloomStrength ?? 0.8)
+      y.set('bloomRadius', node.bloomRadius ?? 0.35)
+      y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
       y.set('showFocusPlane', node.showFocusPlane ?? false)
     }
 
@@ -1391,6 +1410,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'iso',
       'blurLevel',
       'blurQuality',
+      'chromaticAberrationEnabled',
+      'chromaticAberrationAmount',
+      'chromaticAberrationAngle',
+      'bloomEnabled',
+      'bloomStrength',
+      'bloomRadius',
+      'bloomThreshold',
       'showFocusPlane',
     ]) {
       handledKeys.add(key)
@@ -1431,6 +1457,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('iso', node.iso ?? 100)
     y.set('blurLevel', node.blurLevel ?? 1)
     y.set('blurQuality', node.blurQuality ?? 24)
+    y.set('chromaticAberrationEnabled', node.chromaticAberrationEnabled ?? false)
+    y.set('chromaticAberrationAmount', node.chromaticAberrationAmount ?? 4)
+    y.set('chromaticAberrationAngle', node.chromaticAberrationAngle ?? 0)
+    y.set('bloomEnabled', node.bloomEnabled ?? false)
+    y.set('bloomStrength', node.bloomStrength ?? 0.8)
+    y.set('bloomRadius', node.bloomRadius ?? 0.35)
+    y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
     y.set('showFocusPlane', node.showFocusPlane ?? false)
   }
   for (const [k, v] of Object.entries(node)) {

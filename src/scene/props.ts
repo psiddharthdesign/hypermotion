@@ -175,6 +175,26 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'camera.blurQuality', group: 'camera', label: 'Export Samples',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 24,
   },
+  'camera.chromaticAberrationAmount': {
+    id: 'camera.chromaticAberrationAmount', group: 'camera', label: 'Chromatic Amount',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 4,
+  },
+  'camera.chromaticAberrationAngle': {
+    id: 'camera.chromaticAberrationAngle', group: 'camera', label: 'Chromatic Angle',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.bloomStrength': {
+    id: 'camera.bloomStrength', group: 'camera', label: 'Bloom Strength',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.8,
+  },
+  'camera.bloomRadius': {
+    id: 'camera.bloomRadius', group: 'camera', label: 'Bloom Radius',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.35,
+  },
+  'camera.bloomThreshold': {
+    id: 'camera.bloomThreshold', group: 'camera', label: 'Bloom Threshold',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.75,
+  },
 
   // appearance group — also post-layout
   'appearance.opacity': {

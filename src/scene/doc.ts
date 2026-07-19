@@ -267,6 +267,13 @@ export interface NodeBaseMutable {
   iso: number
   blurLevel: number
   blurQuality: number
+  chromaticAberrationEnabled: boolean
+  chromaticAberrationAmount: number
+  chromaticAberrationAngle: number
+  bloomEnabled: boolean
+  bloomStrength: number
+  bloomRadius: number
+  bloomThreshold: number
   showFocusPlane: boolean
   /** Stack of layout guides — only meaningful on FrameNode. */
   layoutGuides: import('@/scene/types').LayoutGuide[]
@@ -742,6 +749,20 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           iso: (y.get('iso') as number | undefined) ?? 100,
           blurLevel: (y.get('blurLevel') as number | undefined) ?? 1,
           blurQuality: (y.get('blurQuality') as number | undefined) ?? 24,
+          chromaticAberrationEnabled:
+            (y.get('chromaticAberrationEnabled') as boolean | undefined) ?? false,
+          chromaticAberrationAmount:
+            (y.get('chromaticAberrationAmount') as number | undefined) ?? 4,
+          chromaticAberrationAngle:
+            (y.get('chromaticAberrationAngle') as number | undefined) ?? 0,
+          bloomEnabled:
+            (y.get('bloomEnabled') as boolean | undefined) ?? false,
+          bloomStrength:
+            (y.get('bloomStrength') as number | undefined) ?? 0.8,
+          bloomRadius:
+            (y.get('bloomRadius') as number | undefined) ?? 0.35,
+          bloomThreshold:
+            (y.get('bloomThreshold') as number | undefined) ?? 0.75,
           showFocusPlane: (y.get('showFocusPlane') as boolean | undefined) ?? false,
         } as CameraNode
       }
@@ -1027,6 +1048,22 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('iso', cp?.iso ?? 100)
           y.set('blurLevel', cp?.blurLevel ?? 1)
           y.set('blurQuality', cp?.blurQuality ?? 24)
+          y.set(
+            'chromaticAberrationEnabled',
+            cp?.chromaticAberrationEnabled ?? false,
+          )
+          y.set(
+            'chromaticAberrationAmount',
+            cp?.chromaticAberrationAmount ?? 4,
+          )
+          y.set(
+            'chromaticAberrationAngle',
+            cp?.chromaticAberrationAngle ?? 0,
+          )
+          y.set('bloomEnabled', cp?.bloomEnabled ?? false)
+          y.set('bloomStrength', cp?.bloomStrength ?? 0.8)
+          y.set('bloomRadius', cp?.bloomRadius ?? 0.35)
+          y.set('bloomThreshold', cp?.bloomThreshold ?? 0.75)
           y.set('showFocusPlane', cp?.showFocusPlane ?? false)
         }
 

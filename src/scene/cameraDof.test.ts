@@ -18,8 +18,8 @@ function activeCamera(): {
   return { api, camera }
 }
 
-describe('camera depth-of-field model', () => {
-  it('reads backward-compatible physical lens defaults from legacy camera maps', () => {
+describe('camera lens and post-effects model', () => {
+  it('reads backward-compatible camera defaults from legacy camera maps', () => {
     const { api, camera } = activeCamera()
     const scene = api.doc.getMap<unknown>('scene')
     const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
@@ -33,6 +33,13 @@ describe('camera depth-of-field model', () => {
       storedCamera.delete('bokehRatio')
       storedCamera.delete('dofPreviewQuality')
       storedCamera.delete('blurQuality')
+      storedCamera.delete('chromaticAberrationEnabled')
+      storedCamera.delete('chromaticAberrationAmount')
+      storedCamera.delete('chromaticAberrationAngle')
+      storedCamera.delete('bloomEnabled')
+      storedCamera.delete('bloomStrength')
+      storedCamera.delete('bloomRadius')
+      storedCamera.delete('bloomThreshold')
     })
 
     expect(api.getActiveCamera()).toMatchObject({
@@ -43,6 +50,37 @@ describe('camera depth-of-field model', () => {
       bokehRatio: 1,
       dofPreviewQuality: 'balanced',
       blurQuality: 24,
+      chromaticAberrationEnabled: false,
+      chromaticAberrationAmount: 4,
+      chromaticAberrationAngle: 0,
+      bloomEnabled: false,
+      bloomStrength: 0.8,
+      bloomRadius: 0.35,
+      bloomThreshold: 0.75,
+    })
+  })
+
+  it('persists independent post-effect settings on the camera', () => {
+    const { api, camera } = activeCamera()
+
+    api.doc.transact(() => {
+      api.setNodeProperty(camera.id, 'chromaticAberrationEnabled', true)
+      api.setNodeProperty(camera.id, 'chromaticAberrationAmount', 12)
+      api.setNodeProperty(camera.id, 'chromaticAberrationAngle', -35)
+      api.setNodeProperty(camera.id, 'bloomEnabled', true)
+      api.setNodeProperty(camera.id, 'bloomStrength', 1.4)
+      api.setNodeProperty(camera.id, 'bloomRadius', 0.6)
+      api.setNodeProperty(camera.id, 'bloomThreshold', 0.42)
+    })
+
+    expect(api.getActiveCamera()).toMatchObject({
+      chromaticAberrationEnabled: true,
+      chromaticAberrationAmount: 12,
+      chromaticAberrationAngle: -35,
+      bloomEnabled: true,
+      bloomStrength: 1.4,
+      bloomRadius: 0.6,
+      bloomThreshold: 0.42,
     })
   })
 
@@ -84,6 +122,33 @@ describe('camera depth-of-field model', () => {
     expect(PROPERTIES['camera.blurQuality'].defaultValue).toBe(24)
   })
 
+  it('registers and records numeric post-effect properties without keyframing toggles', () => {
+    const values = keyframeValuesForPatch('camera', {
+      chromaticAberrationEnabled: true,
+      chromaticAberrationAmount: 10,
+      chromaticAberrationAngle: 45,
+      bloomEnabled: true,
+      bloomStrength: 1.25,
+      bloomRadius: 0.55,
+      bloomThreshold: 0.6,
+    })
+
+    expect(values).toEqual([
+      { propertyId: 'camera.chromaticAberrationAmount', value: 10 },
+      { propertyId: 'camera.chromaticAberrationAngle', value: 45 },
+      { propertyId: 'camera.bloomStrength', value: 1.25 },
+      { propertyId: 'camera.bloomRadius', value: 0.55 },
+      { propertyId: 'camera.bloomThreshold', value: 0.6 },
+    ])
+    expect(PROPERTIES['camera.chromaticAberrationAmount'].defaultValue).toBe(4)
+    expect(PROPERTIES['camera.chromaticAberrationAngle'].interpolation).toBe(
+      'angle',
+    )
+    expect(PROPERTIES['camera.bloomStrength'].defaultValue).toBe(0.8)
+    expect(PROPERTIES['camera.bloomRadius'].defaultValue).toBe(0.35)
+    expect(PROPERTIES['camera.bloomThreshold'].defaultValue).toBe(0.75)
+  })
+
   it('evaluates physical aperture tracks without mutating static camera values', () => {
     const { api, camera } = activeCamera()
     const tracks: Track[] = [
@@ -120,6 +185,48 @@ describe('camera depth-of-field model', () => {
       bladeCount: 7,
       bladeRotation: 0,
       bokehRatio: 1,
+    })
+  })
+
+  it('evaluates post-effect tracks without mutating static camera values', () => {
+    const { api, camera } = activeCamera()
+    const tracks: Track[] = [
+      ['chromatic-amount', 'camera.chromaticAberrationAmount', 0, 12],
+      ['chromatic-angle', 'camera.chromaticAberrationAngle', 0, 90],
+      ['bloom-strength', 'camera.bloomStrength', 0.4, 1.6],
+      ['bloom-radius', 'camera.bloomRadius', 0.1, 0.7],
+      ['bloom-threshold', 'camera.bloomThreshold', 0.2, 0.8],
+    ].map(([id, propertyId, start, end]) => ({
+      id: String(id),
+      nodeId: camera.id,
+      propertyId: propertyId as Track['propertyId'],
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: `${id}-start`, time: 0, value: Number(start) },
+        { id: `${id}-end`, time: 1, value: Number(end) },
+      ],
+    }))
+    api.doc.transact(() => {
+      for (const track of tracks) api.setTrack(track)
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[camera.id]).toMatchObject({
+      chromaticAberrationAmount: 6,
+      chromaticAberrationAngle: 45,
+      bloomStrength: 1,
+      bloomRadius: 0.4,
+      bloomThreshold: 0.5,
+    })
+    expect(api.getActiveCamera()).toMatchObject({
+      chromaticAberrationAmount: 4,
+      chromaticAberrationAngle: 0,
+      bloomStrength: 0.8,
+      bloomRadius: 0.35,
+      bloomThreshold: 0.75,
     })
   })
 

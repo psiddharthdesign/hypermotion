@@ -25,6 +25,7 @@ import {
   importClipboardFiles,
   readElectronClipboardFiles,
 } from '@/ui/importClipboardFiles'
+import { toggleStaggerSetEditing } from '@/ui/staggerEditing'
 
 /**
  * Global keyboard shortcuts.
@@ -631,19 +632,7 @@ export function useKeyboardShortcuts() {
           ? api.getUiState().staggerSets[selectedSetId]
           : undefined
         if (selectedSetId && selectedSet) {
-          if (ui.staggerOn && ui.activeStaggerSetId === selectedSetId) {
-            ui.setStaggerOn(false)
-          } else {
-            ui.activateStaggerSet(selectedSetId, selectedSet.delay)
-            const sourceNodeId =
-              selectedSet.order === 'reverse'
-                ? selectedSet.layerIds[selectedSet.layerIds.length - 1]
-                : selectedSet.layerIds[0]
-            setSelection(sourceNodeId ? [sourceNodeId] : [])
-            ui.setSelectedTrackIds([])
-            ui.setSelectedTrackId(null)
-            ui.setSelectedKeyframes([])
-          }
+          toggleStaggerSetEditing(api, selectedSetId)
           return
         }
         if (selectedSetId && !selectedSet) {

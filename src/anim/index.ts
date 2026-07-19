@@ -101,7 +101,9 @@ export {
   evaluateTextMotionPath,
   normalizeTextMotionPath,
   removeTextMotionPathPoint,
+  setTextMotionPathDistance,
   splitTextMotionPathAt,
+  textMotionPathDistance,
   type TextMotionPath,
   type TextMotionPathPoint,
 } from './textMotionPath'

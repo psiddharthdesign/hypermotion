@@ -76,6 +76,11 @@ test('create_scene description lists supported camera property ids', () => {
     'camera.iso',
     'camera.blurLevel',
     'camera.blurQuality',
+    'camera.chromaticAberrationAmount',
+    'camera.chromaticAberrationAngle',
+    'camera.bloomStrength',
+    'camera.bloomRadius',
+    'camera.bloomThreshold',
   ]) {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))

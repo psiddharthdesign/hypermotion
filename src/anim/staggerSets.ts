@@ -137,6 +137,44 @@ export function staggerLayerOffset(
   return staggerIndex * normalizeDelay(delay)
 }
 
+/**
+ * Resolve the member that acts as the editable source for a stagger.
+ *
+ * Persisted layer ids can outlive a detached/deleted track. Prefer the first
+ * live, member-backed layer in playback order so every entry point (Timeline,
+ * keyboard shortcut, and Inspector) reveals controls that actually belong to
+ * the relationship.
+ */
+export function resolveStaggerSetSourceNodeId(
+  api: SceneAPI,
+  set: StaggerPropertySet | null | undefined,
+): NodeId | null {
+  if (!set) return null
+  const orderedLayerIds =
+    set.order === 'reverse' ? [...set.layerIds].reverse() : set.layerIds
+
+  for (const nodeId of orderedLayerIds) {
+    if (!api.getNode(nodeId)) continue
+    const properties = set.members[nodeId]
+    if (!properties) continue
+    const tracks = api.getTracksForNode(nodeId)
+    const hasLiveOwnedKeyframe = Object.entries(properties).some(
+      ([propertyId, keyframeIds]) => {
+        if (!keyframeIds?.length) return false
+        const ownedIds = new Set(keyframeIds)
+        return tracks.some(
+          (track) =>
+            track.propertyId === propertyId &&
+            track.keyframes.some((keyframe) => ownedIds.has(keyframe.id)),
+        )
+      },
+    )
+    if (hasLiveOwnedKeyframe) return nodeId
+  }
+
+  return null
+}
+
 /** Find the real track owned by one layer in a persistent stagger set. */
 export function findStaggerSetMemberTrack(
   api: SceneAPI,

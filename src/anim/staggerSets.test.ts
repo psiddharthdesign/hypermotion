@@ -23,6 +23,7 @@ import {
   registerStaggerSetKeyframes,
   reverseStaggerSetInPlace,
   resolveStaggerKeyframeBundle,
+  resolveStaggerSetSourceNodeId,
   resolveStaggerTrackBundle,
   retimeStaggerSet,
   stampStaggerSetPatch,
@@ -99,6 +100,37 @@ function ownedKeyframes(
 }
 
 describe('stagger property keyframe sets', () => {
+  it('resolves the first live owned member in stagger playback order', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      0,
+      options,
+    )
+    const authored = api.getUiState().staggerSets['set-1']!
+
+    expect(resolveStaggerSetSourceNodeId(api, authored)).toBe(layers[0])
+    expect(
+      resolveStaggerSetSourceNodeId(api, {
+        ...authored,
+        order: 'reverse',
+      }),
+    ).toBe(layers[2])
+
+    const withoutFirstMember = {
+      ...authored,
+      members: {
+        ...authored.members,
+        [layers[0]!]: {},
+      },
+    }
+    expect(resolveStaggerSetSourceNodeId(api, withoutFirstMember)).toBe(
+      layers[1],
+    )
+  })
+
   it('authors one property as layer-offset sets and persists membership', () => {
     const { api, layers, targets, options } = setup()
     let updates = 0

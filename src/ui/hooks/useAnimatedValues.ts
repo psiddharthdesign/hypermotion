@@ -59,6 +59,11 @@ export interface AnimatedValue {
   bokehRatio?: number
   blurLevel?: number
   blurQuality?: number
+  chromaticAberrationAmount?: number
+  chromaticAberrationAngle?: number
+  bloomStrength?: number
+  bloomRadius?: number
+  bloomThreshold?: number
 }
 
 const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<
