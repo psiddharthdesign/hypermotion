@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_TEXT_ANIMATION } from '@/anim/textAnimations'
+import { defaultTextMotionPath } from '@/anim/textMotionPath'
 import { createSceneAPI } from '@/scene/doc'
 import type { SolvedLayout } from '@/layout'
 import {
   buildWorldPlanes,
+  createPlaneBuildContext,
   hitTestPlanes,
   resolveCamera3D,
+  textNodeNeedsSegmentPlane,
   viewportPointToRay,
 } from '@/render3d/scene3d'
 
@@ -70,6 +74,220 @@ describe('direct nested-layer hit testing', () => {
     )
     expect(hit?.nodeId).toBe(childId)
   })
+})
+
+describe('stable spatial-text plane topology', () => {
+  it('extracts a Curve Drop path even without a straight XYZ vector', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const textId = api.createNode('text', rootId, {
+      name: 'Curve Drop label',
+      text: 'Falling along a curve',
+      size: { width: 260, height: 48 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        id: 'curve-drop',
+        motionVector: null,
+        motionPath: defaultTextMotionPath(),
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [textId]: { x: 140, y: 120, width: 260, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
+    expect(
+      buildWorldPlanes(
+        api,
+        layout,
+        {},
+        resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+      ).find((plane) => plane.nodeId === textId),
+    ).toMatchObject({ renderKind: 'segment-text' })
+  })
+
+  it('splits the sibling stack so later overlays stay above spatial text', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const parentId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const textId = api.createNode('text', parentId, {
+      name: 'Spatial label',
+      text: 'Depth',
+      size: { width: 180, height: 40 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        motionVector: { x: 0, y: 0, z: 1 },
+      },
+    })
+    const overlayId = api.createNode('rect', parentId, {
+      name: 'Later overlay',
+      size: { width: 180, height: 40 },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [parentId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 180, height: 40 },
+      [overlayId]: { x: 140, y: 120, width: 180, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const planes = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+
+    expect(planes.map((plane) => plane.nodeId)).toEqual([
+      parentId,
+      textId,
+      overlayId,
+    ])
+    expect(planes.map((plane) => plane.paintOrder)).toEqual([0, 1, 2])
+    expect(planes.find((plane) => plane.nodeId === parentId)?.contentMode).toBe(
+      'self',
+    )
+    expect(planes.find((plane) => plane.nodeId === overlayId)).toMatchObject({
+      contentMode: 'subtree',
+      extractedFromParent: true,
+    })
+  })
+
+  it('extracts an all-zero node vector as a clipped self segment plane', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const parentId = api.createNode('frame', rootId, {
+      name: 'Clipping card',
+      size: { width: 300, height: 200 },
+      clipsContent: true,
+    })
+    const textId = api.createNode('text', parentId, {
+      name: 'Spatial label',
+      text: 'Spatial label',
+      size: { width: 180, height: 40 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        motionVector: { x: 0, y: 0, z: 0 },
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [parentId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 180, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
+    const planes = buildWorldPlanes(api, layout, {}, resolvedCamera)
+    expect(planes.map((plane) => plane.nodeId)).toEqual([parentId, textId])
+    expect(planes.find((plane) => plane.nodeId === parentId)).toMatchObject({
+      renderKind: 'canvas',
+      contentMode: 'self',
+    })
+    expect(planes.find((plane) => plane.nodeId === textId)).toMatchObject({
+      renderKind: 'segment-text',
+      contentMode: 'self',
+      extractedFromParent: true,
+    })
+    expect(planes.find((plane) => plane.nodeId === textId)?.clips).toEqual([
+      expect.objectContaining({ rect: layout[parentId] }),
+    ])
+  })
+
+  it('stays extracted while a legacy config is active if any stacked track has a vector', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const parentId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const textId = api.createNode('text', parentId, {
+      name: 'Stacked label',
+      text: 'Stacked label',
+      size: { width: 180, height: 40 },
+      textAnimation: { ...DEFAULT_TEXT_ANIMATION, motionVector: null },
+    })
+    api.setTrack({
+      id: 'spatial-text-track',
+      nodeId: textId,
+      propertyId: 'text.progress',
+      defaultEasing: 'linear',
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        startTime: 4,
+        motionVector: { x: 0, y: 0, z: 0 },
+      },
+      keyframes: [
+        { id: 'spatial-start', time: 4, value: 0 },
+        { id: 'spatial-end', time: 5, value: 1 },
+      ],
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [parentId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 180, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+    const activeLegacyAnimation = {
+      ...DEFAULT_TEXT_ANIMATION,
+      motionVector: null,
+    }
+
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(true)
+    expect(
+      buildWorldPlanes(
+        api,
+        layout,
+        {
+          [textId]: {
+            textProgress: 0.5,
+            textAnimation: activeLegacyAnimation,
+          },
+        },
+        resolvedCamera,
+      ).find((plane) => plane.nodeId === textId),
+    ).toMatchObject({
+      renderKind: 'segment-text',
+      contentMode: 'self',
+    })
+
+    api.deleteTrack('spatial-text-track')
+    expect(textNodeNeedsSegmentPlane(api, textId)).toBe(false)
+    expect(
+      buildWorldPlanes(api, layout, {}, resolvedCamera).map(
+        (plane) => plane.nodeId,
+      ),
+    ).toEqual([parentId])
+  })
+
 })
 
 describe('hierarchical WebGL visibility', () => {
@@ -297,5 +515,158 @@ describe('hierarchical WebGL opacity', () => {
 
     expect(planes.find((plane) => plane.nodeId === groupId)?.opacity).toBe(0.5)
     expect(planes.find((plane) => plane.nodeId === cardId)?.opacity).toBeCloseTo(0.2)
+  })
+})
+
+describe('cached plane-build topology', () => {
+  it('preserves output without persistent graph reads on animated frames', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const groupId = api.createNode('frame', rootId, {
+      name: 'Group',
+      size: { width: 300, height: 200 },
+      transform: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rotation: 0,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+        anchorX: 0.5,
+        anchorY: 0.5,
+        anchorZ: 0,
+        renderMode: 'group3d',
+      },
+    })
+    const textId = api.createNode('text', groupId, {
+      name: 'Spatial label',
+      text: 'Progressive entry',
+      size: { width: 220, height: 48 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        motionVector: { x: 0, y: -1, z: 0 },
+      },
+    })
+    const overlayId = api.createNode('rect', groupId, {
+      name: 'Overlay',
+      size: { width: 220, height: 48 },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [groupId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 220, height: 48 },
+      [overlayId]: { x: 140, y: 120, width: 220, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+    const animatedFrame = {
+      [groupId]: { z: 120, opacity: 0.6 },
+      [textId]: { textProgress: 0.45 },
+    }
+    const expectedAtRest = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolvedCamera,
+    )
+    const expectedAnimated = buildWorldPlanes(
+      api,
+      layout,
+      animatedFrame,
+      resolvedCamera,
+    )
+    const nodeCount = api.getAllNodeIds().length
+    const getNode = vi.spyOn(api, 'getNode')
+    const getAllTracks = vi.spyOn(api, 'getAllTracks')
+    const getTracksForNode = vi.spyOn(api, 'getTracksForNode')
+
+    const context = createPlaneBuildContext(api)
+    expect(getNode).toHaveBeenCalledTimes(nodeCount)
+    expect(getAllTracks).toHaveBeenCalledTimes(1)
+    expect(getTracksForNode).not.toHaveBeenCalled()
+
+    expect(
+      buildWorldPlanes(api, layout, {}, resolvedCamera, { context }),
+    ).toEqual(expectedAtRest)
+    expect(
+      buildWorldPlanes(api, layout, animatedFrame, resolvedCamera, {
+        context,
+      }),
+    ).toEqual(expectedAnimated)
+    expect(getNode).toHaveBeenCalledTimes(nodeCount)
+    expect(getAllTracks).toHaveBeenCalledTimes(1)
+    expect(getTracksForNode).not.toHaveBeenCalled()
+
+    getNode.mockRestore()
+    getAllTracks.mockRestore()
+    getTracksForNode.mockRestore()
+  })
+
+  it('refreshes segment topology after a document change', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const cardId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const textId = api.createNode('text', cardId, {
+      name: 'Legacy label',
+      text: 'Legacy label',
+      size: { width: 180, height: 40 },
+      textAnimation: { ...DEFAULT_TEXT_ANIMATION, motionVector: null },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [cardId]: { x: 100, y: 80, width: 300, height: 200 },
+      [textId]: { x: 140, y: 120, width: 180, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+    const beforeContext = createPlaneBuildContext(api)
+    const beforeVersion = api.getVersion()
+
+    api.setTrack({
+      id: 'spatial-text-track',
+      nodeId: textId,
+      propertyId: 'text.progress',
+      defaultEasing: 'linear',
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        motionVector: { x: 0, y: -1, z: 0 },
+      },
+      keyframes: [
+        { id: 'spatial-start', time: 0, value: 0 },
+        { id: 'spatial-end', time: 1, value: 1 },
+      ],
+    })
+    expect(api.getVersion()).toBeGreaterThan(beforeVersion)
+    expect(
+      buildWorldPlanes(api, layout, {}, resolvedCamera, {
+        context: beforeContext,
+      }).map((plane) => plane.nodeId),
+    ).toEqual([cardId])
+
+    const refreshedContext = createPlaneBuildContext(api)
+    expect(
+      buildWorldPlanes(api, layout, {}, resolvedCamera, {
+        context: refreshedContext,
+      }).map((plane) => plane.nodeId),
+    ).toEqual([cardId, textId])
   })
 })

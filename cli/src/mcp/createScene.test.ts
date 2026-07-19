@@ -150,10 +150,50 @@ test('create_scene description mentions text animation track fields', () => {
     'startTime',
     'easingPresetId',
     'travelDistance',
+    'motionVector',
+    'motionPath',
+    'staggerCurve',
     'blurRadius',
   ]) {
     assert.match(description, new RegExp(field))
   }
+})
+
+test('create_scene description defines text motion vector axes', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(
+    description,
+    /\+X right, \+Y down, \+Z toward the viewer/,
+  )
+})
+
+test('create_scene description defines the editable text stagger curve', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(
+    description,
+    /staggerCurve \(\{ version: 1, points: \[\{ id, x, y, inX, inY, outX, outY \}\] \} defining a monotonic initial-to-final trail profile sampled by every segment as it travels across text\)/,
+  )
+})
+
+test('create_scene description defines the editable text spatial path', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(
+    description,
+    /motionPath \(\{ version: 1, points: \[\{ id, t, x, y, z, inX, inY, inZ, outX, outY, outZ \}\] \} defining an editable cubic spatial route in line-height units/,
+  )
+  assert.match(description, /motionPath takes precedence over motionVector/)
 })
 
 test('create_scene description stays in sync with supported property ids', () => {

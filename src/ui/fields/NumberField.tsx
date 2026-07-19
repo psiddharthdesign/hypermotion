@@ -28,6 +28,8 @@ export function NumberField({
   max,
   step = 1,
   suffix,
+  ariaLabel,
+  disabled = false,
   width = 'w-16',
 }: {
   value: number
@@ -45,6 +47,9 @@ export function NumberField({
   max?: number
   step?: number
   suffix?: string
+  /** Accessible name for the numeric input and its scrub handle. */
+  ariaLabel?: string
+  disabled?: boolean
   /** Tailwind width class. Fields in tight rows can shrink. */
   width?: string
 }) {
@@ -128,7 +133,7 @@ export function NumberField({
       }
     }
 
-    const onPointerUp = (e: PointerEvent) => {
+    const finishPointerScrub = (e: PointerEvent, cancelled: boolean) => {
       const scrub = scrubRef.current
       if (!scrub || e.pointerId !== scrub.pointerId) return
       scrubRef.current = null
@@ -137,22 +142,29 @@ export function NumberField({
       document.body.style.cursor = scrub.previousCursor
       if (scrub.scrubbing) {
         if (scrub.deferredCommit) {
-          ;(latestRef.current.onScrubCommit ?? latestRef.current.onCommit)(
-            scrub.latestValue,
-          )
+          if (cancelled) {
+            latestRef.current.onScrubCancel?.()
+            setDraft(formatNumber(latestRef.current.value))
+          } else {
+            ;(latestRef.current.onScrubCommit ?? latestRef.current.onCommit)(
+              scrub.latestValue,
+            )
+          }
         }
         e.preventDefault()
         ref.current?.blur()
       }
     }
+    const onPointerUp = (e: PointerEvent) => finishPointerScrub(e, false)
+    const onPointerCancel = (e: PointerEvent) => finishPointerScrub(e, true)
 
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
-    window.addEventListener('pointercancel', onPointerUp)
+    window.addEventListener('pointercancel', onPointerCancel)
     return () => {
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
-      window.removeEventListener('pointercancel', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerCancel)
       const scrub = scrubRef.current
       document.body.style.userSelect = ''
       if (scrub) {
@@ -165,7 +177,7 @@ export function NumberField({
   }, [])
 
   const beginScrub = (e: React.PointerEvent) => {
-    if (e.button !== 0) return
+    if (disabled || e.button !== 0) return
     e.preventDefault()
     const previousCursor = document.body.style.cursor
     document.body.style.userSelect = 'none'
@@ -194,16 +206,18 @@ export function NumberField({
         'inline-flex h-7 items-center rounded-md bg-app-bg',
         'ring-1 ring-transparent transition-shadow',
         'hover:ring-border focus-within:ring-2 focus-within:ring-accent/45',
+        disabled ? 'cursor-not-allowed opacity-50' : '',
         width,
       ].join(' ')}
     >
       <button
         type="button"
-        aria-label="Drag to scrub value"
+        disabled={disabled}
+        aria-label={ariaLabel ? `Drag to scrub ${ariaLabel}` : 'Drag to scrub value'}
         title="Drag to scrub value"
         onPointerDown={beginScrub}
-        className="flex h-full w-5 shrink-0 cursor-ew-resize items-center justify-center rounded-l-md text-text-dim hover:text-text"
-        style={{ cursor: SCRUB_CURSOR }}
+        className="flex h-full w-5 shrink-0 items-center justify-center rounded-l-md text-text-dim enabled:cursor-ew-resize enabled:hover:text-text"
+        style={{ cursor: disabled ? 'not-allowed' : SCRUB_CURSOR }}
       >
         <svg
           width="13"
@@ -223,7 +237,9 @@ export function NumberField({
       <input
         ref={ref}
         type="text"
+        disabled={disabled}
         inputMode="decimal"
+        aria-label={ariaLabel}
         value={draft}
         step={step}
         onChange={(e) => setDraft(e.target.value)}

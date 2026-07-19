@@ -36,8 +36,11 @@ export {
   PRESETS,
   applyPreset,
   planLayerPresetTargets,
+  planTextPresetTargets,
+  planTextStaggerStartTimes,
   type AnimPresetId,
   type LayerPresetTargetPlan,
+  type TextPresetTargetPlan,
 } from './presets'
 export {
   recordKeyframesForPatch,
@@ -56,17 +59,61 @@ export {
   DEFAULT_TEXT_ANIMATION,
   TEXT_ANIMATION_PRESETS,
   applyTextAnimation,
+  deriveTextAnimationTiming,
   normalizeTextAnimation,
   stampTextAnimationKeyframes,
   textAnimationDefaults,
+  textAnimationUsesLegacyTranslation,
+  typewriterTextAtProgress,
   updateTextAnimationEasing,
+  updateTextAnimationTrackMetadata,
   type TextAnimationAcceleration,
   type TextAnimationApplyTo,
   type TextAnimationConfig,
   type TextAnimationDirection,
   type TextAnimationId,
   type TextAnimationMode,
+  type TextAnimationMotionVector,
   type TextAnimationOrder,
   type TextAnimationPreset,
   type TextAnimationSmoothing,
 } from './textAnimations'
+export {
+  easeTextAnimationProgress,
+  textSegmentEnvelopeProgress,
+  textSegmentLinearProgress,
+  textSegmentStartOffset,
+} from './textSegmentEnvelope'
+export {
+  MAX_TEXT_STAGGER_CURVE_POINTS,
+  evaluateTextStaggerCurve,
+  normalizeTextStaggerCurve,
+  removeTextStaggerCurvePoint,
+  splitTextStaggerCurveAt,
+  textStaggerCurveForPreset,
+  type TextStaggerCurve,
+  type TextStaggerCurvePoint,
+  type TextStaggerCurvePreset,
+} from './textStaggerCurve'
+export {
+  MAX_TEXT_MOTION_PATH_POINTS,
+  defaultTextMotionPath,
+  evaluateTextMotionPath,
+  normalizeTextMotionPath,
+  removeTextMotionPathPoint,
+  splitTextMotionPathAt,
+  type TextMotionPath,
+  type TextMotionPathPoint,
+} from './textMotionPath'
+export {
+  resolveTextMotionRailAmount,
+  resolveTextSegmentMotion,
+} from './textSegmentMotion'
+export {
+  createTextMotionRailWorkspace,
+  refreshTextMotionRailWorkspace,
+  resolveTextMotionRailOffsets,
+  type TextMotionRailPoint,
+  type TextMotionRailSegment,
+  type TextMotionRailWorkspace,
+} from './textMotionRail'

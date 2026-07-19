@@ -13,6 +13,7 @@ export interface CanvasTextAnimationSegment {
   x: number
   y: number
   width: number
+  height: number
   animate: boolean
   order: number
   /** Number of displayed characters before this segment on its visual line. */
@@ -21,6 +22,8 @@ export interface CanvasTextAnimationSegment {
   lineCharacterCount: number
   /** Keeps animated tracking centred/right-aligned like the authored text. */
   trackingAlignment: 0 | 0.5 | 1
+  /** Visual line whose glyph/word centres share one spatial motion rail. */
+  visualLineIndex: number
 }
 
 type MeasureText = (text: string) => number
@@ -94,6 +97,51 @@ export function layoutCanvasTextAnimationSegments({
   align: TextAlign
   measure: MeasureText
 }): CanvasTextAnimationSegment[] {
+  if (applyTo === 'lines') {
+    const segments: CanvasTextAnimationSegment[] = []
+    let visualLineIndex = 0
+    let order = 0
+    for (const authoredLine of text.split('\n')) {
+      const wrappedLines = layoutCanvasTextLines(
+        authoredLine,
+        maxWidth,
+        measure,
+      )
+      const animate = authoredLine.length > 0
+      const authoredOrder = animate ? order++ : order
+      const wrappedWidth = Math.max(
+        0,
+        ...wrappedLines.map((line) => measure(line.text)),
+      )
+      const groupWidth =
+        wrappedLines.length > 1 ? maxWidth : Math.min(maxWidth, wrappedWidth)
+      const groupX =
+        align === 'center'
+          ? x + Math.max(0, (maxWidth - groupWidth) / 2)
+          : align === 'end'
+            ? x + Math.max(0, maxWidth - groupWidth)
+            : x
+      segments.push({
+        text: authoredLine,
+        x: groupX,
+        y: y + visualLineIndex * lineHeightPx,
+        width: groupWidth,
+        height: wrappedLines.length * lineHeightPx,
+        animate,
+        // One authored line owns one quad even when it wraps visually. Its
+        // transform origin, Scramble seed, and timing then match the DOM span.
+        order: authoredOrder,
+        trackingIndex: 0,
+        lineCharacterCount: Array.from(authoredLine).length,
+        trackingAlignment:
+          align === 'center' ? 0.5 : align === 'end' ? 1 : 0,
+        visualLineIndex,
+      })
+      visualLineIndex += wrappedLines.length
+    }
+    return segments
+  }
+
   const lines = layoutCanvasTextLines(text, maxWidth, measure)
   const segments: CanvasTextAnimationSegment[] = []
   let order = 0
@@ -109,22 +157,6 @@ export function layoutCanvasTextAnimationSegments({
     const trackingAlignment: 0 | 0.5 | 1 =
       align === 'center' ? 0.5 : align === 'end' ? 1 : 0
     const lineCharacterCount = Array.from(line.text).length
-
-    if (applyTo === 'lines') {
-      const animate = line.text.length > 0
-      segments.push({
-        text: line.text,
-        x: lineX,
-        y: y + lineIndex * lineHeightPx,
-        width: lineWidth,
-        animate,
-        order: animate ? order++ : order,
-        trackingIndex: 0,
-        lineCharacterCount,
-        trackingAlignment,
-      })
-      return
-    }
 
     const rawSegments =
       applyTo === 'words' ? line.text.split(/(\s+)/) : Array.from(line.text)
@@ -150,11 +182,13 @@ export function layoutCanvasTextAnimationSegments({
         x: lineX + prefixWidth + justifyOffset,
         y: y + lineIndex * lineHeightPx,
         width,
+        height: lineHeightPx,
         animate,
         order: animate ? order++ : order,
         trackingIndex,
         lineCharacterCount,
         trackingAlignment,
+        visualLineIndex: lineIndex,
       })
       prefix += part
       if (whitespace) justifyOffset += extraPerWhitespace

@@ -6,6 +6,7 @@ import type {
   KeyframeValue,
   NodeId,
   PropertyId,
+  Track,
   TrackId,
 } from '@/scene'
 import type {
@@ -77,6 +78,13 @@ export interface ResolvedStaggerKeyframeBundle {
   members: ResolvedStaggerKeyframeMember[]
 }
 
+export interface ResolvedStaggerTrackBundle {
+  setId: string
+  propertyId: PropertyId
+  sourceTrackId: TrackId
+  trackIdsByNode: Partial<Record<NodeId, TrackId>>
+}
+
 export interface StaggerKeyframePatch {
   time?: number
   value?: KeyframeValue
@@ -97,6 +105,141 @@ export function staggerLayerOffset(
   if (index < 0) return 0
   const staggerIndex = order === 'reverse' ? layerIds.length - 1 - index : index
   return staggerIndex * normalizeDelay(delay)
+}
+
+/** Find the real track owned by one layer in a persistent stagger set. */
+export function findStaggerSetMemberTrack(
+  api: SceneAPI,
+  setId: string,
+  nodeId: NodeId,
+  propertyId: PropertyId,
+  preferredTime?: number,
+): Track | null {
+  const set = api.getUiState().staggerSets[setId]
+  const owned = set?.members[nodeId]?.[propertyId]
+  if (!owned?.length) return null
+  const ownedIds = new Set(owned)
+  const candidates = api
+    .getTracksForNode(nodeId)
+    .filter(
+      (track) =>
+        track.propertyId === propertyId &&
+        track.keyframes.some((keyframe) => ownedIds.has(keyframe.id)),
+    )
+  if (candidates.length === 0) return null
+  if (preferredTime === undefined || !Number.isFinite(preferredTime)) {
+    return candidates[0] ?? null
+  }
+  const preferred = candidates.find((track) => {
+      if (track.keyframes.length === 0) return false
+      const times = track.keyframes.map((keyframe) => keyframe.time)
+      const start = Math.min(...times)
+      const end = Math.max(...times)
+      return preferredTime >= start - 0.01 && preferredTime <= end + 0.01
+    })
+  // The playhead is a disambiguation hint, not a requirement. A set with one
+  // owned text track must remain editable before/after its active range;
+  // otherwise the Inspector can offer Add and accidentally stack duplicates.
+  return preferred ?? (candidates.length === 1 ? candidates[0]! : null)
+}
+
+/**
+ * Resolve the same logical property track across every layer in a set.
+ * Stagger membership is appended in lockstep; matching the source track's
+ * member ordinals avoids accidentally editing another text in/out animation.
+ */
+export function resolveStaggerTrackBundle(
+  api: SceneAPI,
+  setId: string,
+  sourceTrackId: TrackId,
+): ResolvedStaggerTrackBundle | null {
+  const set = api.getUiState().staggerSets[setId]
+  const sourceTrack = api.getTrack(sourceTrackId)
+  if (!set || !sourceTrack) return null
+  const sourceMembers = set.members[sourceTrack.nodeId]?.[sourceTrack.propertyId]
+  if (!sourceMembers?.length) return null
+  const sourceKeyframeIds = new Set(
+    sourceTrack.keyframes.map((keyframe) => keyframe.id),
+  )
+  const ordinals = sourceMembers.flatMap((id, index) =>
+    sourceKeyframeIds.has(id) ? [index] : [],
+  )
+  if (ordinals.length === 0) return null
+  const participatingMemberLists = set.layerIds.flatMap((nodeId) => {
+    const ids = set.members[nodeId]?.[sourceTrack.propertyId]
+    return ids?.length ? [ids] : []
+  })
+  const intactOrdinalBundle = participatingMemberLists.every(
+    (ids) => ids.length === sourceMembers.length,
+  )
+  const sourceBaseTime =
+    trackStartTime(sourceTrack) -
+    staggerLayerOffset(
+      set.layerIds,
+      sourceTrack.nodeId,
+      set.delay,
+      set.order,
+    )
+
+  const trackIdsByNode: Partial<Record<NodeId, TrackId>> = {}
+  for (const nodeId of set.layerIds) {
+    const memberIds = set.members[nodeId]?.[sourceTrack.propertyId]
+    if (!memberIds?.length) continue
+    const candidates = api
+      .getTracksForNode(nodeId)
+      .filter((candidate) => candidate.propertyId === sourceTrack.propertyId)
+    let track: Track | undefined
+    if (intactOrdinalBundle) {
+      const expectedIds = new Set(
+        ordinals.flatMap((ordinal) => {
+          const id = memberIds[ordinal]
+          return id ? [id] : []
+        }),
+      )
+      track = candidates
+        .map((candidate) => ({
+          candidate,
+          matchCount: candidate.keyframes.filter((keyframe) =>
+            expectedIds.has(keyframe.id),
+          ).length,
+        }))
+        .sort((a, b) => b.matchCount - a.matchCount)
+        .find((entry) => entry.matchCount > 0)?.candidate
+    } else {
+      const ownedIds = new Set(memberIds)
+      const expectedStart =
+        sourceBaseTime +
+        staggerLayerOffset(
+          set.layerIds,
+          nodeId,
+          set.delay,
+          set.order,
+        )
+      const ranked = candidates
+        .filter((candidate) =>
+          candidate.keyframes.some((keyframe) => ownedIds.has(keyframe.id)),
+        )
+        .map((candidate) => ({
+          candidate,
+          distance: Math.abs(trackStartTime(candidate) - expectedStart),
+        }))
+        .sort((a, b) => a.distance - b.distance)
+      if (
+        ranked[0] &&
+        (!ranked[1] || Math.abs(ranked[1].distance - ranked[0].distance) > 1e-6)
+      ) {
+        track = ranked[0].candidate
+      }
+    }
+    if (track) trackIdsByNode[nodeId] = track.id
+  }
+  if (trackIdsByNode[sourceTrack.nodeId] !== sourceTrack.id) return null
+  return {
+    setId,
+    propertyId: sourceTrack.propertyId,
+    sourceTrackId,
+    trackIdsByNode,
+  }
 }
 
 export function inspectStaggerSetProperty(
@@ -535,34 +678,41 @@ export function configureStaggerSet(
       for (const [propertyId, memberIds] of Object.entries(
         set.members[nodeId] ?? {},
       ) as Array<[PropertyId, string[]]>) {
-        const track = findTrack(api, nodeId, propertyId)
-        if (!track) continue
         const members = new Set(memberIds)
-        const keyframes = track.keyframes
-          .map((keyframe) => {
-            if (!members.has(keyframe.id)) return keyframe
-            const time = normalizeTime(keyframe.time + delta)
-            maxTime = Math.max(maxTime, time)
-            return { ...keyframe, time }
-          })
-          .sort((a, b) => a.time - b.time)
-        const textAnimation =
-          propertyId === 'text.progress' && track.textAnimation
-            ? {
-                ...track.textAnimation,
-                startTime: normalizeTime(
-                  track.textAnimation.startTime + delta,
-                ),
-              }
-            : track.textAnimation
-        api.setTrack({ ...track, keyframes, textAnimation })
-        if (propertyId === 'text.progress' && textAnimation) {
-          const node = api.getNode(nodeId)
-          const textTracks = api
-            .getTracksForNode(nodeId)
-            .filter((candidate) => candidate.propertyId === 'text.progress')
-          if (node?.kind === 'text' && textTracks.length === 1) {
-            api.setNodeProperty(nodeId, 'textAnimation', textAnimation)
+        for (const track of tracksContainingMemberIds(
+          api,
+          nodeId,
+          propertyId,
+          members,
+        )) {
+          const keyframes = track.keyframes
+            .map((keyframe) => {
+              if (!members.has(keyframe.id)) return keyframe
+              const time = normalizeTime(keyframe.time + delta)
+              maxTime = Math.max(maxTime, time)
+              return { ...keyframe, time }
+            })
+            .sort((a, b) => a.time - b.time)
+          const textAnimation =
+            propertyId === 'text.progress' && track.textAnimation
+              ? {
+                  ...track.textAnimation,
+                  startTime: normalizeTime(
+                    track.textAnimation.startTime + delta,
+                  ),
+                }
+              : track.textAnimation
+          api.setTrack({ ...track, keyframes, textAnimation })
+          if (propertyId === 'text.progress' && textAnimation) {
+            const node = api.getNode(nodeId)
+            const textTracks = api
+              .getTracksForNode(nodeId)
+              .filter(
+                (candidate) => candidate.propertyId === 'text.progress',
+              )
+            if (node?.kind === 'text' && textTracks.length === 1) {
+              api.setNodeProperty(nodeId, 'textAnimation', textAnimation)
+            }
           }
         }
       }
@@ -615,8 +765,6 @@ export function resolveStaggerKeyframeBundle(
     for (const nodeId of set.layerIds) {
       const memberIds = set.members[nodeId]?.[editedTrack.propertyId]
       if (!memberIds?.length) continue
-      const track = findTrack(api, nodeId, editedTrack.propertyId)
-      if (!track) continue
       // Membership ids are appended in lockstep when a bundle is authored.
       // Prefer that persistent ordinal when every participating layer remains
       // intact, so even a legacy member that drifted in time can be repaired by
@@ -624,10 +772,18 @@ export function resolveStaggerKeyframeBundle(
       // shifting onto the neighboring bundle.
       if (intactOrdinalBundle) {
         const ordinalId = memberIds[memberIndex]
+        const track = ordinalId
+          ? trackContainingKeyframeId(
+              api,
+              nodeId,
+              editedTrack.propertyId,
+              ordinalId,
+            )
+          : null
         const ordinalKeyframe = ordinalId
-          ? track.keyframes.find((keyframe) => keyframe.id === ordinalId)
+          ? track?.keyframes.find((keyframe) => keyframe.id === ordinalId)
           : undefined
-        if (ordinalKeyframe) {
+        if (track && ordinalKeyframe) {
           members.push({
             nodeId,
             propertyId: editedTrack.propertyId,
@@ -646,15 +802,22 @@ export function resolveStaggerKeyframeBundle(
           set.delay,
           set.order,
         )
-      const candidates = track.keyframes.filter((keyframe) =>
-        memberIds.includes(keyframe.id),
+      const candidates = tracksContainingMemberIds(
+        api,
+        nodeId,
+        editedTrack.propertyId,
+        new Set(memberIds),
+      ).flatMap((track) =>
+        track.keyframes
+          .filter((keyframe) => memberIds.includes(keyframe.id))
+          .map((keyframe) => ({ track, keyframe })),
       )
       let closest = candidates[0]
       let distance = closest
-        ? Math.abs(closest.time - expectedTime)
+        ? Math.abs(closest.keyframe.time - expectedTime)
         : Infinity
       for (const candidate of candidates.slice(1)) {
-        const nextDistance = Math.abs(candidate.time - expectedTime)
+        const nextDistance = Math.abs(candidate.keyframe.time - expectedTime)
         if (nextDistance < distance) {
           closest = candidate
           distance = nextDistance
@@ -665,9 +828,9 @@ export function resolveStaggerKeyframeBundle(
       members.push({
         nodeId,
         propertyId: editedTrack.propertyId,
-        trackId: track.id,
-        keyframeId: closest.id,
-        time: closest.time,
+        trackId: closest.track.id,
+        keyframeId: closest.keyframe.id,
+        time: closest.keyframe.time,
       })
     }
 
@@ -876,7 +1039,12 @@ export function deleteStaggerSetKeyframes(
       const deleting = new Set(member.keyframeIds)
       for (const keyframeId of ownedIds) {
         if (!deleting.has(keyframeId)) continue
-        const track = findTrack(api, member.nodeId, member.propertyId)
+        const track = trackContainingKeyframeId(
+          api,
+          member.nodeId,
+          member.propertyId,
+          keyframeId,
+        )
         if (track?.keyframes.some((keyframe) => keyframe.id === keyframeId)) {
           removeKeyframe(api, track.id, keyframeId)
         }
@@ -946,9 +1114,20 @@ export function registerStaggerSetKeyframes(
   api.doc.transact(() => {
     for (const member of members) {
       if (!layerSet.has(member.nodeId)) continue
-      const track = findTrack(api, member.nodeId, member.propertyId)
-      if (!track) continue
-      const liveIds = new Set(track.keyframes.map((keyframe) => keyframe.id))
+      const liveIds = new Set(
+        api
+          .getTracksForNode(member.nodeId)
+          .filter((track) => track.propertyId === member.propertyId)
+          .flatMap((track) =>
+            track.keyframes.map((keyframe) => keyframe.id),
+          ),
+      )
+      if (liveIds.size === 0) continue
+      const existingIds = set.members[member.nodeId]?.[member.propertyId]
+      if (existingIds) {
+        set.members[member.nodeId]![member.propertyId] =
+          existingIds.filter((id) => liveIds.has(id))
+      }
       for (const keyframeId of member.keyframeIds) {
         if (liveIds.has(keyframeId)) {
           addMember(set, member.nodeId, member.propertyId, keyframeId)
@@ -1156,4 +1335,42 @@ function normalizeDelay(delay: number): number {
 
 function normalizeTime(time: number): number {
   return Math.max(0, Number(time.toFixed(9)))
+}
+
+function trackStartTime(track: Track): number {
+  return track.keyframes.length > 0
+    ? Math.min(...track.keyframes.map((keyframe) => keyframe.time))
+    : Infinity
+}
+
+function tracksContainingMemberIds(
+  api: SceneAPI,
+  nodeId: NodeId,
+  propertyId: PropertyId,
+  memberIds: ReadonlySet<string>,
+): Track[] {
+  return api
+    .getTracksForNode(nodeId)
+    .filter(
+      (track) =>
+        track.propertyId === propertyId &&
+        track.keyframes.some((keyframe) => memberIds.has(keyframe.id)),
+    )
+}
+
+function trackContainingKeyframeId(
+  api: SceneAPI,
+  nodeId: NodeId,
+  propertyId: PropertyId,
+  keyframeId: string,
+): Track | null {
+  return (
+    api
+      .getTracksForNode(nodeId)
+      .find(
+        (track) =>
+          track.propertyId === propertyId &&
+          track.keyframes.some((keyframe) => keyframe.id === keyframeId),
+      ) ?? null
+  )
 }

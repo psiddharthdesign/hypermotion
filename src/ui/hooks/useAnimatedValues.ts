@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useSyncExternalStore } from 'react'
-import type { NodeId } from '@/scene'
+import type { NodeId, SceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
 
@@ -65,6 +65,8 @@ const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<
   NodeId,
   AnimatedValue
 >
+const subscribeToNothing = () => () => {}
+const getZeroPlaybackClock = () => 0
 
 function sameAnimatedValue(
   left: AnimatedValue | undefined,
@@ -147,4 +149,36 @@ export function useAnimatedValues(
     getSelectedSnapshot,
     getSelectedSnapshot,
   )
+}
+
+/**
+ * Node-authored text effects predate `text.progress` tracks. They still use
+ * absolute scene time, but the structurally shared animation selector stays
+ * empty for them. Opt only their small WebGL leaf into the engine clock so
+ * playback remains 60fps without making the complete editor render per tick.
+ */
+export function useAnimationPlaybackClock(enabled: boolean): number {
+  const engine = getAnimEngine()
+  const getSnapshot = enabled ? engine.getPlayhead : getZeroPlaybackClock
+  return useSyncExternalStore(
+    enabled ? engine.subscribe : subscribeToNothing,
+    getSnapshot,
+    getSnapshot,
+  )
+}
+
+export function hasNodeDrivenTextAnimation(
+  api: SceneAPI,
+  nodeIds: readonly NodeId[],
+): boolean {
+  for (const nodeId of nodeIds) {
+    const node = api.getNode(nodeId)
+    if (node?.kind !== 'text' || !node.textAnimation) continue
+    const engineDriven = api.getTracksForNode(nodeId).some(
+      (track) =>
+        track.propertyId === 'text.progress' && track.keyframes.length >= 2,
+    )
+    if (!engineDriven) return true
+  }
+  return false
 }

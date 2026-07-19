@@ -2,21 +2,25 @@
 
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import type { PropertyId } from '@/scene'
+import type { PropertyId, Track } from '@/scene'
 import { createSceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { addKeyframe, findTrack } from './tracks'
+import { DEFAULT_TEXT_ANIMATION } from './textAnimations'
 import {
   deleteStaggerSetKeyframes,
   deleteStaggerSet,
   detachStaggerSetKeyframes,
   detachStaggerSetLayers,
+  findStaggerSetMemberTrack,
   inspectStaggerSetProperty,
   inspectStaggerSetPropertyFromMember,
   patchStaggerKeyframeBundle,
   removeStaggerSet,
   renameStaggerSet,
+  registerStaggerSetKeyframes,
   resolveStaggerKeyframeBundle,
+  resolveStaggerTrackBundle,
   retimeStaggerSet,
   stampStaggerSetPatch,
   staggerSetPropertyIds,
@@ -24,6 +28,26 @@ import {
   toggleStaggerSetPropertyFromMember,
   type StaggerPropertyTarget,
 } from './staggerSets'
+
+function textTrack(
+  id: string,
+  nodeId: string,
+  start: number,
+  end: number,
+): Track {
+  const textAnimation = { ...DEFAULT_TEXT_ANIMATION, startTime: start }
+  return {
+    id,
+    nodeId,
+    propertyId: 'text.progress',
+    defaultEasing: 'ease-out',
+    textAnimation,
+    keyframes: [
+      { id: `${id}-start`, time: start, value: 0 },
+      { id: `${id}-end`, time: end, value: 1 },
+    ],
+  }
+}
 
 function setup() {
   const api = createSceneAPI()
@@ -730,5 +754,177 @@ describe('stagger property keyframe sets', () => {
     expect(times(api, layers[1]!, 'transform.x')).toEqual([0.1, 2.1])
     expect(times(api, layers[2]!, 'transform.x')).toEqual([0.2, 2.2])
     undo.destroy()
+  })
+})
+
+describe('stacked text animation stagger sets', () => {
+  it('keeps a single owned text track editable outside its active range', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const text = api.createNode('text', root, { text: 'Only' })
+    const second = api.createNode('text', root, { text: 'Second' })
+    const track = textTrack('only-in', text, 2, 3)
+    const secondTrack = textTrack('second-in', second, 2.2, 3.2)
+    api.setTrack(track)
+    api.setTrack(secondTrack)
+    registerStaggerSetKeyframes(
+      api,
+      {
+        setId: 'text-set',
+        layerIds: [text, second],
+        delay: 0.2,
+        order: 'forward',
+      },
+      [
+        {
+          nodeId: text,
+          propertyId: 'text.progress',
+          keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+        },
+        {
+          nodeId: second,
+          propertyId: 'text.progress',
+          keyframeIds: secondTrack.keyframes.map((keyframe) => keyframe.id),
+        },
+      ],
+    )
+
+    expect(
+      findStaggerSetMemberTrack(
+        api,
+        'text-set',
+        text,
+        'text.progress',
+        10,
+      )?.id,
+    ).toBe('only-in')
+  })
+
+  it('resolves and retimes the matching stacked text track by member ids', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const first = api.createNode('text', root, { text: 'First' })
+    const second = api.createNode('text', root, { text: 'Second' })
+    const tracks = [
+      textTrack('first-in', first, 0, 1),
+      textTrack('first-out', first, 3, 4),
+      textTrack('second-in', second, 0.2, 1.2),
+      textTrack('second-out', second, 3.2, 4.2),
+    ]
+    for (const track of tracks) api.setTrack(track)
+    const options = {
+      setId: 'text-set',
+      layerIds: [first, second],
+      delay: 0.2,
+      order: 'forward' as const,
+    }
+    for (const pair of [
+      [tracks[0]!, tracks[2]!],
+      [tracks[1]!, tracks[3]!],
+    ]) {
+      registerStaggerSetKeyframes(
+        api,
+        options,
+        pair.map((track) => ({
+          nodeId: track.nodeId,
+          propertyId: 'text.progress' as const,
+          keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+        })),
+      )
+    }
+
+    expect(
+      findStaggerSetMemberTrack(
+        api,
+        'text-set',
+        first,
+        'text.progress',
+        3.5,
+      )?.id,
+    ).toBe('first-out')
+    expect(
+      findStaggerSetMemberTrack(
+        api,
+        'text-set',
+        first,
+        'text.progress',
+        2,
+      ),
+    ).toBeNull()
+    expect(
+      resolveStaggerTrackBundle(api, 'text-set', 'first-out')
+        ?.trackIdsByNode,
+    ).toEqual({
+      [first]: 'first-out',
+      [second]: 'second-out',
+    })
+
+    expect(retimeStaggerSet(api, 'text-set', 0.4)).toBe(true)
+    expect(api.getTrack('second-in')?.keyframes.map((keyframe) => keyframe.time)).toEqual([
+      0.4,
+      1.4,
+    ])
+    expect(api.getTrack('second-out')?.keyframes.map((keyframe) => keyframe.time)).toEqual([
+      3.4,
+      4.4,
+    ])
+    expect(api.getTrack('second-out')?.textAnimation?.startTime).toBe(3.4)
+    expect(api.getTrack('first-out')?.keyframes.map((keyframe) => keyframe.time)).toEqual([
+      3,
+      4,
+    ])
+  })
+
+  it('prunes dead ids when a preset re-registers live text endpoints', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const first = api.createNode('text', root)
+    const second = api.createNode('text', root)
+    const firstTrack = textTrack('first', first, 0, 1)
+    const secondTrack = textTrack('second', second, 0.1, 1.1)
+    api.setTrack(firstTrack)
+    api.setTrack(secondTrack)
+    const options = {
+      setId: 'text-set',
+      layerIds: [first, second],
+      delay: 0.1,
+      order: 'forward' as const,
+    }
+    registerStaggerSetKeyframes(api, options, [firstTrack, secondTrack].map((track) => ({
+      nodeId: track.nodeId,
+      propertyId: 'text.progress' as const,
+      keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+    })))
+    const set = api.getUiState().staggerSets['text-set']!
+    api.setUiState({
+      staggerSets: {
+        ...api.getUiState().staggerSets,
+        'text-set': {
+          ...set,
+          members: {
+            ...set.members,
+            [first]: {
+              ...set.members[first],
+              'text.progress': [
+                ...(set.members[first]?.['text.progress'] ?? []),
+                'dead-id',
+              ],
+            },
+          },
+        },
+      },
+    })
+
+    registerStaggerSetKeyframes(api, options, [{
+      nodeId: first,
+      propertyId: 'text.progress',
+      keyframeIds: firstTrack.keyframes.map((keyframe) => keyframe.id),
+    }])
+
+    expect(
+      api.getUiState().staggerSets['text-set']?.members[first]?.[
+        'text.progress'
+      ],
+    ).toEqual(firstTrack.keyframes.map((keyframe) => keyframe.id))
   })
 })

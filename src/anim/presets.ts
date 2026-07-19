@@ -3,6 +3,7 @@
 import type { EasingKind, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI, StaggerPropertySet } from '@/scene/doc'
 import { addKeyframe, clearPresetKeyframes } from './tracks'
+import { staggerLayerOffset } from './staggerSets'
 
 /**
  * Jitter-style preset animations.
@@ -57,6 +58,11 @@ export interface LayerPresetTargetPlan {
   order: StaggerPropertySet['order']
 }
 
+export interface TextPresetTargetPlan extends LayerPresetTargetPlan {
+  /** Full persistent set scope used to calculate each text layer's offset. */
+  staggerLayerIds: NodeId[]
+}
+
 /**
  * Resolve layer-preset targets without inferring descendants.
  *
@@ -83,6 +89,67 @@ export function planLayerPresetTargets(
     delay: editingSet?.delay ?? Math.max(0, staggerDelay),
     order: editingSet?.order ?? 'forward',
   }
+}
+
+/**
+ * Resolve text-preset targets through the same persistent relationship as
+ * layer presets. Existing stagger sets may contain non-text layers, so keep
+ * their full ordering for offset math while applying the effect only to text.
+ */
+export function planTextPresetTargets(
+  selection: readonly NodeId[],
+  isTextLayer: (id: NodeId) => boolean,
+  staggerOn: boolean,
+  staggerDelay: number,
+  activeSet?: StaggerPropertySet | null,
+): TextPresetTargetPlan {
+  const layerPlan = planLayerPresetTargets(
+    selection,
+    staggerOn,
+    staggerDelay,
+    activeSet,
+  )
+  const targets = layerPlan.targets.filter(isTextLayer)
+  return {
+    ...layerPlan,
+    targets,
+    staggerActive: layerPlan.staggerActive && targets.length > 0,
+    staggerLayerIds: layerPlan.targets,
+  }
+}
+
+/**
+ * Align newly adopted text tracks to a persistent S relationship while
+ * keeping the anchor track exactly where the user authored it.
+ */
+export function planTextStaggerStartTimes(
+  plan: TextPresetTargetPlan,
+  anchorNodeId: NodeId,
+  anchorStart: number,
+): Partial<Record<NodeId, number>> {
+  if (!plan.staggerActive || !plan.staggerLayerIds.includes(anchorNodeId)) {
+    return {}
+  }
+  const baseStart =
+    anchorStart -
+    staggerLayerOffset(
+      plan.staggerLayerIds,
+      anchorNodeId,
+      plan.delay,
+      plan.order,
+    )
+  return Object.fromEntries(
+    plan.targets.map((nodeId) => [
+      nodeId,
+      baseStart +
+        staggerLayerOffset(
+          plan.staggerLayerIds,
+          nodeId,
+          plan.delay,
+          plan.order,
+        ),
+    ]),
+  )
 }
 
 export const PRESETS: AnimPreset[] = [

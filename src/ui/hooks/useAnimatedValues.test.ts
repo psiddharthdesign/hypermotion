@@ -2,8 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import { getAnimEngine } from '@/anim/engine'
+import { textAnimationDefaults } from '@/anim/textAnimations'
 import { createSceneAPI } from '@/scene/doc'
-import { createAnimatedSnapshotSelector } from './useAnimatedValues'
+import {
+  createAnimatedSnapshotSelector,
+  hasNodeDrivenTextAnimation,
+} from './useAnimatedValues'
 
 describe('animated snapshot selection', () => {
   it('does not invalidate scene consumers for camera-only animation', () => {
@@ -66,5 +70,38 @@ describe('animated snapshot selection', () => {
     expect(middle).not.toBe(start)
     expect(end).not.toBe(middle)
     expect(middle.camera).toMatchObject({ focusX: 300, focusY: 180 })
+  })
+
+  it('requests a playback clock for node-authored text animation only', () => {
+    const api = createSceneAPI()
+    const textId = api.createNode('text', null, { text: 'Legacy motion' })
+    api.setNodeProperty(
+      textId,
+      'textAnimation',
+      textAnimationDefaults('slide-up'),
+    )
+
+    expect(hasNodeDrivenTextAnimation(api, [textId])).toBe(true)
+
+    api.setTrack({
+      id: 'text-progress',
+      nodeId: textId,
+      propertyId: 'text.progress',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'start', time: 0, value: 0 },
+        { id: 'end', time: 1, value: 1 },
+      ],
+      textAnimation: textAnimationDefaults('slide-up'),
+    })
+
+    expect(hasNodeDrivenTextAnimation(api, [textId])).toBe(false)
+  })
+
+  it('does not subscribe ordinary scene text to the playback clock', () => {
+    const api = createSceneAPI()
+    const textId = api.createNode('text', null, { text: 'Static text' })
+
+    expect(hasNodeDrivenTextAnimation(api, [textId])).toBe(false)
   })
 })

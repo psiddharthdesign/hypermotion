@@ -602,6 +602,14 @@ body[data-preview-mode='1'] [data-canvas-root] {
   100% { opacity: 0; transform: translateX(-22px); }
 }
 
+@keyframes hm-text-curve-drop {
+  0%, 10% { opacity: 1; transform: translate3d(-22px, -34px, 0); }
+  28% { opacity: 1; transform: translate3d(15px, -27px, 0); }
+  43% { opacity: 1; transform: translate3d(10px, -12px, 0); }
+  55%, 88% { opacity: 1; transform: translate3d(0, 0, 0); }
+  100% { opacity: 1; transform: translate3d(-22px, -34px, 0); }
+}
+
 @keyframes hm-text-mask-up {
   0%, 10% { clip-path: inset(0 0 100% 0); transform: translateY(10px); }
   55%, 88% { clip-path: inset(0); transform: translateY(0); }
@@ -659,6 +667,7 @@ body[data-preview-mode='1'] [data-canvas-root] {
 .hm-text-preset-slide-down .hm-text-preview-letter { animation-name: hm-text-slide-down; }
 .hm-text-preset-slide-left .hm-text-preview-letter { animation-name: hm-text-slide-left; }
 .hm-text-preset-slide-right .hm-text-preview-letter { animation-name: hm-text-slide-right; }
+.hm-text-preset-curve-drop .hm-text-preview-letter { animation-name: hm-text-curve-drop; }
 .hm-text-preset-mask-up .hm-text-preview-letter { animation-name: hm-text-mask-up; }
 .hm-text-preset-mask-down .hm-text-preview-letter { animation-name: hm-text-mask-down; }
 .hm-text-preset-grow .hm-text-preview-letter { animation-name: hm-text-grow; }
@@ -677,4 +686,10 @@ body[data-preview-mode='1'] [data-canvas-root] {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-text-preview-letter {
+    animation: none;
+  }
 }

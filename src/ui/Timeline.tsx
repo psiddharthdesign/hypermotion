@@ -1185,11 +1185,14 @@ export function Timeline() {
     [tracksByNode],
   )
   const resolvedStaggerSets = useMemo<ResolvedStaggerTimelineSet[]>(() => {
-    const trackByTarget = new Map<string, Track>()
+    const tracksByTarget = new Map<string, Track[]>()
     const nodeOrder = new Map<string, number>()
     tracksByNode.forEach((group, index) => nodeOrder.set(group.nodeId, index))
     for (const track of flatTracks) {
-      trackByTarget.set(`${track.nodeId}\u0000${track.propertyId}`, track)
+      const key = `${track.nodeId}\u0000${track.propertyId}`
+      const matching = tracksByTarget.get(key) ?? []
+      matching.push(track)
+      tracksByTarget.set(key, matching)
     }
 
     const resolved: ResolvedStaggerTimelineSet[] = []
@@ -1202,19 +1205,21 @@ export function Timeline() {
         const properties = set.members[nodeId] ?? {}
         for (const [propertyId, keyframeIds] of Object.entries(properties)) {
           if (!keyframeIds?.length) continue
-          const track = trackByTarget.get(`${nodeId}\u0000${propertyId}`)
-          if (!track) continue
           const wanted = new Set(keyframeIds)
-          for (const keyframe of track.keyframes) {
-            if (!wanted.has(keyframe.id)) continue
-            members.push({
-              trackId: track.id,
-              kfId: keyframe.id,
-              time: keyframe.time,
-              nodeId,
-              propertyId: track.propertyId,
-            })
-            propertyIds.add(track.propertyId)
+          const tracks =
+            tracksByTarget.get(`${nodeId}\u0000${propertyId}`) ?? []
+          for (const track of tracks) {
+            for (const keyframe of track.keyframes) {
+              if (!wanted.has(keyframe.id)) continue
+              members.push({
+                trackId: track.id,
+                kfId: keyframe.id,
+                time: keyframe.time,
+                nodeId,
+                propertyId: track.propertyId,
+              })
+              propertyIds.add(track.propertyId)
+            }
           }
         }
       }
@@ -1442,10 +1447,17 @@ export function Timeline() {
     (set: ResolvedStaggerTimelineSet) => {
       activateStaggerSet(set.id, set.delay)
       setSelection([set.sourceNodeId])
+      setSelectedTrackIds([])
       clearKfs()
       setInspectorMode('animate')
     },
-    [activateStaggerSet, clearKfs, setInspectorMode, setSelection],
+    [
+      activateStaggerSet,
+      clearKfs,
+      setInspectorMode,
+      setSelectedTrackIds,
+      setSelection,
+    ],
   )
   const deleteTimelineStagger = useCallback(
     (set: ResolvedStaggerTimelineSet) => {
@@ -2227,6 +2239,7 @@ export function Timeline() {
           </button>
           <button
             onClick={() => setPlaying(!playing)}
+            data-transport-toggle="1"
             title={playing ? 'Pause (Space)' : 'Play (Space)'}
             className="flex h-7 w-7 items-center justify-center rounded bg-accent-soft text-accent hover:brightness-110"
           >
