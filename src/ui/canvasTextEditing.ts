@@ -26,10 +26,22 @@ export function isRepeatedCanvasPress(
 export function canvasTextEditPresentation(
   webglAvailable: boolean,
   editingTextId: string | null,
-): { showDomScene: boolean; hideWebglScene: boolean } {
+): {
+  showDomScene: boolean
+  hideWebglScene: boolean
+  suspendWebglScene: boolean
+  applyDomCameraPostEffects: boolean
+} {
   const editing = editingTextId !== null
   return {
     showDomScene: !webglAvailable || editing,
     hideWebglScene: editing,
+    // Keep the GPU renderer and its resources mounted for an instant resume,
+    // but avoid drawing a scene that the editable DOM layer fully covers.
+    suspendWebglScene: editing,
+    // SVG filters force Chromium to rerasterize the complete DOM scene. Keep
+    // them for the true WebGL-failure fallback, but suspend them while the
+    // contenteditable scene is live; the post effect returns on edit exit.
+    applyDomCameraPostEffects: !webglAvailable && !editing,
   }
 }

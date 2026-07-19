@@ -100,6 +100,11 @@ export interface AnimatedValue {
   iso?: number
   blurLevel?: number
   blurQuality?: number
+  chromaticAberrationAmount?: number
+  chromaticAberrationAngle?: number
+  bloomStrength?: number
+  bloomRadius?: number
+  bloomThreshold?: number
 }
 
 /** Empty snapshot value — no tracks means no overrides. */
@@ -707,6 +712,21 @@ function writeProperty(
       break
     case 'camera.blurQuality':
       into.blurQuality = value
+      break
+    case 'camera.chromaticAberrationAmount':
+      into.chromaticAberrationAmount = value
+      break
+    case 'camera.chromaticAberrationAngle':
+      into.chromaticAberrationAngle = value
+      break
+    case 'camera.bloomStrength':
+      into.bloomStrength = value
+      break
+    case 'camera.bloomRadius':
+      into.bloomRadius = value
+      break
+    case 'camera.bloomThreshold':
+      into.bloomThreshold = value
       break
     // Other PropertyIds ignored for MVP (layout + variant go through FLIP).
     default:

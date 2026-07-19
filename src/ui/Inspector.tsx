@@ -1412,6 +1412,26 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera'
       ? Math.max(24, anim?.blurQuality ?? node.blurQuality ?? 24)
       : 24
+  const liveChromaticAberrationAmount =
+    node.kind === 'camera'
+      ? anim?.chromaticAberrationAmount ?? node.chromaticAberrationAmount ?? 4
+      : 4
+  const liveChromaticAberrationAngle =
+    node.kind === 'camera'
+      ? anim?.chromaticAberrationAngle ?? node.chromaticAberrationAngle ?? 0
+      : 0
+  const liveBloomStrength =
+    node.kind === 'camera'
+      ? anim?.bloomStrength ?? node.bloomStrength ?? 0.8
+      : 0.8
+  const liveBloomRadius =
+    node.kind === 'camera'
+      ? anim?.bloomRadius ?? node.bloomRadius ?? 0.35
+      : 0.35
+  const liveBloomThreshold =
+    node.kind === 'camera'
+      ? anim?.bloomThreshold ?? node.bloomThreshold ?? 0.75
+      : 0.75
   const focusTargetOptions = useMemo(() => {
     // `version` makes this list react to layer additions, deletions and names.
     void version
@@ -1578,6 +1598,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'pointOfInterestY'
         | 'pointOfInterestZ'
         | 'blurQuality'
+        | 'chromaticAberrationEnabled'
+        | 'chromaticAberrationAmount'
+        | 'chromaticAberrationAngle'
+        | 'bloomEnabled'
+        | 'bloomStrength'
+        | 'bloomRadius'
+        | 'bloomThreshold'
         | 'showFocusPlane'
       >
     >,
@@ -1674,6 +1701,39 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.blurQuality !== undefined) {
       api.setNodeProperty(node.id, 'blurQuality', patch.blurQuality)
+    }
+    if (patch.chromaticAberrationEnabled !== undefined) {
+      api.setNodeProperty(
+        node.id,
+        'chromaticAberrationEnabled',
+        patch.chromaticAberrationEnabled,
+      )
+    }
+    if (patch.chromaticAberrationAmount !== undefined) {
+      api.setNodeProperty(
+        node.id,
+        'chromaticAberrationAmount',
+        patch.chromaticAberrationAmount,
+      )
+    }
+    if (patch.chromaticAberrationAngle !== undefined) {
+      api.setNodeProperty(
+        node.id,
+        'chromaticAberrationAngle',
+        patch.chromaticAberrationAngle,
+      )
+    }
+    if (patch.bloomEnabled !== undefined) {
+      api.setNodeProperty(node.id, 'bloomEnabled', patch.bloomEnabled)
+    }
+    if (patch.bloomStrength !== undefined) {
+      api.setNodeProperty(node.id, 'bloomStrength', patch.bloomStrength)
+    }
+    if (patch.bloomRadius !== undefined) {
+      api.setNodeProperty(node.id, 'bloomRadius', patch.bloomRadius)
+    }
+    if (patch.bloomThreshold !== undefined) {
+      api.setNodeProperty(node.id, 'bloomThreshold', patch.bloomThreshold)
     }
     if (patch.showFocusPlane !== undefined) {
       api.setNodeProperty(node.id, 'showFocusPlane', patch.showFocusPlane)
@@ -2685,8 +2745,161 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 Enable depth of field to configure focus, aperture and quality.
               </p>
             )}
-            <CameraAnimationActions node={node} api={api} />
           </Section>
+          <Section title="Post Effects">
+            <FieldRow label="Chromatic aberration">
+              <CheckboxField
+                value={node.chromaticAberrationEnabled ?? false}
+                onCommit={(chromaticAberrationEnabled) =>
+                  patchCamera({ chromaticAberrationEnabled })
+                }
+              />
+            </FieldRow>
+            {node.chromaticAberrationEnabled ? (
+              <>
+                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                  Red and blue each move by Amount in opposite directions.
+                </p>
+                <FieldRow
+                  label="Amount"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.chromaticAberrationAmount"
+                      currentValue={liveChromaticAberrationAmount}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveChromaticAberrationAmount}
+                    onCommit={(v) =>
+                      patchCamera({
+                        chromaticAberrationAmount: Math.max(0, Math.min(64, v)),
+                      })
+                    }
+                    min={0}
+                    max={64}
+                    step={0.5}
+                    suffix="px"
+                    ariaLabel="Chromatic aberration amount"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Angle"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.chromaticAberrationAngle"
+                      currentValue={liveChromaticAberrationAngle}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveChromaticAberrationAngle}
+                    onCommit={(v) =>
+                      patchCamera({
+                        chromaticAberrationAngle: Math.max(
+                          -180,
+                          Math.min(180, v),
+                        ),
+                      })
+                    }
+                    min={-180}
+                    max={180}
+                    step={1}
+                    suffix="°"
+                    ariaLabel="Chromatic aberration angle"
+                  />
+                </FieldRow>
+              </>
+            ) : null}
+
+            <div className="!my-3 border-t border-border" />
+
+            <FieldRow label="Bloom">
+              <CheckboxField
+                value={node.bloomEnabled ?? false}
+                onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
+              />
+            </FieldRow>
+            {node.bloomEnabled ? (
+              <>
+                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                  Spreads bright pixels into a soft glow around highlights.
+                </p>
+                <FieldRow
+                  label="Strength"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bloomStrength"
+                      currentValue={liveBloomStrength}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBloomStrength}
+                    onCommit={(v) =>
+                      patchCamera({ bloomStrength: Math.max(0, Math.min(4, v)) })
+                    }
+                    min={0}
+                    max={4}
+                    step={0.05}
+                    ariaLabel="Bloom strength"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Radius"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bloomRadius"
+                      currentValue={liveBloomRadius}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBloomRadius * 100}
+                    onCommit={(v) =>
+                      patchCamera({
+                        bloomRadius: Math.max(0, Math.min(1, v / 100)),
+                      })
+                    }
+                    min={0}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    ariaLabel="Bloom radius"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Threshold"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.bloomThreshold"
+                      currentValue={liveBloomThreshold}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveBloomThreshold * 100}
+                    onCommit={(v) =>
+                      patchCamera({
+                        bloomThreshold: Math.max(0, Math.min(1, v / 100)),
+                      })
+                    }
+                    min={0}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    ariaLabel="Bloom threshold"
+                  />
+                </FieldRow>
+              </>
+            ) : null}
+          </Section>
+          <CameraAnimationActions node={node} api={api} />
         </>
       )}
     </div>

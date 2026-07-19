@@ -202,6 +202,63 @@ export function evaluateTextMotionPath(
   }
 }
 
+/** The fully displaced start offset represented by a motion path. */
+export function textMotionPathDistance(
+  path: TextMotionPath | null | undefined,
+): TextMotionPathOffset {
+  const normalized = normalizeTextMotionPath(path)
+  const start = normalized?.points.at(-1)
+  return start ? pointOffset(start) : { x: 0, y: 0, z: 0 }
+}
+
+/**
+ * Set the path's overall XYZ distance without flattening its authored curve.
+ *
+ * The distance is the hidden/start endpoint. Changing it adds a straight
+ * displacement ramp across every anchor and Bezier handle; the curve's local
+ * bows, loops, and curvature therefore stay intact within the path's spatial
+ * bounds while the complete rail is stretched to the requested endpoint.
+ */
+export function setTextMotionPathDistance(
+  path: TextMotionPath | null | undefined,
+  distance: TextMotionPathOffset,
+): TextMotionPath {
+  const normalized = normalizeTextMotionPath(path) ?? defaultTextMotionPath()
+  const start = normalized.points.at(-1)!
+  const target = {
+    x: finiteOr(distance.x, start.x),
+    y: finiteOr(distance.y, start.y),
+    z: finiteOr(distance.z, start.z),
+  }
+  const delta = {
+    x: target.x - start.x,
+    y: target.y - start.y,
+    z: target.z - start.z,
+  }
+  if (delta.x === 0 && delta.y === 0 && delta.z === 0) return normalized
+
+  const points = normalized.points.map((point, index, source) => {
+    const previous = source[index - 1]
+    const next = source[index + 1]
+    const inT = previous ? lerp(previous.t, point.t, 2 / 3) : point.t
+    const outT = next ? lerp(point.t, next.t, 1 / 3) : point.t
+    return {
+      ...point,
+      x: point.x + delta.x * point.t,
+      y: point.y + delta.y * point.t,
+      z: point.z + delta.z * point.t,
+      inX: point.inX + delta.x * inT,
+      inY: point.inY + delta.y * inT,
+      inZ: point.inZ + delta.z * inT,
+      outX: point.outX + delta.x * outT,
+      outY: point.outY + delta.y * outT,
+      outZ: point.outZ + delta.z * outT,
+    }
+  })
+
+  return normalizeTextMotionPath({ version: 1, points }) ?? normalized
+}
+
 /** Add an editable anchor without changing the rendered path. */
 export function splitTextMotionPathAt(
   path: TextMotionPath,

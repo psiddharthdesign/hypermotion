@@ -73,6 +73,15 @@ import {
   updateDepthOfFieldShader,
 } from '@/render3d/depthOfFieldShader'
 import {
+  PostEffectsIdleQualityController,
+  ScenePostEffectsRenderer,
+  cameraPostEffectsActive,
+  cameraPostEffectsEnabled,
+  cameraPostEffectsInteractionChanged,
+  cameraPostEffectsPixelRatio,
+  type CameraPostEffectsState,
+} from '@/render3d/postEffects'
+import {
   shouldRasterizePlaneTexture,
   textureScaleForRect,
 } from '@/render3d/texturePolicy'
@@ -115,6 +124,8 @@ interface ThreeSceneViewportProps {
   onAvailabilityChange?: (available: boolean) => void
   /** Camera gesture/scrub is transient; keep GPU DOF on its realtime budget. */
   interactiveCameraPreview?: boolean
+  /** Keep GPU resources mounted while suppressing all scene/post rendering. */
+  suspended?: boolean
 }
 
 interface PlaneRecord {
@@ -423,11 +434,17 @@ export function ThreeSceneViewport({
   sceneVersion = 0,
   onAvailabilityChange,
   interactiveCameraPreview = false,
+  suspended = false,
 }: ThreeSceneViewportProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const postEffectsRef = useRef<ScenePostEffectsRenderer | null>(null)
+  const postEffectsInteractionRef = useRef<{
+    effects: CameraPostEffectsState
+    playhead: number
+  } | null>(null)
   const planesRef = useRef<Map<NodeId, PlaneRecord>>(new Map())
   const helpersRef = useRef<THREE.Group | null>(null)
   const planeSyncRef = useRef<{
@@ -446,6 +463,15 @@ export function ThreeSceneViewport({
   } | null>(null)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
   const [imageRevision, setImageRevision] = useState(0)
+  const [postEffectsQualityRevision, setPostEffectsQualityRevision] =
+    useState(0)
+  const postEffectsIdleQuality = useMemo(
+    () =>
+      new PostEffectsIdleQualityController(() => {
+        setPostEffectsQualityRevision((revision) => revision + 1)
+      }),
+    [],
+  )
   const curvePreviewRevision = useSyncExternalStore(
     textStaggerCurvePreviewStore.subscribeAll,
     textStaggerCurvePreviewStore.getRevision,
@@ -571,6 +597,11 @@ export function ThreeSceneViewport({
     return () => window.removeEventListener(IMAGE_TEXTURE_LOADED_EVENT, onImageLoaded)
   }, [])
 
+  useEffect(
+    () => () => postEffectsIdleQuality.dispose(),
+    [postEffectsIdleQuality],
+  )
+
   useLayoutEffect(() => {
     if (webglUnavailable) return
     const host = hostRef.current
@@ -610,6 +641,11 @@ export function ThreeSceneViewport({
     onAvailabilityChange?.(true)
 
     return () => {
+      // EffectComposer owns half-float render targets and pass materials.
+      // Release them before destroying the WebGL context so HMR/remounts do
+      // not retain a full-resolution framebuffer chain.
+      postEffectsRef.current?.dispose()
+      postEffectsRef.current = null
       for (const record of planesRef.current.values()) {
         disposePlaneRecord(record)
         record.outline.geometry.dispose()
@@ -655,7 +691,15 @@ export function ThreeSceneViewport({
   }, [webglUnavailable, width, height, renderPixelRatio])
 
   useLayoutEffect(() => {
-    if (webglUnavailable) return
+    // Text editing temporarily reveals the DOM scene above this mounted
+    // viewport. Do not keep rasterizing an invisible WebGL + post-process
+    // graph. `suspended` remains in the dependency list, so clearing it runs
+    // this complete sync/render once in a layout effect before the resumed
+    // canvas can paint, even if every other input stayed referentially equal.
+    if (webglUnavailable || suspended) return
+    // The idle controller bumps this after a quiet window so the same scene
+    // is rendered once more at paused/full quality.
+    void postEffectsQualityRevision
     const scene = sceneRef.current
     const perspective = cameraRef.current
     const renderer = rendererRef.current
@@ -761,7 +805,72 @@ export function ThreeSceneViewport({
       focusWorldPoint,
     )
 
-    renderer.render(scene, perspective)
+    const postEffectsEnabled = cameraPostEffectsEnabled(resolvedCamera)
+    const previousPostEffects = postEffectsInteractionRef.current
+    if (playing || interactiveCameraPreview || finalRender) {
+      postEffectsIdleQuality.reset()
+    } else if (
+      postEffectsEnabled &&
+      previousPostEffects &&
+      cameraPostEffectsInteractionChanged(
+        previousPostEffects.effects,
+        resolvedCamera,
+        previousPostEffects.playhead,
+        playhead,
+      )
+    ) {
+      postEffectsIdleQuality.noteInteraction()
+    }
+    postEffectsInteractionRef.current = {
+      effects: resolvedCamera,
+      playhead,
+    }
+
+    if (!postEffectsEnabled) {
+      postEffectsIdleQuality.reset()
+      postEffectsRef.current?.dispose()
+      postEffectsRef.current = null
+      renderer.render(scene, perspective)
+    } else {
+      const postEffectsActive = cameraPostEffectsActive(resolvedCamera)
+      const postEffectsPixelRatio = cameraPostEffectsPixelRatio({
+        width,
+        height,
+        rendererPixelRatio: renderer.getPixelRatio(),
+        effects: resolvedCamera,
+        realtime:
+          !postEffectsActive ||
+          playing ||
+          interactiveCameraPreview ||
+          postEffectsIdleQuality.isRealtime(),
+        finalRender,
+      })
+      let postEffects = postEffectsRef.current
+      if (!postEffects) {
+        postEffects = new ScenePostEffectsRenderer(
+          renderer,
+          scene,
+          perspective,
+          width,
+          height,
+          postEffectsPixelRatio,
+        )
+        postEffectsRef.current = postEffects
+      }
+      postEffects.configure(
+        resolvedCamera,
+        width,
+        height,
+        postEffectsPixelRatio,
+      )
+      if (postEffectsActive) {
+        postEffects.render()
+      } else {
+        // Keep resources warm while an authored toggle remains enabled, but
+        // skip every fullscreen pass at an animated zero crossing.
+        renderer.render(scene, perspective)
+      }
+    }
   }, [
     api,
     planeBuildContext,
@@ -776,6 +885,7 @@ export function ThreeSceneViewport({
     width,
     height,
     webglUnavailable,
+    suspended,
     animated,
     playing,
     playhead,
@@ -783,6 +893,8 @@ export function ThreeSceneViewport({
     playheadDrivenTextureRanges,
     interactiveCameraPreview,
     finalRender,
+    postEffectsIdleQuality,
+    postEffectsQualityRevision,
     curvePreviewRevision,
     texturePixelRatio,
     // Changing the zoom-derived pixel-ratio bucket reallocates and clears the

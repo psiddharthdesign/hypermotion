@@ -24,7 +24,9 @@ import {
   textAnimationDefaults,
   textAnimationUsesLegacyTranslation,
   defaultTextMotionPath,
+  setTextMotionPathDistance,
   textStaggerCurveForPreset,
+  textMotionPathDistance,
   updateTextAnimationEasing,
   updateTextAnimationTrackMetadata,
 } from '@/anim'
@@ -399,6 +401,12 @@ export function PresetsPanel() {
 
   return (
     <div className="space-y-2">
+      {selectedStaggerSetId ? (
+        <StaggerGroupPanel
+          key={selectedStaggerSetId}
+          setId={selectedStaggerSetId}
+        />
+      ) : null}
       {hasTextSelection ? (
         <>
           {textSection}
@@ -1088,7 +1096,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
                 path={current.motionPath ?? defaultTextMotionPath()}
               />
               <span className="text-[10px] text-text-muted">
-                {current.motionPath ? 'Edit' : 'Add'}
+                {current.motionPath ? 'Edit path' : 'Add'}
               </span>
               <SlidersIcon />
             </button>
@@ -1172,7 +1180,30 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             />
           </ParamRow>
         ) : null}
-        {current.motionVector && !current.motionPath ? (
+        {current.motionPath ? (
+          <div
+            className="space-y-1.5"
+            title="Set the fully displaced XYZ position. Editing the distance preserves the path's authored curve."
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] text-text-dim">Travel distance</span>
+              <span className="text-[9px] tracking-wide text-text-dim uppercase">
+                XYZ · hidden endpoint
+              </span>
+            </div>
+            <MotionVectorFields
+              value={textMotionPathDistance(current.motionPath)}
+              onChange={(distance) =>
+                patch({
+                  motionPath: setTextMotionPathDistance(
+                    current.motionPath,
+                    distance,
+                  ),
+                })
+              }
+            />
+          </div>
+        ) : current.motionVector ? (
           <MotionVectorFields
             value={current.motionVector}
             onChange={(motionVector) => patch({ motionVector })}

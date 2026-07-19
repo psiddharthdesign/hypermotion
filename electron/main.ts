@@ -188,6 +188,7 @@ process.env.VITE_PUBLIC = app.isPackaged
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
+let previewWindow: BrowserWindow | null = null
 const RECENT_PROJECTS_LIMIT = 10
 let recentProjects: string[] = []
 
@@ -694,6 +695,27 @@ function createMainWindow() {
     flushPendingOpenScene()
   })
 
+  // A reload replaces the editor-side listeners that own export progress and
+  // cancellation. Stop its hidden workers immediately instead of leaving
+  // unthrottled 4K render windows running with nobody able to control them.
+  mainWindow.webContents.on(
+    'did-start-navigation',
+    (_event, _url, isInPlace, isMainFrame) => {
+      if (!isMainFrame || isInPlace || !mainWindow) return
+      cancelRenderWindowsForEditor(
+        mainWindow.webContents.id,
+        'Export cancelled because the editor reloaded.',
+      )
+    },
+  )
+  mainWindow.webContents.on('render-process-gone', () => {
+    if (!mainWindow) return
+    cancelRenderWindowsForEditor(
+      mainWindow.webContents.id,
+      'Export cancelled because the editor renderer restarted.',
+    )
+  })
+
   // External links (export docs, font CDN, etc.) open in the OS browser
   // rather than hijacking the editor window.
   mainWindow.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
@@ -704,6 +726,10 @@ function createMainWindow() {
   })
 
   mainWindow.on('closed', () => {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.destroy()
+    }
+    previewWindow = null
     mainWindow = null
   })
 }
@@ -1032,7 +1058,14 @@ ipcMain.handle('updates:check', () => checkForUpdates())
 ipcMain.handle('updates:get-status', () => lastUpdateInfo)
 
 ipcMain.handle('preview:open-window', async () => {
-  const previewWindow = new BrowserWindow({
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    if (previewWindow.isMinimized()) previewWindow.restore()
+    previewWindow.show()
+    previewWindow.focus()
+    return { ok: true }
+  }
+
+  previewWindow = new BrowserWindow({
     title: 'hyper-motion preview',
     width: 1280,
     height: 720,
@@ -1048,6 +1081,9 @@ ipcMain.handle('preview:open-window', async () => {
       webSecurity: true,
       backgroundThrottling: false,
     },
+  })
+  previewWindow.on('closed', () => {
+    previewWindow = null
   })
 
   if (VITE_DEV_SERVER_URL) {
@@ -1284,6 +1320,73 @@ interface RenderJob {
 
 const renderJobs = new Map<string, RenderJob>()
 const renderWindows = new Map<string, BrowserWindow>()
+const renderWindowWatchdogs = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>()
+const expectedRenderWindowClosures = new Set<string>()
+
+// A healthy render window reports progress after every encoded frame. If it
+// stops doing so, keeping an unthrottled 4K WebGL window alive in the
+// background can consume an entire CPU/GPU indefinitely. Two minutes still
+// leaves ample room for font boot and a very expensive first 4K frame.
+const RENDER_WINDOW_STALL_TIMEOUT_MS = 120_000
+const RENDER_WINDOW_ENCODING_TIMEOUT_MS = 300_000
+
+function clearRenderWindowWatchdog(requestId: string): void {
+  const timeout = renderWindowWatchdogs.get(requestId)
+  if (timeout) clearTimeout(timeout)
+  renderWindowWatchdogs.delete(requestId)
+}
+
+function closeRenderWindow(requestId: string): void {
+  clearRenderWindowWatchdog(requestId)
+  const win = renderWindows.get(requestId)
+  renderWindows.delete(requestId)
+  renderJobs.delete(requestId)
+  if (win && !win.isDestroyed()) {
+    expectedRenderWindowClosures.add(requestId)
+    win.destroy()
+  } else {
+    expectedRenderWindowClosures.delete(requestId)
+  }
+}
+
+function failRenderWindow(requestId: string, message: string): void {
+  if (!renderJobs.has(requestId)) return
+  forwardToEditor(requestId, 'export:render-window-error', {
+    requestId,
+    message,
+  })
+  closeRenderWindow(requestId)
+}
+
+function armRenderWindowWatchdog(
+  requestId: string,
+  timeoutMs = RENDER_WINDOW_STALL_TIMEOUT_MS,
+): void {
+  clearRenderWindowWatchdog(requestId)
+  if (!renderJobs.has(requestId)) return
+  const timeout = setTimeout(() => {
+    failRenderWindow(
+      requestId,
+      'Export worker stopped reporting progress and was closed to restore app performance.',
+    )
+  }, timeoutMs)
+  timeout.unref()
+  renderWindowWatchdogs.set(requestId, timeout)
+}
+
+function cancelRenderWindowsForEditor(
+  editorWebContentsId: number,
+  message: string,
+): void {
+  for (const [requestId, job] of renderJobs) {
+    if (job.editorWebContentsId === editorWebContentsId) {
+      failRenderWindow(requestId, message)
+    }
+  }
+}
 
 function makeRequestId(): string {
   // Crypto-random short id is overkill for a per-export key. Use the
@@ -1302,6 +1405,14 @@ ipcMain.handle(
   ): Promise<{ requestId: string }> => {
     const requestId = makeRequestId()
     const editorWebContentsId = e.sender.id
+    const existingRender = [...renderJobs.entries()].find(
+      ([, job]) => job.editorWebContentsId === editorWebContentsId,
+    )
+    if (existingRender) {
+      throw new Error(
+        'An export is already running. Finish or cancel it before starting another.',
+      )
+    }
     renderJobs.set(requestId, {
       params: payload.params,
       seedBytes: payload.seedBytes,
@@ -1345,24 +1456,67 @@ ipcMain.handle(
     win.setContentSize(W, H)
 
     renderWindows.set(requestId, win)
+    armRenderWindowWatchdog(requestId)
 
     win.on('closed', () => {
+      const expected = expectedRenderWindowClosures.delete(requestId)
+      if (!expected && renderJobs.has(requestId)) {
+        forwardToEditor(requestId, 'export:render-window-error', {
+          requestId,
+          message: 'The export worker closed before rendering completed.',
+        })
+      }
+      clearRenderWindowWatchdog(requestId)
       renderWindows.delete(requestId)
       renderJobs.delete(requestId)
     })
 
+    win.on('unresponsive', () => {
+      failRenderWindow(
+        requestId,
+        'The export worker became unresponsive and was closed.',
+      )
+    })
+    win.webContents.on('render-process-gone', (_event, details) => {
+      failRenderWindow(
+        requestId,
+        `The export worker stopped unexpectedly (${details.reason}).`,
+      )
+    })
+    win.webContents.on(
+      'did-fail-load',
+      (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3) return
+        failRenderWindow(
+          requestId,
+          `The export worker failed to load: ${errorDescription}`,
+        )
+      },
+    )
+
     // Load the renderer with the render-window flag + requestId. The
     // renderer's main.tsx detects this and mounts <RenderWindowApp>
     // instead of <App>. URL params survive both dev and prod loads.
-    if (VITE_DEV_SERVER_URL) {
-      await win.loadURL(
-        `${VITE_DEV_SERVER_URL}?render-window=1&requestId=${requestId}`,
+    try {
+      if (VITE_DEV_SERVER_URL) {
+        await win.loadURL(
+          `${VITE_DEV_SERVER_URL}?render-window=1&requestId=${requestId}`,
+        )
+      } else {
+        await win.loadFile(
+          path.join(process.env.DIST_RENDERER!, 'index.html'),
+          { query: { 'render-window': '1', requestId } },
+        )
+      }
+      armRenderWindowWatchdog(requestId)
+    } catch (error) {
+      failRenderWindow(
+        requestId,
+        `Failed to open the export worker: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       )
-    } else {
-      await win.loadFile(
-        path.join(process.env.DIST_RENDERER!, 'index.html'),
-        { query: { 'render-window': '1', requestId } },
-      )
+      throw error
     }
 
     return { requestId }
@@ -1413,6 +1567,12 @@ ipcMain.handle(
     },
   ) => {
     forwardToEditor(payload.requestId, 'export:render-window-progress', payload)
+    armRenderWindowWatchdog(
+      payload.requestId,
+      payload.phase === 'encoding'
+        ? RENDER_WINDOW_ENCODING_TIMEOUT_MS
+        : RENDER_WINDOW_STALL_TIMEOUT_MS,
+    )
   },
 )
 
@@ -1428,14 +1588,12 @@ ipcMain.handle(
     },
   ) => {
     forwardToEditor(payload.requestId, 'export:render-window-done', payload)
+    clearRenderWindowWatchdog(payload.requestId)
     // Close + clean up the render window. Defer one tick so the
     // forwarded message lands in the editor's queue before we tear
     // down the sender's frame.
     setTimeout(() => {
-      const win = renderWindows.get(payload.requestId)
-      if (win && !win.isDestroyed()) win.destroy()
-      renderWindows.delete(payload.requestId)
-      renderJobs.delete(payload.requestId)
+      closeRenderWindow(payload.requestId)
     }, 50)
   },
 )
@@ -1444,20 +1602,15 @@ ipcMain.handle(
   'export:render-window-error',
   (_e, payload: { requestId: string; message: string }) => {
     forwardToEditor(payload.requestId, 'export:render-window-error', payload)
+    clearRenderWindowWatchdog(payload.requestId)
     setTimeout(() => {
-      const win = renderWindows.get(payload.requestId)
-      if (win && !win.isDestroyed()) win.destroy()
-      renderWindows.delete(payload.requestId)
-      renderJobs.delete(payload.requestId)
+      closeRenderWindow(payload.requestId)
     }, 50)
   },
 )
 
 ipcMain.handle('export:cancel-render-window', (_e, requestId: string) => {
-  const win = renderWindows.get(requestId)
-  if (win && !win.isDestroyed()) win.destroy()
-  renderWindows.delete(requestId)
-  renderJobs.delete(requestId)
+  closeRenderWindow(requestId)
 })
 
 /**
@@ -1710,6 +1863,9 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  for (const requestId of [...renderJobs.keys()]) {
+    closeRenderWindow(requestId)
+  }
   if (updateCheckTimer) {
     clearInterval(updateCheckTimer)
     updateCheckTimer = null

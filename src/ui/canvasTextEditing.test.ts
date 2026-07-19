@@ -11,14 +11,26 @@ describe('canvas text editing', () => {
     expect(canvasTextEditPresentation(true, null)).toEqual({
       showDomScene: false,
       hideWebglScene: false,
+      suspendWebglScene: false,
+      applyDomCameraPostEffects: false,
     })
     expect(canvasTextEditPresentation(true, 'text-1')).toEqual({
       showDomScene: true,
       hideWebglScene: true,
+      suspendWebglScene: true,
+      applyDomCameraPostEffects: false,
     })
     expect(canvasTextEditPresentation(false, null)).toEqual({
       showDomScene: true,
       hideWebglScene: false,
+      suspendWebglScene: false,
+      applyDomCameraPostEffects: true,
+    })
+    expect(canvasTextEditPresentation(false, 'text-1')).toEqual({
+      showDomScene: true,
+      hideWebglScene: true,
+      suspendWebglScene: true,
+      applyDomCameraPostEffects: false,
     })
   })
 

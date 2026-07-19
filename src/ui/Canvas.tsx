@@ -33,6 +33,7 @@ import { useLayout } from '@/ui/hooks/useLayout'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { useUI } from '@/state/ui'
 import type { Tool } from '@/state/ui'
+import { useExportProgress } from '@/export/progressStore'
 import { SelectionOverlay } from '@/ui/SelectionOverlay'
 import { DistanceOverlay } from '@/ui/DistanceOverlay'
 import {
@@ -61,6 +62,9 @@ import {
 import { instantiateComponent } from '@/ui/actions'
 import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
+import { CameraPostEffectsFallback } from '@/render/CameraPostEffectsFallback'
+import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
+import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import {
   playbackPixelRatio,
@@ -754,6 +758,9 @@ export function Canvas() {
   const selection = useUI((s) => s.selection)
   const tool = useUI((s) => s.tool)
   const playing = useUI((s) => s.playing)
+  const recordingWebmExport = useExportProgress(
+    (s) => s.phase === 'rendering' && s.format?.id === 'webm',
+  )
   const editingTextId = useUI((s) => s.editingTextId)
   const setEditingTextId = useUI((s) => s.setEditingTextId)
   const isEditingText = editingTextId !== null
@@ -821,7 +828,7 @@ export function Canvas() {
     canvasWidth,
     canvasHeight,
   )
-  const webglPreviewPixelRatio = playing
+  const webglPreviewPixelRatio = playing && !recordingWebmExport
     ? playbackPixelRatio(
         pausedWebglPreviewPixelRatio,
         canvasWidth,
@@ -1049,6 +1056,14 @@ export function Canvas() {
   const previewCameraDepthOfField = isCameraManipulating
     ? null
     : cameraDepthOfField
+  const cameraPostEffects = useMemo(
+    () =>
+      resolveFallbackCameraPostEffects(
+        camera && camera.kind === 'camera' ? camera : null,
+        liveCameraAnim,
+      ),
+    [camera, liveCameraAnim],
+  )
 
   const displayedCameraTransform = useCallback(
     (node: CameraNode): CameraNode['transform'] => ({
@@ -2864,6 +2879,11 @@ export function Canvas() {
                         cameraDepthOfField={
                           isEditingText ? null : previewCameraDepthOfField
                         }
+                        cameraPostEffects={
+                          textEditPresentation.applyDomCameraPostEffects
+                            ? cameraPostEffects
+                            : null
+                        }
                         sceneFill={sceneFill}
                         canvasWidth={canvasWidth}
                         canvasHeight={canvasHeight}
@@ -2910,6 +2930,8 @@ export function Canvas() {
                       }
                       showPlanes
                       exportable
+                      suspended={textEditPresentation.suspendWebglScene}
+                      finalRender={recordingWebmExport}
                       playing={playing}
                       playhead={playhead}
                       sceneVersion={version}
@@ -3725,6 +3747,7 @@ function ScenePostProcessLayerImpl({
   animated,
   inherited,
   cameraDepthOfField,
+  cameraPostEffects,
   sceneFill,
   canvasWidth,
   canvasHeight,
@@ -3739,6 +3762,7 @@ function ScenePostProcessLayerImpl({
   animated: Record<NodeId, AnimatedValue>
   inherited: Record<NodeId, InheritedAnim>
   cameraDepthOfField?: CameraDepthOfField | null
+  cameraPostEffects?: CameraPostEffectsState | null
   sceneFill: string | null
   canvasWidth: number
   canvasHeight: number
@@ -3782,33 +3806,35 @@ function ScenePostProcessLayerImpl({
   ) : (
     sceneBody
   )
-  if (
-    !cameraDepthOfField?.enabled ||
-    cameraDepthOfField.blurPx <= 0.05
-  ) {
-    return scene
-  }
-
-  const radius = Math.max(1, cameraDepthOfField.focusRadius)
-  const feather = Math.max(24, cameraDepthOfField.featherPx * 1.4)
-  const blur = Number(cameraDepthOfField.blurPx.toFixed(2))
+  const depthCompositedScene =
+    cameraDepthOfField?.enabled && cameraDepthOfField.blurPx > 0.05 ? (
+      <SnapshotCompositor
+        width={canvasWidth}
+        height={canvasHeight}
+        focus={{
+          enabled: true,
+          focusX: cameraDepthOfField.focusX,
+          focusY: cameraDepthOfField.focusY,
+          radius: Math.max(1, cameraDepthOfField.focusRadius),
+          feather: Math.max(24, cameraDepthOfField.featherPx * 1.4),
+          blurPx: Number(cameraDepthOfField.blurPx.toFixed(2)),
+          iso: cameraDepthOfField.iso,
+        }}
+      >
+        {scene}
+      </SnapshotCompositor>
+    ) : (
+      scene
+    )
 
   return (
-    <SnapshotCompositor
+    <CameraPostEffectsFallback
+      effects={cameraPostEffects}
       width={canvasWidth}
       height={canvasHeight}
-      focus={{
-        enabled: true,
-        focusX: cameraDepthOfField.focusX,
-        focusY: cameraDepthOfField.focusY,
-        radius,
-        feather,
-        blurPx: blur,
-        iso: cameraDepthOfField.iso,
-      }}
     >
-      {scene}
-    </SnapshotCompositor>
+      {depthCompositedScene}
+    </CameraPostEffectsFallback>
   )
 }
 

@@ -5,12 +5,14 @@ import {
   createStaggerSetReturn,
   duplicateStaggerSet,
   renameStaggerSet,
+  resolveStaggerSetSourceNodeId,
   retimeStaggerSet,
   reverseStaggerSetInPlace,
   staggerSetPropertyIds,
 } from '@/anim/staggerSets'
 import { useUI } from '@/state/ui'
 import { NumberField } from '@/ui/fields'
+import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
 
 /**
  * Relationship-level inspector shown when the compact S row is selected.
@@ -28,6 +30,8 @@ export function StaggerGroupPanel({ setId }: { setId: string }) {
   const setSelectedTrackId = useUI((state) => state.setSelectedTrackId)
   const setSelectedKeyframes = useUI((state) => state.setSelectedKeyframes)
   const staggerOn = useUI((state) => state.staggerOn)
+  const activeStaggerSetId = useUI((state) => state.activeStaggerSetId)
+  const selection = useUI((state) => state.selection)
   const setStaggerOn = useUI((state) => state.setStaggerOn)
   const setStaggerDelay = useUI((state) => state.setStaggerDelay)
   const set = api.getUiState().staggerSets[setId]
@@ -42,6 +46,13 @@ export function StaggerGroupPanel({ setId }: { setId: string }) {
 
   const properties = staggerSetPropertyIds(set)
   const label = set.name?.trim() || 'Stagger group'
+  const sourceNodeId = resolveStaggerSetSourceNodeId(api, set)
+  const sourceNode = sourceNodeId ? api.getNode(sourceNodeId) : null
+  const editingSource =
+    staggerOn &&
+    activeStaggerSetId === set.id &&
+    selection.length === 1 &&
+    selection[0] === sourceNodeId
   const selectClone = (nextSetId: string) => {
     if (staggerOn) setStaggerOn(false)
     setSelection([])
@@ -137,7 +148,40 @@ export function StaggerGroupPanel({ setId }: { setId: string }) {
           Layer order changes who starts first. It does not reverse the motion.
         </p>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
+        <div className="border-t border-border pt-3">
+          <div className="mb-2 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2">
+            <span className="text-[10px] text-text-muted">Edit source</span>
+            <span
+              className="truncate text-right text-[10px] text-text-dim"
+              title={sourceNode?.name ?? 'Source layer unavailable'}
+            >
+              {sourceNode?.name ?? 'Unavailable'}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={!sourceNodeId || editingSource}
+            onClick={() => activateStaggerSetForEditing(api, set.id)}
+            className={[
+              'flex h-8 w-full items-center justify-center gap-2 rounded text-[10px] font-semibold',
+              editingSource
+                ? 'cursor-default bg-stagger/15 text-stagger'
+                : sourceNodeId
+                  ? 'bg-stagger-soft text-stagger hover:bg-stagger/15'
+                  : 'cursor-not-allowed bg-panel text-text-dim opacity-60',
+            ].join(' ')}
+            title="Reveal the first-starting member and edit the whole stagger relationship"
+          >
+            {editingSource ? 'Editing animation' : 'Edit animation'}
+            {!editingSource ? (
+              <kbd className="rounded border border-stagger/30 px-1 py-px font-mono text-[8px]">
+                S
+              </kbd>
+            ) : null}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => {
