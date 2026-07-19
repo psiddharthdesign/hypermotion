@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import { createSceneAPI } from '@/scene/doc'
-import { applyPreset, planLayerPresetTargets } from './presets'
+import {
+  applyPreset,
+  planLayerPresetTargets,
+  planTextPresetTargets,
+  planTextStaggerStartTimes,
+} from './presets'
 
 describe('animation presets', () => {
   it('authors Fade In as an ease-out appearance opacity track', () => {
@@ -65,6 +70,52 @@ describe('animation presets', () => {
       staggerActive: true,
       delay: 0.25,
       order: 'reverse',
+    })
+  })
+
+  it('uses the active S relationship for text presets while preserving mixed-layer order', () => {
+    const textIds = new Set(['title', 'caption'])
+    const plan = planTextPresetTargets(
+      ['title'],
+      (id) => textIds.has(id),
+      true,
+      0.1,
+      {
+        id: 'stagger-1',
+        layerIds: ['title', 'image', 'caption'],
+        delay: 0.2,
+        order: 'reverse',
+        members: {},
+      },
+    )
+
+    expect(plan).toEqual({
+      targets: ['title', 'caption'],
+      staggerLayerIds: ['title', 'image', 'caption'],
+      staggerActive: true,
+      delay: 0.2,
+      order: 'reverse',
+    })
+  })
+
+  it('aligns freshly adopted text tracks to the full mixed-layer S order', () => {
+    const plan = planTextPresetTargets(
+      ['title'],
+      (id) => id === 'title' || id === 'caption',
+      true,
+      0.1,
+      {
+        id: 'stagger-1',
+        layerIds: ['title', 'image', 'caption'],
+        delay: 0.2,
+        order: 'reverse',
+        members: {},
+      },
+    )
+
+    expect(planTextStaggerStartTimes(plan, 'title', 1)).toEqual({
+      title: 1,
+      caption: 0.6,
     })
   })
 

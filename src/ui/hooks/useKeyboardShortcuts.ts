@@ -105,7 +105,23 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Focused controls own shortcuts they explicitly consume. Graph editors
+      // use arrows and Delete for control points, never scene layers/tracks.
+      if (e.defaultPrevented) return
       const target = e.target as HTMLElement | null
+      const inCurveEditor = !!target?.closest('[data-curve-editor]')
+      const isSpace = e.key === ' ' || e.code === 'Space'
+      // A focused native button dispatches its click after Space keydown. If
+      // the global handler also acts, it runs twice. Ordinary controls own
+      // Space; the transport button is the deliberate exception so this
+      // handler prevents its native click and toggles exactly once. SVG curve
+      // anchors/handles also fall through to the global transport.
+      const nativeControl = target?.closest(
+        'button, input, textarea, select, [contenteditable="true"]',
+      )
+      const transportControl = target?.closest('[data-transport-toggle]')
+      if (isSpace && nativeControl && !transportControl) return
+      if (inCurveEditor && !isSpace) return
       const inField =
         !!target &&
         (target.tagName === 'INPUT' ||
@@ -624,6 +640,9 @@ export function useKeyboardShortcuts() {
                 ? selectedSet.layerIds[selectedSet.layerIds.length - 1]
                 : selectedSet.layerIds[0]
             setSelection(sourceNodeId ? [sourceNodeId] : [])
+            ui.setSelectedTrackIds([])
+            ui.setSelectedTrackId(null)
+            ui.setSelectedKeyframes([])
           }
           return
         }

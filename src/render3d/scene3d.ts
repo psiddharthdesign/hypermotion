@@ -54,6 +54,13 @@ export interface Plane3D {
   nodeId: NodeId
   node: Node
   rect: Rect
+  /**
+   * How the compositor should paint this plane. Spatial text keeps its own
+   * plane topology even while a different stacked text effect is active; the
+   * renderer can then choose the live text config without folding the node
+   * back into its parent's bitmap.
+   */
+  renderKind: 'canvas' | 'segment-text'
   contentMode: 'self' | 'subtree'
   paintOrder: number
   opacity: number
@@ -92,6 +99,28 @@ interface PlaneBuildOptions {
    * as the placement source while allowing children to move in 3D space.
    */
   independentNodes?: boolean
+  /**
+   * Persistent scene topology prepared outside the animation loop. When this
+   * is omitted, buildWorldPlanes creates an equivalent one-shot context so
+   * existing callers retain the same behavior.
+   */
+  context?: PlaneBuildContext
+}
+
+/**
+ * Scene data that cannot change between animation frames without a document
+ * transaction. Keeping it separate from layout/animated values lets the
+ * viewport resolve live transforms without repeatedly decoding the same Yjs
+ * nodes or scanning every track for every text node.
+ */
+export interface PlaneBuildContext {
+  readonly rootId: NodeId
+  readonly nodesById: ReadonlyMap<NodeId, Node>
+  readonly segmentTextNodeIds: ReadonlySet<NodeId>
+  readonly explicit3DDescendantNodeIds: ReadonlySet<NodeId>
+  readonly videoDescendantNodeIds: ReadonlySet<NodeId>
+  readonly directVideoChildNodeIds: ReadonlySet<NodeId>
+  readonly directSegmentTextChildNodeIds: ReadonlySet<NodeId>
 }
 
 export interface FocusHit3D {
@@ -129,6 +158,145 @@ interface Inherited3D {
   scaleX: number
   scaleY: number
   opacity: number
+}
+
+/**
+ * Spatial text must remain extracted for the lifetime of every authored
+ * vector effect, not only while that particular track owns the playhead.
+ * Otherwise stacked text animations would repeatedly change plane topology
+ * at their range boundaries and could briefly paint both the flattened text
+ * and its segment mesh.
+ */
+export function textNodeNeedsSegmentPlane(
+  api: SceneAPI,
+  nodeId: NodeId,
+): boolean {
+  const node = api.getNode(nodeId)
+  if (node?.kind !== 'text') return false
+  if (textAnimationNeedsSegmentPlane(node.textAnimation)) return true
+  return api.getTracksForNode(nodeId).some(
+    (track) =>
+      track.propertyId === 'text.progress' &&
+      textAnimationNeedsSegmentPlane(track.textAnimation),
+  )
+}
+
+function textAnimationNeedsSegmentPlane(
+  config: import('@/anim/textAnimations').TextAnimationConfig | null | undefined,
+): boolean {
+  return config?.motionVector != null || config?.motionPath != null
+}
+
+/**
+ * Snapshot the persistent graph once per scene version. Animated transforms,
+ * opacity, solved layout, and camera values deliberately do not live here;
+ * buildWorldPlanes continues to resolve those for every preview/export frame.
+ */
+export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
+  const rootId = api.getRoot()
+  const nodesById = new Map<NodeId, Node>()
+  for (const nodeId of api.getAllNodeIds()) {
+    const node = api.getNode(nodeId)
+    if (node) nodesById.set(nodeId, node)
+  }
+
+  const segmentTextNodeIds = new Set<NodeId>()
+  for (const [nodeId, node] of nodesById) {
+    if (
+      node.kind === 'text' &&
+      textAnimationNeedsSegmentPlane(node.textAnimation)
+    ) {
+      segmentTextNodeIds.add(nodeId)
+    }
+  }
+  // One track pass replaces getTracksForNode(textId) for every text node.
+  for (const track of api.getAllTracks()) {
+    if (
+      track.propertyId === 'text.progress' &&
+      nodesById.get(track.nodeId)?.kind === 'text' &&
+      textAnimationNeedsSegmentPlane(track.textAnimation)
+    ) {
+      segmentTextNodeIds.add(track.nodeId)
+    }
+  }
+
+  const directVideoChildNodeIds = new Set<NodeId>()
+  const directSegmentTextChildNodeIds = new Set<NodeId>()
+  for (const [nodeId, node] of nodesById) {
+    for (const childId of node.children) {
+      if (nodesById.get(childId)?.kind === 'video') {
+        directVideoChildNodeIds.add(nodeId)
+      }
+      if (segmentTextNodeIds.has(childId)) {
+        directSegmentTextChildNodeIds.add(nodeId)
+      }
+    }
+  }
+
+  const explicit3DDescendantMemo = new Map<NodeId, boolean>()
+  const hasExplicit3DDescendant = (nodeId: NodeId): boolean => {
+    const cached = explicit3DDescendantMemo.get(nodeId)
+    if (cached !== undefined) return cached
+    // Seed false before descending so a malformed cyclic graph cannot recurse
+    // forever. Valid scene trees overwrite it with their computed result.
+    explicit3DDescendantMemo.set(nodeId, false)
+    const node = nodesById.get(nodeId)
+    if (!node) return false
+    for (const childId of node.children) {
+      const child = nodesById.get(childId)
+      if (!child) continue
+      const childRenderMode = child.transform.renderMode ?? 'flat'
+      if (
+        segmentTextNodeIds.has(childId) ||
+        childRenderMode === 'plane' ||
+        childRenderMode === 'group3d' ||
+        hasExplicit3DDescendant(childId)
+      ) {
+        explicit3DDescendantMemo.set(nodeId, true)
+        return true
+      }
+    }
+    return false
+  }
+
+  const videoDescendantMemo = new Map<NodeId, boolean>()
+  const hasVideoDescendant = (nodeId: NodeId): boolean => {
+    const cached = videoDescendantMemo.get(nodeId)
+    if (cached !== undefined) return cached
+    videoDescendantMemo.set(nodeId, false)
+    const node = nodesById.get(nodeId)
+    if (!node) return false
+    for (const childId of node.children) {
+      const child = nodesById.get(childId)
+      if (!child) continue
+      if (child.kind === 'video' || hasVideoDescendant(childId)) {
+        videoDescendantMemo.set(nodeId, true)
+        return true
+      }
+    }
+    return false
+  }
+
+  const explicit3DDescendantNodeIds = new Set<NodeId>()
+  const videoDescendantNodeIds = new Set<NodeId>()
+  for (const nodeId of nodesById.keys()) {
+    if (hasExplicit3DDescendant(nodeId)) {
+      explicit3DDescendantNodeIds.add(nodeId)
+    }
+    if (hasVideoDescendant(nodeId)) {
+      videoDescendantNodeIds.add(nodeId)
+    }
+  }
+
+  return {
+    rootId,
+    nodesById,
+    segmentTextNodeIds,
+    explicit3DDescendantNodeIds,
+    videoDescendantNodeIds,
+    directVideoChildNodeIds,
+    directSegmentTextChildNodeIds,
+  }
 }
 
 export function resolveCamera3D(
@@ -360,9 +528,13 @@ export function buildWorldPlanes(
   camera: ResolvedCamera3D,
   options: PlaneBuildOptions = {},
 ): Plane3D[] {
-  const rootId = api.getRoot()
+  const context = options.context ?? createPlaneBuildContext(api)
+  const rootId = context.rootId
   if (!rootId) return []
   const planes: Plane3D[] = []
+  const getNode = (nodeId: NodeId): Node | null =>
+    context.nodesById.get(nodeId) ?? null
+  const segmentTextNodeIds = context.segmentTextNodeIds
 
   const mapPoint = (transform: Inherited3D, point: Vec3): Vec3 =>
     add3(
@@ -382,33 +554,17 @@ export function buildWorldPlanes(
       mul3(transform.basisZ, vector.z),
     )
 
-  const hasExplicit3DDescendant = (id: NodeId): boolean => {
-    const node = api.getNode(id)
-    if (!node) return false
-    for (const childId of node.children) {
-      const child = api.getNode(childId)
-      if (!child) continue
-      const childRenderMode = child.transform.renderMode ?? 'flat'
-      if (childRenderMode === 'plane' || childRenderMode === 'group3d') return true
-      if (hasExplicit3DDescendant(childId)) return true
-    }
-    return false
-  }
+  const hasExplicit3DDescendant = (id: NodeId): boolean =>
+    context.explicit3DDescendantNodeIds.has(id)
 
-  const hasVideoDescendant = (id: NodeId): boolean => {
-    const node = api.getNode(id)
-    if (!node) return false
-    for (const childId of node.children) {
-      const child = api.getNode(childId)
-      if (!child) continue
-      if (child.kind === 'video') return true
-      if (hasVideoDescendant(childId)) return true
-    }
-    return false
-  }
+  const hasVideoDescendant = (id: NodeId): boolean =>
+    context.videoDescendantNodeIds.has(id)
 
   const hasDirectVideoChild = (node: Node | null): boolean =>
-    !!node && node.children.some((childId) => api.getNode(childId)?.kind === 'video')
+    !!node && context.directVideoChildNodeIds.has(node.id)
+
+  const hasDirectSegmentTextChild = (node: Node | null): boolean =>
+    !!node && context.directSegmentTextChildNodeIds.has(node.id)
 
   const clipFromFrame = (rect: Rect, inherited: Inherited3D): PlaneClip3D => {
     const basisXLength = Math.max(0.0001, len3(inherited.basisX))
@@ -428,7 +584,7 @@ export function buildWorldPlanes(
   }
 
   const visit = (id: NodeId, inherited: Inherited3D, activeClips: PlaneClip3D[] = []): void => {
-    const node = api.getNode(id)
+    const node = getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera') return
     // Visibility is hierarchical. The WebGL compositor emits some descendants
@@ -479,17 +635,22 @@ export function buildWorldPlanes(
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
     }
 
-    const parent = node.parent ? api.getNode(node.parent) : null
+    const parent = node.parent ? getNode(node.parent) : null
     const renderMode = node.transform.renderMode ?? 'flat'
     const parentMode = parent?.transform.renderMode ?? 'flat'
     const isRootChild = node.parent === rootId
     const independentNodes = options.independentNodes ?? false
+    const segmentText = segmentTextNodeIds.has(id)
     const videoStackSibling = !!parent && hasDirectVideoChild(parent)
+    const segmentStackSibling = !!parent && hasDirectSegmentTextChild(parent)
+    const splitsSegmentStack = hasDirectSegmentTextChild(node)
     const containsExplicit3DDescendant = hasExplicit3DDescendant(id)
     const shouldEmitPlane =
       !isRoot &&
-      (independentNodes ||
+      (segmentText ||
+        independentNodes ||
         videoStackSibling ||
+        segmentStackSibling ||
         node.kind === 'video' ||
         renderMode === 'plane' ||
         renderMode === 'group3d' ||
@@ -504,6 +665,8 @@ export function buildWorldPlanes(
       const down = norm3(nextInherited.basisY)
       const normal = norm3(nextInherited.basisZ)
       const contentMode =
+        segmentText ||
+        splitsSegmentStack ||
         independentNodes ||
         node.kind === 'video' ||
         (videoStackSibling && node.kind !== 'frame' && node.kind !== 'component') ||
@@ -519,6 +682,7 @@ export function buildWorldPlanes(
         nodeId: id,
         node,
         rect,
+        renderKind: segmentText ? 'segment-text' : 'canvas',
         contentMode,
         paintOrder: planes.length,
         // Opacity belongs to the emitted plane, irrespective of whether its
@@ -538,7 +702,11 @@ export function buildWorldPlanes(
         down,
         normal,
         cameraDepth: cameraSpaceDepth(center, camera),
-        extractedFromParent: videoStackSibling || node.kind === 'video',
+        extractedFromParent:
+          segmentText ||
+          segmentStackSibling ||
+          videoStackSibling ||
+          node.kind === 'video',
         clips: activeClips.length ? [...activeClips] : undefined,
       })
     }
@@ -555,8 +723,11 @@ export function buildWorldPlanes(
       (node.transform.renderMode ?? 'flat') === 'group3d' ||
       containsExplicit3DDescendant
     ) {
-      for (let i = node.children.length - 1; i >= 0; i--) {
-        visit(node.children[i]!, nextInherited, nextClips)
+      const childIds = splitsSegmentStack
+        ? node.children
+        : [...node.children].reverse()
+      for (const childId of childIds) {
+        visit(childId, nextInherited, nextClips)
       }
     }
   }

@@ -35,7 +35,12 @@ import { useUI } from '@/state/ui'
 import type { Tool } from '@/state/ui'
 import { SelectionOverlay } from '@/ui/SelectionOverlay'
 import { DistanceOverlay } from '@/ui/DistanceOverlay'
-import { useAnimatedValues, type AnimatedValue } from '@/ui/hooks/useAnimatedValues'
+import {
+  hasNodeDrivenTextAnimation,
+  useAnimatedValues,
+  useAnimationPlaybackClock,
+  type AnimatedValue,
+} from '@/ui/hooks/useAnimatedValues'
 import { useDragToMove } from '@/ui/hooks/useDragToMove'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
@@ -77,14 +82,24 @@ import {
   stampToActiveTracksForPatch,
   listTracksForNode,
   normalizeTextAnimation,
+  typewriterTextAtProgress,
 } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
+import { textMotionPerspectiveDistance } from '@/anim/textMotionVector'
+import { resolveTextSegmentMotion } from '@/anim/textSegmentMotion'
+import {
+  easeTextAnimationProgress,
+  textSegmentEnvelopeProgress,
+  textSegmentLinearProgress,
+} from '@/anim/textSegmentEnvelope'
+import { scrambleTextForSegment } from '@/anim/textScramble'
 import {
   cameraPreviewStore,
   cameraTransformPreview,
   mergeCameraAnimationPreview,
 } from '@/ui/cameraPreviewStore'
 import { cameraWheelStartZ, cameraZFromWheel } from '@/ui/cameraWheel'
+import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
 
 const MemoizedThreeSceneViewport = memo(ThreeSceneViewport)
 MemoizedThreeSceneViewport.displayName = 'MemoizedThreeSceneViewport'
@@ -134,6 +149,13 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
 }: AnimatedThreeSceneViewportProps) {
   const sceneAnimated = useAnimatedValues(animationIds)
   const { cameraAnim, cameraPreview } = useLiveCameraAnimatedValue(camera.id)
+  const needsNodeTextClock = useMemo(() => {
+    void props.sceneVersion
+    return hasNodeDrivenTextAnimation(props.api, animationIds)
+  }, [animationIds, props.api, props.sceneVersion])
+  const nodeTextClockEnabled =
+    props.playing === true && props.showPlanes !== false && needsNodeTextClock
+  const nodeTextPlayhead = useAnimationPlaybackClock(nodeTextClockEnabled)
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
   )
@@ -141,7 +163,9 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   // Read the engine-owned time during that render instead of subscribing this
   // WebGL leaf to the slower 15 Hz UI mirror as a second render source.
   const playbackPlayhead = props.playing
-    ? getAnimEngine().getPlayhead()
+    ? nodeTextClockEnabled
+      ? nodeTextPlayhead
+      : getAnimEngine().getPlayhead()
     : (pausedPlayhead ?? props.playhead ?? 0)
   return (
     <MemoizedThreeSceneViewport
@@ -1476,23 +1500,27 @@ export function Canvas() {
   const [spacePanning, setSpacePanning] = useState(false)
 
   useEffect(() => {
-    const isTypingTarget = (target: EventTarget | null) => {
+    const spaceBelongsToTarget = (target: EventTarget | null) => {
       const el = target as HTMLElement | null
       if (!el) return false
       return (
         el.isContentEditable ||
-        !!el.closest('input, textarea, select, [contenteditable="true"]')
+        !!el.closest(
+          'button, input, textarea, select, [contenteditable="true"], [data-curve-editor]',
+        )
       )
     }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || isTypingTarget(e.target)) return
+      if (e.code !== 'Space' || spaceBelongsToTarget(e.target)) return
+      // This state only arms click-drag panning. The global shortcut handler
+      // owns Space itself so it can toggle playback and prevent page scroll.
+      // Pre-empting the event here made listener order decide whether the
+      // timeline played at all.
       setSpacePanning(true)
-      e.preventDefault()
     }
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
       setSpacePanning(false)
-      e.preventDefault()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
@@ -4828,8 +4856,37 @@ function TextGlyphs({
   const playhead = hasTextAnimationTracks
     ? getAnimEngine().getPlayhead()
     : mirroredPlayhead
-  const textAnimation =
+  const authoredTextAnimation =
     anim?.textAnimation ?? legacyTextAnimation
+  const subscribeToCurvePreview = useCallback(
+    (listener: () => void) =>
+      textStaggerCurvePreviewStore.subscribe(node.id, listener),
+    [node.id],
+  )
+  const getCurvePreview = useCallback(
+    () => textStaggerCurvePreviewStore.getPreview(node.id),
+    [node.id],
+  )
+  const trailPreview = useSyncExternalStore(
+    subscribeToCurvePreview,
+    getCurvePreview,
+    getCurvePreview,
+  )
+  const textAnimation =
+    authoredTextAnimation && trailPreview
+      ? {
+          ...authoredTextAnimation,
+          ...(trailPreview.curve
+            ? { staggerCurve: trailPreview.curve }
+            : {}),
+          ...(trailPreview.motionPath
+            ? { motionPath: trailPreview.motionPath }
+            : {}),
+          ...(trailPreview.duration != null
+            ? { duration: trailPreview.duration }
+            : {}),
+        }
+      : authoredTextAnimation
 
   // Common typography style block. Shared between read and edit modes
   // so the text doesn't shift visually when you press Enter to edit.
@@ -4907,6 +4964,17 @@ function TextGlyphs({
     whiteSpace: hugWidth ? 'pre' : 'pre-wrap',
     wordBreak: hugWidth ? 'normal' : 'break-word',
   }
+  const textAnimationContainerStyle: React.CSSProperties =
+    textAnimationHasSpatialDepth(textAnimation)
+      ? {
+          ...sharedStyle,
+          perspective: `${textMotionPerspectiveDistance(
+            node.fontSize * node.lineHeight,
+          )}px`,
+          perspectiveOrigin: '50% 50%',
+          transformStyle: 'preserve-3d',
+        }
+      : sharedStyle
 
   // contentEditable focus + select-all on mount. We do this with a ref
   // callback rather than autoFocus + a select effect because React
@@ -4996,13 +5064,13 @@ function TextGlyphs({
         userSelect: 'none',
       }}
     >
-      <span style={sharedStyle}>
+      <span style={textAnimationContainerStyle}>
         {textAnimation
           ? renderTextAnimationSegments(
               node.text,
               textAnimation,
               playhead,
-              sharedStyle,
+              textAnimationContainerStyle,
               anim?.textProgress,
             )
           : node.text}
@@ -5057,8 +5125,13 @@ function renderTextAnimationSegments(
     )
     return (
       <Fragment key={`${index}-${segment.text}`}>
-        <span style={style}>
-          {displayTextForSegment(
+        <span
+          style={{
+            ...style,
+            position: config.id === 'scramble' ? 'relative' : undefined,
+          }}
+        >
+          {renderTextSegmentContent(
             segment.text || '\u200b',
             config,
             playhead,
@@ -5103,7 +5176,17 @@ function renderLetterTextAnimationSegments(
       )
     }
     return (
-      <span key={`${partIndex}-${part}`} style={{ whiteSpace: 'nowrap' }}>
+      <span
+        key={`${partIndex}-${part}`}
+        style={{
+          display: 'inline-block',
+          whiteSpace: 'nowrap',
+          transformStyle:
+            textAnimationHasSpatialDepth(config)
+              ? 'preserve-3d'
+              : undefined,
+        }}
+      >
         {Array.from(part).map((character, characterIndex) => {
           const orderIndex =
             config.order === 'backward'
@@ -5120,8 +5203,14 @@ function renderLetterTextAnimationSegments(
             'inline',
           )
           return (
-            <span key={`${characterIndex}-${character}`} style={style}>
-              {displayTextForSegment(
+            <span
+              key={`${characterIndex}-${character}`}
+              style={{
+                ...style,
+                position: config.id === 'scramble' ? 'relative' : undefined,
+              }}
+            >
+              {renderTextSegmentContent(
                 character,
                 config,
                 playhead,
@@ -5153,17 +5242,42 @@ function textAnimationSegmentStyle(
   const globalElapsed = timelineProgress === undefined
     ? playhead - config.startTime
     : timelineProgress * totalSpan
-  const raw = (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)
-  const u = Math.max(0, Math.min(1, raw))
-  const eased = progress === undefined ? easeTextAnimation(u, config.acceleration) : u
+  const linearProgress = textSegmentLinearProgress(
+    globalElapsed,
+    config.duration,
+    config.delay,
+    orderIndex,
+    count,
+  )
+  const envelopeProgress = textSegmentEnvelopeProgress(
+    globalElapsed,
+    config.duration,
+    config.delay,
+    orderIndex,
+    count,
+    config.smoothing,
+    config.staggerCurve,
+  )
+  const localProgress = progress === undefined
+    ? easeTextAnimationProgress(envelopeProgress, config.acceleration)
+    : envelopeProgress
   const exit = config.mode === 'out'
-  const amount = exit ? eased : 1 - eased
+  const amount = exit ? localProgress : 1 - localProgress
   const lineHeight =
     typeof sharedStyle.fontSize === 'number' && typeof sharedStyle.lineHeight === 'number'
       ? sharedStyle.fontSize * sharedStyle.lineHeight
       : 32
   const travel = Math.max(1, lineHeight * config.travelDistance)
-  const [dx, dy] = directionOffset(config.direction, travel * amount)
+  const [legacyDx, legacyDy] = directionOffset(
+    config.direction,
+    travel * amount,
+  )
+  const motion = resolveTextSegmentMotion(
+    config.motionPath,
+    config.motionVector,
+    lineHeight,
+    amount,
+  )
   const transforms: string[] = []
   let opacity = 1
   let filter: string | undefined
@@ -5173,6 +5287,16 @@ function textAnimationSegmentStyle(
     typeof sharedStyle.letterSpacing === 'number' ? sharedStyle.letterSpacing : 0
   let effectiveTracking = authoredTracking
 
+  // An explicitly authored vector is independent of the effect preset: fade,
+  // mask, blur, scale, and expressive effects can all travel through XYZ.
+  // Null/undefined intentionally leaves the established direction/travel path
+  // below untouched for backwards-compatible scenes.
+  if (motion) {
+    transforms.push(
+      `translate3d(${motion.x}px, ${motion.y}px, ${motion.z}px)`,
+    )
+  }
+
   if (
     config.id === 'fade' ||
     config.id === 'slide-up' ||
@@ -5181,15 +5305,18 @@ function textAnimationSegmentStyle(
     config.id === 'slide-right' ||
     config.id === 'blur-slide' ||
     config.id === 'blur' ||
-    config.id === 'appear' ||
-    config.id === 'typewriter'
+    config.id === 'appear'
   ) {
-    opacity = config.id === 'appear' || config.id === 'typewriter'
-      ? amount > 0.5 ? 0 : 1
-      : 1 - amount
+    opacity = config.id === 'appear' ? (amount > 0.5 ? 0 : 1) : 1 - amount
   }
-  if (config.id.startsWith('slide') || config.id === 'blur-slide') {
-    transforms.push(`translate(${dx}px, ${dy}px)`)
+  if (config.id === 'typewriter' && kind !== 'layer') {
+    opacity = amount > 0.5 ? 0 : 1
+  }
+  if (
+    !motion &&
+    (config.id.startsWith('slide') || config.id === 'blur-slide')
+  ) {
+    transforms.push(`translate(${legacyDx}px, ${legacyDy}px)`)
   }
   if (config.id === 'grow') {
     transforms.push(`scale(${1 - amount * 0.35})`)
@@ -5232,6 +5359,8 @@ function textAnimationSegmentStyle(
         letterSpacing: effectiveTracking,
         transform: transforms.length > 0 ? transforms.join(' ') : undefined,
         transformOrigin: '50% 50%',
+        transformStyle:
+          motion && motion.z !== 0 ? 'preserve-3d' : undefined,
         willChange: 'transform, opacity, filter, clip-path, letter-spacing',
       }
     }
@@ -5242,7 +5371,7 @@ function textAnimationSegmentStyle(
   }
   if (config.id === 'character-wave') {
     const phase = count <= 1 ? 0 : orderIndex / (count - 1)
-    transforms.push(`translateY(${Math.sin((phase + u) * Math.PI * 2) * 8 * amount}px)`)
+    transforms.push(`translateY(${Math.sin((phase + linearProgress) * Math.PI * 2) * 8 * amount}px)`)
     opacity = 1 - amount * 0.35
   }
   if (config.id === 'tracking') {
@@ -5250,13 +5379,17 @@ function textAnimationSegmentStyle(
     opacity = 1 - amount
   }
   if (config.id === 'skew') {
-    transforms.push(`translate(${dx}px, ${dy}px) skewX(${amount * -14}deg)`)
+    transforms.push(
+      motion
+        ? `skewX(${amount * -14}deg)`
+        : `translate(${legacyDx}px, ${legacyDy}px) skewX(${amount * -14}deg)`,
+    )
     opacity = 1 - amount
   }
   if (config.id === 'color-fade') {
     color = config.mode === 'in'
-      ? `color-mix(in oklab, currentColor ${Math.round(eased * 100)}%, transparent)`
-      : `color-mix(in oklab, currentColor ${Math.round((1 - eased) * 100)}%, transparent)`
+      ? `color-mix(in oklab, currentColor ${Math.round(localProgress * 100)}%, transparent)`
+      : `color-mix(in oklab, currentColor ${Math.round((1 - localProgress) * 100)}%, transparent)`
   }
 
   return {
@@ -5271,21 +5404,9 @@ function textAnimationSegmentStyle(
     letterSpacing: effectiveTracking,
     transform: transforms.length > 0 ? transforms.join(' ') : undefined,
     transformOrigin: '50% 50%',
+    transformStyle: motion && motion.z !== 0 ? 'preserve-3d' : undefined,
     willChange: 'transform, opacity, filter, clip-path, letter-spacing',
   }
-}
-
-function easeTextAnimation(
-  u: number,
-  acceleration: TextAnimationConfig['acceleration'],
-): number {
-  if (acceleration === 'linear') return u
-  if (acceleration === 'speed-up') return u * u
-  if (acceleration === 'spring') {
-    return Math.min(1, 1 - Math.cos(u * Math.PI * 2.4) * Math.exp(-5 * u))
-  }
-  if (acceleration === 'smooth') return u * u * (3 - 2 * u)
-  return 1 - Math.pow(1 - u, 3)
 }
 
 function directionOffset(
@@ -5305,6 +5426,18 @@ function directionOffset(
   }
 }
 
+function textAnimationHasSpatialDepth(
+  config: TextAnimationConfig | null | undefined,
+): boolean {
+  if (!config) return false
+  if (config.motionPath) {
+    return config.motionPath.points.some(
+      (point) => point.z !== 0 || point.inZ !== 0 || point.outZ !== 0,
+    )
+  }
+  return config.motionVector?.z !== 0
+}
+
 function displayTextForSegment(
   text: string,
   config: TextAnimationConfig,
@@ -5313,24 +5446,68 @@ function displayTextForSegment(
   orderIndex: number,
   count: number,
 ): string {
-  if (config.id !== 'scramble') return text
-  const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
-  const timelineProgress = progress === undefined
-    ? undefined
-    : Math.max(0, Math.min(1, progress))
-  const globalElapsed = timelineProgress === undefined
-    ? playhead - config.startTime
-    : timelineProgress * totalSpan
-  const u = Math.max(0, Math.min(1, (globalElapsed - orderIndex * config.delay) / Math.max(0.05, config.duration)))
-  if ((config.mode === 'in' && u >= 0.85) || (config.mode === 'out' && u <= 0.15)) return text
-  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&'
-  return Array.from(text)
-    .map((char, index) => {
-      if (/\s/.test(char)) return char
-      const n = Math.abs(Math.sin((orderIndex + 1) * 17.17 + index * 9.91 + playhead * 24))
-      return glyphs[Math.floor(n * glyphs.length) % glyphs.length]!
-    })
-    .join('')
+  if (config.id === 'typewriter' && config.applyTo === 'layer') {
+    const typewriterProgress =
+      progress === undefined
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              (playhead - config.startTime) / Math.max(0.05, config.duration),
+            ),
+          )
+        : progress
+    return typewriterTextAtProgress(text, config.mode, typewriterProgress)
+  }
+  return scrambleTextForSegment(
+    text,
+    config,
+    playhead,
+    progress,
+    orderIndex,
+    count,
+  )
+}
+
+/** Keep Scramble replacement glyphs out of inline layout calculations. */
+function renderTextSegmentContent(
+  text: string,
+  config: TextAnimationConfig,
+  playhead: number,
+  progress: number | undefined,
+  orderIndex: number,
+  count: number,
+) {
+  const displayed = displayTextForSegment(
+    text,
+    config,
+    playhead,
+    progress,
+    orderIndex,
+    count,
+  )
+  if (config.id !== 'scramble') return displayed
+  return (
+    <>
+      <span style={{ opacity: 0 }}>{text}</span>
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          overflow: 'visible',
+          pointerEvents: 'none',
+          textAlign:
+            config.applyTo === 'letters' || config.applyTo === 'words'
+              ? 'center'
+              : 'inherit',
+          whiteSpace: 'inherit',
+        }}
+      >
+        {displayed}
+      </span>
+    </>
+  )
 }
 
 function MediaVideo({

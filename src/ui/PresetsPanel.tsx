@@ -5,6 +5,7 @@ import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type { EasingKind, Fill, NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import {
   PRESETS,
   applyPreset,
@@ -14,11 +15,18 @@ import {
   bezierOf,
   TEXT_ANIMATION_PRESETS,
   applyTextAnimation,
+  deriveTextAnimationTiming,
   planLayerPresetTargets,
+  planTextPresetTargets,
+  planTextStaggerStartTimes,
   normalizeTextAnimation,
   stampTextAnimationKeyframes,
   textAnimationDefaults,
+  textAnimationUsesLegacyTranslation,
+  defaultTextMotionPath,
+  textStaggerCurveForPreset,
   updateTextAnimationEasing,
+  updateTextAnimationTrackMetadata,
 } from '@/anim'
 import type {
   AnimPresetId,
@@ -26,15 +34,33 @@ import type {
   TextAnimationConfig,
   TextAnimationDirection,
   TextAnimationId,
+  TextAnimationMotionVector,
   TextAnimationOrder,
   TextAnimationSmoothing,
+  TextStaggerCurve,
+  TextMotionPath,
 } from '@/anim'
 import { EasingPicker } from '@/ui/EasingPicker'
 import { GraphEditor } from '@/ui/GraphEditor'
 import { NumberField } from '@/ui/fields'
 import {
+  currentAnimationAuthorTime,
+  pausedInspectorPlayhead,
+} from '@/ui/animationPlayhead'
+import {
+  StaggerCurveEditor,
+  StaggerCurveMini,
+} from '@/ui/StaggerCurveEditor'
+import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
+import {
+  TextMotionPathEditor,
+  TextMotionPathMini,
+} from '@/ui/TextMotionPathEditor'
+import {
+  findStaggerSetMemberTrack,
   registerStaggerSetKeyframes,
   resolveStaggerKeyframeBundle,
+  resolveStaggerTrackBundle,
   retimeStaggerSet,
   staggerLayerOffset,
 } from '@/anim/staggerSets'
@@ -79,7 +105,8 @@ export function PresetsPanel() {
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
-  const playhead = useUI((s) => s.playhead)
+  const pausedPlayhead = useUI(pausedInspectorPlayhead)
+  const playhead = pausedPlayhead ?? useUI.getState().playhead
   const easingPresetId = useUI((s) => s.easingPresetId)
   const easingStrength = useUI((s) => s.easingStrength)
   const setEasing = useUI((s) => s.setEasing)
@@ -194,16 +221,17 @@ export function PresetsPanel() {
   // `i * staggerDelay` when stagger is on. The same target list drives
   // the easing sweep so "click preset, slide easing" feels coherent.
   const stampPreset = (id: AnimPresetId) => {
+    const authorTime = currentAnimationAuthorTime()
     const presetDirection = PRESETS.find((preset) => preset.id === id)?.direction
     for (const targetId of targets) {
       const startTime = isStaggerActive
-        ? playhead + staggerLayerOffset(
+        ? authorTime + staggerLayerOffset(
             targets,
             targetId,
             targetPlan.delay,
             targetPlan.order,
           )
-        : playhead
+        : authorTime
       applyPreset(api, targetId, id, startTime)
     }
     if (isStaggerActive && activeStaggerSetId && presetDirection) {
@@ -346,7 +374,7 @@ export function PresetsPanel() {
       primary={hasTextSelection}
       onToggle={() => toggleSection('text')}
     >
-      <TextAnimationPanel />
+      <TextAnimationPanel playhead={playhead} />
     </AnimationAccordion>
   ) : null
 
@@ -438,7 +466,7 @@ function AnimationAccordion({
   )
 }
 
-function TextAnimationPanel() {
+function TextAnimationPanel({ playhead }: { playhead: number }) {
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
@@ -449,9 +477,10 @@ function TextAnimationPanel() {
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
-  const playhead = useUI((s) => s.playhead)
   const [showPicker, setShowPicker] = useState(false)
   const [showEasing, setShowEasing] = useState(false)
+  const [showStaggerCurve, setShowStaggerCurve] = useState(false)
+  const [showMotionPath, setShowMotionPath] = useState(false)
   const [copiedEasing, setCopiedEasing] = useState(false)
   const [easingDraft, setEasingDraft] = useState({ source: '', value: '' })
   const updateStaggerDelay = (delay: number) => {
@@ -461,64 +490,251 @@ function TextAnimationPanel() {
     setStaggerDelay(delay)
   }
   const selectedTextTrackFilter = timelineTrackFilter(selectedTrackIds, selectedKeyframes)
-  const selectedTextNodes = textNodesFromSelectionOrTimeline(
+  const selectedTextSources = textNodesFromSelectionOrTimeline(
     api,
     selection,
     selectedTextTrackFilter,
   )
-  const primary = selectedTextNodes[0]
-  const primaryTextAnimationTrack = primary
-    ? findTextAnimationTrack(api, primary.id, selectedTextTrackFilter, playhead)
-    : null
+  const activeStaggerSet = activeStaggerSetId
+    ? api.getUiState().staggerSets[activeStaggerSetId]
+    : undefined
+  const textTargetPlan = planTextPresetTargets(
+    selectedTextSources.map((node) => node.id),
+    (id) => api.getNode(id)?.kind === 'text',
+    staggerOn,
+    staggerDelay,
+    activeStaggerSet,
+  )
+  const selectedTextNodes = textTargetPlan.targets.flatMap((id) => {
+    const node = api.getNode(id)
+    return node?.kind === 'text' ? [node] : []
+  })
+  const isTextStaggerActive =
+    textTargetPlan.staggerActive && selectedTextNodes.length > 0
+  const activeTextStaggerHasMembers =
+    isTextStaggerActive &&
+    !!activeStaggerSet &&
+    activeStaggerSet.layerIds.some(
+      (nodeId) =>
+        (activeStaggerSet.members[nodeId]?.['text.progress']?.length ?? 0) > 0,
+    )
+  const targetTextIds = new Set(selectedTextNodes.map((node) => node.id))
+  const primary =
+    selectedTextSources.find((node) => targetTextIds.has(node.id)) ??
+    selectedTextNodes[0]
   const primarySelectedTimelineTrack = primary
     ? findSelectedTimelineTrack(api, primary.id, selectedTextTrackFilter)
     : null
+  const primaryExplicitTextTrack =
+    primary && selectedTextTrackFilter
+      ? listTracksForNode(api, primary.id).find(
+          (track) =>
+            track.propertyId === 'text.progress' &&
+            selectedTextTrackFilter.has(track.id),
+        ) ?? null
+      : null
+  const primaryStaggerTextTrack =
+    primary && staggerOn && activeStaggerSetId
+      ? findStaggerSetMemberTrack(
+          api,
+          activeStaggerSetId,
+          primary.id,
+          'text.progress',
+          playhead,
+        )
+      : null
+  const primaryExplicitTrackIsOwned =
+    !!primaryExplicitTextTrack &&
+    !!primary &&
+    !!activeStaggerSet?.members[primary.id]?.['text.progress']?.some((id) =>
+      primaryExplicitTextTrack.keyframes.some(
+        (keyframe) => keyframe.id === id,
+      ),
+    )
+  const primaryGenericTextTrack = primary
+    ? findTextAnimationTrack(
+        api,
+        primary.id,
+        selectedTextTrackFilter,
+        playhead,
+      )
+    : null
+  const primaryTextAnimationTrack =
+    (primaryExplicitTextTrack &&
+    (!staggerOn || !activeStaggerSet || primaryExplicitTrackIsOwned)
+      ? primaryExplicitTextTrack
+      : null) ??
+    primaryStaggerTextTrack ??
+    (!activeTextStaggerHasMembers ? primaryGenericTextTrack : null)
   const primaryResolvedTextTrack =
     primaryTextAnimationTrack ??
-    (primary && primarySelectedTimelineTrack
+    (!activeTextStaggerHasMembers && primary && primarySelectedTimelineTrack
       ? findTextAnimationTrackMatchingRange(api, primary.id, primarySelectedTimelineTrack)
       : null)
   const primaryTextAnimationConfig = normalizeTextAnimation(primary?.textAnimation)
+  const staggerTextTrackBundle =
+    activeStaggerSetId && primaryResolvedTextTrack
+      ? resolveStaggerTrackBundle(
+          api,
+          activeStaggerSetId,
+          primaryResolvedTextTrack.id,
+        )
+      : null
   const current = primaryResolvedTextTrack
-    ? withTextTrackTiming(
+    ? deriveTextAnimationTiming(
         normalizeTextAnimation(primaryResolvedTextTrack.textAnimation ?? primary?.textAnimation),
         primaryResolvedTextTrack,
         primary?.text ?? '',
       )
-    : withTextTrackTiming(
-        primaryTextAnimationConfig,
-        primarySelectedTimelineTrack,
-        primary?.text ?? '',
-      )
+    : activeTextStaggerHasMembers
+      ? null
+      : deriveTextAnimationTiming(
+          primaryTextAnimationConfig,
+          primarySelectedTimelineTrack,
+          primary?.text ?? '',
+        )
+  const freshTextStaggerStartTimesAt = (fallbackPlayhead: number) =>
+    isTextStaggerActive &&
+    !activeTextStaggerHasMembers &&
+    primary
+      ? planTextStaggerStartTimes(
+          textTargetPlan,
+          primary.id,
+          primaryResolvedTextTrack
+            ? trackStartTime(primaryResolvedTextTrack)
+            : current?.startTime ?? fallbackPlayhead,
+        )
+      : null
   const currentEasingText = current ? easingToText(current) : ''
   const visibleEasingDraft =
     easingDraft.source === currentEasingText ? easingDraft.value : currentEasingText
 
   const patch = (next: Partial<TextAnimationConfig>) => {
     if (!current) return
-    for (const node of selectedTextNodes) {
-      const selectedTimelineTrack = findSelectedTimelineTrack(api, node.id, selectedTextTrackFilter)
-      const textTrack =
-        findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead) ??
-        (selectedTimelineTrack
-          ? findTextAnimationTrackMatchingRange(api, node.id, selectedTimelineTrack)
-          : null)
-      const base = normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation) ?? current
-      const config = {
-        ...base,
-        ...next,
+    const authorTime = currentAnimationAuthorTime()
+    const freshTextStaggerStartTimes =
+      freshTextStaggerStartTimesAt(authorTime)
+    const alignedTextStaggerStart = (
+      nodeId: NodeId,
+      fallback: number,
+    ): number => freshTextStaggerStartTimes?.[nodeId] ?? fallback
+    const staggerMembers: Array<{
+      nodeId: NodeId
+      propertyId: 'text.progress'
+      keyframeIds: string[]
+    }> = []
+    api.doc.transact(() => {
+      for (const node of selectedTextNodes) {
+        const selectedTimelineTrack = findSelectedTimelineTrack(
+          api,
+          node.id,
+          selectedTextTrackFilter,
+        )
+        const staggerTrackId =
+          staggerTextTrackBundle?.trackIdsByNode[node.id]
+        // A partial bundle means this layer's member was intentionally
+        // detached or can no longer be resolved safely. Do not fall back to
+        // another same-property track and silently reattach it.
+        if (staggerTextTrackBundle && !staggerTrackId) continue
+        const staggerTrack = staggerTrackId
+          ? api.getTrack(staggerTrackId)
+          : null
+        const textTrack =
+          staggerTrack ??
+          (!activeTextStaggerHasMembers
+            ? findTextAnimationTrack(
+                api,
+                node.id,
+                selectedTextTrackFilter,
+                authorTime,
+              ) ??
+              (selectedTimelineTrack
+                ? findTextAnimationTrackMatchingRange(
+                    api,
+                    node.id,
+                    selectedTimelineTrack,
+                  )
+                : null)
+            : null)
+        const base =
+          normalizeTextAnimation(
+            textTrack?.textAnimation ?? node.textAnimation,
+          ) ?? current
+        const timingTrack = textTrack ?? selectedTimelineTrack
+        const timedBase =
+          deriveTextAnimationTiming(base, timingTrack, node.text) ?? base
+        const timedConfig = {
+          ...timedBase,
+          ...next,
+          startTime: alignedTextStaggerStart(
+            node.id,
+            next.startTime ?? timedBase.startTime,
+          ),
+        }
+        api.setNodeProperty(node.id, 'textAnimation', timedConfig)
+        let authoredTrackId = textTrack?.id ?? null
+        if (
+          isTextProgressionOnlyPatch(next) &&
+          freshTextStaggerStartTimes == null &&
+          textTrack
+        ) {
+          // The across-segment curve is metadata on the existing semantic
+          // progress track. Updating it must not retime or replace S members.
+          updateTextAnimationTrackMetadata(
+            api,
+            node.id,
+            timedConfig,
+            textTrack.id,
+          )
+        } else if (
+          isTextEasingOnlyPatch(next) &&
+          freshTextStaggerStartTimes == null
+        ) {
+          updateTextAnimationEasing(
+            api,
+            node.id,
+            timedConfig,
+            textTrack?.id,
+          )
+        } else {
+          authoredTrackId = stampTextAnimationKeyframes(
+            api,
+            node.id,
+            timedConfig,
+            node.text,
+            { trackId: textTrack?.id },
+          )
+        }
+        const authoredTrack = authoredTrackId
+          ? api.getTrack(authoredTrackId)
+          : null
+        if (authoredTrack?.propertyId === 'text.progress') {
+          staggerMembers.push({
+            nodeId: node.id,
+            propertyId: 'text.progress',
+            keyframeIds: authoredTrack.keyframes.map(
+              (keyframe) => keyframe.id,
+            ),
+          })
+        }
       }
-      const timingTrack = textTrack ?? selectedTimelineTrack
-      const timedConfig = withTextTrackTiming(config, timingTrack, node.text, next) ?? config
-      api.setNodeProperty(node.id, 'textAnimation', timedConfig)
-      if (isTextEasingOnlyPatch(next)) {
-        updateTextAnimationEasing(api, node.id, timedConfig, textTrack?.id)
-      } else {
-        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text, {
-          trackId: textTrack?.id,
-        })
+      if (
+        isTextStaggerActive &&
+        activeStaggerSetId &&
+        staggerMembers.length > 0
+      ) {
+        registerStaggerSetKeyframes(
+          api,
+          {
+            setId: activeStaggerSetId,
+            layerIds: textTargetPlan.staggerLayerIds,
+            delay: textTargetPlan.delay,
+            order: textTargetPlan.order,
+          },
+          staggerMembers,
+        )
       }
-    }
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
   const updateEasingText = (value: string) => {
     setEasingDraft({ source: currentEasingText, value })
@@ -535,104 +751,159 @@ function TextAnimationPanel() {
       setCopiedEasing(false)
     }
   }
-
   const pickPreset = (id: TextAnimationId) => {
+    const authorTime = currentAnimationAuthorTime()
+    const freshTextStaggerStartTimes =
+      freshTextStaggerStartTimesAt(authorTime)
+    const alignedTextStaggerStart = (
+      nodeId: NodeId,
+      fallback: number,
+    ): number => freshTextStaggerStartTimes?.[nodeId] ?? fallback
     const applied = new Set<NodeId>()
     const staggerMembers: Array<{
       nodeId: NodeId
       propertyId: 'text.progress'
       keyframeIds: string[]
     }> = []
-    for (let i = 0; i < selectedTextNodes.length; i++) {
-      const node = selectedTextNodes[i]!
-      if (applied.has(node.id)) continue
-      applied.add(node.id)
-      const priorTextTrackIds = new Set(
-        api
-          .getTracksForNode(node.id)
-          .filter((track) => track.propertyId === 'text.progress')
-          .map((track) => track.id),
-      )
-      const selectedTimelineTrack = findSelectedTimelineTrack(api, node.id, selectedTextTrackFilter)
-      const textTrack =
-        findTextAnimationTrack(api, node.id, selectedTextTrackFilter, playhead) ??
-        (selectedTimelineTrack
-          ? findTextAnimationTrackMatchingRange(api, node.id, selectedTimelineTrack)
-          : null)
-      const timingTrack = textTrack ?? selectedTimelineTrack
-      const startTime = timingTrack
-        ? trackStartTime(timingTrack)
-        : playhead + (staggerOn && selectedTextNodes.length > 1 ? i * staggerDelay : 0)
-      if (!textTrack && selectedTimelineTrack) {
-        const previous = normalizeTextAnimation(node.textAnimation)
-        const defaults = textAnimationDefaults(id)
-        const next: TextAnimationConfig = {
-          ...defaults,
-          ...(previous
-            ? {
-                mode: previous.mode,
-                applyTo: previous.applyTo,
-                order: previous.order,
-                delay: previous.delay,
-                smoothing: previous.smoothing,
-                easingPresetId: previous.easingPresetId,
-                easingStrength: previous.easingStrength,
-                customEasing: previous.customEasing,
-              }
-            : {}),
-          startTime,
-        }
-        const timedConfig = withTextTrackTiming(
-          next,
-          selectedTimelineTrack,
-          node.text,
-        ) ?? next
-        api.setNodeProperty(node.id, 'textAnimation', timedConfig)
-        stampTextAnimationKeyframes(api, node.id, timedConfig, node.text)
-      } else {
-        applyTextAnimation(
+    api.doc.transact(() => {
+      for (const node of selectedTextNodes) {
+        if (applied.has(node.id)) continue
+        applied.add(node.id)
+        const selectedTimelineTrack = findSelectedTimelineTrack(
           api,
           node.id,
-          id,
-          startTime,
-          normalizeTextAnimation(textTrack?.textAnimation ?? node.textAnimation),
-          { trackId: textTrack?.id },
+          selectedTextTrackFilter,
+        )
+        const staggerTrackId =
+          staggerTextTrackBundle?.trackIdsByNode[node.id]
+        if (staggerTextTrackBundle && !staggerTrackId) continue
+        const staggerTrack = staggerTrackId
+          ? api.getTrack(staggerTrackId)
+          : null
+        const textTrack =
+          staggerTrack ??
+          (!activeTextStaggerHasMembers
+            ? findTextAnimationTrack(
+                api,
+                node.id,
+                selectedTextTrackFilter,
+                authorTime,
+              ) ??
+              (selectedTimelineTrack
+                ? findTextAnimationTrackMatchingRange(
+                    api,
+                    node.id,
+                    selectedTimelineTrack,
+                  )
+                : null)
+            : null)
+        const timingTrack = textTrack ?? selectedTimelineTrack
+        const fallbackStartTime = timingTrack
+          ? trackStartTime(timingTrack)
+          : authorTime +
+            (isTextStaggerActive
+              ? staggerLayerOffset(
+                  textTargetPlan.staggerLayerIds,
+                  node.id,
+                  textTargetPlan.delay,
+                  textTargetPlan.order,
+                )
+              : 0)
+        const startTime = alignedTextStaggerStart(
+          node.id,
+          fallbackStartTime,
+        )
+        let authoredTrackId: string | null = textTrack?.id ?? null
+        if (!textTrack && selectedTimelineTrack) {
+          const previous = normalizeTextAnimation(node.textAnimation)
+          const defaults = textAnimationDefaults(id)
+          const next: TextAnimationConfig = {
+            ...defaults,
+            ...(previous
+              ? {
+                  mode: previous.mode,
+                  applyTo: previous.applyTo,
+                  order: previous.order,
+                  delay: previous.delay,
+                  smoothing: previous.smoothing,
+                  staggerCurve: previous.staggerCurve,
+                  easingPresetId: previous.easingPresetId,
+                  easingStrength: previous.easingStrength,
+                  customEasing: previous.customEasing,
+                  motionVector: previous.motionVector,
+                  motionPath: previous.motionPath ?? defaults.motionPath,
+                }
+              : {}),
+            startTime,
+          }
+          const timedConfig = {
+            ...(deriveTextAnimationTiming(
+              next,
+              selectedTimelineTrack,
+              node.text,
+            ) ?? next),
+            startTime,
+          }
+          api.setNodeProperty(node.id, 'textAnimation', timedConfig)
+          authoredTrackId = stampTextAnimationKeyframes(
+            api,
+            node.id,
+            timedConfig,
+            node.text,
+          )
+        } else {
+          const appliedConfig = applyTextAnimation(
+            api,
+            node.id,
+            id,
+            startTime,
+            normalizeTextAnimation(
+              textTrack?.textAnimation ?? node.textAnimation,
+            ),
+            { trackId: textTrack?.id },
+          )
+          authoredTrackId ??=
+            api
+              .getTracksForNode(node.id)
+              .find(
+                (track) =>
+                  track.propertyId === 'text.progress' &&
+                  Math.abs(
+                    (track.textAnimation?.startTime ??
+                      trackStartTime(track)) - appliedConfig.startTime,
+                  ) <= 0.01,
+              )?.id ?? null
+        }
+        const authoredTrack = authoredTrackId
+          ? api.getTrack(authoredTrackId)
+          : null
+        if (authoredTrack?.propertyId === 'text.progress') {
+          staggerMembers.push({
+            nodeId: node.id,
+            propertyId: 'text.progress',
+            keyframeIds: authoredTrack.keyframes.map(
+              (keyframe) => keyframe.id,
+            ),
+          })
+        }
+      }
+      if (
+        isTextStaggerActive &&
+        activeStaggerSetId &&
+        staggerMembers.length > 0
+      ) {
+        registerStaggerSetKeyframes(
+          api,
+          {
+            setId: activeStaggerSetId,
+            layerIds: textTargetPlan.staggerLayerIds,
+            delay: textTargetPlan.delay,
+            order: textTargetPlan.order,
+          },
+          staggerMembers,
         )
       }
-      const authoredTrack = textTrack
-        ? api.getTrack(textTrack.id)
-        : api
-            .getTracksForNode(node.id)
-            .find(
-              (track) =>
-                track.propertyId === 'text.progress' &&
-                !priorTextTrackIds.has(track.id),
-            )
-      if (authoredTrack?.propertyId === 'text.progress') {
-        staggerMembers.push({
-          nodeId: node.id,
-          propertyId: 'text.progress',
-          keyframeIds: authoredTrack.keyframes.map((keyframe) => keyframe.id),
-        })
-      }
-    }
-    if (
-      staggerOn &&
-      activeStaggerSetId &&
-      selectedTextNodes.length > 1 &&
-      staggerMembers.length > 0
-    ) {
-      registerStaggerSetKeyframes(
-        api,
-        {
-          setId: activeStaggerSetId,
-          layerIds: selectedTextNodes.map((node) => node.id),
-          delay: staggerDelay,
-          order: 'forward',
-        },
-        staggerMembers,
-      )
-    }
+    }, UNDOABLE_GESTURE_ORIGIN)
     setShowPicker(false)
   }
 
@@ -659,13 +930,14 @@ function TextAnimationPanel() {
           </div>
         </div>
         {showPicker ? <TextPresetPicker current={null} onPick={pickPreset} /> : null}
-        <TextStaggerControls
-          enabled={staggerOn}
-          delay={staggerDelay}
-          disabled={selectedTextNodes.length < 2}
-          onEnabledChange={setStaggerOn}
-          onDelayChange={updateStaggerDelay}
-        />
+        <div className="rounded-md border border-border bg-panel-raised p-2.5">
+          <StaggerControls
+            on={staggerOn}
+            delay={staggerDelay}
+            onToggle={() => setStaggerOn(!staggerOn)}
+            onDelayChange={updateStaggerDelay}
+          />
+        </div>
       </div>
     )
   }
@@ -719,13 +991,14 @@ function TextAnimationPanel() {
       </div>
 
       {showPicker ? <TextPresetPicker current={current.id} onPick={pickPreset} /> : null}
-      <TextStaggerControls
-        enabled={staggerOn}
-        delay={staggerDelay}
-        disabled={selectedTextNodes.length < 2 || Boolean(primaryTextAnimationTrack)}
-        onEnabledChange={setStaggerOn}
-        onDelayChange={updateStaggerDelay}
-      />
+      <div className="rounded-md border border-border bg-panel-raised p-2.5">
+        <StaggerControls
+          on={staggerOn}
+          delay={staggerDelay}
+          onToggle={() => setStaggerOn(!staggerOn)}
+          onDelayChange={updateStaggerDelay}
+        />
+      </div>
 
       <ControlCard title="Effect">
         {(current.id === 'blur' || current.id === 'blur-slide') ? (
@@ -739,8 +1012,115 @@ function TextAnimationPanel() {
             />
           </ParamRow>
         ) : null}
-        {usesDirection(current.id) ? (
-          <ParamRow label="Direction">
+        {!current.motionPath ? (
+          <ParamRow label="Motion">
+            <TextMotionModeToggle
+              mode={current.motionVector ? 'xyz' : '2d'}
+              onChange={(mode) =>
+                patch({
+                  motionVector:
+                    mode === 'xyz'
+                      ? textAnimationUsesLegacyTranslation(current.id)
+                        ? legacyTextMotionVector(current)
+                        : { x: 0, y: 0, z: 0 }
+                      : null,
+                })
+              }
+            />
+          </ParamRow>
+        ) : null}
+        <ParamRow label="Motion path">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (!current.motionPath) {
+                  textStaggerCurvePreviewStore.cancel()
+                  patch({ motionPath: defaultTextMotionPath() })
+                  setShowMotionPath(true)
+                  return
+                }
+                setShowMotionPath((open) => !open)
+              }}
+              aria-expanded={current.motionPath ? showMotionPath : false}
+              className={[
+                'flex h-8 min-w-[116px] items-center justify-between gap-2 rounded bg-panel px-1.5 text-left ring-1 ring-transparent hover:ring-border',
+                current.motionPath && showMotionPath ? 'ring-accent/55' : '',
+              ].join(' ')}
+              title={
+                current.motionPath
+                  ? 'Edit the shared spatial rail followed by the text'
+                  : 'Add an editable spatial rail to this text animation'
+              }
+            >
+              <TextMotionPathMini
+                path={current.motionPath ?? defaultTextMotionPath()}
+              />
+              <span className="text-[10px] text-text-muted">
+                {current.motionPath ? 'Edit' : 'Add'}
+              </span>
+              <SlidersIcon />
+            </button>
+            {current.motionPath && current.id !== 'curve-drop' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  textStaggerCurvePreviewStore.cancel()
+                  patch({ motionPath: null })
+                  setShowMotionPath(false)
+                }}
+                className="grid h-8 w-8 place-items-center rounded bg-panel text-[14px] text-text-dim hover:text-text"
+                aria-label="Remove text motion path"
+                title="Remove path and restore straight motion"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+        </ParamRow>
+        {current.motionPath && showMotionPath ? (
+          <>
+            <TextMotionPathEditor
+              path={current.motionPath}
+              onCommit={(motionPath: TextMotionPath) =>
+                patch({ motionPath })
+              }
+              onReset={() => {
+                textStaggerCurvePreviewStore.cancel()
+                patch({ motionPath: defaultTextMotionPath() })
+              }}
+              onPreview={(motionPath) =>
+                textStaggerCurvePreviewStore.preview(
+                  selectedTextNodes.map((node) => node.id),
+                  { motionPath },
+                )
+              }
+              onPreviewFinish={() =>
+                textStaggerCurvePreviewStore.finish()
+              }
+              onPreviewCancel={() =>
+                textStaggerCurvePreviewStore.cancel()
+              }
+            />
+            <p className="px-0.5 text-[10px] leading-4 text-text-dim">
+              Path shapes one shared rail for the text. Rail pace below
+              controls how the complete strip advances along it.
+              {current.id !== 'curve-drop'
+                ? ' Removing it restores the previous 2D or XYZ motion.'
+                : ''}
+            </p>
+          </>
+        ) : null}
+        {usesDirection(current.id) &&
+        ((!current.motionVector && !current.motionPath) ||
+          usesMaskDirection(current.id)) ? (
+          <ParamRow
+            label={
+              usesMaskDirection(current.id)
+                ? 'Mask direction'
+                : 'Motion direction'
+            }
+          >
             <DirectionButtons
               value={current.direction}
               onChange={(direction) =>
@@ -749,7 +1129,7 @@ function TextAnimationPanel() {
             />
           </ParamRow>
         ) : null}
-        {usesTravel(current.id) ? (
+        {usesTravel(current.id) && !current.motionVector && !current.motionPath ? (
           <ParamRow label="Travel distance">
             <NumberField
               value={Math.round(current.travelDistance * 100)}
@@ -761,7 +1141,13 @@ function TextAnimationPanel() {
             />
           </ParamRow>
         ) : null}
-        <ParamRow label="Duration">
+        {current.motionVector && !current.motionPath ? (
+          <MotionVectorFields
+            value={current.motionVector}
+            onChange={(motionVector) => patch({ motionVector })}
+          />
+        ) : null}
+        <ParamRow label="Segment duration">
           <NumberField
             value={Math.round(current.duration * 1000)}
             onCommit={(ms) => patch({ duration: ms / 1000 })}
@@ -794,7 +1180,7 @@ function TextAnimationPanel() {
             </ParamRow>
           </>
         ) : null}
-        <ParamRow label="Acceleration">
+        <ParamRow label="Time easing">
           <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1">
             <input
               value={visibleEasingDraft}
@@ -847,6 +1233,7 @@ function TextAnimationPanel() {
       <ControlCard title="Text">
         <ParamRow label="Apply effect to">
           <SelectField<TextAnimationApplyTo>
+            ariaLabel="Apply text animation to"
             value={current.applyTo}
             options={[
               ['letters', 'Letters'],
@@ -859,6 +1246,7 @@ function TextAnimationPanel() {
         </ParamRow>
         <ParamRow label="Order">
           <SelectField<TextAnimationOrder>
+            ariaLabel="Text animation order"
             value={current.order}
             options={[
               ['forward', 'Forward'],
@@ -867,17 +1255,103 @@ function TextAnimationPanel() {
             onChange={(order) => patch({ order })}
           />
         </ParamRow>
-        <ParamRow label="Smoothing">
-          <SelectField<TextAnimationSmoothing>
-            value={current.smoothing}
-            options={[
-              ['none', 'None'],
-              ['soft', 'Soft'],
-              ['smooth', 'Smooth'],
-            ]}
-            onChange={(smoothing) => patch({ smoothing })}
-          />
-        </ParamRow>
+        {current.applyTo !== 'layer' ? (
+          <>
+            <ParamRow label="Step delay">
+              <TextSegmentDelayField
+                value={current.delay}
+                onChange={(delay) => patch({ delay })}
+                unit={textSegmentUnit(current.applyTo)}
+              />
+            </ParamRow>
+            <ParamRow label="Trail length">
+              {current.delay > 0 ? (
+                <TextTrailLengthField
+                  duration={current.duration}
+                  delay={current.delay}
+                  unit={textSegmentUnit(current.applyTo)}
+                  nodeIds={selectedTextNodes.map((node) => node.id)}
+                  onChange={(duration) => patch({ duration })}
+                />
+              ) : (
+                <span
+                  className="text-[10px] text-text-dim"
+                  title="Set Step delay above zero to create a traveling trail"
+                >
+                  Set delay
+                </span>
+              )}
+            </ParamRow>
+            <ParamRow label={current.motionPath ? 'Rail pace' : 'Trail profile'}>
+              <button
+                type="button"
+                onClick={() => setShowStaggerCurve((open) => !open)}
+                aria-expanded={showStaggerCurve}
+                className={[
+                  'flex h-8 min-w-[116px] items-center justify-between gap-2 rounded bg-panel px-1.5 text-left ring-1 ring-transparent hover:ring-border',
+                  showStaggerCurve ? 'ring-stagger-ring' : '',
+                ].join(' ')}
+                title={
+                  current.motionPath
+                    ? 'Shape how the complete text strip advances along its rail'
+                    : 'Shape the bend shared by simultaneous text segments'
+                }
+              >
+                <StaggerCurveMini
+                  curve={
+                    current.staggerCurve ?? textStaggerCurveForPreset('none')
+                  }
+                />
+                <span className="text-[10px] text-text-muted">
+                  {current.staggerCurve ? 'Custom' : 'Linear'}
+                </span>
+                <SlidersIcon />
+              </button>
+            </ParamRow>
+            {showStaggerCurve ? (
+              <>
+                <StaggerCurveEditor
+                  curve={
+                    current.staggerCurve ?? textStaggerCurveForPreset('none')
+                  }
+                  onCommit={(staggerCurve: TextStaggerCurve) =>
+                    patch({ staggerCurve })
+                  }
+                  onReset={() => {
+                    textStaggerCurvePreviewStore.cancel()
+                    patch({ staggerCurve: null })
+                  }}
+                  onPreview={(staggerCurve) =>
+                    textStaggerCurvePreviewStore.preview(
+                    selectedTextNodes.map((node) => node.id),
+                    { curve: staggerCurve },
+                  )
+                  }
+                  onPreviewFinish={() =>
+                    textStaggerCurvePreviewStore.finish()
+                  }
+                  onPreviewCancel={() =>
+                    textStaggerCurvePreviewStore.cancel()
+                  }
+                />
+                <div className="mt-2 rounded bg-panel px-2 py-1.5">
+                  <ParamRow label="Sample blending">
+                    <SelectField<TextAnimationSmoothing>
+                      ariaLabel="Trail profile sample blending"
+                      value={current.smoothing}
+                      options={[
+                        ['none', 'None'],
+                        ['soft', 'Soft'],
+                        ['smooth', 'Wide'],
+                      ]}
+                      onChange={(smoothing) => patch({ smoothing })}
+                    />
+                  </ParamRow>
+                </div>
+              </>
+            ) : null}
+          </>
+        ) : null}
       </ControlCard>
     </div>
   )
@@ -949,68 +1423,6 @@ function TextAnimationCardPreview({
   )
 }
 
-function TextStaggerControls({
-  enabled,
-  delay,
-  disabled,
-  onEnabledChange,
-  onDelayChange,
-}: {
-  enabled: boolean
-  delay: number
-  disabled: boolean
-  onEnabledChange: (enabled: boolean) => void
-  onDelayChange: (delay: number) => void
-}) {
-  return (
-    <div className="rounded-md border border-border bg-panel-raised p-2.5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold text-text">Stagger</div>
-          <div className="mt-0.5 text-[10px] text-text-dim">
-            Offset newly added text animations across selected layers.
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => onEnabledChange(!enabled)}
-          className={[
-            'h-6 w-10 rounded-full border p-0.5 transition',
-            enabled && !disabled
-              ? 'border-accent bg-accent/20'
-              : 'border-border-strong bg-panel',
-            disabled ? 'cursor-not-allowed opacity-45' : '',
-          ].join(' ')}
-          aria-pressed={enabled}
-        >
-          <span
-            className={[
-              'block h-4 w-4 rounded-full bg-text-dim transition-transform',
-              enabled && !disabled ? 'translate-x-4 bg-accent' : '',
-            ].join(' ')}
-          />
-        </button>
-      </div>
-      {enabled && !disabled ? (
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <span className="text-[10px] uppercase tracking-wide text-text-dim">Delay</span>
-          <NumberField
-            value={delay}
-            onCommit={(next) => onDelayChange(Math.max(0, next))}
-            onScrubPreview={() => {}}
-            onScrubCommit={(next) => onDelayChange(Math.max(0, next))}
-            min={0}
-            step={0.05}
-            suffix="s"
-            width="w-24"
-          />
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function TextAnimationThumb({
   preset,
   active = false,
@@ -1045,6 +1457,17 @@ function textApplyLabel(value: TextAnimationApplyTo): string {
   if (value === 'words') return 'Words'
   if (value === 'lines') return 'Lines'
   return 'Layer'
+}
+
+function textSegmentUnit(value: TextAnimationApplyTo): string {
+  if (value === 'words') return 'words'
+  if (value === 'lines') return 'lines'
+  return 'letters'
+}
+
+function roundedTrailLength(duration: number, delay: number): number {
+  if (delay <= 0) return 0
+  return Math.round((duration / delay) * 10) / 10
 }
 
 function ControlCard({
@@ -1083,13 +1506,16 @@ function SelectField<T extends string>({
   value,
   options,
   onChange,
+  ariaLabel,
 }: {
   value: T
   options: Array<[T, string]>
   onChange: (next: T) => void
+  ariaLabel: string
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value as T)}
       className="h-8 max-w-full rounded bg-panel px-2 text-[12px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
@@ -1131,6 +1557,185 @@ function DirectionButtons({
           {label}
         </button>
       ))}
+    </div>
+  )
+}
+
+function TextMotionModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: '2d' | 'xyz'
+  onChange: (next: '2d' | 'xyz') => void
+}) {
+  return (
+    <div
+      role="group"
+      className="grid grid-cols-2 rounded bg-panel p-0.5"
+      aria-label="Text motion dimensions"
+      title="XYZ offsets: +X right, +Y down, +Z toward the viewer"
+    >
+      {(['2d', 'xyz'] as const).map((id) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={mode === id}
+          onClick={() => onChange(id)}
+          className={[
+            'h-7 min-w-12 rounded px-2 text-[11px] font-semibold uppercase',
+            mode === id
+              ? 'bg-panel-raised text-text shadow-sm'
+              : 'text-text-dim hover:text-text-muted',
+          ].join(' ')}
+        >
+          {id === '2d' ? '2D' : 'XYZ'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function MotionVectorFields({
+  value,
+  onChange,
+}: {
+  value: TextAnimationMotionVector
+  onChange: (next: TextAnimationMotionVector) => void
+}) {
+  const axes = ['x', 'y', 'z'] as const
+  const [scrubPreview, setScrubPreview] =
+    useState<TextAnimationMotionVector | null>(null)
+  const displayed = scrubPreview ?? value
+  return (
+    <div
+      role="group"
+      aria-label="Text motion vector"
+      title="Offsets use line-height units: +X right, +Y down, +Z toward the viewer"
+      className="grid grid-cols-3 gap-1.5"
+    >
+      {axes.map((axis) => (
+        <div key={axis} className="grid min-w-0 gap-1">
+          <span className="text-[10px] font-semibold text-text-dim uppercase">
+            {axis}
+          </span>
+          <NumberField
+            value={Math.round(displayed[axis] * 100)}
+            onCommit={(percent) => {
+              setScrubPreview(null)
+              onChange({ ...value, [axis]: percent / 100 })
+            }}
+            onScrubPreview={(percent) =>
+              setScrubPreview({ ...displayed, [axis]: percent / 100 })
+            }
+            onScrubCommit={(percent) => {
+              const next = {
+                ...(scrubPreview ?? value),
+                [axis]: percent / 100,
+              }
+              setScrubPreview(null)
+              onChange(next)
+            }}
+            onScrubCancel={() => setScrubPreview(null)}
+            min={-1000}
+            max={1000}
+            suffix="%"
+            ariaLabel={`Text motion ${axis.toUpperCase()}`}
+            width="w-full"
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TextSegmentDelayField({
+  value,
+  onChange,
+  unit,
+}: {
+  value: number
+  onChange: (next: number) => void
+  unit: string
+}) {
+  const [scrubPreview, setScrubPreview] = useState<number | null>(null)
+  const displayed = scrubPreview ?? value
+  return (
+    <div title={`Time for the moving bend to advance one of the ${unit}`}>
+      <NumberField
+        value={Math.round(displayed * 1000)}
+        onCommit={(milliseconds) => {
+          setScrubPreview(null)
+          onChange(milliseconds / 1000)
+        }}
+        onScrubPreview={(milliseconds) =>
+          setScrubPreview(milliseconds / 1000)
+        }
+        onScrubCommit={(milliseconds) => {
+          setScrubPreview(null)
+          onChange(milliseconds / 1000)
+        }}
+        onScrubCancel={() => setScrubPreview(null)}
+        min={0}
+        max={1000}
+        step={10}
+        suffix="ms"
+        ariaLabel={`Step delay between ${unit}`}
+        width="w-24"
+      />
+    </div>
+  )
+}
+
+function TextTrailLengthField({
+  duration,
+  delay,
+  unit,
+  nodeIds,
+  onChange,
+}: {
+  duration: number
+  delay: number
+  unit: string
+  nodeIds: NodeId[]
+  onChange: (duration: number) => void
+}) {
+  const [scrubPreview, setScrubPreview] = useState<number | null>(null)
+  const authoredLength = roundedTrailLength(duration, delay)
+  const displayedLength = scrubPreview ?? authoredLength
+  const durationForLength = (length: number) =>
+    Math.max(0.05, delay * length)
+
+  return (
+    <div title={`How many ${unit} share the moving bend at once`}>
+      <NumberField
+        value={displayedLength}
+        onCommit={(length) => {
+          setScrubPreview(null)
+          textStaggerCurvePreviewStore.cancel()
+          onChange(durationForLength(length))
+        }}
+        onScrubPreview={(length) => {
+          setScrubPreview(length)
+          textStaggerCurvePreviewStore.preview(nodeIds, {
+            duration: durationForLength(length),
+          })
+        }}
+        onScrubCommit={(length) => {
+          setScrubPreview(null)
+          onChange(durationForLength(length))
+          textStaggerCurvePreviewStore.finish()
+        }}
+        onScrubCancel={() => {
+          setScrubPreview(null)
+          textStaggerCurvePreviewStore.cancel()
+        }}
+        min={0.25}
+        max={64}
+        step={0.1}
+        suffix={unit}
+        ariaLabel="Number of text segments sharing the moving trail"
+        width="w-28"
+      />
     </div>
   )
 }
@@ -1198,6 +1803,28 @@ function usesDirection(id: TextAnimationId): boolean {
     id === 'character-wave' ||
     id === 'skew'
   )
+}
+
+function usesMaskDirection(id: TextAnimationId): boolean {
+  return id === 'mask-up' || id === 'mask-down'
+}
+
+/** Preserve the legacy effect's visual offset when opting into XYZ mode. */
+function legacyTextMotionVector(
+  config: Pick<TextAnimationConfig, 'direction' | 'travelDistance'>,
+): TextAnimationMotionVector {
+  const distance = config.travelDistance
+  switch (config.direction) {
+    case 'down':
+      return { x: 0, y: -distance, z: 0 }
+    case 'left':
+      return { x: distance, y: 0, z: 0 }
+    case 'right':
+      return { x: -distance, y: 0, z: 0 }
+    case 'up':
+    default:
+      return { x: 0, y: distance, z: 0 }
+  }
 }
 
 function usesTravel(id: TextAnimationId): boolean {
@@ -1291,6 +1918,21 @@ function isTextEasingOnlyPatch(patch: Partial<TextAnimationConfig>): boolean {
   )
 }
 
+function isTextProgressionOnlyPatch(
+  patch: Partial<TextAnimationConfig>,
+): boolean {
+  const keys = Object.keys(patch)
+  return (
+    keys.length > 0 &&
+    keys.every(
+      (key) =>
+        key === 'smoothing' ||
+        key === 'staggerCurve' ||
+        key === 'motionPath',
+    )
+  )
+}
+
 function timelineTrackFilter(
   selectedTrackIds: string[],
   selectedKeyframes: string[],
@@ -1340,7 +1982,8 @@ function findTextAnimationTrack(
     if (selected) return selected
   }
   if (playhead !== undefined) {
-    return tracks.find((track) => trackContainsTime(track, playhead)) ?? null
+    const active = tracks.find((track) => trackContainsTime(track, playhead))
+    return active ?? (tracks.length === 1 ? tracks[0]! : null)
   }
   return tracks[0] ?? null
 }
@@ -1401,44 +2044,6 @@ function trackRange(
     start: Math.min(...times),
     end: Math.max(...times),
   }
-}
-
-function withTextTrackTiming(
-  config: TextAnimationConfig | null,
-  track: ReturnType<typeof listTracksForNode>[number] | null,
-  text: string,
-  patch: Partial<TextAnimationConfig> = {},
-): TextAnimationConfig | null {
-  if (!config || !track || track.keyframes.length < 2) return config
-  const sorted = [...track.keyframes].sort((a, b) => a.time - b.time)
-  const start = sorted[0]!.time
-  const end = sorted[sorted.length - 1]!.time
-  const delaySpan =
-    Math.max(0, textTimingSegmentCount(text, config.applyTo) - 1) *
-    config.delay
-  const duration =
-    patch.duration !== undefined
-      ? Math.max(0.05, patch.duration)
-      : Math.max(0.05, end - start - delaySpan)
-  return {
-    ...config,
-    startTime: patch.startTime ?? start,
-    duration,
-  }
-}
-
-function textTimingSegmentCount(
-  text: string,
-  applyTo: TextAnimationApplyTo,
-): number {
-  if (applyTo === 'layer') return 1
-  if (applyTo === 'lines') {
-    return Math.max(1, text.split(/\n/).filter((line) => line.length > 0).length)
-  }
-  if (applyTo === 'words') {
-    return Math.max(1, text.trim().split(/\s+/).filter(Boolean).length)
-  }
-  return Math.max(1, Array.from(text).filter((char) => char !== '\n' && char !== ' ').length)
 }
 
 function parseEasingText(
@@ -1563,10 +2168,8 @@ function PresetButton({
 }
 
 /**
- * Stagger toggle + delay input. The delay field greys out when stagger
- * is off — matches the user's ask that "delay should be on" exactly
- * when stagger is on, and keeps the Animate panel from looking like
- * two independent controls with ambiguous interaction.
+ * Whole-layer stagger toggle + delay input. This is deliberately named
+ * separately from the within-text stagger curve shown in the Text card.
  */
 function StaggerControls({
   on,
@@ -1583,7 +2186,7 @@ function StaggerControls({
     <div>
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
-          Stagger
+          Layer stagger
         </div>
         <button
           type="button"
@@ -1623,9 +2226,9 @@ function StaggerControls({
             on ? 'text-text-muted' : 'text-text-dim',
           ].join(' ')}
         >
-          Delay
+          Layer delay
         </label>
-        <div className={on ? '' : 'pointer-events-none opacity-50'}>
+        <div>
           <NumberField
             value={delay}
             onCommit={onDelayChange}
@@ -1634,6 +2237,8 @@ function StaggerControls({
             min={0}
             step={0.05}
             suffix="s"
+            ariaLabel="Layer stagger delay"
+            disabled={!on}
             width="w-16"
           />
         </div>

@@ -82,6 +82,7 @@ import {
 import { PresetsPanel } from '@/ui/PresetsPanel'
 import { AlignTools } from '@/ui/AlignTools'
 import { EasingPicker } from '@/ui/EasingPicker'
+import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import {
   applyRenderModeToSelection,
   RENDER_MODE_OPTIONS,
@@ -468,7 +469,6 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   const setSelection = useUI((s) => s.setSelection)
   const selection = useUI((s) => s.selection)
   const recording = useUI((s) => s.recording)
-  const playhead = useUI((s) => s.playhead)
   const staggerOn = useUI((s) => s.staggerOn)
   const staggerDelay = useUI((s) => s.staggerDelay)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
@@ -508,10 +508,11 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     group: 'transform' | 'appearance' | 'size',
     patch: Record<string, unknown>,
   ) => {
+    const authorTime = currentAnimationAuthorTime()
     if (staggerActive && staggerOptions) {
       const trackIds = stampStaggerSetPatch(
         api,
-        playhead,
+        authorTime,
         group,
         patch,
         recording ? 'record' : 'active-track',
@@ -524,9 +525,9 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     }
     for (const node of nodes) {
       if (recording) {
-        recordKeyframesForPatch(api, node.id, playhead, group, patch)
+        recordKeyframesForPatch(api, node.id, authorTime, group, patch)
       } else {
-        stampToActiveTracksForPatch(api, node.id, playhead, group, patch)
+        stampToActiveTracksForPatch(api, node.id, authorTime, group, patch)
       }
     }
   }

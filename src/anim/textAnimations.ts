@@ -8,6 +8,16 @@ import {
 } from './easingPresets'
 import type { SceneAPI } from '@/scene/doc'
 import type { EasingKind, Keyframe, NodeId, Track, TrackId } from '@/scene/types'
+import type { TextMotionVector } from './textMotionVector'
+import {
+  defaultTextMotionPath,
+  normalizeTextMotionPath,
+  type TextMotionPath,
+} from './textMotionPath'
+import {
+  normalizeTextStaggerCurve,
+  type TextStaggerCurve,
+} from './textStaggerCurve'
 
 export type TextAnimationId =
   | 'appear'
@@ -16,6 +26,7 @@ export type TextAnimationId =
   | 'slide-down'
   | 'slide-left'
   | 'slide-right'
+  | 'curve-drop'
   | 'mask-up'
   | 'mask-down'
   | 'grow'
@@ -43,6 +54,13 @@ export type TextAnimationAcceleration =
   | 'spring'
 export type TextAnimationSmoothing = 'none' | 'soft' | 'smooth'
 
+/**
+ * Per-segment motion offset in line-height multiples: +X moves right, +Y moves
+ * down, and +Z moves toward the viewer. A null vector keeps the legacy
+ * direction + travel-distance controls and rendering behavior.
+ */
+export type TextAnimationMotionVector = TextMotionVector
+
 export interface TextAnimationConfig {
   id: TextAnimationId
   mode: TextAnimationMode
@@ -50,6 +68,7 @@ export interface TextAnimationConfig {
   order: TextAnimationOrder
   delay: number
   smoothing: TextAnimationSmoothing
+  staggerCurve: TextStaggerCurve | null
   duration: number
   startTime: number
   acceleration: TextAnimationAcceleration
@@ -58,6 +77,13 @@ export interface TextAnimationConfig {
   customEasing?: EasingKind
   direction: TextAnimationDirection
   travelDistance: number
+  motionVector: TextAnimationMotionVector | null
+  /**
+   * Editable per-segment spatial trajectory in line-height units. Progress 0
+   * is the settled text position and progress 1 is the authored start/hidden
+   * position, matching the renderer's existing motion `amount` convention.
+   */
+  motionPath: TextMotionPath | null
   blurRadius: number
   startColor?: string
   endColor?: string
@@ -79,6 +105,7 @@ export const DEFAULT_TEXT_ANIMATION: TextAnimationConfig = {
   order: 'forward',
   delay: 0.12,
   smoothing: 'none',
+  staggerCurve: null,
   duration: 0.8,
   startTime: 0,
   acceleration: 'slow-down',
@@ -86,6 +113,8 @@ export const DEFAULT_TEXT_ANIMATION: TextAnimationConfig = {
   easingStrength: 50,
   direction: 'up',
   travelDistance: 0.5,
+  motionVector: null,
+  motionPath: null,
   blurRadius: 20,
   startGradient: {
     kind: 'linear',
@@ -113,6 +142,19 @@ export const TEXT_ANIMATION_PRESETS: TextAnimationPreset[] = [
   { id: 'slide-down', label: 'Slide ↓', category: 'Slide', defaults: { direction: 'down', travelDistance: 0.5, blurRadius: 0 } },
   { id: 'slide-left', label: 'Slide ←', category: 'Slide', defaults: { direction: 'left', travelDistance: 0.5, blurRadius: 0 } },
   { id: 'slide-right', label: 'Slide →', category: 'Slide', defaults: { direction: 'right', travelDistance: 0.5, blurRadius: 0 } },
+  {
+    id: 'curve-drop',
+    label: 'Curve Drop',
+    category: 'Motion',
+    defaults: {
+      duration: 1.15,
+      delay: 0.09,
+      smoothing: 'soft',
+      travelDistance: 0,
+      blurRadius: 0,
+      motionPath: defaultTextMotionPath(),
+    },
+  },
   { id: 'mask-up', label: 'Mask ↑', category: 'Mask', defaults: { direction: 'up', travelDistance: 0.7, blurRadius: 0 } },
   { id: 'mask-down', label: 'Mask ↓', category: 'Mask', defaults: { direction: 'down', travelDistance: 0.7, blurRadius: 0 } },
   { id: 'grow', label: 'Grow', category: 'Scale', defaults: { travelDistance: 0, blurRadius: 0 } },
@@ -129,6 +171,25 @@ export const TEXT_ANIMATION_PRESETS: TextAnimationPreset[] = [
   { id: 'skew', label: 'Skew', category: 'Reveal', defaults: { duration: 0.65, delay: 0.06 } },
 ]
 
+/** Progressive whole-layer reveal shared by DOM, Canvas2D, and WebGL. */
+export function typewriterTextAtProgress(
+  text: string,
+  mode: TextAnimationMode,
+  progress: number,
+): string {
+  const safeProgress = Math.max(
+    0,
+    Math.min(1, Number.isFinite(progress) ? progress : 0),
+  )
+  const visibleProgress = mode === 'out' ? 1 - safeProgress : safeProgress
+  const characters = Array.from(text)
+  const visibleCount = Math.max(
+    0,
+    Math.min(characters.length, Math.ceil(characters.length * visibleProgress)),
+  )
+  return characters.slice(0, visibleCount).join('')
+}
+
 export function textAnimationDefaults(id: TextAnimationId): TextAnimationConfig {
   const preset = TEXT_ANIMATION_PRESETS.find((p) => p.id === id)
   const direction = directionFromPresetId(id)
@@ -138,6 +199,20 @@ export function textAnimationDefaults(id: TextAnimationId): TextAnimationConfig 
     id,
     ...(preset?.defaults ?? {}),
   }
+}
+
+/** Legacy presets whose direction/travel fields author a real translation. */
+export function textAnimationUsesLegacyTranslation(
+  id: TextAnimationId,
+): boolean {
+  return (
+    id === 'slide-up' ||
+    id === 'slide-down' ||
+    id === 'slide-left' ||
+    id === 'slide-right' ||
+    id === 'blur-slide' ||
+    id === 'skew'
+  )
 }
 
 export function applyTextAnimation(
@@ -159,9 +234,15 @@ export function applyTextAnimation(
           order: previous.order,
           delay: previous.delay,
           smoothing: previous.smoothing,
+          staggerCurve: previous.staggerCurve,
           easingPresetId: previous.easingPresetId,
           easingStrength: previous.easingStrength,
           customEasing: previous.customEasing,
+          motionVector: previous.motionVector,
+          // Selecting Curve Drop from a legacy effect should install its
+          // useful bowed default. Once a path exists, preset changes retain
+          // it just like the independent XYZ motion vector.
+          motionPath: previous.motionPath ?? defaults.motionPath,
         }
       : {}),
     startTime,
@@ -188,23 +269,95 @@ export function stampTextAnimationKeyframes(
   if (options.replaceAll) clearTextAnimationKeyframes(api, nodeId)
   const start = config.startTime
   const end = start + config.duration + Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
-  const trackId =
-    options.trackId ??
-    findTextAnimationTrackAtStart(api, nodeId, start) ??
-    genId()
+  const trackId = options.trackId ?? findTextAnimationTrackAtStart(api, nodeId, start) ?? genId()
+  const existingTrack = api.getTrack(trackId)
   const track: Track = {
+    ...existingTrack,
     id: trackId,
     nodeId,
     propertyId: 'text.progress',
     defaultEasing: easingForText(config),
     textAnimation: config,
-    keyframes: [
-      textKeyframe(start, 0, easingForText(config), config.mode),
-      textKeyframe(end, 1, undefined, config.mode),
-    ],
+    keyframes: reconcileTextAnimationKeyframes(
+      existingTrack,
+      start,
+      end,
+      easingForText(config),
+      config.mode,
+    ),
   }
   api.setTrack(track)
   return trackId
+}
+
+/**
+ * Recover the semantic start and per-segment duration from a live timeline
+ * track. UI option changes merge onto this result before restamping, so
+ * changing words to letters adjusts only the repeated delay span instead of
+ * accidentally treating that span as part of the animation duration.
+ */
+export function deriveTextAnimationTiming(
+  config: TextAnimationConfig | null,
+  track: Track | null,
+  text: string,
+): TextAnimationConfig | null {
+  if (!config || !track || track.keyframes.length < 2) return config
+  const times = track.keyframes.map((keyframe) => keyframe.time)
+  const start = Math.min(...times)
+  const end = Math.max(...times)
+  const delaySpan =
+    Math.max(0, textSegmentCount(text, config.applyTo) - 1) * config.delay
+  return {
+    ...config,
+    startTime: start,
+    duration: Math.max(0.05, end - start - delaySpan),
+  }
+}
+
+/**
+ * Text controls edit a semantic animation that already owns real timeline
+ * keys. Preserve those key identities so persistent stagger relationships,
+ * keyframe selection, and grouped edits remain attached while timing changes.
+ */
+function reconcileTextAnimationKeyframes(
+  existingTrack: Track | null,
+  start: number,
+  end: number,
+  easing: EasingKind,
+  mode: TextAnimationMode,
+): Keyframe[] {
+  const existing = [...(existingTrack?.keyframes ?? [])]
+    .map((keyframe, index) => ({ keyframe, index }))
+    .sort(
+      (a, b) =>
+        a.keyframe.time - b.keyframe.time || a.index - b.index,
+    )
+    .map((entry) => entry.keyframe)
+  if (existing.length < 2) {
+    const first = textKeyframe(start, 0, easing, mode, existing[0]?.id)
+    return [first, textKeyframe(end, 1, undefined, mode)]
+  }
+
+  const oldStart = existing[0]!.time
+  const oldEnd = existing[existing.length - 1]!.time
+  const oldSpan = oldEnd - oldStart
+  const nextSpan = end - start
+  return existing.map((keyframe, index) => {
+    if (index === 0) {
+      return textKeyframe(start, 0, easing, mode, keyframe.id)
+    }
+    if (index === existing.length - 1) {
+      return textKeyframe(end, 1, undefined, mode, keyframe.id)
+    }
+    const progress =
+      Math.abs(oldSpan) > 1e-9
+        ? Math.max(0, Math.min(1, (keyframe.time - oldStart) / oldSpan))
+        : index / (existing.length - 1)
+    return {
+      ...keyframe,
+      time: start + nextSpan * progress,
+    }
+  })
 }
 
 function findTextAnimationTrackAtStart(
@@ -240,6 +393,25 @@ export function updateTextAnimationEasing(
   }
 }
 
+/** Update semantic text-effect metadata without touching timeline keys. */
+export function updateTextAnimationTrackMetadata(
+  api: SceneAPI,
+  nodeId: NodeId,
+  config: TextAnimationConfig,
+  trackId: TrackId,
+): boolean {
+  const track = api.getTrack(trackId)
+  if (
+    !track ||
+    track.nodeId !== nodeId ||
+    track.propertyId !== 'text.progress'
+  ) {
+    return false
+  }
+  api.setTrack({ ...track, textAnimation: config })
+  return true
+}
+
 function clearTextAnimationKeyframes(
   api: SceneAPI,
   nodeId: NodeId,
@@ -254,7 +426,7 @@ function textSegmentCount(text: string, applyTo: TextAnimationApplyTo): number {
   if (applyTo === 'layer') return 1
   if (applyTo === 'lines') return Math.max(1, text.split('\n').filter(Boolean).length)
   if (applyTo === 'words') return Math.max(1, text.split(/\s+/).filter(Boolean).length)
-  return Math.max(1, Array.from(text).filter((char) => char !== ' ' && char !== '\n').length)
+  return Math.max(1, Array.from(text).filter((char) => !/\s/.test(char)).length)
 }
 
 function textKeyframe(
@@ -262,9 +434,10 @@ function textKeyframe(
   value: number,
   easingOut?: EasingKind,
   presetOrigin?: TextAnimationMode,
+  id = genId(),
 ): Keyframe {
   return {
-    id: genId(),
+    id,
     time,
     value,
     ...(easingOut ? { easingOut } : {}),
@@ -291,13 +464,16 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
   const value = raw as Partial<TextAnimationConfig>
   const id = isTextAnimationId(value.id) ? value.id : DEFAULT_TEXT_ANIMATION.id
   const base = textAnimationDefaults(id)
+  const smoothing = isSmoothing(value.smoothing) ? value.smoothing : base.smoothing
+  const staggerCurve = normalizeTextStaggerCurve(value.staggerCurve)
   return {
     ...base,
     mode: value.mode === 'out' ? 'out' : 'in',
     applyTo: isApplyTo(value.applyTo) ? value.applyTo : base.applyTo,
     order: value.order === 'backward' ? 'backward' : 'forward',
-    delay: finiteNumber(value.delay, base.delay),
-    smoothing: isSmoothing(value.smoothing) ? value.smoothing : base.smoothing,
+    delay: Math.max(0, finiteNumber(value.delay, base.delay)),
+    smoothing,
+    staggerCurve: value.staggerCurve == null ? null : staggerCurve,
     duration: Math.max(0.05, finiteNumber(value.duration, base.duration)),
     startTime: Math.max(0, finiteNumber(value.startTime, base.startTime)),
     acceleration: isAcceleration(value.acceleration) ? value.acceleration : base.acceleration,
@@ -308,12 +484,35 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
     customEasing: isEasingKind(value.customEasing) ? value.customEasing : base.customEasing,
     direction: isDirection(value.direction) ? value.direction : base.direction,
     travelDistance: Math.max(0, finiteNumber(value.travelDistance, base.travelDistance)),
+    motionVector: normalizeMotionVector(value.motionVector),
+    motionPath:
+      value.motionPath === null
+        ? null
+        : value.motionPath === undefined
+          ? base.motionPath
+          : normalizeTextMotionPath(value.motionPath),
     blurRadius: Math.max(0, finiteNumber(value.blurRadius, base.blurRadius)),
     startColor: typeof value.startColor === 'string' ? value.startColor : base.startColor,
     endColor: typeof value.endColor === 'string' ? value.endColor : base.endColor,
     startGradient: value.startGradient ?? base.startGradient,
     endGradient: value.endGradient ?? base.endGradient,
   }
+}
+
+function normalizeMotionVector(
+  value: unknown,
+): TextAnimationMotionVector | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Partial<Record<keyof TextAnimationMotionVector, unknown>>
+  return {
+    x: clampedMotionAxis(candidate.x),
+    y: clampedMotionAxis(candidate.y),
+    z: clampedMotionAxis(candidate.z),
+  }
+}
+
+function clampedMotionAxis(value: unknown): number {
+  return Math.max(-10, Math.min(10, finiteNumber(value, 0)))
 }
 
 function finiteNumber(value: unknown, fallback: number): number {

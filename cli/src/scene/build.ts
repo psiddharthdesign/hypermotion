@@ -284,6 +284,8 @@ export interface TextAnimationJson {
   order: 'forward' | 'reverse' | 'random'
   delay: number
   smoothing: 'none' | 'soft' | 'smooth'
+  /** Optional monotonic profile sampled by each segment as the trail travels. */
+  staggerCurve?: TextStaggerCurveJson | null
   duration: number
   startTime: number
   acceleration: 'linear' | 'speed-up' | 'slow-down' | 'smooth' | 'spring'
@@ -291,7 +293,47 @@ export interface TextAnimationJson {
   easingStrength: number
   direction: 'up' | 'down' | 'left' | 'right'
   travelDistance: number
+  /**
+   * Per-segment offset in line-height multiples: +X right, +Y down, +Z toward
+   * the viewer. Null/omitted uses direction + travelDistance.
+   */
+  motionVector?: { x: number; y: number; z: number } | null
+  /**
+   * Editable cubic spatial path in line-height units. t=0 is the settled
+   * origin and t=1 is the segment's authored start/hidden position.
+   */
+  motionPath?: TextMotionPathJson | null
   blurRadius: number
+}
+
+export interface TextStaggerCurveJson {
+  version: 1
+  points: Array<{
+    id: string
+    x: number
+    y: number
+    inX: number
+    inY: number
+    outX: number
+    outY: number
+  }>
+}
+
+export interface TextMotionPathJson {
+  version: 1
+  points: Array<{
+    id: string
+    t: number
+    x: number
+    y: number
+    z: number
+    inX: number
+    inY: number
+    inZ: number
+    outX: number
+    outY: number
+    outZ: number
+  }>
 }
 
 export interface AppearanceJson {

@@ -9,7 +9,7 @@ import {
 const measure = (text: string) => Array.from(text).length * 10
 
 describe('canvas text animation layout', () => {
-  it('uses the same wrapped visual lines as static text', () => {
+  it('wraps like static text while one authored line remains one segment', () => {
     expect(layoutCanvasTextLines('Pricing that scales', 80, measure)).toEqual([
       { text: 'Pricing', canJustify: false },
       { text: 'that', canJustify: false },
@@ -26,10 +26,24 @@ describe('canvas text animation layout', () => {
       align: 'start',
       measure,
     })
-    expect(segments.map(({ text, x, y }) => ({ text, x, y }))).toEqual([
-      { text: 'Pricing', x: 5, y: 7 },
-      { text: 'that', x: 5, y: 31 },
-      { text: 'scales', x: 5, y: 55 },
+    expect(
+      segments.map(({ text, x, y, width, height, order }) => ({
+        text,
+        x,
+        y,
+        width,
+        height,
+        order,
+      })),
+    ).toEqual([
+      {
+        text: 'Pricing that scales',
+        x: 5,
+        y: 7,
+        width: 80,
+        height: 72,
+        order: 0,
+      },
     ])
   })
 

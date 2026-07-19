@@ -113,6 +113,14 @@ test('buildSceneBytes preserves text animation track config', () => {
     order: 'forward',
     delay: 0.08,
     smoothing: 'none',
+    staggerCurve: {
+      version: 1,
+      points: [
+        { id: 'start', x: 0, y: 0, inX: 0, inY: 0, outX: 0.2, outY: 0 },
+        { id: 'middle', x: 0.45, y: 0.2, inX: 0.32, inY: 0.08, outX: 0.65, outY: 0.3 },
+        { id: 'end', x: 1, y: 1, inX: 0.82, inY: 0.94, outX: 1, outY: 1 },
+      ],
+    },
     duration: 0.6,
     startTime: 0,
     acceleration: 'slow-down',
@@ -120,6 +128,14 @@ test('buildSceneBytes preserves text animation track config', () => {
     easingStrength: 50,
     direction: 'up',
     travelDistance: 0.5,
+    motionVector: { x: 0.25, y: -0.5, z: 1.5 },
+    motionPath: {
+      version: 1,
+      points: [
+        { id: 'settled', t: 0, x: 0, y: 0, z: 0, inX: 0, inY: 0, inZ: 0, outX: 0.7, outY: -0.3, outZ: 0 },
+        { id: 'start', t: 1, x: -1.5, y: -4, z: 0.5, inX: 1.2, inY: -3.5, inZ: 0.25, outX: -1.5, outY: -4, outZ: 0.5 },
+      ],
+    },
     blurRadius: 20,
   }
 
