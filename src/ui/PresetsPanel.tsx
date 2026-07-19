@@ -52,6 +52,7 @@ import {
   StaggerCurveMini,
 } from '@/ui/StaggerCurveEditor'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
+import { StaggerGroupPanel } from '@/ui/StaggerGroupPanel'
 import {
   TextMotionPathEditor,
   TextMotionPathMini,
@@ -115,6 +116,7 @@ export function PresetsPanel() {
   const setStaggerOn = useUI((s) => s.setStaggerOn)
   const setStaggerDelay = useUI((s) => s.setStaggerDelay)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
+  const selectedStaggerSetId = useUI((s) => s.selectedStaggerSetId)
   const [showLayerOptions, setShowLayerOptions] = useState(false)
   const [layerPresetTab, setLayerPresetTab] = useState<'in' | 'out'>('in')
   const [openSectionState, setOpenSectionState] = useState({
@@ -129,6 +131,12 @@ export function PresetsPanel() {
       retimeStaggerSet(api, activeStaggerSetId, delay)
     }
     setStaggerDelay(delay)
+  }
+  const updateStaggerOrder = (order: 'forward' | 'reverse') => {
+    if (!activeStaggerSetId) return
+    const set = api.getUiState().staggerSets[activeStaggerSetId]
+    if (!set) return
+    retimeStaggerSet(api, activeStaggerSetId, set.delay, order)
   }
   // Timeline selection sources, in order of precedence:
   //   1. selectedKeyframes — individual diamonds the user marquee'd or
@@ -184,6 +192,14 @@ export function PresetsPanel() {
   }
 
   if (selection.length === 0 && selectedTextNodes.length === 0) {
+    if (selectedStaggerSetId) {
+      return (
+        <StaggerGroupPanel
+          key={selectedStaggerSetId}
+          setId={selectedStaggerSetId}
+        />
+      )
+    }
     return (
       <div className="rounded border border-border bg-panel-raised p-3 text-text-muted">
         <div className="text-[12px]">Nothing selected</div>
@@ -327,8 +343,11 @@ export function PresetsPanel() {
             <StaggerControls
               on={staggerOn}
               delay={staggerDelay}
+              order={activeStaggerSet?.order ?? 'forward'}
+              orderEnabled={!!activeStaggerSet}
               onToggle={() => setStaggerOn(!staggerOn)}
               onDelayChange={updateStaggerDelay}
+              onOrderChange={updateStaggerOrder}
             />
           </div>
         ) : null}
@@ -488,6 +507,12 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
       retimeStaggerSet(api, activeStaggerSetId, delay)
     }
     setStaggerDelay(delay)
+  }
+  const updateStaggerOrder = (order: 'forward' | 'reverse') => {
+    if (!activeStaggerSetId) return
+    const set = api.getUiState().staggerSets[activeStaggerSetId]
+    if (!set) return
+    retimeStaggerSet(api, activeStaggerSetId, set.delay, order)
   }
   const selectedTextTrackFilter = timelineTrackFilter(selectedTrackIds, selectedKeyframes)
   const selectedTextSources = textNodesFromSelectionOrTimeline(
@@ -934,8 +959,11 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           <StaggerControls
             on={staggerOn}
             delay={staggerDelay}
+            order={activeStaggerSet?.order ?? 'forward'}
+            orderEnabled={!!activeStaggerSet}
             onToggle={() => setStaggerOn(!staggerOn)}
             onDelayChange={updateStaggerDelay}
+            onOrderChange={updateStaggerOrder}
           />
         </div>
       </div>
@@ -995,8 +1023,11 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
         <StaggerControls
           on={staggerOn}
           delay={staggerDelay}
+          order={activeStaggerSet?.order ?? 'forward'}
+          orderEnabled={!!activeStaggerSet}
           onToggle={() => setStaggerOn(!staggerOn)}
           onDelayChange={updateStaggerDelay}
+          onOrderChange={updateStaggerOrder}
         />
       </div>
 
@@ -1244,13 +1275,13 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             onChange={(applyTo) => patch({ applyTo })}
           />
         </ParamRow>
-        <ParamRow label="Order">
+        <ParamRow label={textOrderLabel(current.applyTo)}>
           <SelectField<TextAnimationOrder>
-            ariaLabel="Text animation order"
+            ariaLabel={textOrderLabel(current.applyTo)}
             value={current.order}
             options={[
               ['forward', 'Forward'],
-              ['backward', 'Backward'],
+              ['backward', 'Reverse'],
             ]}
             onChange={(order) => patch({ order })}
           />
@@ -1457,6 +1488,13 @@ function textApplyLabel(value: TextAnimationApplyTo): string {
   if (value === 'words') return 'Words'
   if (value === 'lines') return 'Lines'
   return 'Layer'
+}
+
+function textOrderLabel(value: TextAnimationApplyTo): string {
+  if (value === 'letters') return 'Letter order'
+  if (value === 'words') return 'Word order'
+  if (value === 'lines') return 'Line order'
+  return 'Layer order'
 }
 
 function textSegmentUnit(value: TextAnimationApplyTo): string {
@@ -2174,14 +2212,21 @@ function PresetButton({
 function StaggerControls({
   on,
   delay,
+  order,
+  orderEnabled,
   onToggle,
   onDelayChange,
+  onOrderChange,
 }: {
   on: boolean
   delay: number
+  order: 'forward' | 'reverse'
+  orderEnabled: boolean
   onToggle: () => void
   onDelayChange: (next: number) => void
+  onOrderChange: (next: 'forward' | 'reverse') => void
 }) {
+  const orderDisabled = !on || !orderEnabled
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -2241,6 +2286,51 @@ function StaggerControls({
             disabled={!on}
             width="w-16"
           />
+        </div>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span
+          className={[
+            'text-[11px]',
+            orderDisabled ? 'text-text-dim' : 'text-text-muted',
+          ].join(' ')}
+        >
+          Layer order
+        </span>
+        <div
+          role="group"
+          aria-label="Layer stagger order"
+          className={[
+            'grid grid-cols-2 rounded bg-panel p-0.5',
+            orderDisabled ? 'opacity-50' : '',
+          ].join(' ')}
+          title={
+            orderEnabled
+              ? 'Choose which layer starts first'
+              : 'Add a staggered animation before changing its order'
+          }
+        >
+          {([
+            ['forward', 'Forward'],
+            ['reverse', 'Reverse'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={order === value}
+              disabled={orderDisabled}
+              onClick={() => onOrderChange(value)}
+              className={[
+                'h-7 min-w-[58px] rounded px-2 text-[10px] font-medium transition-colors',
+                order === value
+                  ? 'bg-panel-raised text-text shadow-sm'
+                  : 'text-text-dim hover:text-text-muted',
+                orderDisabled ? 'cursor-not-allowed' : '',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
     </div>

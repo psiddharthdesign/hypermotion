@@ -17,6 +17,7 @@ import {
 } from '@/anim/textAnimations'
 import {
   SCRAMBLE_GLYPHS,
+  scrambleCharacterForSegment,
   scrambleTextForSegment,
 } from '@/anim/textScramble'
 import {
@@ -52,7 +53,9 @@ import {
   type Plane3D,
   type ResolvedCamera3D,
 } from '@/render3d/scene3d'
+import { createWorldPlaneAnimationSelector } from '@/render3d/planeAnimationSnapshot'
 import {
+  TEXT_SEGMENT_BUFFER_CHANGE,
   createTextSegmentBuffers,
   textSegmentWorldUnitsPerScreenPixel,
   writeTextSegmentBuffers,
@@ -100,6 +103,12 @@ interface ThreeSceneViewportProps {
   finalRender?: boolean
   /** Explicit WebGL drawing-buffer ratio. Editor previews derive this from zoom. */
   renderPixelRatio?: number
+  /**
+   * Stable density for rasterized text atlases. The editor keeps this at its
+   * paused-preview value while lowering only the framebuffer during playback,
+   * preventing every letter atlas from rebuilding on Play/Pause.
+   */
+  texturePixelRatio?: number
   playing?: boolean
   playhead?: number
   sceneVersion?: number
@@ -124,6 +133,10 @@ interface PlaneRecord {
 interface TextSegmentRenderEntry extends TextSegmentAtlasEntry {
   text: string
   source: 'text' | 'decoration'
+  scrambleRole?: 'base' | 'glyph'
+  scrambleGlyph?: string
+  settledUv?: TextSegmentAtlasEntry['uv']
+  scrambleUvs?: Readonly<Record<string, TextSegmentAtlasEntry['uv']>>
 }
 
 interface TextSegmentRecord {
@@ -133,6 +146,25 @@ interface TextSegmentRecord {
   atlasScale: number
   blurPadding: number
   motionRail: WebGLTextMotionRailCache | null
+  /** Reused camera basis vectors; avoid three allocations per text node/frame. */
+  cameraRight: THREE.Vector3
+  cameraDown: THREE.Vector3
+  cameraForward: THREE.Vector3
+  visualState: CanvasTextSegmentVisualState
+  usesStaticScrambleAtlas: boolean
+}
+
+interface CanvasTextSegmentVisualState {
+  amount: number
+  opacity: number
+  blur: number
+  scale: number
+  skew: number
+  extraTracking: number
+  waveOffset: number
+  dx: number
+  dy: number
+  localProgress: number
 }
 
 interface WebGLTextMotionRailRun {
@@ -385,6 +417,7 @@ export function ThreeSceneViewport({
   exportable = false,
   finalRender = false,
   renderPixelRatio,
+  texturePixelRatio,
   playing = false,
   playhead = 0,
   sceneVersion = 0,
@@ -399,6 +432,7 @@ export function ThreeSceneViewport({
   const helpersRef = useRef<THREE.Group | null>(null)
   const planeSyncRef = useRef<{
     planes: Plane3D[]
+    animated: Record<NodeId, AnimatedValue>
     selectedIds: NodeId[]
     textureRevision: PlaneTextureRevision
     playing: boolean
@@ -407,6 +441,7 @@ export function ThreeSceneViewport({
     dynamicDepthOfField: boolean
     camera: ResolvedCamera3D
     pixelRatio: number
+    texturePixelRatio: number
     curvePreviewRevision: number
   } | null>(null)
   const [webglUnavailable, setWebglUnavailable] = useState(false)
@@ -424,6 +459,12 @@ export function ThreeSceneViewport({
     return createPlaneBuildContext(api)
   }, [api, sceneVersion])
 
+  const selectWorldPlaneAnimation = useMemo(
+    () => createWorldPlaneAnimationSelector(),
+    [],
+  )
+  const worldPlaneAnimation = selectWorldPlaneAnimation(animated)
+
   const baseCamera = useMemo(
     // Plane topology/world transforms are camera-independent. Keep a static
     // reference camera so camera keyframes do not rebuild the scene graph.
@@ -434,15 +475,21 @@ export function ThreeSceneViewport({
     if ((camera.focusMode ?? 'screen') !== 'target' || !camera.focusTargetNodeId) {
       return null
     }
-    const targetPlane = buildWorldPlanes(api, layout, animated, baseCamera, {
-      context: planeBuildContext,
-      independentNodes: true,
-    }).find((plane) => plane.nodeId === camera.focusTargetNodeId)
+    const targetPlane = buildWorldPlanes(
+      api,
+      layout,
+      worldPlaneAnimation,
+      baseCamera,
+      {
+        context: planeBuildContext,
+        independentNodes: true,
+      },
+    ).find((plane) => plane.nodeId === camera.focusTargetNodeId)
     return targetPlane?.center ?? null
   }, [
     api,
     layout,
-    animated,
+    worldPlaneAnimation,
     baseCamera,
     planeBuildContext,
     camera.focusMode,
@@ -462,7 +509,7 @@ export function ThreeSceneViewport({
     () => {
       void sceneVersion
       return showPlanes
-        ? buildWorldPlanes(api, layout, animated, baseCamera, {
+        ? buildWorldPlanes(api, layout, worldPlaneAnimation, baseCamera, {
             context: planeBuildContext,
           })
         : EMPTY_PLANES
@@ -470,7 +517,7 @@ export function ThreeSceneViewport({
     [
       api,
       layout,
-      animated,
+      worldPlaneAnimation,
       baseCamera,
       planeBuildContext,
       sceneVersion,
@@ -622,6 +669,10 @@ export function ThreeSceneViewport({
       (plane) => plane.renderKind === 'segment-text',
     )
     const pixelRatio = renderer.getPixelRatio()
+    const stableTexturePixelRatio = Math.max(
+      0.25,
+      Math.min(4, texturePixelRatio ?? pixelRatio),
+    )
     const hasDynamicDepthOfField =
       resolvedCamera.depthOfField &&
       effectiveApertureStrength(
@@ -639,11 +690,16 @@ export function ThreeSceneViewport({
     const planeStateChanged =
       !previousPlaneSync ||
       previousPlaneSync.planes !== planes ||
+      // The world-plane projection deliberately ignores text/paint values.
+      // Their full snapshot still invalidates record sync so existing glyph
+      // buffers, material opacity, and canvas texture signatures stay exact.
+      previousPlaneSync.animated !== animated ||
       previousPlaneSync.selectedIds !== selectedIds ||
       previousPlaneSync.textureRevision !== textureRevision ||
       previousPlaneSync.curvePreviewRevision !== curvePreviewRevision ||
       previousPlaneSync.showPlanes !== showPlanes ||
       previousPlaneSync.pixelRatio !== pixelRatio ||
+      previousPlaneSync.texturePixelRatio !== stableTexturePixelRatio ||
       (hasSegmentTextPlane && previousPlaneSync.camera !== resolvedCamera) ||
       (hasVideoPlane &&
         (previousPlaneSync.playing !== playing ||
@@ -673,6 +729,7 @@ export function ThreeSceneViewport({
           interactiveCameraPreview,
           finalRender,
           curvePreviewRevision,
+          stableTexturePixelRatio,
         )
       } else {
         clearPlanes(scene, planesRef.current)
@@ -683,6 +740,7 @@ export function ThreeSceneViewport({
     // stay cached while timeline and camera gestures run.
     planeSyncRef.current = {
       planes,
+      animated,
       selectedIds,
       textureRevision,
       playing,
@@ -691,6 +749,7 @@ export function ThreeSceneViewport({
       dynamicDepthOfField: hasDynamicDepthOfField,
       camera: resolvedCamera,
       pixelRatio,
+      texturePixelRatio: stableTexturePixelRatio,
       curvePreviewRevision,
     }
     syncHelpers(
@@ -725,6 +784,7 @@ export function ThreeSceneViewport({
     interactiveCameraPreview,
     finalRender,
     curvePreviewRevision,
+    texturePixelRatio,
     // Changing the zoom-derived pixel-ratio bucket reallocates and clears the
     // WebGL drawing buffer. Render again immediately after the resize effect.
     renderPixelRatio,
@@ -929,6 +989,7 @@ function syncPlanes(
   interactiveCameraPreview: boolean,
   finalRender: boolean,
   curvePreviewRevision: number,
+  texturePixelRatio: number,
 ) {
   const active = new Set<NodeId>()
   const selected = new Set(selectedIds)
@@ -1019,6 +1080,7 @@ function syncPlanes(
         screenPixelRatio,
         sampleCount,
         interactiveCameraPreview,
+        texturePixelRatio,
       })
       records.set(plane.nodeId, nextRecord)
       continue
@@ -1199,6 +1261,7 @@ interface TextSegmentPlaneSyncOptions {
   screenPixelRatio: number
   sampleCount: number
   interactiveCameraPreview: boolean
+  texturePixelRatio: number
 }
 
 /**
@@ -1226,6 +1289,7 @@ function syncTextSegmentPlane({
   screenPixelRatio,
   sampleCount,
   interactiveCameraPreview,
+  texturePixelRatio,
 }: TextSegmentPlaneSyncOptions): PlaneRecord {
   if (plane.node.kind !== 'text') {
     throw new Error('A segment-text plane must reference a text node')
@@ -1235,9 +1299,26 @@ function syncTextSegmentPlane({
   // avoids cloning and sorting custom curve points on every playback sync.
   const authoredConfig = anim?.textAnimation ?? node.textAnimation ?? null
   const config = previewedTextAnimation(node.id, authoredConfig)
+  const previousSegments = currentRecord?.textSegments
+  const cameraRight = previousSegments?.cameraRight ?? new THREE.Vector3()
+  const cameraDown = previousSegments?.cameraDown ?? new THREE.Vector3()
+  const cameraForward = previousSegments?.cameraForward ?? new THREE.Vector3()
+  cameraRight
+    .set(1, 0, 0)
+    .applyQuaternion(perspective.quaternion)
+    .normalize()
+  cameraDown
+    .set(0, -1, 0)
+    .applyQuaternion(perspective.quaternion)
+    .normalize()
+  perspective.getWorldDirection(cameraForward).normalize()
+  const cameraDepth = (point: { x: number; y: number; z: number }) =>
+    (point.x - camera.position.x) * cameraForward.x +
+    (point.y - camera.position.y) * cameraForward.y +
+    (point.z - camera.position.z) * cameraForward.z
   const atlasScale = textureScaleForRect(
     plane.rect,
-    renderer.getPixelRatio(),
+    texturePixelRatio,
   )
   const lineHeightPx = Math.max(
     1,
@@ -1257,7 +1338,7 @@ function syncTextSegmentPlane({
     (config?.id === 'flip' ? lineHeightPx * Math.abs(plane.scaleY) : 0)
   const worldUnitsPerScreenPixel = textSegmentWorldUnitsPerScreenPixel({
     plane,
-    cameraDepth: (point) => cameraSpaceDepth(point, camera),
+    cameraDepth,
     focalLength: camera.focalLength,
     extraAwayDepth,
   })
@@ -1349,6 +1430,13 @@ function syncTextSegmentPlane({
         atlasScale: nextAtlas.scale,
         blurPadding,
         motionRail: null,
+        cameraRight,
+        cameraDown,
+        cameraForward,
+        visualState: createCanvasTextSegmentVisualState(),
+        usesStaticScrambleAtlas: nextAtlas.entries.some(
+          (entry) => entry.scrambleRole === 'base',
+        ),
       },
     }
   } else if (atlas) {
@@ -1371,6 +1459,12 @@ function syncTextSegmentPlane({
       record.mesh.geometry.dispose()
       const buffers = createTextSegmentBuffers(atlas.entries.length)
       record.mesh.geometry = createTextSegmentGeometry(buffers)
+      const previousCameraRight = record.textSegments?.cameraRight ?? cameraRight
+      const previousCameraDown = record.textSegments?.cameraDown ?? cameraDown
+      const previousCameraForward =
+        record.textSegments?.cameraForward ?? cameraForward
+      const previousVisualState =
+        record.textSegments?.visualState ?? createCanvasTextSegmentVisualState()
       record.textSegments = {
         entries: atlas.entries,
         buffers,
@@ -1378,6 +1472,13 @@ function syncTextSegmentPlane({
         atlasScale: atlas.scale,
         blurPadding,
         motionRail: null,
+        cameraRight: previousCameraRight,
+        cameraDown: previousCameraDown,
+        cameraForward: previousCameraForward,
+        visualState: previousVisualState,
+        usesStaticScrambleAtlas: atlas.entries.some(
+          (entry) => entry.scrambleRole === 'base',
+        ),
       }
     } else {
       record.textSegments = {
@@ -1387,6 +1488,13 @@ function syncTextSegmentPlane({
         atlasScale: atlas.scale,
         blurPadding,
         motionRail: record.textSegments.motionRail,
+        cameraRight: record.textSegments.cameraRight,
+        cameraDown: record.textSegments.cameraDown,
+        cameraForward: record.textSegments.cameraForward,
+        visualState: record.textSegments.visualState,
+        usesStaticScrambleAtlas: atlas.entries.some(
+          (entry) => entry.scrambleRole === 'base',
+        ),
       }
     }
     record.textureRevision = textureRevision
@@ -1400,33 +1508,37 @@ function syncTextSegmentPlane({
     config,
     anim?.textProgress,
     playhead,
-    perspective,
     camera,
     apertureStrength,
     maximumBlurLevel,
     pointBlurLevel,
     focusMask,
+    cameraRight,
+    cameraDown,
+    cameraForward,
   )
-  writeTextSegmentBuffers({
-    buffers: segmentRecord.buffers,
-    entries: segmentRecord.entries,
-    states,
-    plane,
-    cameraDepth: (point) => cameraSpaceDepth(point, camera),
-  })
   const animatedMaskBounds =
     config?.id === 'mask-up' ||
     config?.id === 'mask-down' ||
     config?.id === 'gradient-reveal'
-  markTextSegmentGeometryUpdated(
-    record.mesh.geometry,
-    !!atlas || animatedMaskBounds,
-  )
+  const bufferChanges = writeTextSegmentBuffers({
+    buffers: segmentRecord.buffers,
+    entries: segmentRecord.entries,
+    states,
+    plane,
+    cameraPosition: camera.position,
+    cameraForward,
+    updateTextureCoordinates:
+      !!atlas ||
+      animatedMaskBounds ||
+      segmentRecord.usesStaticScrambleAtlas,
+  })
+  markTextSegmentGeometryUpdated(record.mesh.geometry, bufferChanges)
 
-  const maximumSegmentBlur = states.reduce(
-    (maximum, state) => Math.max(maximum, state.dofBlur),
-    0,
-  )
+  let maximumSegmentBlur = 0
+  for (const state of states) {
+    maximumSegmentBlur = Math.max(maximumSegmentBlur, state.dofBlur)
+  }
   updateTextSegmentMaterialShader(record.mesh.material, {
     enabled:
       camera.depthOfField &&
@@ -1526,23 +1638,61 @@ function createTextSegmentGeometry(
 
 function markTextSegmentGeometryUpdated(
   geometry: THREE.BufferGeometry,
-  atlasChanged: boolean,
+  changes: number,
 ) {
-  for (const name of [
+  markTextSegmentAttributeUpdated(
+    geometry,
     'position',
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.positions,
+  )
+  markTextSegmentAttributeUpdated(
+    geometry,
     'uv',
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.uvs,
+  )
+  markTextSegmentAttributeUpdated(
+    geometry,
     'hmOpacity',
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.opacity,
+  )
+  markTextSegmentAttributeUpdated(
+    geometry,
     'hmEffectBlur',
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.effectBlur,
+  )
+  markTextSegmentAttributeUpdated(
+    geometry,
     'hmDofBlur',
-  ]) {
-    const attribute = geometry.getAttribute(name)
-    if (attribute) attribute.needsUpdate = true
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.dofBlur,
+  )
+  markTextSegmentAttributeUpdated(
+    geometry,
+    'hmUvBounds',
+    changes,
+    TEXT_SEGMENT_BUFFER_CHANGE.uvBounds,
+  )
+  if (
+    changes & TEXT_SEGMENT_BUFFER_CHANGE.indices &&
+    geometry.index
+  ) {
+    geometry.index.needsUpdate = true
   }
-  if (atlasChanged) {
-    const uvBounds = geometry.getAttribute('hmUvBounds')
-    if (uvBounds) uvBounds.needsUpdate = true
-  }
-  if (geometry.index) geometry.index.needsUpdate = true
+}
+
+function markTextSegmentAttributeUpdated(
+  geometry: THREE.BufferGeometry,
+  name: string,
+  changes: number,
+  flag: number,
+): void {
+  if (!(changes & flag)) return
+  const attribute = geometry.getAttribute(name)
+  if (attribute) attribute.needsUpdate = true
 }
 
 function createTextSegmentGeometryStates(
@@ -1567,12 +1717,14 @@ function resolveTextSegmentGeometryStates(
   config: TextAnimationConfig | null,
   timelineProgress: number | undefined,
   playhead: number,
-  perspective: THREE.PerspectiveCamera,
   camera: ResolvedCamera3D,
   apertureStrength: number,
   maximumBlurLevel: number,
   pointBlurLevel: number,
   focusMask: boolean,
+  cameraRight: THREE.Vector3,
+  cameraDown: THREE.Vector3,
+  cameraForward: THREE.Vector3,
 ): TextSegmentGeometryState[] {
   const { entries, states } = segmentRecord
   if (states.length !== entries.length) {
@@ -1584,14 +1736,6 @@ function resolveTextSegmentGeometryStates(
     (plane.node.kind === 'text' ? plane.node.fontSize : 16) *
       (plane.node.kind === 'text' ? plane.node.lineHeight : 1.2),
   )
-  const cameraRight = new THREE.Vector3(1, 0, 0)
-    .applyQuaternion(perspective.quaternion)
-    .normalize()
-  const cameraDown = new THREE.Vector3(0, -1, 0)
-    .applyQuaternion(perspective.quaternion)
-    .normalize()
-  const cameraForward = new THREE.Vector3()
-  perspective.getWorldDirection(cameraForward).normalize()
   segmentRecord.motionRail = ensureWebGLTextMotionRailCache(
     entries,
     config,
@@ -1611,6 +1755,8 @@ function resolveTextSegmentGeometryStates(
     cameraForward,
     segmentRecord.motionRail,
   )
+  const depthOfFieldEnabled =
+    camera.depthOfField && apertureStrength > 0 && maximumBlurLevel > 0
 
   const center = { x: 0, y: 0, z: 0 }
   for (let index = 0; index < entries.length; index++) {
@@ -1632,6 +1778,17 @@ function resolveTextSegmentGeometryStates(
         config.order === 'backward'
           ? animatedCount - entry.order - 1
           : entry.order
+      if (entry.settledUv && entry.scrambleUvs && config.id === 'scramble') {
+        const glyph = scrambleCharacterForSegment(
+          entry.text,
+          config,
+          playhead,
+          timelineProgress,
+          orderIndex,
+          animatedCount,
+        )
+        entry.uv = entry.scrambleUvs[glyph] ?? entry.settledUv
+      }
       const visual = canvasTextSegmentState(
         config,
         playhead,
@@ -1639,6 +1796,7 @@ function resolveTextSegmentGeometryStates(
         orderIndex,
         animatedCount,
         lineHeightPx,
+        segmentRecord.visualState,
       )
       const trackingShift =
         config.applyTo === 'layer'
@@ -1732,10 +1890,14 @@ function resolveTextSegmentGeometryStates(
       plane.right.z * (entry.pivotX - plane.rect.width / 2) * plane.scaleX +
       plane.down.z * (entry.pivotY - plane.rect.height / 2) * plane.scaleY +
       offsetZ
-    state.dofBlur = focusMask
-      ? pointBlurLevel
-      : depthBlurAmount(
-          cameraSpaceDepth(center, camera),
+    state.dofBlur = !depthOfFieldEnabled
+      ? 0
+      : focusMask
+        ? pointBlurLevel
+        : depthBlurAmount(
+          (center.x - camera.position.x) * cameraForward.x +
+            (center.y - camera.position.y) * cameraForward.y +
+            (center.z - camera.position.z) * cameraForward.z,
           center,
           camera.focusWorld,
           camera.focusDistance,
@@ -1966,6 +2128,23 @@ function textSegmentAtlasPlayhead(
     : playhead
 }
 
+function usesStaticLetterScrambleAtlas(
+  node: Extract<Node, { kind: 'text' }>,
+  anim: AnimatedValue | undefined,
+  config: TextAnimationConfig | null,
+): boolean {
+  if (config?.id !== 'scramble' || config.applyTo !== 'letters') return false
+  // A shared pre-baked glyph may be reused at every letter position only when
+  // its paint is position-independent. Animated colors, legacy text colors,
+  // and solid fills qualify; gradients/images retain the dynamic atlas path
+  // so their node-space fill alignment stays exact.
+  return (
+    anim?.fill !== undefined ||
+    node.appearance.fill == null ||
+    node.appearance.fill.kind === 'solid'
+  )
+}
+
 function textSegmentTextureSignature(
   node: Extract<Node, { kind: 'text' }>,
   rect: Rect,
@@ -1976,8 +2155,13 @@ function textSegmentTextureSignature(
   atlasScale: number,
 ): string {
   const text = displayedText(node)
+  const staticLetterScramble = usesStaticLetterScrambleAtlas(
+    node,
+    anim,
+    config,
+  )
   let dynamicFrame: number | null = null
-  if (config?.id === 'scramble') {
+  if (config?.id === 'scramble' && !staticLetterScramble) {
     // Scramble changes glyph content, so it is the only segment effect that
     // needs frequent atlas uploads. Thirty texture updates per second keeps
     // the effect visually rapid while the geometry itself still moves at the
@@ -2029,6 +2213,7 @@ function textSegmentTextureSignature(
         : null,
     stroke: node.appearance.stroke,
     applyTo: config?.applyTo ?? 'layer',
+    staticLetterScramble,
     blurPadding,
     atlasScale: Number(atlasScale.toFixed(3)),
     dynamicFrame,
@@ -2053,6 +2238,11 @@ function renderTextSegmentAtlas(
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
   const tracking = Number.isFinite(node.letterSpacing) ? node.letterSpacing : 0
   const text = displayedText(node)
+  const staticLetterScramble = usesStaticLetterScrambleAtlas(
+    node,
+    anim,
+    config,
+  )
   const lineCount = layoutCanvasTextLines(
     measurement,
     text,
@@ -2160,52 +2350,69 @@ function renderTextSegmentAtlas(
       tracking,
       node.textAlign ?? 'start',
     )
+    const sharedScrambleCellWidth = staticLetterScramble
+      ? Math.max(
+          0.5,
+          widestScrambleReplacement.width,
+          ...segments.map((segment) => segment.width),
+        )
+      : 0
+    const sharedScrambleCellHeight = staticLetterScramble
+      ? Math.max(1, ...segments.map((segment) => segment.height))
+      : 0
     for (const segment of segments) {
       if (!segment.animate || segment.text.length === 0 || /^\s+$/.test(segment.text)) {
         continue
       }
+      const segmentWidth = staticLetterScramble
+        ? sharedScrambleCellWidth
+        : Math.max(0.5, segment.width)
+      const segmentHeight = staticLetterScramble
+        ? sharedScrambleCellHeight
+        : segment.height
       pending.push({
         text: segment.text,
         source: 'text',
-        x: segment.x,
-        y: segment.y,
-        width: Math.max(0.5, segment.width),
-        height: segment.height,
-        padding:
-          padding +
-          (config.id === 'scramble' &&
-          (config.applyTo === 'letters' || config.applyTo === 'words')
-            ? scrambleTextOverflowPadding(
-                measurement,
-                segment.text,
-                segment.width,
-                tracking,
-                widestScrambleReplacement.width,
-              )
-            : 0) +
-          (config.id === 'scramble' && config.applyTo === 'lines'
-            ? Math.max(
-                scrambleWrappedHeightOverflowPadding(
+        x: segment.x + (segment.width - segmentWidth) / 2,
+        y: segment.y + (segment.height - segmentHeight) / 2,
+        width: segmentWidth,
+        height: segmentHeight,
+        padding: staticLetterScramble
+          ? padding
+          : padding +
+            (config.id === 'scramble' &&
+            (config.applyTo === 'letters' || config.applyTo === 'words')
+              ? scrambleTextOverflowPadding(
                   measurement,
                   segment.text,
                   segment.width,
                   tracking,
-                  segment.height,
-                  lineHeightPx,
-                  widestScrambleReplacement.character,
-                ),
-                scrambleWrappedWidthOverflowPadding(
-                  segment.text,
-                  segment.width,
-                  tracking,
                   widestScrambleReplacement.width,
-                  node.textAlign ?? 'start',
-                ),
-              )
-            : 0) +
-          (config.id === 'tracking'
-            ? Math.max(0, Array.from(segment.text).length - 1) * 10
-            : 0),
+                )
+              : 0) +
+            (config.id === 'scramble' && config.applyTo === 'lines'
+              ? Math.max(
+                  scrambleWrappedHeightOverflowPadding(
+                    measurement,
+                    segment.text,
+                    segment.width,
+                    tracking,
+                    segment.height,
+                    lineHeightPx,
+                    widestScrambleReplacement.character,
+                  ),
+                  scrambleWrappedWidthOverflowPadding(
+                    segment.text,
+                    segment.width,
+                    tracking,
+                    widestScrambleReplacement.width,
+                    node.textAlign ?? 'start',
+                  ),
+                )
+              : 0) +
+            (config.id === 'tracking'
+              ? Math.max(0, Array.from(segment.text).length - 1) * 10
+              : 0),
         pivotX: segment.x + segment.width / 2,
         pivotY: segment.y + segment.height / 2,
         animate: true,
@@ -2214,7 +2421,31 @@ function renderTextSegmentAtlas(
         lineCharacterCount: segment.lineCharacterCount,
         trackingAlignment: segment.trackingAlignment,
         visualLineIndex: segment.visualLineIndex,
+        scrambleRole: staticLetterScramble ? 'base' : undefined,
       })
+    }
+    if (staticLetterScramble && sharedScrambleCellWidth > 0) {
+      for (const glyph of Array.from(SCRAMBLE_GLYPHS)) {
+        pending.push({
+          text: glyph,
+          source: 'text',
+          x: 0,
+          y: 0,
+          width: sharedScrambleCellWidth,
+          height: sharedScrambleCellHeight,
+          padding,
+          pivotX: sharedScrambleCellWidth / 2,
+          pivotY: sharedScrambleCellHeight / 2,
+          animate: false,
+          order: -1,
+          trackingIndex: 0,
+          lineCharacterCount: 1,
+          trackingAlignment: 0.5,
+          visualLineIndex: -1,
+          scrambleRole: 'glyph',
+          scrambleGlyph: glyph,
+        })
+      }
     }
   }
 
@@ -2276,9 +2507,30 @@ function renderTextSegmentAtlas(
       animatedCount,
     )
   }
+  const scrambleUvs: Record<string, TextSegmentAtlasEntry['uv']> = {}
+  for (const packedEntry of packed.entries) {
+    if (
+      packedEntry.entry.scrambleRole === 'glyph' &&
+      packedEntry.entry.scrambleGlyph
+    ) {
+      scrambleUvs[packedEntry.entry.scrambleGlyph] = packedEntry.entry.uv
+    }
+  }
+  const entries = packed.entries.flatMap(({ entry }) => {
+    if (entry.scrambleRole === 'glyph') return []
+    return [
+      entry.scrambleRole === 'base'
+        ? {
+            ...entry,
+            settledUv: entry.uv,
+            scrambleUvs,
+          }
+        : entry,
+    ]
+  })
   return {
     canvas,
-    entries: packed.entries.map((entry) => entry.entry),
+    entries,
     scale,
   }
 }
@@ -2501,7 +2753,7 @@ function paintTextSegmentAtlasCell(
           config.mode,
           progress,
         )
-      } else if (config.id === 'scramble') {
+      } else if (config.id === 'scramble' && !entry.scrambleRole) {
         renderedText = scrambleTextForSegment(
           entry.text,
           config,
@@ -2533,7 +2785,7 @@ function paintTextSegmentAtlasCell(
         node.textDecoration ?? 'none',
       )
     } else {
-      if (config?.id === 'scramble') {
+      if (config?.id === 'scramble' && !entry.scrambleRole) {
         renderedText = scrambleTextForSegment(
           renderedText,
           config,
@@ -4072,6 +4324,21 @@ function layoutCanvasTextAnimationSegments(
   })
 }
 
+function createCanvasTextSegmentVisualState(): CanvasTextSegmentVisualState {
+  return {
+    amount: 0,
+    opacity: 1,
+    blur: 0,
+    scale: 1,
+    skew: 0,
+    extraTracking: 0,
+    waveOffset: 0,
+    dx: 0,
+    dy: 0,
+    localProgress: 0,
+  }
+}
+
 function canvasTextSegmentState(
   config: TextAnimationConfig,
   playhead: number,
@@ -4079,7 +4346,8 @@ function canvasTextSegmentState(
   orderIndex: number,
   count: number,
   lineHeightPx: number,
-) {
+  output: CanvasTextSegmentVisualState = createCanvasTextSegmentVisualState(),
+): CanvasTextSegmentVisualState {
   const totalSpan = config.duration + Math.max(0, count - 1) * config.delay
   const globalElapsed = timelineProgress === undefined
     ? playhead - config.startTime
@@ -4107,10 +4375,24 @@ function canvasTextSegmentState(
   const amount = exit ? localProgress : 1 - localProgress
   const visibleProgress = exit ? 1 - localProgress : localProgress
   const travel = Math.max(1, lineHeightPx * config.travelDistance)
-  const [legacyDx, legacyDy] = textDirectionOffset(
-    config.direction,
-    travel * amount,
-  )
+  const legacyDistance = travel * amount
+  let legacyDx = 0
+  let legacyDy = 0
+  switch (config.direction) {
+    case 'down':
+      legacyDy = -legacyDistance
+      break
+    case 'left':
+      legacyDx = legacyDistance
+      break
+    case 'right':
+      legacyDx = -legacyDistance
+      break
+    case 'up':
+    default:
+      legacyDy = legacyDistance
+      break
+  }
   let opacity = 1
   let blur = 0
   let scale = 1
@@ -4161,22 +4443,18 @@ function canvasTextSegmentState(
       ? Math.sin((linearProgress + orderIndex / Math.max(1, count - 1)) * Math.PI * 2) * 8 * amount
       : 0
 
-  return {
-    amount,
-    opacity,
-    blur,
-    scale,
-    skew,
-    extraTracking,
-    waveOffset,
-    dx: textAnimationUsesLegacyTranslation(config.id)
-      ? legacyDx
-      : 0,
-    dy: (textAnimationUsesLegacyTranslation(config.id)
-      ? legacyDy
-      : 0) + waveOffset,
-    localProgress,
-  }
+  const usesLegacyTranslation = textAnimationUsesLegacyTranslation(config.id)
+  output.amount = amount
+  output.opacity = opacity
+  output.blur = blur
+  output.scale = scale
+  output.skew = skew
+  output.extraTracking = extraTracking
+  output.waveOffset = waveOffset
+  output.dx = usesLegacyTranslation ? legacyDx : 0
+  output.dy = (usesLegacyTranslation ? legacyDy : 0) + waveOffset
+  output.localProgress = localProgress
+  return output
 }
 
 function paintCanvasTextSegment(

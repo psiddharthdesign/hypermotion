@@ -45,6 +45,24 @@ export interface TextSegmentBuffers {
   sortOrder: Uint32Array
 }
 
+/**
+ * Bit flags returned by {@link writeTextSegmentBuffers}. Keeping this as a
+ * number avoids allocating a per-frame change object for every animated text
+ * node, while still letting the WebGL caller upload only the buffers whose
+ * contents actually changed.
+ */
+export const TEXT_SEGMENT_BUFFER_CHANGE = {
+  positions: 1 << 0,
+  uvs: 1 << 1,
+  opacity: 1 << 2,
+  effectBlur: 1 << 3,
+  dofBlur: 1 << 4,
+  uvBounds: 1 << 5,
+  indices: 1 << 6,
+} as const
+
+export type TextSegmentBufferChangeMask = number
+
 export function cameraSpaceTextMotionOffset(
   motion: { x: number; y: number; z: number },
   basis: {
@@ -121,7 +139,14 @@ export function textSegmentWorldUnitsPerScreenPixel({
 export function createTextSegmentBuffers(count: number): TextSegmentBuffers {
   const safeCount = Math.max(0, Math.floor(count))
   const sortOrder = new Uint32Array(safeCount)
-  for (let index = 0; index < safeCount; index++) sortOrder[index] = index
+  const indices =
+    safeCount * 4 > 65_535
+      ? new Uint32Array(safeCount * 6)
+      : new Uint16Array(safeCount * 6)
+  for (let index = 0; index < safeCount; index++) {
+    sortOrder[index] = index
+    writeTextSegmentIndices(indices, index, index)
+  }
   return {
     positions: new Float32Array(safeCount * 4 * 3),
     uvs: new Float32Array(safeCount * 4 * 2),
@@ -129,10 +154,7 @@ export function createTextSegmentBuffers(count: number): TextSegmentBuffers {
     effectBlur: new Float32Array(safeCount * 4),
     dofBlur: new Float32Array(safeCount * 4),
     uvBounds: new Float32Array(safeCount * 4 * 4),
-    indices:
-      safeCount * 4 > 65_535
-        ? new Uint32Array(safeCount * 6)
-        : new Uint16Array(safeCount * 6),
+    indices,
     segmentDepths: new Float32Array(safeCount),
     sortOrder,
   }
@@ -150,14 +172,24 @@ export function writeTextSegmentBuffers({
   entries,
   states,
   plane,
-  cameraDepth,
+  cameraPosition,
+  cameraForward,
+  updateTextureCoordinates = true,
 }: {
   buffers: TextSegmentBuffers
   entries: readonly TextSegmentAtlasEntry[]
   states: readonly TextSegmentGeometryState[]
   plane: Plane3D
-  cameraDepth: (point: { x: number; y: number; z: number }) => number
-}): void {
+  /** World-space camera origin used for transparent depth ordering. */
+  cameraPosition: { x: number; y: number; z: number }
+  /** Normalized world-space direction from the camera into the scene. */
+  cameraForward: { x: number; y: number; z: number }
+  /**
+   * UVs only change when the atlas is repacked or a mask crops the quads.
+   * Ordinary stagger motion can skip all texture-coordinate writes.
+   */
+  updateTextureCoordinates?: boolean
+}): TextSegmentBufferChangeMask {
   if (entries.length !== states.length) {
     throw new Error('Text segment entries and states must have the same length')
   }
@@ -167,7 +199,7 @@ export function writeTextSegmentBuffers({
 
   const planeWidth = plane.rect.width
   const planeHeight = plane.rect.height
-  const depthPoint = { x: 0, y: 0, z: 0 }
+  let changes = 0
   for (let segmentIndex = 0; segmentIndex < entries.length; segmentIndex++) {
     const entry = entries[segmentIndex]!
     const state = states[segmentIndex]!
@@ -190,13 +222,27 @@ export function writeTextSegmentBuffers({
         : fullBottom
     if (cropTop >= 1 - 1e-6) bottom = top
     if (cropBottom >= 1 - 1e-6) top = bottom
-    const uvHeight = entry.uv.maxY - entry.uv.minY
+    const uvHeight = updateTextureCoordinates
+      ? entry.uv.maxY - entry.uv.minY
+      : 0
     // Atlas coordinates and world geometry both use a visual top-left origin.
     // CanvasTexture keeps flipY=false, so the visual top maps to the lower V.
-    const topV =
-      entry.uv.minY + uvHeight * ((top - fullTop) / fullHeight)
-    const bottomV =
-      entry.uv.minY + uvHeight * ((bottom - fullTop) / fullHeight)
+    const topV = updateTextureCoordinates
+      ? entry.uv.minY + uvHeight * ((top - fullTop) / fullHeight)
+      : 0
+    const bottomV = updateTextureCoordinates
+      ? entry.uv.minY + uvHeight * ((bottom - fullTop) / fullHeight)
+      : 0
+    const storedMinX = updateTextureCoordinates
+      ? Math.fround(entry.uv.minX)
+      : 0
+    const storedMaxX = updateTextureCoordinates
+      ? Math.fround(entry.uv.maxX)
+      : 0
+    const storedTopV = updateTextureCoordinates ? Math.fround(topV) : 0
+    const storedBottomV = updateTextureCoordinates
+      ? Math.fround(bottomV)
+      : 0
     const left = fullLeft
     const right = fullRight
     const cosX = Math.cos(state.rotationX)
@@ -216,6 +262,13 @@ export function writeTextSegmentBuffers({
       plane.right.z * (entry.pivotX - planeWidth / 2) * plane.scaleX +
       plane.down.z * (entry.pivotY - planeHeight / 2) * plane.scaleY
 
+    // Compare values at the precision actually stored by the GPU buffers.
+    // Comparing a Float32Array value with its original double would report a
+    // false change every frame for ordinary fractional animation values.
+    const opacity = Math.fround(clamp01(state.opacity))
+    const effectBlur = Math.fround(Math.max(0, state.effectBlur))
+    const dofBlur = Math.fround(Math.max(0, state.dofBlur))
+
     let centerX = 0
     let centerY = 0
     let centerZ = 0
@@ -224,8 +277,6 @@ export function writeTextSegmentBuffers({
       const isBottom = cornerIndex >= 2
       const cornerX = isRight ? right : left
       const cornerY = isBottom ? bottom : top
-      const u = isRight ? entry.uv.maxX : entry.uv.minX
-      const v = isBottom ? bottomV : topV
       let localX = (cornerX - entry.pivotX) * segmentScale
       const localY = (cornerY - entry.pivotY) * segmentScale
       localX += localY * segmentSkew
@@ -255,46 +306,127 @@ export function writeTextSegmentBuffers({
         state.offset.z
       const vertexIndex = segmentIndex * 4 + cornerIndex
       const positionOffset = vertexIndex * 3
-      buffers.positions[positionOffset] = worldX
-      buffers.positions[positionOffset + 1] = worldY
-      buffers.positions[positionOffset + 2] = worldZ
-      const uvOffset = vertexIndex * 2
-      buffers.uvs[uvOffset] = u
-      buffers.uvs[uvOffset + 1] = v
-      buffers.opacity[vertexIndex] = clamp01(state.opacity)
-      buffers.effectBlur[vertexIndex] = Math.max(0, state.effectBlur)
-      buffers.dofBlur[vertexIndex] = Math.max(0, state.dofBlur)
-      const boundsOffset = vertexIndex * 4
-      buffers.uvBounds[boundsOffset] = entry.uv.minX
-      buffers.uvBounds[boundsOffset + 1] = topV
-      buffers.uvBounds[boundsOffset + 2] = entry.uv.maxX
-      buffers.uvBounds[boundsOffset + 3] = bottomV
+      const storedWorldX = Math.fround(worldX)
+      const storedWorldY = Math.fround(worldY)
+      const storedWorldZ = Math.fround(worldZ)
+      if (
+        buffers.positions[positionOffset] !== storedWorldX ||
+        buffers.positions[positionOffset + 1] !== storedWorldY ||
+        buffers.positions[positionOffset + 2] !== storedWorldZ
+      ) {
+        buffers.positions[positionOffset] = storedWorldX
+        buffers.positions[positionOffset + 1] = storedWorldY
+        buffers.positions[positionOffset + 2] = storedWorldZ
+        changes |= TEXT_SEGMENT_BUFFER_CHANGE.positions
+      }
+      if (updateTextureCoordinates) {
+        const uvOffset = vertexIndex * 2
+        const storedU = isRight ? storedMaxX : storedMinX
+        const storedV = isBottom ? storedBottomV : storedTopV
+        if (
+          buffers.uvs[uvOffset] !== storedU ||
+          buffers.uvs[uvOffset + 1] !== storedV
+        ) {
+          buffers.uvs[uvOffset] = storedU
+          buffers.uvs[uvOffset + 1] = storedV
+          changes |= TEXT_SEGMENT_BUFFER_CHANGE.uvs
+        }
+        const boundsOffset = vertexIndex * 4
+        if (
+          buffers.uvBounds[boundsOffset] !== storedMinX ||
+          buffers.uvBounds[boundsOffset + 1] !== storedTopV ||
+          buffers.uvBounds[boundsOffset + 2] !== storedMaxX ||
+          buffers.uvBounds[boundsOffset + 3] !== storedBottomV
+        ) {
+          buffers.uvBounds[boundsOffset] = storedMinX
+          buffers.uvBounds[boundsOffset + 1] = storedTopV
+          buffers.uvBounds[boundsOffset + 2] = storedMaxX
+          buffers.uvBounds[boundsOffset + 3] = storedBottomV
+          changes |= TEXT_SEGMENT_BUFFER_CHANGE.uvBounds
+        }
+      }
+      if (buffers.opacity[vertexIndex] !== opacity) {
+        buffers.opacity[vertexIndex] = opacity
+        changes |= TEXT_SEGMENT_BUFFER_CHANGE.opacity
+      }
+      if (buffers.effectBlur[vertexIndex] !== effectBlur) {
+        buffers.effectBlur[vertexIndex] = effectBlur
+        changes |= TEXT_SEGMENT_BUFFER_CHANGE.effectBlur
+      }
+      if (buffers.dofBlur[vertexIndex] !== dofBlur) {
+        buffers.dofBlur[vertexIndex] = dofBlur
+        changes |= TEXT_SEGMENT_BUFFER_CHANGE.dofBlur
+      }
       centerX += worldX
       centerY += worldY
       centerZ += worldZ
     }
-    depthPoint.x = centerX / 4
-    depthPoint.y = centerY / 4
-    depthPoint.z = centerZ / 4
-    buffers.segmentDepths[segmentIndex] = cameraDepth(depthPoint)
+    const depthX = centerX / 4 - cameraPosition.x
+    const depthY = centerY / 4 - cameraPosition.y
+    const depthZ = centerZ / 4 - cameraPosition.z
+    buffers.segmentDepths[segmentIndex] =
+      depthX * cameraForward.x +
+      depthY * cameraForward.y +
+      depthZ * cameraForward.z
   }
 
   // Transparent quads share one draw call. Paint the farthest segment first
   // so crossing Z paths blend predictably without enabling a depth buffer.
-  buffers.sortOrder.sort(
-    (a, b) =>
-      buffers.segmentDepths[b]! - buffers.segmentDepths[a]! || a - b,
-  )
-  buffers.sortOrder.forEach((segmentIndex, sortedIndex) => {
-    const vertex = segmentIndex * 4
-    const indexOffset = sortedIndex * 6
-    buffers.indices[indexOffset] = vertex
-    buffers.indices[indexOffset + 1] = vertex + 2
-    buffers.indices[indexOffset + 2] = vertex + 1
-    buffers.indices[indexOffset + 3] = vertex + 2
-    buffers.indices[indexOffset + 4] = vertex + 3
-    buffers.indices[indexOffset + 5] = vertex + 1
-  })
+  // Most stagger frames preserve the previous relative depth. Validate that
+  // retained order first and invoke the typed-array sort only when segments
+  // actually cross; this also avoids rebuilding/uploading the index buffer on
+  // virtually every ordinary 2D text-animation frame.
+  let orderChanged = false
+  for (let index = 1; index < buffers.sortOrder.length; index++) {
+    if (
+      compareTextSegmentDepth(
+        buffers.sortOrder[index - 1]!,
+        buffers.sortOrder[index]!,
+        buffers.segmentDepths,
+      ) > 0
+    ) {
+      orderChanged = true
+      break
+    }
+  }
+  if (orderChanged) {
+    buffers.sortOrder.sort((a, b) =>
+      compareTextSegmentDepth(a, b, buffers.segmentDepths),
+    )
+    for (let sortedIndex = 0; sortedIndex < buffers.sortOrder.length; sortedIndex++) {
+      writeTextSegmentIndices(
+        buffers.indices,
+        sortedIndex,
+        buffers.sortOrder[sortedIndex]!,
+      )
+    }
+    changes |= TEXT_SEGMENT_BUFFER_CHANGE.indices
+  }
+  return changes
+}
+
+function compareTextSegmentDepth(
+  a: number,
+  b: number,
+  depths: Float32Array,
+): number {
+  const delta = depths[b]! - depths[a]!
+  return Number.isFinite(delta) && delta !== 0 ? delta : a - b
+}
+
+function writeTextSegmentIndices(
+  indices: Uint16Array | Uint32Array,
+  sortedIndex: number,
+  segmentIndex: number,
+): void {
+  const vertex = segmentIndex * 4
+  const indexOffset = sortedIndex * 6
+  indices[indexOffset] = vertex
+  indices[indexOffset + 1] = vertex + 2
+  indices[indexOffset + 2] = vertex + 1
+  indices[indexOffset + 3] = vertex + 2
+  indices[indexOffset + 4] = vertex + 3
+  indices[indexOffset + 5] = vertex + 1
 }
 
 function clamp01(value: number): number {

@@ -174,14 +174,18 @@ export function MultiKeyframeButton({
   const staggerOn = useUI((state) => state.staggerOn)
   const staggerDelay = useUI((state) => state.staggerDelay)
   const activeStaggerSetId = useUI((state) => state.activeStaggerSetId)
+  const activeStaggerSet = activeStaggerSetId
+    ? api.getUiState().staggerSets[activeStaggerSetId]
+    : undefined
   const staggerActive =
     staggerOn && activeStaggerSetId !== null && targets.length > 1
   const staggerOptions = activeStaggerSetId
     ? {
         setId: activeStaggerSetId,
-        layerIds: targets.map((target) => target.nodeId),
-        delay: staggerDelay,
-        order: 'forward' as const,
+        layerIds:
+          activeStaggerSet?.layerIds ?? targets.map((target) => target.nodeId),
+        delay: activeStaggerSet?.delay ?? staggerDelay,
+        order: activeStaggerSet?.order ?? ('forward' as const),
       }
     : null
   const normalSummary = inspectMultiKeyframes(

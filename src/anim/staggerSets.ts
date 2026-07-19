@@ -26,6 +26,7 @@ import {
   findTrack,
   removeKeyframe,
 } from './tracks'
+import type { TextAnimationConfig } from './textAnimations'
 
 export interface StaggerPropertyTarget {
   nodeId: NodeId
@@ -52,9 +53,38 @@ export interface StaggerSetMutationResult {
   set: StaggerPropertySet | null
 }
 
+export interface StaggerSetCloneOptions {
+  /** Fresh relationship id. Generated when omitted. */
+  setId?: string
+  /** Global start of the copy. Defaults to the source set's global end. */
+  insertionTime?: number
+  /** Timeline label. Defaults to "<source> Copy" or "<source> Return". */
+  name?: string
+}
+
+export interface StaggerSetCloneResult {
+  setId: string
+  set: StaggerPropertySet
+  startTime: number
+  endTime: number
+  trackIds: TrackId[]
+}
+
 interface AdoptedStaggerPropertyTrack {
   trackIds: TrackId[]
   maxTime: number
+}
+
+interface OwnedStaggerTrackSnapshot {
+  track: Track
+  keyframes: Keyframe[]
+  keyframeIds: ReadonlySet<string>
+}
+
+interface StaggerSetSnapshot {
+  tracks: OwnedStaggerTrackSnapshot[]
+  startTime: number
+  endTime: number
 }
 
 export interface StaggerSetMemberInput {
@@ -727,6 +757,97 @@ export function configureStaggerSet(
 }
 
 /**
+ * Copy a complete stagger relationship to a new global start time.
+ *
+ * Ordinary properties keep sharing their existing node/property track. Text
+ * animations receive a fresh track because each text track owns one semantic
+ * effect configuration. Every copied key gets a fresh id, so editing or
+ * dissolving either relationship can never mutate the other one's membership.
+ */
+export function duplicateStaggerSet(
+  api: SceneAPI,
+  sourceSetId: string,
+  options: StaggerSetCloneOptions = {},
+): StaggerSetCloneResult | null {
+  return cloneStaggerSet(api, sourceSetId, options, 'copy')
+}
+
+/**
+ * Create an independent return animation immediately after a stagger (or at
+ * an explicit insertion time). The entire relationship is reflected around
+ * its global time range, rather than reversing each layer in isolation. This
+ * preserves the traveling wave: the layer that settled last starts returning
+ * first, and every property finishes at its exact pre-stagger value.
+ */
+export function createStaggerSetReturn(
+  api: SceneAPI,
+  sourceSetId: string,
+  options: StaggerSetCloneOptions = {},
+): StaggerSetCloneResult | null {
+  return cloneStaggerSet(api, sourceSetId, options, 'return')
+}
+
+/**
+ * Reverse one stagger in place while retaining its keyframe identities.
+ * Unowned keyframes on the same tracks are left byte-for-byte untouched.
+ */
+export function reverseStaggerSetInPlace(
+  api: SceneAPI,
+  setId: string,
+): boolean {
+  const sourceSet = api.getUiState().staggerSets[setId]
+  if (!sourceSet) return false
+  const snapshot = snapshotStaggerSet(api, sourceSet)
+  if (!snapshot) return false
+
+  const nextSet = cloneSet(sourceSet)
+  nextSet.order = oppositeStaggerOrder(sourceSet.order)
+  let maxTime = api.getMeta().duration
+
+  api.doc.transact(() => {
+    for (const ownedTrack of snapshot.tracks) {
+      const { track } = ownedTrack
+      const reversed = reverseOwnedKeyframes(
+        ownedTrack,
+        snapshot.startTime,
+        snapshot.endTime,
+      )
+      const byId = new Map(reversed.map((keyframe) => [keyframe.id, keyframe]))
+      const keyframes = track.keyframes
+        .map((keyframe) => byId.get(keyframe.id) ?? keyframe)
+        .map((keyframe, index) => ({ keyframe, index }))
+        .sort(
+          (a, b) =>
+            a.keyframe.time - b.keyframe.time || a.index - b.index,
+        )
+        .map((entry) => entry.keyframe)
+      const ownedStart = minimumOwnedTime(keyframes, ownedTrack.keyframeIds)
+      const textAnimation = mirroredTextAnimation(
+        track.textAnimation,
+        ownedStart,
+      )
+      api.setTrack({
+        ...track,
+        keyframes,
+        ...(track.propertyId === 'text.progress'
+          ? {
+              defaultEasing: mirrorEasing(track.defaultEasing),
+              textAnimation,
+            }
+          : {}),
+      })
+      for (const keyframe of reversed) maxTime = Math.max(maxTime, keyframe.time)
+      if (track.propertyId === 'text.progress' && textAnimation) {
+        syncUnambiguousTextAnimation(api, track.nodeId, track.id, textAnimation)
+      }
+    }
+    writeStaggerSet(api, setId, nextSet)
+    if (maxTime > api.getMeta().duration) api.setMeta({ duration: maxTime })
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return true
+}
+
+/**
  * Resolve the corresponding keyframe on every layer in a stagger bundle.
  *
  * Membership is persistent, while bundle identity is derived from the set's
@@ -1327,6 +1448,349 @@ function adoptStaggerPropertyTrackIntoSet(
   }
 
   return { trackIds: [...new Set(trackIds)], maxTime }
+}
+
+type StaggerCloneKind = 'copy' | 'return'
+
+function cloneStaggerSet(
+  api: SceneAPI,
+  sourceSetId: string,
+  options: StaggerSetCloneOptions,
+  kind: StaggerCloneKind,
+): StaggerSetCloneResult | null {
+  const sourceSet = api.getUiState().staggerSets[sourceSetId]
+  if (!sourceSet) return null
+  const snapshot = snapshotStaggerSet(api, sourceSet)
+  if (!snapshot) return null
+
+  const usedSetIds = new Set(Object.keys(api.getUiState().staggerSets))
+  const requestedSetId = options.setId?.trim()
+  if (requestedSetId && usedSetIds.has(requestedSetId)) return null
+  const setId = requestedSetId || freshId('stagger', usedSetIds)
+  const sourceLabel = sourceSet.name?.trim() || 'Stagger'
+  const defaultName = `${sourceLabel} ${kind === 'return' ? 'Return' : 'Copy'}`
+  const requestedName = options.name?.trim()
+  const frameDuration = 1 / Math.max(1, api.getMeta().frameRate)
+  const defaultInsertion = snapshot.endTime + frameDuration
+  const insertionTime = normalizeTime(
+    options.insertionTime !== undefined &&
+      Number.isFinite(options.insertionTime)
+      ? options.insertionTime
+      : defaultInsertion,
+  )
+  const span = snapshot.endTime - snapshot.startTime
+  const endTime = normalizeTime(insertionTime + span)
+
+  const keyframeIds = new Set(
+    api.getAllTracks().flatMap((track) =>
+      track.keyframes.map((keyframe) => keyframe.id),
+    ),
+  )
+  const trackIds = new Set(api.getAllTracks().map((track) => track.id))
+  const copiedKeyframeIds = new Map<string, string>()
+  for (const ownedTrack of snapshot.tracks) {
+    for (const keyframe of ownedTrack.keyframes) {
+      if (!copiedKeyframeIds.has(keyframe.id)) {
+        copiedKeyframeIds.set(keyframe.id, freshId('keyframe', keyframeIds))
+      }
+    }
+  }
+
+  const set: StaggerPropertySet = {
+    id: setId,
+    name: requestedName || defaultName,
+    layerIds: [...sourceSet.layerIds],
+    delay: sourceSet.delay,
+    order:
+      kind === 'return'
+        ? oppositeStaggerOrder(sourceSet.order)
+        : sourceSet.order,
+    members: {},
+  }
+  for (const [nodeId, properties] of Object.entries(sourceSet.members)) {
+    for (const [propertyId, sourceIds] of Object.entries(properties) as Array<
+      [PropertyId, string[]]
+    >) {
+      for (const sourceId of sourceIds) {
+        const copiedId = copiedKeyframeIds.get(sourceId)
+        if (copiedId) addMember(set, nodeId, propertyId, copiedId)
+      }
+    }
+  }
+
+  const affectedTrackIds: TrackId[] = []
+  api.doc.transact(() => {
+    for (const ownedTrack of snapshot.tracks) {
+      const copies =
+        kind === 'return'
+          ? cloneReversedOwnedKeyframes(
+              ownedTrack,
+              snapshot.endTime,
+              insertionTime,
+              copiedKeyframeIds,
+            )
+          : ownedTrack.keyframes.map((keyframe) => ({
+              ...keyframe,
+              id: copiedKeyframeIds.get(keyframe.id)!,
+              time: normalizeTime(
+                insertionTime + keyframe.time - snapshot.startTime,
+              ),
+            }))
+
+      if (ownedTrack.track.propertyId === 'text.progress') {
+        const newTrackId = freshId('text-track', trackIds)
+        const copiedStart = Math.min(...copies.map((keyframe) => keyframe.time))
+        const textAnimation =
+          kind === 'return'
+            ? mirroredTextAnimation(
+                ownedTrack.track.textAnimation,
+                copiedStart,
+              )
+            : shiftedTextAnimation(
+                ownedTrack.track.textAnimation,
+                copiedStart,
+              )
+        api.setTrack({
+          ...ownedTrack.track,
+          id: newTrackId,
+          keyframes: copies,
+          ...(kind === 'return'
+            ? { defaultEasing: mirrorEasing(ownedTrack.track.defaultEasing) }
+            : {}),
+          textAnimation,
+        })
+        affectedTrackIds.push(newTrackId)
+        continue
+      }
+
+      const currentTrack = api.getTrack(ownedTrack.track.id)
+      if (!currentTrack) continue
+      const keyframes = [...currentTrack.keyframes, ...copies]
+        .map((keyframe, index) => ({ keyframe, index }))
+        .sort(
+          (a, b) =>
+            a.keyframe.time - b.keyframe.time || a.index - b.index,
+        )
+        .map((entry) => entry.keyframe)
+      api.setTrack({ ...currentTrack, keyframes })
+      affectedTrackIds.push(currentTrack.id)
+    }
+    writeStaggerSet(api, setId, set)
+    if (endTime > api.getMeta().duration) api.setMeta({ duration: endTime })
+  }, UNDOABLE_GESTURE_ORIGIN)
+
+  return {
+    setId,
+    set,
+    startTime: insertionTime,
+    endTime,
+    trackIds: [...new Set(affectedTrackIds)],
+  }
+}
+
+function snapshotStaggerSet(
+  api: SceneAPI,
+  set: StaggerPropertySet,
+): StaggerSetSnapshot | null {
+  const byTrack = new Map<
+    TrackId,
+    { track: Track; ids: Set<string>; keyframes: Keyframe[] }
+  >()
+  for (const nodeId of set.layerIds) {
+    for (const [propertyId, memberIds] of Object.entries(
+      set.members[nodeId] ?? {},
+    ) as Array<[PropertyId, string[]]>) {
+      for (const keyframeId of memberIds) {
+        const track = trackContainingKeyframeId(
+          api,
+          nodeId,
+          propertyId,
+          keyframeId,
+        )
+        const keyframe = track?.keyframes.find(
+          (candidate) => candidate.id === keyframeId,
+        )
+        if (!track || !keyframe) continue
+        const entry = byTrack.get(track.id) ?? {
+          track,
+          ids: new Set<string>(),
+          keyframes: [],
+        }
+        if (!entry.ids.has(keyframe.id)) {
+          entry.ids.add(keyframe.id)
+          entry.keyframes.push({ ...keyframe })
+        }
+        byTrack.set(track.id, entry)
+      }
+    }
+  }
+  const tracks: OwnedStaggerTrackSnapshot[] = [...byTrack.values()].map(
+    (entry) => ({
+      track: entry.track,
+      keyframeIds: entry.ids,
+      keyframes: entry.keyframes
+        .map((keyframe, index) => ({ keyframe, index }))
+        .sort(
+          (a, b) =>
+            a.keyframe.time - b.keyframe.time || a.index - b.index,
+        )
+        .map((item) => item.keyframe),
+    }),
+  )
+  const keyframes = tracks.flatMap((track) => track.keyframes)
+  if (keyframes.length === 0) return null
+  return {
+    tracks,
+    startTime: Math.min(...keyframes.map((keyframe) => keyframe.time)),
+    endTime: Math.max(...keyframes.map((keyframe) => keyframe.time)),
+  }
+}
+
+function cloneReversedOwnedKeyframes(
+  ownedTrack: OwnedStaggerTrackSnapshot,
+  sourceGlobalEnd: number,
+  targetGlobalStart: number,
+  copiedIds: ReadonlyMap<string, string>,
+): Keyframe[] {
+  const source = ownedTrack.keyframes
+  return [...source].reverse().map((keyframe, targetIndex) => {
+    const sourceIndex = source.length - 1 - targetIndex
+    const sourceSegmentStart = source[sourceIndex - 1]
+    return withOutgoingEasing(
+      {
+        ...keyframe,
+        id: copiedIds.get(keyframe.id)!,
+        time: normalizeTime(
+          targetGlobalStart + sourceGlobalEnd - keyframe.time,
+        ),
+      },
+      sourceSegmentStart,
+      ownedTrack.track.defaultEasing,
+    )
+  })
+}
+
+function reverseOwnedKeyframes(
+  ownedTrack: OwnedStaggerTrackSnapshot,
+  globalStart: number,
+  globalEnd: number,
+): Keyframe[] {
+  const source = ownedTrack.keyframes
+  return [...source].reverse().map((keyframe, targetIndex) => {
+    const sourceIndex = source.length - 1 - targetIndex
+    const sourceSegmentStart = source[sourceIndex - 1]
+    return withOutgoingEasing(
+      {
+        ...keyframe,
+        time: normalizeTime(globalStart + globalEnd - keyframe.time),
+      },
+      sourceSegmentStart,
+      ownedTrack.track.defaultEasing,
+    )
+  })
+}
+
+function withOutgoingEasing(
+  keyframe: Keyframe,
+  sourceSegmentStart: Keyframe | undefined,
+  sourceDefault: EasingKind,
+): Keyframe {
+  const next = { ...keyframe }
+  if (sourceSegmentStart) {
+    next.easingOut = mirrorEasing(
+      sourceSegmentStart.easingOut ?? sourceDefault,
+    )
+  } else {
+    delete next.easingOut
+  }
+  return next
+}
+
+/**
+ * Mirror an easing function as `1 - easing(1 - t)`.
+ *
+ * A damped spring's exact time reverse cannot be represented by the current
+ * `{ spring }` schema (it would need a driven/anti-damped curve), so spring
+ * parameters are retained as the least-surprising editable fallback.
+ */
+function mirrorEasing(easing: EasingKind): EasingKind {
+  if (easing === 'ease-in') return 'ease-out'
+  if (easing === 'ease-out') return 'ease-in'
+  if (easing === 'linear' || easing === 'ease-in-out') return easing
+  if ('bezier' in easing) {
+    const [x1, y1, x2, y2] = easing.bezier
+    return { bezier: [1 - x2, 1 - y2, 1 - x1, 1 - y1] }
+  }
+  return {
+    spring: {
+      stiffness: easing.spring.stiffness,
+      damping: easing.spring.damping,
+      mass: easing.spring.mass,
+    },
+  }
+}
+
+function shiftedTextAnimation(
+  config: TextAnimationConfig | null | undefined,
+  startTime: number,
+): TextAnimationConfig | null | undefined {
+  return config ? { ...config, startTime } : config
+}
+
+function mirroredTextAnimation(
+  config: TextAnimationConfig | null | undefined,
+  startTime: number,
+): TextAnimationConfig | null | undefined {
+  // Keep mode, per-segment order, custom stagger curve, and path unchanged.
+  // Descending text.progress values make the renderer evaluate the exact same
+  // geometry in reverse, including arbitrary user-drawn envelope curves.
+  return shiftedTextAnimation(config, startTime)
+}
+
+function minimumOwnedTime(
+  keyframes: readonly Keyframe[],
+  ownedIds: ReadonlySet<string>,
+): number {
+  const times = keyframes.flatMap((keyframe) =>
+    ownedIds.has(keyframe.id) ? [keyframe.time] : [],
+  )
+  return times.length > 0 ? Math.min(...times) : 0
+}
+
+function syncUnambiguousTextAnimation(
+  api: SceneAPI,
+  nodeId: NodeId,
+  trackId: TrackId,
+  config: TextAnimationConfig,
+) {
+  const textTracks = api
+    .getTracksForNode(nodeId)
+    .filter((track) => track.propertyId === 'text.progress')
+  if (
+    textTracks.length === 1 &&
+    textTracks[0]?.id === trackId &&
+    api.getNode(nodeId)?.kind === 'text'
+  ) {
+    api.setNodeProperty(nodeId, 'textAnimation', config)
+  }
+}
+
+function oppositeStaggerOrder(
+  order: StaggerPropertySet['order'],
+): StaggerPropertySet['order'] {
+  return order === 'forward' ? 'reverse' : 'forward'
+}
+
+function freshId(prefix: string, used: Set<string>): string {
+  let id = ''
+  do {
+    id = `${prefix}-${
+      Math.random().toString(36).slice(2, 10) +
+      Math.random().toString(36).slice(2, 10)
+    }`
+  } while (used.has(id))
+  used.add(id)
+  return id
 }
 
 function normalizeDelay(delay: number): number {

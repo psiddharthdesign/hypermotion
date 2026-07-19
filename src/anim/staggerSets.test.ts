@@ -8,10 +8,12 @@ import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { addKeyframe, findTrack } from './tracks'
 import { DEFAULT_TEXT_ANIMATION } from './textAnimations'
 import {
+  createStaggerSetReturn,
   deleteStaggerSetKeyframes,
   deleteStaggerSet,
   detachStaggerSetKeyframes,
   detachStaggerSetLayers,
+  duplicateStaggerSet,
   findStaggerSetMemberTrack,
   inspectStaggerSetProperty,
   inspectStaggerSetPropertyFromMember,
@@ -19,6 +21,7 @@ import {
   removeStaggerSet,
   renameStaggerSet,
   registerStaggerSetKeyframes,
+  reverseStaggerSetInPlace,
   resolveStaggerKeyframeBundle,
   resolveStaggerTrackBundle,
   retimeStaggerSet,
@@ -77,6 +80,22 @@ function times(
   return findTrack(api, nodeId, propertyId)?.keyframes.map((keyframe) =>
     keyframe.time,
   )
+}
+
+function ownedKeyframes(
+  api: ReturnType<typeof createSceneAPI>,
+  setId: string,
+  nodeId: string,
+  propertyId: PropertyId,
+) {
+  const ids = new Set(
+    api.getUiState().staggerSets[setId]?.members[nodeId]?.[propertyId] ?? [],
+  )
+  return api
+    .getTracksForNode(nodeId)
+    .filter((track) => track.propertyId === propertyId)
+    .flatMap((track) => track.keyframes.filter((keyframe) => ids.has(keyframe.id)))
+    .sort((a, b) => a.time - b.time)
 }
 
 describe('stagger property keyframe sets', () => {
@@ -757,7 +776,363 @@ describe('stagger property keyframe sets', () => {
   })
 })
 
+describe('complete stagger mutations', () => {
+  it('duplicates every owned property with fresh membership one frame after the source', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(api, targets, 'transform.x', 0, options)
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.map((target) => ({
+        ...target,
+        currentValue: Number(target.currentValue) + 100,
+      })),
+      'transform.x',
+      1,
+      options,
+    )
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.map((target, index) => ({ ...target, currentValue: index / 2 })),
+      'appearance.opacity',
+      0,
+      options,
+    )
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.map((target) => ({ ...target, currentValue: 1 })),
+      'appearance.opacity',
+      1,
+      options,
+    )
+    addKeyframe(api, layers[0]!, 'transform.x', 4, 999)
+    api.setMeta({ duration: 1.2, frameRate: 60 })
+
+    const source = api.getUiState().staggerSets['set-1']!
+    const sourceIds = new Set(
+      Object.values(source.members).flatMap((properties) =>
+        Object.values(properties).flatMap((ids) => ids ?? []),
+      ),
+    )
+    const transactions: unknown[] = []
+    const observe = (transaction: Y.Transaction) => {
+      transactions.push(transaction.origin)
+    }
+    api.doc.on('afterTransaction', observe)
+
+    const result = duplicateStaggerSet(api, 'set-1', { setId: 'set-copy' })
+
+    api.doc.off('afterTransaction', observe)
+    expect(result?.startTime).toBeCloseTo(1.2 + 1 / 60)
+    expect(result?.endTime).toBeCloseTo(2.4 + 1 / 60)
+    expect(result?.set.order).toBe('forward')
+    expect(result?.set.name).toBe('Stagger Copy')
+    expect(transactions).toEqual([UNDOABLE_GESTURE_ORIGIN])
+    expect(api.getMeta().duration).toBeCloseTo(2.4 + 1 / 60)
+    expect(times(api, layers[0]!, 'transform.x')).toEqual([
+      0,
+      1,
+      1.216666667,
+      2.216666667,
+      4,
+    ])
+    expect(ownedKeyframes(api, 'set-copy', layers[2]!, 'transform.x')).toMatchObject([
+      { time: 1.416666667, value: 30 },
+      { time: 2.416666667, value: 130 },
+    ])
+    expect(ownedKeyframes(api, 'set-copy', layers[1]!, 'appearance.opacity')).toMatchObject([
+      { time: 1.316666667, value: 0.5 },
+      { time: 2.316666667, value: 1 },
+    ])
+    const copyIds = Object.values(result!.set.members).flatMap((properties) =>
+      Object.values(properties).flatMap((ids) => ids ?? []),
+    )
+    expect(copyIds.every((id) => !sourceIds.has(id))).toBe(true)
+    expect(new Set(copyIds).size).toBe(copyIds.length)
+    expect(findTrack(api, layers[0]!, 'transform.x')?.keyframes.find(
+      (keyframe) => keyframe.value === 999,
+    )).toMatchObject({ time: 4, value: 999 })
+  })
+
+  it('creates a globally mirrored exact return with mirrored easing', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(api, targets, 'transform.x', 0, options)
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.map((target) => ({
+        ...target,
+        currentValue: Number(target.currentValue) + 100,
+      })),
+      'transform.x',
+      1,
+      options,
+    )
+    const curve = {
+      bezier: [0.1, 0.2, 0.3, 0.4] as [number, number, number, number],
+    }
+    for (const nodeId of layers) {
+      const track = findTrack(api, nodeId, 'transform.x')!
+      api.setTrack({
+        ...track,
+        keyframes: track.keyframes.map((keyframe, index) =>
+          index === 0 ? { ...keyframe, easingOut: curve } : keyframe,
+        ),
+      })
+    }
+    addKeyframe(api, layers[0]!, 'transform.x', 2.5, 999)
+    const unrelated = findTrack(api, layers[0]!, 'transform.x')!.keyframes.find(
+      (keyframe) => keyframe.value === 999,
+    )!
+    const sourceIds = new Set(
+      api.getUiState().staggerSets['set-1']!.members[layers[0]]![
+        'transform.x'
+      ],
+    )
+
+    const result = createStaggerSetReturn(api, 'set-1', {
+      setId: 'set-return',
+      insertionTime: 3,
+    })
+
+    expect(result?.set.order).toBe('reverse')
+    expect(result?.set.name).toBe('Stagger Return')
+    expect(result?.startTime).toBe(3)
+    expect(result?.endTime).toBe(4.2)
+    expect(ownedKeyframes(api, 'set-return', layers[0]!, 'transform.x')).toMatchObject([
+      {
+        time: 3.2,
+        value: 110,
+        easingOut: { bezier: [0.7, 0.6, 0.9, 0.8] },
+      },
+      { time: 4.2, value: 10 },
+    ])
+    expect(ownedKeyframes(api, 'set-return', layers[1]!, 'transform.x')).toMatchObject([
+      { time: 3.1, value: 120 },
+      { time: 4.1, value: 20 },
+    ])
+    expect(ownedKeyframes(api, 'set-return', layers[2]!, 'transform.x')).toMatchObject([
+      { time: 3, value: 130 },
+      { time: 4, value: 30 },
+    ])
+    expect(
+      ownedKeyframes(api, 'set-return', layers[0]!, 'transform.x').every(
+        (keyframe) => !sourceIds.has(keyframe.id),
+      ),
+    ).toBe(true)
+    expect(findTrack(api, layers[0]!, 'transform.x')?.keyframes).toContainEqual(
+      unrelated,
+    )
+  })
+
+  it('reverses owned keys in place, preserves ids and unrelated keys, and undoes atomically', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(api, targets, 'transform.x', 0, options)
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.map((target) => ({
+        ...target,
+        currentValue: Number(target.currentValue) + 100,
+      })),
+      'transform.x',
+      1,
+      options,
+    )
+    addKeyframe(api, layers[0]!, 'transform.x', 0.6, 999)
+    const before = findTrack(api, layers[0]!, 'transform.x')!
+    const ownedIds = [
+      ...(api.getUiState().staggerSets['set-1']!.members[layers[0]]![
+        'transform.x'
+      ] ?? []),
+    ]
+    const unrelated = before.keyframes.find((keyframe) => keyframe.value === 999)!
+    const scene = api.doc.getMap('scene')
+    const undo = new Y.UndoManager(
+      [scene, scene.get('tracks') as Y.Map<unknown>, scene.get('uiState') as Y.Map<unknown>],
+      { trackedOrigins: new Set([UNDOABLE_GESTURE_ORIGIN]) },
+    )
+
+    expect(reverseStaggerSetInPlace(api, 'set-1')).toBe(true)
+
+    expect(api.getUiState().staggerSets['set-1']?.order).toBe('reverse')
+    expect(ownedKeyframes(api, 'set-1', layers[0]!, 'transform.x')).toMatchObject([
+      { time: 0.2, value: 110 },
+      { time: 1.2, value: 10 },
+    ])
+    expect(ownedKeyframes(api, 'set-1', layers[2]!, 'transform.x')).toMatchObject([
+      { time: 0, value: 130 },
+      { time: 1, value: 30 },
+    ])
+    expect(
+      ownedKeyframes(api, 'set-1', layers[0]!, 'transform.x')
+        .map((keyframe) => keyframe.id)
+        .sort(),
+    ).toEqual([...ownedIds].sort())
+    expect(findTrack(api, layers[0]!, 'transform.x')?.keyframes).toContainEqual(
+      unrelated,
+    )
+
+    undo.undo()
+    expect(api.getUiState().staggerSets['set-1']?.order).toBe('forward')
+    expect(findTrack(api, layers[0]!, 'transform.x')).toEqual(before)
+    undo.destroy()
+  })
+})
+
 describe('stacked text animation stagger sets', () => {
+  it('creates an exact text return on fresh tracks without changing custom geometry semantics', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const first = api.createNode('text', root, { text: 'First' })
+    const second = api.createNode('text', root, { text: 'Second' })
+    const staggerCurve = {
+      version: 1 as const,
+      points: [
+        { id: 'a', x: 0, y: 0, inX: 0, inY: 0, outX: 0.1, outY: 0.4 },
+        { id: 'b', x: 1, y: 1, inX: 0.8, inY: 0.9, outX: 1, outY: 1 },
+      ],
+    }
+    const easing = {
+      bezier: [0.15, 0.25, 0.6, 0.9] as [number, number, number, number],
+    }
+    const tracks = [
+      textTrack('first-in', first, 1, 2),
+      textTrack('second-in', second, 1.2, 2.2),
+    ].map((track) => ({
+      ...track,
+      textAnimation: {
+        ...track.textAnimation!,
+        mode: 'in' as const,
+        order: 'forward' as const,
+        staggerCurve,
+      },
+      keyframes: track.keyframes.map((keyframe, index) =>
+        index === 0 ? { ...keyframe, easingOut: easing } : keyframe,
+      ),
+    }))
+    for (const track of tracks) {
+      api.setTrack(track)
+      api.setNodeProperty(track.nodeId, 'textAnimation', track.textAnimation)
+    }
+    registerStaggerSetKeyframes(
+      api,
+      {
+        setId: 'text-set',
+        layerIds: [first, second],
+        delay: 0.2,
+        order: 'forward',
+      },
+      tracks.map((track) => ({
+        nodeId: track.nodeId,
+        propertyId: 'text.progress',
+        keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+      })),
+    )
+
+    const result = createStaggerSetReturn(api, 'text-set', {
+      setId: 'text-return',
+      insertionTime: 5,
+    })!
+    const firstReturnIds = new Set(
+      result.set.members[first]?.['text.progress'] ?? [],
+    )
+    const secondReturnIds = new Set(
+      result.set.members[second]?.['text.progress'] ?? [],
+    )
+    const firstReturn = api
+      .getTracksForNode(first)
+      .find((track) =>
+        track.keyframes.some((keyframe) => firstReturnIds.has(keyframe.id)),
+      )!
+    const secondReturn = api
+      .getTracksForNode(second)
+      .find((track) =>
+        track.keyframes.some((keyframe) => secondReturnIds.has(keyframe.id)),
+      )!
+
+    expect(result.set.order).toBe('reverse')
+    expect(firstReturn.id).not.toBe('first-in')
+    expect(secondReturn.id).not.toBe('second-in')
+    expect(firstReturn.keyframes).toMatchObject([
+      {
+        time: 5.2,
+        value: 1,
+        easingOut: {
+          bezier: [0.4, 0.09999999999999998, 0.85, 0.75],
+        },
+      },
+      { time: 6.2, value: 0 },
+    ])
+    expect(secondReturn.keyframes).toMatchObject([
+      { time: 5, value: 1 },
+      { time: 6, value: 0 },
+    ])
+    expect(firstReturn.textAnimation).toMatchObject({
+      mode: 'in',
+      order: 'forward',
+      startTime: 5.2,
+      staggerCurve,
+    })
+    expect(secondReturn.textAnimation?.startTime).toBe(5)
+    expect(api.getNode(first)?.kind === 'text' && api.getNode(first)?.textAnimation).toMatchObject({
+      startTime: 1,
+      mode: 'in',
+    })
+    const sourceIds = new Set(tracks.flatMap((track) => track.keyframes.map((keyframe) => keyframe.id)))
+    expect(
+      [...firstReturnIds, ...secondReturnIds].every((id) => !sourceIds.has(id)),
+    ).toBe(true)
+  })
+
+  it('reverses text tracks in place and synchronizes unambiguous node metadata', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const first = api.createNode('text', root, { text: 'First' })
+    const second = api.createNode('text', root, { text: 'Second' })
+    const tracks = [
+      textTrack('first-in', first, 1, 2),
+      textTrack('second-in', second, 1.2, 2.2),
+    ]
+    for (const track of tracks) {
+      api.setTrack(track)
+      api.setNodeProperty(track.nodeId, 'textAnimation', track.textAnimation)
+    }
+    registerStaggerSetKeyframes(
+      api,
+      {
+        setId: 'text-set',
+        layerIds: [first, second],
+        delay: 0.2,
+        order: 'forward',
+      },
+      tracks.map((track) => ({
+        nodeId: track.nodeId,
+        propertyId: 'text.progress',
+        keyframeIds: track.keyframes.map((keyframe) => keyframe.id),
+      })),
+    )
+    const sourceIds = tracks.map((track) => track.keyframes.map((keyframe) => keyframe.id))
+
+    expect(reverseStaggerSetInPlace(api, 'text-set')).toBe(true)
+
+    expect(api.getUiState().staggerSets['text-set']?.order).toBe('reverse')
+    expect(api.getTrack('first-in')?.keyframes).toMatchObject([
+      { id: sourceIds[0]![1], time: 1.2, value: 1 },
+      { id: sourceIds[0]![0], time: 2.2, value: 0 },
+    ])
+    expect(api.getTrack('second-in')?.keyframes).toMatchObject([
+      { id: sourceIds[1]![1], time: 1, value: 1 },
+      { id: sourceIds[1]![0], time: 2, value: 0 },
+    ])
+    expect(api.getTrack('first-in')?.textAnimation).toMatchObject({
+      mode: 'in',
+      order: 'forward',
+      startTime: 1.2,
+    })
+    expect(api.getNode(first)?.kind === 'text' && api.getNode(first)?.textAnimation).toMatchObject({
+      mode: 'in',
+      startTime: 1.2,
+    })
+  })
+
   it('keeps a single owned text track editable outside its active range', () => {
     const api = createSceneAPI()
     const root = api.createNode('frame', null)

@@ -161,11 +161,12 @@ interface Inherited3D {
 }
 
 /**
- * Spatial text must remain extracted for the lifetime of every authored
- * vector effect, not only while that particular track owns the playhead.
- * Otherwise stacked text animations would repeatedly change plane topology
- * at their range boundaries and could briefly paint both the flattened text
- * and its segment mesh.
+ * Per-segment text must remain extracted for the lifetime of every authored
+ * effect, not only while that particular track owns the playhead. Besides
+ * keeping stacked animation topology stable, this lets letter/word/line
+ * staggers reuse their glyph atlas and update only geometry during playback.
+ * Leaving them flattened would repaint and upload the containing canvas on
+ * every text.progress sample, which can stall the shared preview/playhead rAF.
  */
 export function textNodeNeedsSegmentPlane(
   api: SceneAPI,
@@ -184,7 +185,7 @@ export function textNodeNeedsSegmentPlane(
 function textAnimationNeedsSegmentPlane(
   config: import('@/anim/textAnimations').TextAnimationConfig | null | undefined,
 ): boolean {
-  return config?.motionVector != null || config?.motionPath != null
+  return config != null
 }
 
 /**

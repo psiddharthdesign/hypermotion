@@ -14,13 +14,16 @@ import { useSceneAPI, useSceneVersion } from '@/scene'
 import { getAnimEngine, removeKeyframe, removeTrack } from '@/anim'
 import {
   configureStaggerSet,
+  createStaggerSetReturn,
   deleteStaggerSet,
   deleteStaggerSetKeyframes,
   detachStaggerSetKeyframes,
   detachStaggerSetLayers,
+  duplicateStaggerSet,
   removeStaggerSet,
   renameStaggerSet,
   resolveStaggerKeyframeBundle,
+  reverseStaggerSetInPlace,
   setStaggerSetDelayMetadata,
   type StaggerSetMemberInput,
 } from '@/anim/staggerSets'
@@ -1579,6 +1582,14 @@ export function Timeline() {
       event.preventDefault()
       event.stopPropagation()
       const detachAction = detachSelectionForStagger(set)
+      const selectCreatedStagger = (setId: string) => {
+        if (staggerOn) setStaggerOn(false)
+        setSelectedStaggerSetId(setId)
+        setSelection([])
+        setSelectedTrackIds([])
+        clearKfs()
+        setInspectorMode('animate')
+      }
       openContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -1590,6 +1601,25 @@ export function Timeline() {
           {
             label: 'Change Stagger Settings…',
             onClick: () => setStaggerSettingsSetId(set.id),
+          },
+          { kind: 'separator' },
+          {
+            label: 'Duplicate stagger',
+            onClick: () => {
+              const result = duplicateStaggerSet(api, set.id)
+              if (result) selectCreatedStagger(result.setId)
+            },
+          },
+          {
+            label: 'Create return',
+            onClick: () => {
+              const result = createStaggerSetReturn(api, set.id)
+              if (result) selectCreatedStagger(result.setId)
+            },
+          },
+          {
+            label: 'Reverse motion',
+            onClick: () => reverseStaggerSetInPlace(api, set.id),
           },
           { kind: 'separator' },
           {
@@ -1631,12 +1661,17 @@ export function Timeline() {
       api,
       detachSelectionForStagger,
       deleteTimelineStagger,
+      clearKfs,
+      setInspectorMode,
+      setSelectedTrackIds,
+      setSelection,
       openContextMenu,
       replaceKfs,
       selectedStaggerSetId,
       setSelectedStaggerSetId,
       setStaggerSettingsSetId,
       setStaggerOn,
+      staggerOn,
     ],
   )
 
@@ -3447,7 +3482,10 @@ export function Timeline() {
             if (selectedStaggerSetId === staggerSettingsSet.id) {
               if (remaining) {
                 setSelectedStaggerSetId(staggerSettingsSet.id)
-                setSelection(remaining.layerIds)
+                // A local stagger row is its own Inspector selection. Keep
+                // canvas layers clear so the new relationship-level panel
+                // remains visible after applying settings.
+                setSelection([])
               } else {
                 setSelectedStaggerSetId(null)
               }
@@ -3567,7 +3605,7 @@ function StaggerSettingsModal({
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1.5 block text-[9px] font-semibold tracking-wider text-text-dim uppercase">
-                Delay
+                Layer delay
               </span>
               <div className="flex h-8 items-center rounded-md border border-border bg-panel focus-within:border-stagger">
                 <input
@@ -3585,7 +3623,7 @@ function StaggerSettingsModal({
             </label>
             <div>
               <span className="mb-1.5 block text-[9px] font-semibold tracking-wider text-text-dim uppercase">
-                Order
+                Layer order
               </span>
               <div className="grid h-8 grid-cols-2 rounded-md border border-border bg-panel p-0.5">
                 {(['forward', 'reverse'] as const).map((value) => (
@@ -4568,7 +4606,8 @@ function StaggerSetLeftRow({
           )}
           <span className="shrink-0 font-mono text-[8px] text-text-dim">
             {set.layerIds.length}L · {set.propertyIds.length}P ·{' '}
-            {Math.round(set.delay * 1000)}MS
+            {Math.round(set.delay * 1000)}MS ·{' '}
+            {set.order === 'forward' ? '1→N' : 'N→1'}
           </span>
         </div>
         <div className="mt-0.5 flex items-center">
