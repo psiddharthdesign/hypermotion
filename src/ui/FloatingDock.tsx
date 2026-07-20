@@ -5,6 +5,16 @@ import { useUI, type Tool } from '@/state/ui'
 import { useSceneAPI } from '@/scene'
 import { importImageFiles } from '@/ui/importImage'
 import { importMediaFiles } from '@/ui/importMedia'
+import {
+  NucleoEllipseIcon,
+  NucleoFrameIcon,
+  NucleoHandIcon,
+  NucleoImageIcon,
+  NucleoPointerIcon,
+  NucleoRectangleIcon,
+  NucleoTextToolIcon,
+  NucleoVideoIcon,
+} from '@/ui/icons/NucleoUiIcons'
 
 /**
  * FloatingDock — the tool palette as a floating pill at the bottom of
@@ -28,12 +38,12 @@ import { importMediaFiles } from '@/ui/importMedia'
  */
 
 const TOOLS: { id: Tool; shortcut: string; hint: string; icon: ReactNode }[] = [
-  { id: 'select', shortcut: 'V', hint: 'Select', icon: <CursorIcon /> },
-  { id: 'hand', shortcut: 'H', hint: 'Hand (pan)', icon: <HandIcon /> },
-  { id: 'frame', shortcut: 'F', hint: 'Frame', icon: <FrameIcon /> },
-  { id: 'rect', shortcut: 'R', hint: 'Rectangle', icon: <RectIcon /> },
-  { id: 'ellipse', shortcut: 'O', hint: 'Ellipse', icon: <EllipseIcon /> },
-  { id: 'text', shortcut: 'T', hint: 'Text', icon: <TextIcon /> },
+  { id: 'select', shortcut: 'V', hint: 'Select', icon: <NucleoPointerIcon size={18} /> },
+  { id: 'hand', shortcut: 'H', hint: 'Hand (pan)', icon: <NucleoHandIcon size={18} /> },
+  { id: 'frame', shortcut: 'F', hint: 'Frame', icon: <NucleoFrameIcon size={18} /> },
+  { id: 'rect', shortcut: 'R', hint: 'Rectangle', icon: <NucleoRectangleIcon size={18} /> },
+  { id: 'ellipse', shortcut: 'O', hint: 'Ellipse', icon: <NucleoEllipseIcon size={18} /> },
+  { id: 'text', shortcut: 'T', hint: 'Text', icon: <NucleoTextToolIcon size={18} /> },
 ]
 
 // Dock groupings. Each entry is the index in TOOLS where that group
@@ -142,7 +152,7 @@ export function FloatingDock() {
         onClick={() => imageInputRef.current?.click()}
         className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
       >
-        <ImageIcon />
+        <NucleoImageIcon size={18} />
       </button>
       <input
         ref={imageInputRef}
@@ -161,7 +171,7 @@ export function FloatingDock() {
         onClick={() => mediaInputRef.current?.click()}
         className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
       >
-        <VideoIcon />
+        <NucleoVideoIcon size={18} />
       </button>
       <input
         ref={mediaInputRef}
@@ -175,92 +185,5 @@ export function FloatingDock() {
         }}
       />
     </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Icons — copied from TopBar (single file ownership, since the dock now
-// owns these). Slightly larger viewBox-internal stroke sized for the
-// 18×18 visual size so they don't look spindly at dock scale.
-// ---------------------------------------------------------------------------
-
-function svgProps() {
-  return {
-    width: 18,
-    height: 18,
-    viewBox: '0 0 16 16',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.5,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  }
-}
-
-function CursorIcon() {
-  return (
-    <svg {...svgProps()}>
-      <path d="M3 2.5l7.5 11 1.7-4.4 4.4-1.7L3 2.5z" />
-    </svg>
-  )
-}
-
-function FrameIcon() {
-  return (
-    <svg {...svgProps()}>
-      <path d="M5 1.5v13M11 1.5v13M1.5 5h13M1.5 11h13" />
-    </svg>
-  )
-}
-
-function RectIcon() {
-  return (
-    <svg {...svgProps()}>
-      <rect x="2.5" y="3.5" width="11" height="9" rx="1" />
-    </svg>
-  )
-}
-
-function EllipseIcon() {
-  return (
-    <svg {...svgProps()}>
-      <ellipse cx="8" cy="8" rx="5.5" ry="4.5" />
-    </svg>
-  )
-}
-
-function TextIcon() {
-  return (
-    <svg {...svgProps()}>
-      <path d="M3 4V3h10v1M8 3v10M5.5 13h5" />
-    </svg>
-  )
-}
-
-function HandIcon() {
-  return (
-    <svg {...svgProps()}>
-      <path d="M5.5 8V3.5a1 1 0 112 0V8M7.5 8V2.5a1 1 0 112 0V8M9.5 8V3.5a1 1 0 112 0V9M11.5 9V5.5a1 1 0 112 0V11.5c0 2.2-1.8 3-3.5 3h-2c-1 0-1.7-.4-2.3-1L3 10c-.6-.7-.3-1.6.5-1.6.4 0 .8.2 1 .5L5.5 10" />
-    </svg>
-  )
-}
-
-function ImageIcon() {
-  return (
-    <svg {...svgProps()}>
-      <rect x="2" y="3" width="12" height="10" rx="1" />
-      <circle cx="6" cy="6.5" r="1" />
-      <path d="M2.5 11.5l3-3 2.5 2.5 2-2 3.5 3.5" />
-    </svg>
-  )
-}
-
-function VideoIcon() {
-  return (
-    <svg {...svgProps()}>
-      <rect x="2" y="3.5" width="9" height="9" rx="1" />
-      <path d="M11 6.2l3-1.7v7l-3-1.7z" />
-      <path d="M5.5 6.3v3.4L8.4 8z" fill="currentColor" stroke="none" />
-    </svg>
   )
 }

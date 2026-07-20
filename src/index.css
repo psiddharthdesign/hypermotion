@@ -194,7 +194,7 @@ body {
   background: var(--color-app-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.45;
   /* Tabular numerals + SF Pro stylistic sets at body level keep
      timeline readouts and frame counters aligned during scrubbing,
@@ -213,38 +213,38 @@ body {
  * Compact editor typography.
  *
  * Hyper Motion's inspector and timeline deliberately use explicit pixel
- * utilities so dense numeric controls remain aligned. Lowering only body's
- * inherited size would leave most of the interface unchanged, so this layer
- * remaps the larger UI tokens by roughly 12–16% and keeps 10px as the
- * legibility floor. Authored content under the canvas/node markers is excluded:
- * changing editor density must never resize a user's design.
+ * utilities so dense numeric controls remain aligned. The general UI sits at
+ * 11px, supporting copy at 10px, and micro metadata at 9px. Larger legacy
+ * utilities are remapped into that compact scale while authored content under
+ * canvas/node markers is excluded: editor density must never resize a user's
+ * design.
  */
 body[data-hm-ui-density='compact'] {
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[28px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 24px;
+  font-size: 22px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[18px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *),
 body[data-hm-ui-density='compact']
   [class~='text-[17px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[15px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *),
 body[data-hm-ui-density='compact']
   [class~='text-[16px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[14px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 body[data-hm-ui-density='compact']
@@ -260,6 +260,34 @@ body[data-hm-ui-density='compact']
 body[data-hm-ui-density='compact']
   [class~='text-[11px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
   font-size: 10px;
+}
+
+/* Semantic editor type scale. Prefer these over adding more one-off pixel
+   values to dense dialogs and inspector surfaces. */
+.hm-type-dialog-title {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.hm-type-section,
+.hm-type-body {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.hm-type-support {
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.hm-type-micro {
+  font-size: 9px;
+  line-height: 12px;
+}
+
+[data-hm-figma-plugin-modal],
+[data-hm-figma-plugin-modal] button {
+  text-transform: uppercase;
 }
 
 [data-canvas-root],

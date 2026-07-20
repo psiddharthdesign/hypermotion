@@ -4114,7 +4114,7 @@ function TimelineTabButton({
       type="button"
       onClick={onClick}
       className={[
-        'h-5 rounded px-1.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
+        'h-5 shrink-0 whitespace-nowrap rounded px-1.5 text-[9px] font-semibold uppercase tracking-[0.04em]',
         active
           ? 'bg-accent-soft text-accent'
           : 'text-text-muted hover:bg-panel-raised hover:text-text',
