@@ -3,6 +3,49 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## v0.1.16 — Compact editor polish and downloadable Figma setup (2026-07-20)
+
+Hyper Motion's editor chrome is denser and more consistent, the Figma importer
+now follows the familiar download-and-import flow, and unfinished asset-library
+actions are clearly gated. The release pipeline also publishes the standalone
+Figma plugin automatically alongside every desktop build.
+
+### Clearer Figma setup
+
+- Lead with a direct link to the latest Hyper Motion release instead of a
+  hidden Application Support path.
+- Reduce setup to three steps: download and unzip the plugin, import
+  `manifest.json` in Figma Desktop, then copy the selection into Hyper Motion.
+- Keep every visible modal label and instruction in capitals, with compact
+  spacing, keyboard focus containment, and focus restoration on close.
+- Publish a versioned `hyper-motion-figma-plugin-v*.zip` release asset containing
+  the manifest, compiled plugin runtime, UI, license, notice, and guide.
+
+### Denser, consistent editor chrome
+
+- Move the editor to an 11px general type size with 10px support text and 9px
+  metadata while leaving authored canvas text and exported compositions alone.
+- Preserve explicit control typography instead of globally overriding form
+  sizes, so compact mode does not collapse intentionally larger controls.
+- Replace the floating tool dock artwork and Figma setup icons with a consistent
+  Nucleo UI Essential outline set.
+- Keep the Animated Layers timeline tab on one line at narrow panel widths.
+
+### Assets safely gated
+
+- Mark the Assets panel as **Coming Soon** without changing the Layers panel.
+- Disable View All, component selection, double-click editing, dragging, and
+  imported-media interactions until the asset library is ready.
+- Block the legacy component browser modal from opening through any Assets
+  panel path.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the one-line
+installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
+
 ## v0.1.15 — Built-in Figma importer and compact editor (2026-07-20)
 
 Figma import no longer requires cloning the repository, building plugin source,
