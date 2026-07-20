@@ -14,7 +14,7 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
 WebM / GIF export.
 
-## Status — v0.1.11 research preview
+## Status — v0.1.12 research preview
 
 The semantic-layout-animation bet works end-to-end, with desktop
 editing, Figma import, pixel-correct export, and CLI / MCP workflows for
@@ -34,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.11`.
+For a specific version: `curl ... | bash -s -- v0.1.12`.
 
 ### Manual install
 
@@ -91,27 +91,32 @@ pnpm build
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.11
+## What's in v0.1.12
 
-- **Semantic keyframes.** Animate variant, opacity, scale, rotation, gap,
-  padding — never raw `x` / `y`. Layouts can shift without breaking
-  timing.
-- **Auto-layout containers.** Flex with gap, padding, alignment. Same
-  model designers think in from Figma.
-- **3D camera** — X / Y / Z position, three-axis rotation, real
-  depth-of-field with aperture and focus distance.
+- **Curve-driven text animation.** Animate letters, words, lines, or whole
+  layers with 21 presets, editable stagger curves, Bézier motion paths,
+  and independent X / Y / Z travel.
+- **Reversible stagger choreography.** Set layer or text order to Forward
+  or Reverse, duplicate a stagger safely, or create an exact return that
+  restores the original state.
+- **Camera effects.** Add keyframeable Bloom and Chromatic Aberration
+  alongside animated focus, aperture, falloff, and depth of field.
+- **Smooth realtime preview.** Text-heavy scenes and camera effects use a
+  bounded preview budget while final exports retain full quality.
+- **Semantic keyframes + auto layout.** Animate variant, opacity, scale,
+  rotation, gap, and padding without breaking the layout model.
 - **Timeline with chapters** — named sections you can isolate, loop,
-  and export individually or concatenated.
+  and export individually or concatenated, with video and waveform-backed
+  audio on the same timeline.
 - **Pixel-correct export.** MP4 up to 4K (WebCodecs + mp4-muxer), WebM
-  via tab capture, GIF via gifenc. Captured directly from the renderer
-  — no screen-recording compromise.
+  via tab capture, and GIF via gifenc, with stalled render workers cleaned
+  up automatically.
 - **Figma import** — plugin that brings frames, text, layout sizing,
-  per-corner radii, individual stroke weights, and layout grids into the
-  canvas.
-- **AI-driveable** — included CLI + Model Context Protocol server. Claude
-  Code, Codex CLI, and any MCP-compatible agent can create `.hype`
-  scenes, inspect scene metadata, and render MP4 / WebM / GIF exports
-  from the terminal. See [`AGENTS.md`](./AGENTS.md).
+  fills, strokes, gradients, per-corner radii, and layout grids into the
+  canvas with improved fidelity.
+- **Scriptable `.hype` scenes.** The included CLI and MCP server can create,
+  inspect, patch, validate, open, and render saved scenes. See
+  [`AGENTS.md`](./AGENTS.md).
 - **Open source from day one.** Apache 2.0. Yjs-backed data model so
   real-time collab arrives without a rewrite.
 

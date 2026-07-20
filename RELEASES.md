@@ -1,7 +1,73 @@
 # Releases
 
-Human-friendly release notes. The GitHub Releases page mirrors the entries
-below for the corresponding tag, plus auto-generated commit summaries.
+Human-friendly release notes. The GitHub Releases page mirrors the matching
+entry below for each corresponding tag.
+
+## v0.1.12 — Curve-driven text motion + camera effects (2026-07-20)
+
+Hyper Motion's text system can now animate letters, words, lines, or whole
+layers through editable motion. Shape stagger timing with custom Bézier
+curves, move text through XYZ along adjustable paths, reverse sequence order,
+build exact return animations, and finish scenes with camera-wide Bloom and
+Chromatic Aberration.
+
+### Curve-driven text animation
+
+- Animate by letter, word, line, or whole layer with 21 presets, including
+  Curve Drop, Scramble, Typewriter, Character Wave, Blur, Flip, and Gradient
+  Reveal.
+- Draw editable Bézier motion paths on the canvas or in the inspector, with
+  independent X, Y, and Z travel controls.
+- Shape stagger progression with a point-and-handle curve editor for
+  continuous, progressive entry instead of isolated letter drops.
+- Switch segmentation or animation type without breaking the stagger
+  relationship or manufacturing disconnected keyframes.
+
+### Reversible stagger choreography
+
+- Set Layer, Letter, Word, and Line order to Forward or Reverse without
+  reversing the underlying motion.
+- Duplicate a stagger as an independent animation or create an exact return
+  that restores the state before the stagger began.
+- Preserve custom paths, timing curves, values, and Bézier easing when
+  reversing or returning motion.
+
+### Camera effects and depth
+
+- Add camera-wide Bloom and Chromatic Aberration, with keyframeable amount,
+  direction, strength, radius, and threshold controls.
+- Keep the same effect in editor preview, fallback rendering, and final
+  export.
+- Improved depth-of-field movement, focus transitions, bokeh quality, and
+  opacity consistency across flat, 3D-plane, and grouped 3D render modes.
+
+### Smoother playback and safer exports
+
+- Reduced per-frame work for segment-based text animation and effect-heavy
+  scenes through cached geometry, coalesced updates, and adaptive realtime
+  quality. Final exports remain full quality.
+- Stabilized playhead timing, keyboard playback, zoom behavior, hit testing,
+  and stacked text-animation ordering.
+- Added automatic cleanup for stalled or orphaned hidden export workers so a
+  reload cannot leave a 4K render consuming CPU and GPU in the background.
+- Suspended hidden WebGL work while editing text to keep direct manipulation
+  responsive.
+
+### CLI and scene workflows
+
+- Expanded `.hype` workflows for creating, inspecting, patching, validating,
+  opening, and rendering saved scenes through the CLI and MCP server.
+- Added the new text-animation, stagger-path, camera-focus, and camera-effect
+  properties to scene authoring and validation.
+- Hardened scene and render argument validation, path handling, and error
+  reporting for agent-driven workflows.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the
+one-line installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
 
 ## v0.1.11 — Audio timeline + focus export workflow (2026-06-22)
 
