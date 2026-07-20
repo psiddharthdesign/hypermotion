@@ -14,7 +14,7 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
 WebM / GIF export.
 
-## Status — v0.1.14 research preview
+## Status — v0.1.15 research preview
 
 The semantic-layout-animation bet works end-to-end, with desktop
 editing, Figma import, pixel-correct export, and CLI / MCP workflows for
@@ -34,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.14`.
+For a specific version: `curl ... | bash -s -- v0.1.15`.
 
 ### Manual install
 
@@ -77,26 +77,34 @@ open release/mac-arm64/hyper-motion.app
 ## Figma plugin
 
 Copy frames, text, layout, and vector artwork from Figma straight into
-hyper-motion. Payload v2 imports supported artwork as native vector-backed
-layers and retains the canonical point/segment graph, Bézier controls,
-transforms, ordered paints, gradient metadata, and detailed strokes. Version 1
-payloads remain compatible, while complex constructs keep a sanitized SVG
-fallback for visual fidelity. Direct point editing remains a follow-up. The
-plugin source lives in
-[`figma-plugin/`](./figma-plugin) inside this repo.
+hyper-motion. The desktop app includes the importer—no repository checkout,
+source build, or terminal setup is required. Click the Figma import button in
+the top bar, reveal the manifest from the setup modal, then choose
+**Plugins → Development → Import plugin from manifest…** in Figma Desktop.
+That one-time registration uses a stable per-user location which Hyper Motion
+keeps refreshed across app updates.
 
-```sh
-cd figma-plugin
-pnpm install
-pnpm build
-# Then in Figma: Plugins → Development → Import plugin from manifest…
-# → point at figma-plugin/manifest.json
-```
+Payload v2 imports supported artwork as native vector-backed layers and retains
+the canonical point/segment graph, Bézier controls, transforms, ordered paints,
+gradient metadata, and detailed strokes. Version 1 payloads remain compatible,
+while complex constructs keep a sanitized SVG fallback for visual fidelity.
+Direct point editing remains a follow-up. Contributor source lives in
+[`figma-plugin/`](./figma-plugin).
 
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.14
+## What's in v0.1.15
+
+- **Built-in Figma importer setup.** Open the setup guide from the editor,
+  reveal the exact bundled manifest, and register it once in Figma Desktop—no
+  code download, local build, or terminal commands required.
+- **Stable plugin updates.** Hyper Motion refreshes the importer in its
+  Application Support directory on launch while preserving the same manifest
+  path that Figma already knows.
+- **More compact editor chrome.** Interface text is denser and gives the canvas
+  more breathing room while authored text and exported compositions remain
+  unchanged.
 
 - **Camera-accurate selection and resize.** Selection polygons, hit testing,
   and all eight resize handles now follow workspace zoom, camera XYZ, tilt,
