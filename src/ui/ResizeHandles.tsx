@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { useSceneAPI } from '@/scene'
 import type { NodeId, SizeAxis } from '@/scene'
+import type {
+  PlaneQuad,
+  ProjectedPoint2D,
+  ProjectedResizeHandleId,
+} from '@/render3d/selectionProjection'
+import { projectedResizeHandles } from '@/render3d/selectionProjection'
 import { useUI } from '@/state/ui'
 import {
   recordKeyframesForPatch,
@@ -32,25 +38,40 @@ import {
  * of the rect. This matches Figma: resize commands a size, Yoga picks
  * the final placement.
  *
- * Caveat: rotation is not respected. Dragging NE on a rotated node
- * doesn't rotate the drag axis. Good enough for MVP. We'll revisit
- * when Step 4.5 brings real gizmo rendering in Pixi.
+ * The regular DOM path retains the legacy screen-axis behavior. When a
+ * projected camera quad is supplied, pointer positions are ray-cast back to
+ * the selected plane so dolly, roll, X/Y tilt, perspective, and layer
+ * rotation all resize along the layer's real local axes.
  */
 
-type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+type HandleId = ProjectedResizeHandleId
+
+export interface ResizeHandleProjection {
+  quad: PlaneQuad<ProjectedPoint2D>
+  clientToLocal: (clientX: number, clientY: number) => ProjectedPoint2D | null
+}
 
 export function ResizeHandles({
   nodeId,
   rectWidth,
   rectHeight,
   zoom,
+  projection,
 }: {
   nodeId: NodeId
   rectWidth: number
   rectHeight: number
   zoom: number
+  projection?: ResizeHandleProjection
 }) {
   const api = useSceneAPI()
+  // Camera animation can update the projection while a pointer is held. The
+  // move listener must always ray-cast through the latest camera instead of
+  // retaining the render that happened at pointer-down.
+  const projectionRef = useRef(projection)
+  useLayoutEffect(() => {
+    projectionRef.current = projection
+  }, [projection])
   const dragRef = useRef<{
     handle: HandleId
     pointerId: number
@@ -58,6 +79,7 @@ export function ResizeHandles({
     startY: number
     w0: number
     h0: number
+    startLocal: ProjectedPoint2D | null
   } | null>(null)
 
   const startDrag = useCallback(
@@ -79,6 +101,8 @@ export function ResizeHandles({
         startY: e.clientY,
         w0: rectWidth,
         h0: rectHeight,
+        startLocal:
+          projectionRef.current?.clientToLocal(e.clientX, e.clientY) ?? null,
       }
       const el = e.currentTarget as HTMLElement
       el.setPointerCapture(e.pointerId)
@@ -86,9 +110,18 @@ export function ResizeHandles({
       const onMove = (ev: PointerEvent) => {
         const d = dragRef.current
         if (!d || ev.pointerId !== d.pointerId) return
+        const currentProjection = projectionRef.current
+        const projectedLocal =
+          d.startLocal && currentProjection
+            ? currentProjection.clientToLocal(ev.clientX, ev.clientY)
+            : null
         const z = useUI.getState().view.zoom || 1
-        const dx = (ev.clientX - d.startX) / z
-        const dy = (ev.clientY - d.startY) / z
+        const dx = projectedLocal
+          ? projectedLocal.x - d.startLocal!.x
+          : (ev.clientX - d.startX) / z
+        const dy = projectedLocal
+          ? projectedLocal.y - d.startLocal!.y
+          : (ev.clientY - d.startY) / z
 
         // Figure out which directions change width / height. +1 means
         // dragging this handle in that direction grows the dimension.
@@ -178,16 +211,45 @@ export function ResizeHandles({
 
   // Each handle sits at its anchor; we center via translate(-50%, -50%)
   // so positioning numbers read naturally ("top-right = right: 0, top: 0").
-  const handles: Array<{ id: HandleId; style: React.CSSProperties; cursor: string }> = [
-    { id: 'nw', style: { left: -half, top: -half }, cursor: 'nwse-resize' },
-    { id: 'n', style: { left: '50%', top: -half, marginLeft: -half }, cursor: 'ns-resize' },
-    { id: 'ne', style: { right: -half, top: -half }, cursor: 'nesw-resize' },
-    { id: 'e', style: { right: -half, top: '50%', marginTop: -half }, cursor: 'ew-resize' },
-    { id: 'se', style: { right: -half, bottom: -half }, cursor: 'nwse-resize' },
-    { id: 's', style: { left: '50%', bottom: -half, marginLeft: -half }, cursor: 'ns-resize' },
-    { id: 'sw', style: { left: -half, bottom: -half }, cursor: 'nesw-resize' },
-    { id: 'w', style: { left: -half, top: '50%', marginTop: -half }, cursor: 'ew-resize' },
-  ]
+  const handles: Array<{
+    id: HandleId
+    style: React.CSSProperties
+    cursor: string
+  }> = projection
+    ? projectedResizeHandles(projection.quad).map((handle) => ({
+        id: handle.id,
+        style: {
+          left: handle.point.x - half,
+          top: handle.point.y - half,
+        },
+        cursor: handle.cursor,
+      }))
+    : [
+        { id: 'nw', style: { left: -half, top: -half }, cursor: 'nwse-resize' },
+        {
+          id: 'n',
+          style: { left: '50%', top: -half, marginLeft: -half },
+          cursor: 'ns-resize',
+        },
+        { id: 'ne', style: { right: -half, top: -half }, cursor: 'nesw-resize' },
+        {
+          id: 'e',
+          style: { right: -half, top: '50%', marginTop: -half },
+          cursor: 'ew-resize',
+        },
+        { id: 'se', style: { right: -half, bottom: -half }, cursor: 'nwse-resize' },
+        {
+          id: 's',
+          style: { left: '50%', bottom: -half, marginLeft: -half },
+          cursor: 'ns-resize',
+        },
+        { id: 'sw', style: { left: -half, bottom: -half }, cursor: 'nesw-resize' },
+        {
+          id: 'w',
+          style: { left: -half, top: '50%', marginTop: -half },
+          cursor: 'ew-resize',
+        },
+      ]
 
   return (
     <>

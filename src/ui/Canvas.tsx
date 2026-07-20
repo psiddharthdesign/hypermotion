@@ -35,6 +35,7 @@ import { useUI } from '@/state/ui'
 import type { Tool } from '@/state/ui'
 import { useExportProgress } from '@/export/progressStore'
 import { SelectionOverlay } from '@/ui/SelectionOverlay'
+import { CameraSelectionOverlay } from '@/ui/CameraSelectionOverlay'
 import { DistanceOverlay } from '@/ui/DistanceOverlay'
 import {
   hasNodeDrivenTextAnimation,
@@ -116,10 +117,17 @@ type AnimatedThreeSceneViewportProps = Omit<
   'animated' | 'cameraAnim'
 > & {
   animationIds: NodeId[]
+  editorZoom: number
+  showSelectionOverlay: boolean
+  clientToViewport: (
+    clientX: number,
+    clientY: number,
+  ) => { x: number; y: number } | null
 }
 
 const EMPTY_CAMERA_ANIMATION_IDS: NodeId[] = []
 const EMPTY_SCENE_ANIMATION_IDS: NodeId[] = []
+const EMPTY_THREE_SELECTION_IDS: NodeId[] = []
 const subscribeToNothing = () => () => {}
 const getNoCameraPreview = () => undefined
 
@@ -152,6 +160,9 @@ function useLiveCameraAnimatedValue(cameraId: NodeId) {
 const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   camera,
   animationIds,
+  editorZoom,
+  showSelectionOverlay,
+  clientToViewport,
   ...props
 }: AnimatedThreeSceneViewportProps) {
   const sceneAnimated = useAnimatedValues(animationIds)
@@ -175,14 +186,38 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
       : getAnimEngine().getPlayhead()
     : (pausedPlayhead ?? props.playhead ?? 0)
   return (
-    <MemoizedThreeSceneViewport
-      {...props}
-      camera={camera}
-      animated={sceneAnimated}
-      cameraAnim={cameraAnim}
-      interactiveCameraPreview={!!cameraPreview}
-      playhead={playbackPlayhead}
-    />
+    <>
+      <MemoizedThreeSceneViewport
+        {...props}
+        camera={camera}
+        animated={sceneAnimated}
+        cameraAnim={cameraAnim}
+        selectedIds={
+          showSelectionOverlay
+            ? EMPTY_THREE_SELECTION_IDS
+            : props.selectedIds
+        }
+        interactiveCameraPreview={!!cameraPreview}
+        playhead={playbackPlayhead}
+      />
+      {showSelectionOverlay &&
+      props.showPlanes !== false &&
+      !props.suspended ? (
+        <CameraSelectionOverlay
+          api={props.api}
+          solved={props.layout}
+          animated={sceneAnimated}
+          camera={camera}
+          cameraAnim={cameraAnim}
+          selectedIds={props.selectedIds}
+          width={props.width}
+          height={props.height}
+          zoom={editorZoom}
+          sceneVersion={props.sceneVersion ?? 0}
+          clientToViewport={clientToViewport}
+        />
+      ) : null}
+    </>
   )
 })
 
@@ -840,6 +875,10 @@ export function Canvas() {
     threeCameraAvailable,
     editingTextId,
   )
+  const cameraAccurateSelectionActive =
+    threeCameraAvailable &&
+    !textEditPresentation.hideWebglScene &&
+    !textEditPresentation.suspendWebglScene
   const fallbackSceneAnimationIds = useMemo(
     () =>
       cameraId && threeCameraAvailable && !isEditingText
@@ -1353,57 +1392,57 @@ export function Canvas() {
     [api, clientToViewport, workspaceOrder],
   )
 
-  const resolvedCamera3D = useMemo(
-    () =>
-      camera && camera.kind === 'camera'
-        ? resolveCamera3D(camera, liveCameraAnim, {
-            width: canvasWidth,
-            height: canvasHeight,
-          })
-        : null,
-    [camera, liveCameraAnim, canvasWidth, canvasHeight],
-  )
-
   const hitTestCanvas3D = useCallback(
     (
       clientX: number,
       clientY: number,
       independentNodes = false,
     ) => {
-      if (!resolvedCamera3D || !solved) return null
+      if (!camera || camera.kind !== 'camera' || !solved) return null
       const point = clientToViewport(clientX, clientY)
       if (!point) return null
       // Hit testing is a discrete pointer action. Building this hierarchy on
       // every camera animation frame duplicated the renderer's full scene
       // walk even when the user never interacted with the canvas.
-      const hitAnimated = threeCameraAvailable
-        ? getAnimEngine().getSnapshot()
-        : animated
+      const engineAnimated = getAnimEngine().getSnapshot()
+      const previewSnapshot = cameraPreviewStore.getSnapshot()
+      const currentCameraAnim = mergeCameraAnimationPreview(
+        engineAnimated[camera.id] ?? liveCameraAnim,
+        previewSnapshot?.cameraId === camera.id
+          ? previewSnapshot.value
+          : undefined,
+      )
+      const currentCamera = resolveCamera3D(camera, currentCameraAnim, {
+        width: canvasWidth,
+        height: canvasHeight,
+      })
+      const hitAnimated = threeCameraAvailable ? engineAnimated : animated
       const planes3D = buildWorldPlanes(
         api,
         solved,
         hitAnimated,
-        resolvedCamera3D,
+        currentCamera,
         { independentNodes },
       )
       return hitTestPlanes(
         planes3D,
         viewportPointToRay(
-          resolvedCamera3D,
+          currentCamera,
           point.x,
           point.y,
           { width: canvasWidth, height: canvasHeight },
         ),
-        resolvedCamera3D,
+        currentCamera,
         { width: canvasWidth, height: canvasHeight },
       )
     },
     [
-      resolvedCamera3D,
+      camera,
       solved,
       api,
       animated,
       threeCameraAvailable,
+      liveCameraAnim,
       clientToViewport,
       canvasWidth,
       canvasHeight,
@@ -2906,6 +2945,9 @@ export function Canvas() {
                       api={api}
                       layout={solved}
                       animationIds={renderOrder}
+                      editorZoom={view.zoom}
+                      showSelectionOverlay={cameraAccurateSelectionActive}
+                      clientToViewport={clientToViewport}
                       camera={camera}
                       width={canvasWidth}
                       height={canvasHeight}
@@ -3080,7 +3122,7 @@ export function Canvas() {
 	                : undefined
             }
           >
-            {solved && (
+            {solved && (!camera || !cameraAccurateSelectionActive) && (
               <SelectionOverlay
                 solved={solved}
                 animated={animated}

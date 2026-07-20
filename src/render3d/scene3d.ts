@@ -104,6 +104,12 @@ interface PlaneBuildOptions {
    */
   independentNodes?: boolean
   /**
+   * Restrict an independent-node build to these nodes and the ancestor paths
+   * needed to resolve their world transforms. Selection chrome uses this to
+   * stay camera-accurate without walking/rasterizing every layer each frame.
+   */
+  targetNodeIds?: ReadonlySet<NodeId>
+  /**
    * Persistent scene topology prepared outside the animation loop. When this
    * is omitted, buildWorldPlanes creates an equivalent one-shot context so
    * existing callers retain the same behavior.
@@ -551,6 +557,10 @@ export function buildWorldPlanes(
   const context = options.context ?? createPlaneBuildContext(api)
   const rootId = context.rootId
   if (!rootId) return []
+  const targetNodeIds = options.targetNodeIds
+  const targetPathNodeIds = targetNodeIds
+    ? collectTargetPathNodeIds(context, targetNodeIds)
+    : null
   const planes: Plane3D[] = []
   const getNode = (nodeId: NodeId): Node | null =>
     context.nodesById.get(nodeId) ?? null
@@ -604,6 +614,7 @@ export function buildWorldPlanes(
   }
 
   const visit = (id: NodeId, inherited: Inherited3D, activeClips: PlaneClip3D[] = []): void => {
+    if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera') return
@@ -660,12 +671,14 @@ export function buildWorldPlanes(
     const parentMode = parent?.transform.renderMode ?? 'flat'
     const isRootChild = node.parent === rootId
     const independentNodes = options.independentNodes ?? false
+    const isRequestedNode = !targetNodeIds || targetNodeIds.has(id)
     const segmentText = segmentTextNodeIds.has(id)
     const videoStackSibling = !!parent && hasDirectVideoChild(parent)
     const segmentStackSibling = !!parent && hasDirectSegmentTextChild(parent)
     const splitsSegmentStack = hasDirectSegmentTextChild(node)
     const containsExplicit3DDescendant = hasExplicit3DDescendant(id)
     const shouldEmitPlane =
+      isRequestedNode &&
       !isRoot &&
       (segmentText ||
         independentNodes ||
@@ -754,6 +767,23 @@ export function buildWorldPlanes(
 
   visit(rootId, IDENTITY_INHERITED)
   return planes
+}
+
+function collectTargetPathNodeIds(
+  context: PlaneBuildContext,
+  targetNodeIds: ReadonlySet<NodeId>,
+): Set<NodeId> {
+  const paths = new Set<NodeId>()
+  for (const targetId of targetNodeIds) {
+    let current: NodeId | null = targetId
+    const visited = new Set<NodeId>()
+    while (current && !visited.has(current)) {
+      visited.add(current)
+      paths.add(current)
+      current = context.nodesById.get(current)?.parent ?? null
+    }
+  }
+  return paths
 }
 
 export function hitTestPlanes(
