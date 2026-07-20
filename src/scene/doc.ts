@@ -22,12 +22,17 @@ import type {
   Track,
   TrackId,
   Transform,
+  VectorDocument,
+  VectorNode,
+  VectorSource,
+  VectorViewBox,
 } from '@/scene/types'
 import {
   DEFAULT_CAMERA_SCROLL_SENSITIVITY,
   normalizeCameraScrollSensitivity,
 } from '@/scene/types'
 import { normalizeTextAnimation } from '@/anim/textAnimations'
+import { emptyVectorDocument } from '@/scene/vector/model'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -224,6 +229,12 @@ export interface NodeBaseMutable {
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
   importWarning: string
+  // vector-kind fields
+  viewBox: VectorViewBox
+  vector: VectorDocument
+  trimOffset: number
+  source: VectorSource | undefined
+  importFidelity: VectorNode['importFidelity']
   // media-kind fields — used by audio/video layers.
   poster: string
   duration: number
@@ -344,9 +355,19 @@ const MEDIA_DEFAULT_APPEARANCE: Appearance = {
   effects: [],
 }
 
+const VECTOR_DEFAULT_APPEARANCE: Appearance = {
+  opacity: 1,
+  fill: null,
+  stroke: null,
+  cornerRadius: 0,
+  blendMode: 'normal',
+  effects: [],
+}
+
 function defaultAppearanceForKind(kind: NodeKind): Appearance {
   if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
   if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
+  if (kind === 'vector') return VECTOR_DEFAULT_APPEARANCE
   return DEFAULT_APPEARANCE
 }
 
@@ -357,7 +378,7 @@ function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
     blendMode: normalizeBlendMode(appearance.blendMode),
     effects: appearance.effects ?? [],
   }
-  if (kind === 'video' || kind === 'audio') {
+  if (kind === 'video' || kind === 'audio' || kind === 'vector') {
     return {
       ...normalized,
       fill: null,
@@ -580,6 +601,30 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
               }
             : {}),
         } as Node
+      case 'vector':
+        return {
+          ...base,
+          kind,
+          size: (y.get('size') as Size) ?? DEFAULT_SIZE,
+          viewBox:
+            (y.get('viewBox') as VectorViewBox | undefined) ?? {
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 100,
+            },
+          vector:
+            (y.get('vector') as VectorDocument | undefined) ??
+            emptyVectorDocument(),
+          trimStart: clamp01((y.get('trimStart') as number | undefined) ?? 0),
+          trimEnd: clamp01((y.get('trimEnd') as number | undefined) ?? 1),
+          trimOffset:
+            finiteNumber((y.get('trimOffset') as number | undefined), 0),
+          source: (y.get('source') as VectorSource | undefined) ?? undefined,
+          importFidelity:
+            (y.get('importFidelity') as VectorNode['importFidelity'] | undefined) ??
+            'editable',
+        } as VectorNode
       case 'video':
       case 'audio':
         return {
@@ -914,8 +959,18 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             y.set('interactions', cp?.interactions ?? [])
           }
         }
-        if (kind === 'rect' || kind === 'ellipse' || kind === 'image') {
+        if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
+        }
+        if (kind === 'vector') {
+          const vp = props as Partial<VectorNode> | undefined
+          y.set('viewBox', vp?.viewBox ?? { x: 0, y: 0, width: 100, height: 100 })
+          y.set('vector', vp?.vector ?? emptyVectorDocument())
+          y.set('trimStart', clamp01(vp?.trimStart ?? 0))
+          y.set('trimEnd', clamp01(vp?.trimEnd ?? 1))
+          y.set('trimOffset', finiteNumber(vp?.trimOffset, 0))
+          if (vp?.source) y.set('source', vp.source)
+          y.set('importFidelity', vp?.importFidelity ?? 'editable')
         }
         if (kind === 'video' || kind === 'audio') {
           // Video takes the normal 100×100 default; audio gets a compact
@@ -1419,11 +1474,20 @@ function genId(): NodeId {
   return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10)
 }
 
+function finiteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function clamp01(value: unknown): number {
+  return Math.max(0, Math.min(1, finiteNumber(value, 0)))
+}
+
 function defaultName(kind: NodeKind): string {
   switch (kind) {
     case 'frame': return 'Frame'
     case 'rect': return 'Rectangle'
     case 'ellipse': return 'Ellipse'
+    case 'vector': return 'Vector'
     case 'text': return 'Text'
     case 'image': return 'Image'
     case 'video': return 'Video'

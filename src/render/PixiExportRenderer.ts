@@ -52,8 +52,27 @@ import type {
   SceneAPI,
   Stroke,
   TextNode,
+  VectorNode,
 } from '@/scene'
 import { displayedText } from '@/scene'
+import {
+  paintVectorNodeToCanvas,
+  vectorTrimState,
+} from '@/render/vectorPaint'
+import { getPreservedVectorSource } from '@/render/vectorSource'
+
+interface VectorRasterEntry {
+  canvas: HTMLCanvasElement
+  context: CanvasRenderingContext2D
+  texture: Texture
+  width: number
+  height: number
+  paintedVector: VectorNode['vector'] | null
+  paintedSource: VectorNode['source']
+  paintedImportFidelity: VectorNode['importFidelity'] | null
+  paintedViewBoxKey: string
+  paintedTrimKey: string
+}
 
 /**
  * Public input for a frame render. The caller (the export orchestrator)
@@ -94,6 +113,8 @@ export class PixiExportRenderer {
    * parallel with encoding).
    */
   private imageTextures: Map<string, Texture> = new Map()
+  /** Reusable Canvas2D surfaces for canonical editable vector artwork. */
+  private vectorRasters: Map<NodeId, VectorRasterEntry> = new Map()
   /**
    * Set of font families we've asked the document to load. Pixi Text
    * draws to a 2D canvas which uses whatever fonts the document has
@@ -168,6 +189,10 @@ export class PixiExportRenderer {
     // Don't clear imageTextures — Pixi already destroyed them when we
     // destroyed the app. The Map references would be dangling; reset.
     this.imageTextures.clear()
+    for (const raster of this.vectorRasters.values()) {
+      raster.texture.destroy(true)
+    }
+    this.vectorRasters.clear()
     this.fontsLoaded.clear()
     this.initialized = false
     this.outputWidth = 0
@@ -200,6 +225,9 @@ export class PixiExportRenderer {
         imgSrcs.add(node.src)
       } else if (node.kind === 'text' && node.fontFamily) {
         fontFamilies.add(node.fontFamily)
+      } else if (node.kind === 'vector') {
+        const preserved = getPreservedVectorSource(node, vectorTrimState(node))
+        if (preserved) imgSrcs.add(preserved.dataUrl)
       }
       for (const childId of node.children) walk(childId)
     }
@@ -540,7 +568,7 @@ export class PixiExportRenderer {
       this.debugStats.skipped0Size++
       // Loud about size-zero text/image — these are the most likely
       // missing-content sources, easy to track down once we know.
-      if (node.kind === 'text' || node.kind === 'image') {
+      if (node.kind === 'text' || node.kind === 'image' || node.kind === 'vector') {
         // eslint-disable-next-line no-console
         console.warn(
           '[PixiExport] skipped 0-size node',
@@ -555,9 +583,6 @@ export class PixiExportRenderer {
       return
     }
 
-    const g = new Graphics()
-    container.addChild(g)
-
     // Local origin: container's pivot=(w/2, h/2) and position=(rect.x +
     // w/2, rect.y + h/2). The two offsets cancel, so local (0, 0) maps
     // to world (rect.x, rect.y) — i.e. the rect's top-left. Draw shapes
@@ -568,6 +593,14 @@ export class PixiExportRenderer {
     const localY = 0
     const w = rect.width
     const h = rect.height
+
+    if (node.kind === 'vector') {
+      this.paintVectorShape(node, w, h, container)
+      return
+    }
+
+    const g = new Graphics()
+    container.addChild(g)
 
     if (node.kind === 'frame' || node.kind === 'rect') {
       this.paintRectShape(g, localX, localY, w, h, node, animated)
@@ -602,6 +635,106 @@ export class PixiExportRenderer {
       // Cameras and audio nodes don't paint anything. The camera's
       // transform is applied to the root in a later phase. Audio is invisible.
     }
+  }
+
+  private paintVectorShape(
+    node: VectorNode,
+    width: number,
+    height: number,
+    container: Container,
+  ): void {
+    const trim = vectorTrimState(node)
+    const preserved = getPreservedVectorSource(node, trim)
+    if (preserved) {
+      const texture = this.imageTextures.get(preserved.dataUrl)
+      if (texture) {
+        const sprite = new Sprite(texture)
+        sprite.width = width
+        sprite.height = height
+        container.addChild(sprite)
+        return
+      }
+    }
+
+    try {
+      const rootScaleX = Math.abs(this.root?.scale.x ?? 1)
+      const rootScaleY = Math.abs(this.root?.scale.y ?? 1)
+      const nodeScaleX = Math.abs(container.scale.x || 1)
+      const nodeScaleY = Math.abs(container.scale.y || 1)
+      const pixelWidth = Math.max(
+        1,
+        Math.min(this.outputWidth, Math.ceil(width * rootScaleX * nodeScaleX)),
+      )
+      const pixelHeight = Math.max(
+        1,
+        Math.min(this.outputHeight, Math.ceil(height * rootScaleY * nodeScaleY)),
+      )
+      const raster = this.vectorRaster(node.id, pixelWidth, pixelHeight)
+      const viewBoxKey = `${node.viewBox.x},${node.viewBox.y},${node.viewBox.width},${node.viewBox.height}`
+      const trimKey = `${trim.start},${trim.end},${trim.offset}`
+      const rasterIsCurrent =
+        raster.paintedVector === node.vector &&
+        raster.paintedSource === node.source &&
+        raster.paintedImportFidelity === node.importFidelity &&
+        raster.paintedViewBoxKey === viewBoxKey &&
+        raster.paintedTrimKey === trimKey
+      if (!rasterIsCurrent) {
+        raster.context.setTransform(1, 0, 0, 1, 0, 0)
+        raster.context.clearRect(0, 0, pixelWidth, pixelHeight)
+        paintVectorNodeToCanvas(
+          raster.context,
+          node,
+          pixelWidth,
+          pixelHeight,
+          trim,
+        )
+        raster.texture.source.update()
+        raster.paintedVector = node.vector
+        raster.paintedSource = node.source
+        raster.paintedImportFidelity = node.importFidelity
+        raster.paintedViewBoxKey = viewBoxKey
+        raster.paintedTrimKey = trimKey
+      }
+      const sprite = new Sprite(raster.texture)
+      sprite.width = width
+      sprite.height = height
+      container.addChild(sprite)
+    } catch (error) {
+      // One malformed imported contour must not abort the entire export.
+      console.warn('[PixiExport] vector paint failed', node.id, error)
+    }
+  }
+
+  private vectorRaster(
+    nodeId: NodeId,
+    width: number,
+    height: number,
+  ): VectorRasterEntry {
+    const current = this.vectorRasters.get(nodeId)
+    if (current && current.width === width && current.height === height) {
+      return current
+    }
+    if (current) current.texture.destroy(true)
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not create vector raster surface')
+    const entry: VectorRasterEntry = {
+      canvas,
+      context,
+      texture: Texture.from(canvas, true),
+      width,
+      height,
+      paintedVector: null,
+      paintedSource: undefined,
+      paintedImportFidelity: null,
+      paintedViewBoxKey: '',
+      paintedTrimKey: '',
+    }
+    this.vectorRasters.set(nodeId, entry)
+    return entry
   }
 
   /**

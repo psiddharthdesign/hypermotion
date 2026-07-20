@@ -11,6 +11,7 @@ import type {
   SizeAxis,
 } from '@/scene'
 import { makeTextMeasure } from '@/layout/textMeasure'
+import { makeVectorMeasure } from '@/layout/vectorMeasure'
 
 /**
  * Pure translation from scene enum values to Yoga enum values.
@@ -99,6 +100,8 @@ export function applyNodeStyle(y: Yoga, yNode: YogaNode, node: Node): void {
   // wraps to the declared width but reports an intrinsic height.
   if (node.kind === 'text') {
     yNode.setMeasureFunc(makeTextMeasure(y, node))
+  } else if (node.kind === 'vector') {
+    yNode.setMeasureFunc(makeVectorMeasure(y, node))
   }
 }
 

@@ -20,6 +20,7 @@ export type { ScenePersistence } from './persistence'
 export { createSampleScene } from './sample'
 export { SceneProvider } from './context'
 export { useSceneAPI, useSceneVersion } from './hooks'
+export * from './vector'
 // `apiReady` is the module-scope singleton — a Promise<SceneAPI> that
 // resolves once IndexedDB has hydrated the doc. Exposed for non-React
 // callers (the headless export driver) that need the API without going

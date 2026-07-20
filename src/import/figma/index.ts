@@ -21,8 +21,10 @@ export type {
   FigmaCapturedText,
   FigmaCapturedVector,
   FigmaPayload,
+  FigmaPayloadVersion,
 } from './types'
 export {
   FIGMA_PAYLOAD_FORMAT,
+  FIGMA_PAYLOAD_LEGACY_VERSION,
   FIGMA_PAYLOAD_VERSION,
 } from './types'

@@ -26,6 +26,8 @@ import {
   readElectronClipboardFiles,
 } from '@/ui/importClipboardFiles'
 import { toggleStaggerSetEditing } from '@/ui/staggerEditing'
+import { FIGMA_PAYLOAD_FORMAT } from '@/import/figma'
+import { FIGMA_PASTE_TEXT_EVENT } from '@/ui/hooks/useFigmaPaste'
 
 /**
  * Global keyboard shortcuts.
@@ -309,6 +311,22 @@ export function useKeyboardShortcuts() {
               setSelection(ids)
               return
             }
+          }
+
+          // An in-app layer copy can still be populated while the user copies
+          // a fresh selection from Figma. Prefer the newest system payload so
+          // Cmd+V imports Figma instead of replaying stale internal layers.
+          const clipboardBridge = window.hypermotion?.clipboard
+          const externalText = clipboardBridge
+            ? await clipboardBridge.readText().catch(() => '')
+            : ''
+          if (externalText.includes(FIGMA_PAYLOAD_FORMAT)) {
+            window.dispatchEvent(
+              new CustomEvent<string>(FIGMA_PASTE_TEXT_EVENT, {
+                detail: externalText,
+              }),
+            )
+            return
           }
 
           const sel = useUI.getState().selection

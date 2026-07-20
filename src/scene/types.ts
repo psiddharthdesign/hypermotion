@@ -501,6 +501,172 @@ export interface EllipseNode extends NodeBase {
   size: Size
 }
 
+// ---------------------------------------------------------------------------
+// Native vectors
+// ---------------------------------------------------------------------------
+
+/** SVG-compatible 2D affine matrix in `[a, b, c, d, e, f]` order. */
+export type VectorMatrix = [number, number, number, number, number, number]
+
+export interface VectorViewBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface VectorPosition {
+  x: number
+  y: number
+}
+
+/**
+ * A stable anchor in a vector network. Cubic handles live on segments rather
+ * than anchors so one point can participate in branching Figma networks.
+ */
+export interface VectorPoint extends VectorPosition {
+  id: string
+  handleMode?: 'mirrored' | 'aligned' | 'independent'
+  cornerRadius?: number
+}
+
+export interface VectorSegment {
+  id: string
+  startPointId: string
+  endPointId: string
+  kind: 'line' | 'cubic'
+  /** Cubic control point leaving the start anchor. */
+  controlStart?: VectorPosition
+  /** Cubic control point arriving at the end anchor. */
+  controlEnd?: VectorPosition
+  /** True for the implicit straight edge created by an SVG `Z` command. */
+  isClosing?: boolean
+}
+
+export interface VectorContour {
+  id: string
+  segmentIds: string[]
+  closed: boolean
+  fillRule: 'nonzero' | 'evenodd'
+}
+
+/** A fillable region can reference multiple contours (outer ring + holes). */
+export interface VectorRegion {
+  id: string
+  contourIds: string[]
+  fillRule: 'nonzero' | 'evenodd'
+  /** Optional subset of the owning item's fills used by this region. */
+  fillIds?: string[]
+}
+
+export interface VectorGeometry {
+  points: Record<string, VectorPoint>
+  segments: Record<string, VectorSegment>
+  contours: VectorContour[]
+  regions?: VectorRegion[]
+}
+
+export interface VectorPaintBase {
+  id: string
+  visible: boolean
+  opacity: number
+  blendMode: BlendMode
+  /** Paint-space to item-space transform, retained exactly on import. */
+  transform?: VectorMatrix
+  /** SVG gradient coordinate system; omitted for non-gradient paints. */
+  coordinateSpace?: 'objectBoundingBox' | 'userSpaceOnUse'
+  /** SVG gradient behavior outside its first/last stops. */
+  spread?: 'pad' | 'reflect' | 'repeat'
+}
+
+export type VectorPaint =
+  | (VectorPaintBase & { kind: 'solid'; color: Color })
+  | (VectorPaintBase & {
+      kind: 'linear'
+      stops: GradientStop[]
+      start: VectorPosition
+      end: VectorPosition
+    })
+  | (VectorPaintBase & {
+      kind: 'radial'
+      stops: GradientStop[]
+      center: VectorPosition
+      radiusX: number
+      radiusY: number
+      rotation: number
+    })
+  | (VectorPaintBase & {
+      kind: 'conic'
+      stops: GradientStop[]
+      center: VectorPosition
+      angle: number
+    })
+  | (VectorPaintBase & {
+      kind: 'image'
+      src: string
+      fit: 'cover' | 'contain' | 'fill' | 'tile'
+    })
+
+export interface VectorStroke {
+  id: string
+  paint: VectorPaint
+  width: number
+  align: 'inside' | 'center' | 'outside'
+  cap: 'butt' | 'round' | 'square'
+  join: 'miter' | 'round' | 'bevel'
+  miterLimit: number
+  dash: number[]
+  dashOffset: number
+  opacity: number
+  visible: boolean
+  /** Figma arrow/shape caps; renderers may preserve them as a fidelity fallback. */
+  startCap?: string
+  endCap?: string
+}
+
+export interface VectorItem {
+  id: string
+  name?: string
+  transform: VectorMatrix
+  geometry: VectorGeometry
+  fills: VectorPaint[]
+  strokes: VectorStroke[]
+  opacity: number
+  blendMode: BlendMode
+  visible: boolean
+}
+
+export interface VectorDocument {
+  version: 1
+  items: VectorItem[]
+}
+
+export interface VectorSource {
+  provider: 'figma' | 'svg' | 'native'
+  sourceNodeId?: string
+  /** Sanitized, inert source kept only for visual-preservation fallback. */
+  originalSvg?: string
+  payloadVersion?: number
+  unsupportedFeatures?: string[]
+  /** Provider-specific editable metadata retained losslessly for round-trips. */
+  metadata?: Record<string, unknown>
+}
+
+export interface VectorNode extends NodeBase {
+  kind: 'vector'
+  size: Size
+  /** Intrinsic coordinate system used for hug sizing and vector editing. */
+  viewBox: VectorViewBox
+  vector: VectorDocument
+  /** Normalized 0..1 path trim controls. */
+  trimStart: number
+  trimEnd: number
+  /** Normalized path-length offset; values outside 0..1 intentionally wrap. */
+  trimOffset: number
+  source?: VectorSource
+  importFidelity: 'editable' | 'preserved' | 'raster-fallback'
+}
+
 export type TextFontStyle = 'normal' | 'italic'
 export type TextCase =
   | 'original'
@@ -819,6 +985,7 @@ export type Node =
   | FrameNode
   | RectNode
   | EllipseNode
+  | VectorNode
   | TextNode
   | ImageNode
   | VideoNode
