@@ -42,10 +42,6 @@ Build-time dependencies:
   - Tailwind CSS (MIT)                  https://github.com/tailwindlabs/tailwindcss
   - ESLint (MIT)                        https://github.com/eslint/eslint
 
-Interface assets:
-  - Nucleo UI Essential icons           https://nucleoapp.com/free-ui-icons
-    Used under the Nucleo Icons License  https://nucleoapp.com/license
-
 A complete machine-readable list of dependencies and their pinned
 versions is maintained in pnpm-lock.yaml.
 

@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useRef, type ReactNode } from 'react'
+import {
+  Circle,
+  Frame,
+  Hand,
+  ImageIcon,
+  MousePointer2,
+  Square,
+  Type,
+  Video,
+} from 'lucide-react'
 import { useUI, type Tool } from '@/state/ui'
 import { useSceneAPI } from '@/scene'
 import { importImageFiles } from '@/ui/importImage'
 import { importMediaFiles } from '@/ui/importMedia'
-import {
-  NucleoEllipseIcon,
-  NucleoFrameIcon,
-  NucleoHandIcon,
-  NucleoImageIcon,
-  NucleoPointerIcon,
-  NucleoRectangleIcon,
-  NucleoTextToolIcon,
-  NucleoVideoIcon,
-} from '@/ui/icons/NucleoUiIcons'
 
 /**
  * FloatingDock — the tool palette as a floating pill at the bottom of
@@ -38,12 +38,12 @@ import {
  */
 
 const TOOLS: { id: Tool; shortcut: string; hint: string; icon: ReactNode }[] = [
-  { id: 'select', shortcut: 'V', hint: 'Select', icon: <NucleoPointerIcon size={18} /> },
-  { id: 'hand', shortcut: 'H', hint: 'Hand (pan)', icon: <NucleoHandIcon size={18} /> },
-  { id: 'frame', shortcut: 'F', hint: 'Frame', icon: <NucleoFrameIcon size={18} /> },
-  { id: 'rect', shortcut: 'R', hint: 'Rectangle', icon: <NucleoRectangleIcon size={18} /> },
-  { id: 'ellipse', shortcut: 'O', hint: 'Ellipse', icon: <NucleoEllipseIcon size={18} /> },
-  { id: 'text', shortcut: 'T', hint: 'Text', icon: <NucleoTextToolIcon size={18} /> },
+  { id: 'select', shortcut: 'V', hint: 'Select', icon: <MousePointer2 size={18} /> },
+  { id: 'hand', shortcut: 'H', hint: 'Hand (pan)', icon: <Hand size={18} /> },
+  { id: 'frame', shortcut: 'F', hint: 'Frame', icon: <Frame size={18} /> },
+  { id: 'rect', shortcut: 'R', hint: 'Rectangle', icon: <Square size={18} /> },
+  { id: 'ellipse', shortcut: 'O', hint: 'Ellipse', icon: <Circle size={18} /> },
+  { id: 'text', shortcut: 'T', hint: 'Text', icon: <Type size={18} /> },
 ]
 
 // Dock groupings. Each entry is the index in TOOLS where that group
@@ -152,7 +152,7 @@ export function FloatingDock() {
         onClick={() => imageInputRef.current?.click()}
         className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
       >
-        <NucleoImageIcon size={18} />
+        <ImageIcon size={18} />
       </button>
       <input
         ref={imageInputRef}
@@ -171,7 +171,7 @@ export function FloatingDock() {
         onClick={() => mediaInputRef.current?.click()}
         className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
       >
-        <NucleoVideoIcon size={18} />
+        <Video size={18} />
       </button>
       <input
         ref={mediaInputRef}

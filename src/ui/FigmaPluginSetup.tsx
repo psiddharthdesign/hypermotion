@@ -10,12 +10,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  NucleoClipboardCheckIcon,
-  NucleoCloseIcon,
-  NucleoDownloadIcon,
-  NucleoFileContentIcon,
-  NucleoPuzzlePieceIcon,
-} from '@/ui/icons/NucleoUiIcons'
+  ClipboardCheck,
+  Download,
+  FileJson,
+  Puzzle,
+  X,
+} from 'lucide-react'
 
 const RELEASES_URL =
   'https://github.com/psiddharthdesign/hypermotion/releases/latest'
@@ -48,7 +48,7 @@ export function FigmaPluginSetupButton() {
         aria-expanded={open}
         className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
       >
-        <NucleoPuzzlePieceIcon size={15} />
+        <Puzzle size={15} />
         <span className="uppercase">Figma import</span>
       </button>
       {open && <FigmaPluginSetupModal onClose={close} />}
@@ -119,7 +119,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
         <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-3.5">
           <div className="flex min-w-0 items-start gap-2.5">
             <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel text-accent">
-              <NucleoPuzzlePieceIcon size={15} />
+              <Puzzle size={15} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -144,7 +144,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
             aria-label="Close Figma plugin setup"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted outline-none hover:bg-panel hover:text-text focus-visible:ring-2 focus-visible:ring-accent/40"
           >
-            <NucleoCloseIcon size={14} />
+            <X size={14} />
           </button>
         </header>
 
@@ -152,7 +152,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
           <ol className="grid gap-3">
             <SetupStep
               number="1"
-              icon={<NucleoDownloadIcon size={14} />}
+              icon={<Download size={14} />}
               title="Download the plugin"
               action={
                 <button
@@ -161,7 +161,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
                   onClick={openReleases}
                   className="mt-2 flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-3 hm-type-body font-semibold uppercase text-white outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent/40"
                 >
-                  <NucleoDownloadIcon size={14} />
+                  <Download size={14} />
                   Download from releases
                 </button>
               }
@@ -171,7 +171,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
             </SetupStep>
             <SetupStep
               number="2"
-              icon={<NucleoFileContentIcon size={14} />}
+              icon={<FileJson size={14} />}
               title="Import manifest.json"
             >
               In Figma Desktop, choose{' '}
@@ -183,7 +183,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
             </SetupStep>
             <SetupStep
               number="3"
-              icon={<NucleoClipboardCheckIcon size={14} />}
+              icon={<ClipboardCheck size={14} />}
               title="Copy into Hyper Motion"
             >
               Run <strong>Hyper Motion Import</strong>, choose{' '}

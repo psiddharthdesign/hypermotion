@@ -28,6 +28,7 @@
     "@ffmpeg/util": "^0.12.1",
     "gifenc": "^1.0.3",
     "immer": "^11.1.4",
+    "lucide-react": "^1.25.0",
     "mp4-muxer": "^5.2.2",
     "pixi.js": "^8.6.0",
     "react": "^19.2.5",
