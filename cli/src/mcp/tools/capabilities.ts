@@ -38,23 +38,23 @@ export const QUERY_TOOLS = [
 export type QueryToolName = (typeof QUERY_TOOLS)[number]
 
 type CapabilitiesPayload = {
-  sceneExtension: '.hype'
-  mcpTools: readonly McpToolName[]
-  nodeKinds: typeof NODE_KINDS
-  patchOperations: typeof PATCH_OPERATION_TYPES
-  validation: {
-    structuralSceneValidation: boolean
+  readonly sceneExtension: '.hype'
+  readonly mcpTools: readonly McpToolName[]
+  readonly nodeKinds: typeof NODE_KINDS
+  readonly patchOperations: typeof PATCH_OPERATION_TYPES
+  readonly validation: {
+    readonly structuralSceneValidation: boolean
   }
-  validationTools: typeof VALIDATION_TOOLS
-  queryTools: typeof QUERY_TOOLS
-  renderFormats: typeof RENDER_FORMATS
-  renderQualities: typeof RENDER_QUALITIES
-  renderFileSceneInput: boolean
-  keyframeableProperties: typeof PROPERTY_IDS
+  readonly validationTools: typeof VALIDATION_TOOLS
+  readonly queryTools: typeof QUERY_TOOLS
+  readonly renderFormats: typeof RENDER_FORMATS
+  readonly renderQualities: typeof RENDER_QUALITIES
+  readonly renderFileSceneInput: boolean
+  readonly keyframeableProperties: typeof PROPERTY_IDS
 }
 
 type KeyframeablePropertiesPayload = {
-  keyframeableProperties: typeof PROPERTY_IDS
+  readonly keyframeableProperties: typeof PROPERTY_IDS
 }
 
 type CapabilityToolPayload = CapabilitiesPayload | KeyframeablePropertiesPayload
