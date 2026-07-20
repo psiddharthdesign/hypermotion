@@ -101,8 +101,6 @@ Figma Community publish (one-click install) is on the v0.2 roadmap.
   includes a versioned, ready-to-import Figma plugin ZIP alongside the app.
 - **More compact editor chrome.** General interface text now uses an 11px base
   with a tighter semantic scale while authored canvas text remains unchanged.
-- **Consistent editor icons.** The floating tool dock and setup UI now use the
-  Nucleo UI Essential outline set instead of mixed local artwork.
 - **Assets safely gated.** The Assets panel is marked Coming Soon and all of
   its browsing, editing, dragging, and insertion paths are disabled.
 - **Stable timeline tabs.** Compact timeline labels remain on one line instead

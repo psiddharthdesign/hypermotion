@@ -27,8 +27,6 @@ Figma plugin automatically alongside every desktop build.
   metadata while leaving authored canvas text and exported compositions alone.
 - Preserve explicit control typography instead of globally overriding form
   sizes, so compact mode does not collapse intentionally larger controls.
-- Replace the floating tool dock artwork and Figma setup icons with a consistent
-  Nucleo UI Essential outline set.
 - Keep the Animated Layers timeline tab on one line at narrow panel widths.
 
 ### Assets safely gated
