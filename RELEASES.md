@@ -3,6 +3,24 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## v0.1.17 — Editor and Figma setup maintenance (2026-07-21)
+
+This maintenance release keeps the current editor and Figma setup aligned with
+the latest source on `main` while removing obsolete public and source references.
+
+### Included
+
+- Keep the direct Figma plugin download and three-step manifest import flow.
+- Keep the compact editor typography, gated Assets panel, and stable timeline tabs.
+- Remove obsolete product-copy and source references.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the one-line
+installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
+
 ## v0.1.16 — Compact editor polish and downloadable Figma setup (2026-07-20)
 
 Hyper Motion's editor chrome is denser and more consistent, the Figma importer

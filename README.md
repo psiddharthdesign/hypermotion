@@ -14,7 +14,7 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
 WebM / GIF export.
 
-## Status — v0.1.16 research preview
+## Status — v0.1.17 research preview
 
 The semantic-layout-animation bet works end-to-end, with desktop
 editing, Figma import, pixel-correct export, and CLI / MCP workflows for
@@ -34,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.16`.
+For a specific version: `curl ... | bash -s -- v0.1.17`.
 
 ### Manual install
 
@@ -93,7 +93,7 @@ Direct point editing remains a follow-up. Contributor source lives in
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.16
+## What's in v0.1.17
 
 - **Direct Figma plugin download.** The setup modal now leads with the release
   ZIP and the standard three-step Figma manifest import flow.
