@@ -363,7 +363,7 @@ export function resolveCamera3D(
   }
   const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
   const position = add3(pointOfInterest, orbitOffset)
-  const basis = cameraBasisFromPosition(position, pointOfInterest, -rotation.z)
+  const basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
   const focusScreen = {
@@ -493,7 +493,7 @@ function cameraBasisFromPosition(
 }
 
 function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
-  return cameraBasisFromPosition(camera.position, camera.pointOfInterest, -camera.rotation.z)
+  return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
 }
 
 export function viewportPointToRay(

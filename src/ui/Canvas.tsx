@@ -65,6 +65,7 @@ import { FloatingDock } from '@/ui/FloatingDock'
 import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { CameraPostEffectsFallback } from '@/render/CameraPostEffectsFallback'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
+import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import {
@@ -81,6 +82,7 @@ import {
   buildWorldPlanes,
   effectiveApertureStrength,
   hitTestPlanes,
+  projectWorldPoint,
   resolveCamera3D,
   viewportPointToRay,
 } from '@/render3d/scene3d'
@@ -128,6 +130,7 @@ type AnimatedThreeSceneViewportProps = Omit<
 const EMPTY_CAMERA_ANIMATION_IDS: NodeId[] = []
 const EMPTY_SCENE_ANIMATION_IDS: NodeId[] = []
 const EMPTY_THREE_SELECTION_IDS: NodeId[] = []
+const CAMERA_CONTROL_DRAG_THRESHOLD_PX = 6
 const subscribeToNothing = () => () => {}
 const getNoCameraPreview = () => undefined
 
@@ -365,35 +368,6 @@ function degToRad(deg: number): number {
   return (deg * Math.PI) / 180
 }
 
-function sub3(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }
-}
-
-function rotateX(v: Vec3, deg: number): Vec3 {
-  const r = degToRad(deg)
-  const c = Math.cos(r)
-  const s = Math.sin(r)
-  return { x: v.x, y: v.y * c - v.z * s, z: v.y * s + v.z * c }
-}
-
-function rotateY(v: Vec3, deg: number): Vec3 {
-  const r = degToRad(deg)
-  const c = Math.cos(r)
-  const s = Math.sin(r)
-  return { x: v.x * c + v.z * s, y: v.y, z: -v.x * s + v.z * c }
-}
-
-function rotateZ(v: Vec3, deg: number): Vec3 {
-  const r = degToRad(deg)
-  const c = Math.cos(r)
-  const s = Math.sin(r)
-  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c, z: v.z }
-}
-
-function inverseRotateEuler(v: Vec3, rotX: number, rotY: number, rotZ: number): Vec3 {
-  return rotateX(rotateY(rotateZ(v, -rotZ), -rotY), -rotX)
-}
-
 function cornerRadiusCss(
   cornerRadius: number,
   cornerRadii?: CornerRadii,
@@ -573,7 +547,11 @@ export function computeCameraDepthOfField(
   const fStop = Math.max(0.1, cameraAnim?.fStop ?? camera.fStop ?? 2.8)
   const focusZ = cameraAnim?.focusWorldZ ?? camera.focusWorldZ ?? focusDistance
   const maxBlur = Math.max(0, Math.min(128, cameraAnim?.blurLevel ?? camera.blurLevel ?? 1))
-  const focalLength = Math.max(50, camera.focalLength ?? 1000)
+  const focalLength = resolveCameraDomProjection(
+    camera,
+    cameraAnim,
+    { width: canvasWidth, height: canvasHeight },
+  ).focalLength
   const cameraZ = cameraAnim?.z ?? camera.transform.z
   const rotationX = cameraAnim?.rotationX ?? camera.transform.rotationX
   const rotationY = cameraAnim?.rotationY ?? camera.transform.rotationY
@@ -681,21 +659,12 @@ function projectWorldPointThroughCamera(
   canvasWidth: number,
   canvasHeight: number,
 ): { x: number; y: number } {
-  const focalLength = Math.max(50, camera.focalLength ?? 1000)
-  const cx = cameraAnim?.x ?? camera.transform.x
-  const cy = cameraAnim?.y ?? camera.transform.y
-  const cz = cameraAnim?.z ?? camera.transform.z
-  const rX = cameraAnim?.rotationX ?? camera.transform.rotationX
-  const rY = cameraAnim?.rotationY ?? camera.transform.rotationY
-  const rZ = cameraAnim?.rotation ?? camera.transform.rotation
-  const cameraOrigin: Vec3 = { x: cx, y: cy, z: -focalLength + cz }
-  const cameraSpace = inverseRotateEuler(sub3(point, cameraOrigin), rX, rY, rZ)
-  const denom = Math.max(1, cameraSpace.z)
-  const scale = focalLength / denom
-  return {
-    x: canvasWidth / 2 + cameraSpace.x * scale,
-    y: canvasHeight / 2 + cameraSpace.y * scale,
-  }
+  const viewport = { width: canvasWidth, height: canvasHeight }
+  return projectWorldPoint(
+    point,
+    resolveCamera3D(camera, cameraAnim, viewport),
+    viewport,
+  )
 }
 
 export function resolveCameraFocusTargetPoint(
@@ -973,58 +942,21 @@ export function Canvas() {
   // Apparent scale uses a textbook pinhole model:
   //   apparentScale = focalLength / (focalLength - z)
   //
-  // Focal length now lives on the camera node so users can dial it
-  // per-scene. Default 1000 matches the historical hardcoded value.
-  // Larger = more telephoto (subtler rotations, less Z-driven scale).
-  // Smaller = wide-angle (dramatic rotations, big Z scale).
-  const cameraFocalLength =
-    camera && camera.kind === 'camera'
-      ? Math.max(50, camera.focalLength ?? 1000)
-      : 1000
-  const cameraZ =
-    camera && camera.kind === 'camera'
-      ? liveCameraAnim?.z ?? camera.transform.z
-      : 0
-  const cameraDollyZ = cameraZ / 100
-  // Clamp the denominator so an animation through z = focal length
-  // (singularity) doesn't blow the scale up to infinity.
-  const cameraScaleFromZ = useMemo(() => {
-    const denom = Math.max(1, cameraFocalLength - cameraDollyZ)
-    return cameraFocalLength / denom
-  }, [cameraDollyZ, cameraFocalLength])
-
-  const cameraTransform = useMemo(() => {
-    if (!camera || camera.kind !== 'camera') return null
-    const cx = liveCameraAnim?.x ?? camera.transform.x
-    const cy = liveCameraAnim?.y ?? camera.transform.y
-    const rX =
-      liveCameraAnim?.rotationX ?? camera.transform.rotationX
-    const rY =
-      liveCameraAnim?.rotationY ?? camera.transform.rotationY
-    const rZ =
-      liveCameraAnim?.rotation ?? camera.transform.rotation
-    const s = cameraScaleFromZ
-    const w = canvasWidth
-    const h = canvasHeight
-    // Keep the editor preview faithful to the actual design DOM/Yoga
-    // renderer. WebGL remains the long-term 3D compositor, but until its
-    // texture pipeline can rasterize full design fidelity, the visible
-    // camera view should use the real DOM tree and CSS 3D camera tilt.
-    return (
-      `translate(${w / 2}px, ${h / 2}px) ` +
-      `scale(${s}, ${s}) ` +
-      `rotateX(${-rX}deg) ` +
-      `rotateY(${rY}deg) ` +
-      `rotateZ(${-rZ}deg) ` +
-      `translate(${-cx}px, ${-cy}px)`
-    )
-  }, [
-    camera,
-    liveCameraAnim,
-    cameraScaleFromZ,
-    canvasWidth,
-    canvasHeight,
-  ])
+  // Text editing reveals the DOM scene while the WebGL scene stays mounted.
+  // Resolve both renderers from the same FOV and direct-Z projection so that
+  // entering contenteditable never looks like a lens or camera jump.
+  const cameraDomProjection = useMemo(
+    () =>
+      resolveCameraDomProjection(
+        camera && camera.kind === 'camera' ? camera : null,
+        liveCameraAnim,
+        { width: canvasWidth, height: canvasHeight },
+      ),
+    [camera, liveCameraAnim, canvasWidth, canvasHeight],
+  )
+  const cameraFocalLength = cameraDomProjection.focalLength
+  const cameraScaleFromZ = cameraDomProjection.scale
+  const cameraTransform = cameraDomProjection.transform
   const cameraSceneContentStyle = useMemo<CSSProperties | undefined>(
     () =>
       cameraTransform
@@ -1609,40 +1541,6 @@ export function Canvas() {
         e.stopPropagation()
         return
       }
-      if (
-        !focusPickingCameraId &&
-        tool === 'select' &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        camera &&
-        camera.kind === 'camera' &&
-        selection.includes(camera.id)
-      ) {
-        const target = e.target as HTMLElement
-        if (target.closest('[data-export-hide="1"]')) return
-        const startTransform = displayedCameraTransform(camera)
-        cameraControlRef.current = {
-          pointerId: e.pointerId,
-          cameraId: camera.id,
-          mode: e.shiftKey ? 'pan' : 'rotate',
-          startX: e.clientX,
-          startY: e.clientY,
-          transform: startTransform,
-          latestTransform: startTransform,
-          startPlayhead: currentAnimationAuthorTime(),
-          startPerfTime: performance.now(),
-          lastSampleTime: currentAnimationAuthorTime(),
-          didStampStart: false,
-          moved: false,
-          samples: [],
-        }
-        cameraPreviewStore.set(camera.id, cameraTransformPreview(startTransform))
-        setIsCameraManipulating(true)
-        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
       if (!focusPickingCameraId) return
       const point = clientToViewport(e.clientX, e.clientY)
       const canvasPoint = clientToCanvas(e.clientX, e.clientY)
@@ -1683,17 +1581,11 @@ export function Canvas() {
       api,
       clientToViewport,
       clientToCanvas,
-      solved,
       focusPickingCameraId,
       setFocusPickingCameraId,
       setSelection,
       stampCanvasCameraPatch,
-      currentAnimationAuthorTime,
-      camera,
-      displayedCameraTransform,
-      selection,
       spacePanning,
-      tool,
       view.panX,
       view.panY,
     ],
@@ -2001,6 +1893,33 @@ export function Canvas() {
             e.preventDefault()
 	            return
 	          }
+	          // A flattened camera plane can miss a nested text node even
+	          // though the independent-node hit test used by double-click
+	          // finds it. When the camera itself is selected, check for that
+	          // content before arming a camera drag; otherwise the first press
+	          // can rotate the camera and the second press enters text editing.
+	          if (
+	            !directSelect &&
+	            camera &&
+	            camera.kind === 'camera' &&
+	            selection.includes(camera.id)
+	          ) {
+	            const contentHit = hitTestCanvas3D(
+	              e.clientX,
+	              e.clientY,
+	              true,
+	            )
+	            if (contentHit) {
+	              if (e.shiftKey) {
+	                useUI.getState().toggleInSelection(contentHit.nodeId, true)
+	              } else {
+	                setSelection([contentHit.nodeId])
+	              }
+	              e.preventDefault()
+	              e.stopPropagation()
+	              return
+	            }
+	          }
 	        }
 	        if (
 	          tool === 'select' &&
@@ -2104,7 +2023,10 @@ export function Canvas() {
 	        if (!current || current.kind !== 'camera') return
 	        const dx = e.clientX - cameraControl.startX
 	        const dy = e.clientY - cameraControl.startY
-	        if (!cameraControl.moved && Math.hypot(dx, dy) < 2) return
+	        if (
+	          !cameraControl.moved &&
+	          Math.hypot(dx, dy) < CAMERA_CONTROL_DRAG_THRESHOLD_PX
+	        ) return
 	        cameraControl.moved = true
 	        let nextTransform: CameraNode['transform']
 	        if (cameraControl.mode === 'rotate') {
@@ -2455,42 +2377,63 @@ export function Canvas() {
     cameraCommitTimer: null as number | null,
   })
 
+  const flushPendingCameraWheel = useCallback(() => {
+    const pending = pendingWheelRef.current
+    const cameraId = pending.cameraId
+    const cameraZ = pending.cameraZ
+    if (pending.cameraCommitTimer !== null) {
+      window.clearTimeout(pending.cameraCommitTimer)
+      pending.cameraCommitTimer = null
+    }
+    if (!cameraId || cameraZ === null) return
+    const authorTime =
+      pending.cameraAuthorTime ?? currentAnimationAuthorTime()
+    pending.cameraId = null
+    pending.cameraZ = null
+    pending.cameraAuthorTime = null
+    const current = api.getNode(cameraId)
+    if (!current || current.kind !== 'camera') {
+      cameraPreviewStore.clear(cameraId)
+      return
+    }
+    // A trackpad dolly can emit dozens of packets. Keep those packets in
+    // the shared rAF preview and author one scene/track mutation after the
+    // gesture goes idle, just like pointer-based camera movement.
+    api.doc.transact(() => {
+      api.setNodeProperty(current.id, 'transform', {
+        ...current.transform,
+        z: cameraZ,
+      })
+      stampCanvasTransformPatch(current.id, { z: cameraZ }, authorTime)
+    })
+    // Keep the final transient Z for one paint while the scene update and
+    // newly-authored track reach the WebGL leaf. Clearing synchronously can
+    // reveal its previous engine snapshot for one frame and looks like the
+    // zoom jumped backwards at the end of every wheel burst.
+    cameraPreviewStore.finish(cameraId)
+  }, [api, currentAnimationAuthorTime, stampCanvasTransformPatch])
+
+  useEffect(() => {
+    if (!editingTextId) return
+    const pending = pendingWheelRef.current
+    if (wheelFrameRef.current !== null) {
+      cancelAnimationFrame(wheelFrameRef.current)
+      wheelFrameRef.current = null
+    }
+    // Preserve the exact camera pose visible before contenteditable takes
+    // over. Dropping this pending preview made entering edit mode look like
+    // a sudden FOV/dolly change.
+    flushPendingCameraWheel()
+    pending.zoomDeltaY = 0
+    pending.panDeltaX = 0
+    pending.panDeltaY = 0
+  }, [editingTextId, flushPendingCameraWheel])
+
   // --- wheel: cmd/ctrl + wheel = zoom, otherwise pan -------------------
   useEffect(() => {
     const el = workspaceRef.current
     if (!el) return
     const pendingWheel = pendingWheelRef.current
-    const commitCameraWheel = () => {
-      const cameraId = pendingWheel.cameraId
-      const cameraZ = pendingWheel.cameraZ
-      if (!cameraId || cameraZ === null) return
-      const authorTime =
-        pendingWheel.cameraAuthorTime ?? currentAnimationAuthorTime()
-      pendingWheel.cameraId = null
-      pendingWheel.cameraZ = null
-      pendingWheel.cameraAuthorTime = null
-      pendingWheel.cameraCommitTimer = null
-      const current = api.getNode(cameraId)
-      if (!current || current.kind !== 'camera') {
-        cameraPreviewStore.clear(cameraId)
-        return
-      }
-      // A trackpad dolly can emit dozens of packets. Keep those packets in
-      // the shared rAF preview and author one scene/track mutation after the
-      // gesture goes idle, just like pointer-based camera movement.
-      api.doc.transact(() => {
-        api.setNodeProperty(current.id, 'transform', {
-          ...current.transform,
-          z: cameraZ,
-        })
-        stampCanvasTransformPatch(current.id, { z: cameraZ }, authorTime)
-      })
-      // Keep the final transient Z for one paint while the scene update and
-      // newly-authored track reach the WebGL leaf. Clearing synchronously can
-      // reveal its previous engine snapshot for one frame and looks like the
-      // zoom jumped backwards at the end of every wheel burst.
-      cameraPreviewStore.finish(cameraId)
-    }
     const scheduleViewCommit = () => {
       if (wheelFrameRef.current !== null) return
       wheelFrameRef.current = requestAnimationFrame(() => {
@@ -2527,6 +2470,14 @@ export function Canvas() {
     }
     const onWheel = (e: WheelEvent) => {
       if (!el.contains(e.target as Node)) return
+      const target = e.target as HTMLElement | null
+      if (
+        editingTextId ||
+        target?.isContentEditable ||
+        target?.closest('input, textarea, select, [contenteditable="true"]')
+      ) {
+        return
+      }
       e.preventDefault()
       const deltaScale =
         e.deltaMode === 1
@@ -2598,7 +2549,7 @@ export function Canvas() {
           window.clearTimeout(pendingWheel.cameraCommitTimer)
         }
         pendingWheel.cameraCommitTimer = window.setTimeout(
-          commitCameraWheel,
+          flushPendingCameraWheel,
           180,
         )
       } else {
@@ -2617,11 +2568,7 @@ export function Canvas() {
         cancelAnimationFrame(wheelFrameRef.current)
         wheelFrameRef.current = null
       }
-      if (pendingWheel.cameraCommitTimer !== null) {
-        window.clearTimeout(pendingWheel.cameraCommitTimer)
-        pendingWheel.cameraCommitTimer = null
-      }
-      commitCameraWheel()
+      flushPendingCameraWheel()
       pendingWheel.zoomDeltaY = 0
       pendingWheel.panDeltaX = 0
       pendingWheel.panDeltaY = 0
@@ -2632,6 +2579,8 @@ export function Canvas() {
     canvasHeight,
     canvasWidth,
     currentAnimationAuthorTime,
+    editingTextId,
+    flushPendingCameraWheel,
     selection,
     stampCanvasTransformPatch,
     tool,
@@ -2908,7 +2857,10 @@ export function Canvas() {
               {camera && camera.kind === 'camera' ? (
                 <>
                   {textEditPresentation.showDomScene ? (
-                    <div className="absolute inset-0 z-[1]">
+                    <div
+                      className="absolute inset-0 z-[1]"
+                      style={{ transformStyle: 'preserve-3d' }}
+                    >
                       <ScenePostProcessLayer
                         rootId={rootId}
                         solved={solved}
@@ -3092,6 +3044,8 @@ export function Canvas() {
             width: canvasWidth,
             height: canvasHeight,
             borderRadius: Math.max(0, sceneCorner),
+            perspective: cameraFocalLength,
+            perspectiveOrigin: 'center center',
           }}
         >
           {/* Camera viewfinder gizmo. Drawn OUTSIDE the camera-transform
@@ -3919,12 +3873,14 @@ const AnimatedCameraFocusMaskOverlay = memo(
     onHandlePointerCancel: (e: React.PointerEvent<HTMLElement>) => void
   }) {
     const { cameraAnim } = useLiveCameraAnimatedValue(camera.id)
-    const cameraScale = useMemo(() => {
-      const focalLength = Math.max(50, camera.focalLength ?? 1000)
-      const cameraDollyZ =
-        (cameraAnim?.z ?? camera.transform.z) / 100
-      return focalLength / Math.max(1, focalLength - cameraDollyZ)
-    }, [camera, cameraAnim?.z])
+    const cameraScale = useMemo(
+      () =>
+        resolveCameraDomProjection(camera, cameraAnim, {
+          width: canvasWidth,
+          height: canvasHeight,
+        }).scale,
+      [camera, cameraAnim, canvasWidth, canvasHeight],
+    )
     const depthOfField = useMemo(
       () =>
         computeCameraDepthOfField(
