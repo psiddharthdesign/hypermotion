@@ -3,6 +3,50 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## v0.1.14 — Camera-accurate selection and resize (2026-07-20)
+
+Selection chrome now uses the same world planes and live camera projection as
+the WebGL scene. Outlines, click targets, and resize handles stay attached to
+their layers through workspace zoom, camera movement, perspective changes, and
+camera animation instead of drifting back to the untransformed layout box.
+
+### Selection follows the active camera
+
+- Project every selected layer's four real world-space corners through camera
+  X, Y, and Z movement, dolly, X/Y tilt, roll, and field of view.
+- Update selection polygons continuously during camera keyframe playback,
+  timeline scrubbing, and transient camera gestures.
+- Sample the current animation-engine and gesture-preview camera state for
+  click and double-click hit testing, avoiding stale UI-frame coordinates.
+- Keep accurate individual outlines for multi-selection and the fixed viewport
+  outline for the root artboard.
+
+### Perspective-correct resize handles
+
+- Place all eight handles at projected corners and edge midpoints instead of
+  an axis-aligned approximation.
+- Rotate resize cursors to match the visible layer axes after camera or layer
+  rotation.
+- Ray-cast pointer movement back into the selected plane's local coordinates,
+  so every handle changes the intended width or height under perspective.
+- Refresh the drag projection while the camera animates rather than retaining
+  the camera frame captured at pointer-down.
+
+### Scoped realtime work
+
+- Resolve only selected nodes and the ancestor paths needed for their world
+  transforms, avoiding a second full-scene plane build on every camera frame.
+- Preserve the existing DOM selection fallback when WebGL is unavailable or
+  inline text editing temporarily owns the canvas.
+- Keep all editor selection chrome out of exported media.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the one-line
+installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
+
 ## v0.1.13 — Figma v2 vector import (2026-07-20)
 
 Hyper Motion's Figma importer now brings supported vector artwork across as

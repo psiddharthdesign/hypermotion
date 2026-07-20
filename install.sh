@@ -15,7 +15,7 @@
 #
 # Or for a specific version:
 #
-#   curl -fsSL https://raw.githubusercontent.com/psiddharthdesign/hypermotion/main/install.sh | bash -s -- v0.1.13
+#   curl -fsSL https://raw.githubusercontent.com/psiddharthdesign/hypermotion/main/install.sh | bash -s -- v0.1.14
 #
 # Works for every future release without changes — the script always
 # resolves the latest tag from the GitHub API unless you pass one.

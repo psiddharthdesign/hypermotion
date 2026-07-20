@@ -14,7 +14,7 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
 WebM / GIF export.
 
-## Status — v0.1.13 research preview
+## Status — v0.1.14 research preview
 
 The semantic-layout-animation bet works end-to-end, with desktop
 editing, Figma import, pixel-correct export, and CLI / MCP workflows for
@@ -34,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.13`.
+For a specific version: `curl ... | bash -s -- v0.1.14`.
 
 ### Manual install
 
@@ -96,8 +96,11 @@ pnpm build
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.13
+## What's in v0.1.14
 
+- **Camera-accurate selection and resize.** Selection polygons, hit testing,
+  and all eight resize handles now follow workspace zoom, camera XYZ, tilt,
+  roll, FOV, and camera keyframe playback using the same projection as WebGL.
 - **Curve-driven text animation.** Animate letters, words, lines, or whole
   layers with 21 presets, editable stagger curves, Bézier motion paths,
   and independent X / Y / Z travel.
