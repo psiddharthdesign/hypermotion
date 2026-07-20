@@ -15,6 +15,8 @@ import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { instantiateComponent, setLockedRecursive } from '@/ui/actions'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 
+const ASSET_LIBRARY_ENABLED = false
+
 /**
  * Layers panel.
  *
@@ -188,7 +190,7 @@ export function LayersPanel() {
       ) : (
         <ComponentsPanel onViewAll={() => setComponentsModalOpen(true)} />
       )}
-      {componentsModalOpen ? (
+      {ASSET_LIBRARY_ENABLED && componentsModalOpen ? (
         <ComponentsModal onClose={() => setComponentsModalOpen(false)} />
       ) : null}
       {/* Right-edge drag handle. 4px wide, sits half-outside the panel
@@ -232,46 +234,49 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
   useSceneVersion()
   const api = useSceneAPI()
   const components = listComponents(api)
-  const setSelection = useUI((s) => s.setSelection)
-  const setComponentEditId = useUI((s) => s.setComponentEditId)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="text-[11px] font-medium text-text-muted">
-          Assets
+        <span className="text-[11px] font-medium uppercase text-text-muted">
+          Asset library
         </span>
-        <button
-          type="button"
-          onClick={onViewAll}
-          className="rounded px-2 py-1 text-[11px] font-medium text-[oklch(0.7_0.24_300)] hover:bg-panel-raised"
-        >
-          View all
-        </button>
+        <div className="flex items-center gap-1">
+          <span
+            role="status"
+            className="rounded border border-border bg-panel-raised px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.04em] text-text-dim"
+          >
+            Coming soon
+          </span>
+          <button
+            type="button"
+            disabled={!ASSET_LIBRARY_ENABLED}
+            onClick={onViewAll}
+            title="Coming soon"
+            className="rounded px-1.5 py-1 text-[9px] font-medium uppercase text-text-dim disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            View all
+          </button>
+        </div>
       </div>
-      <div className="flex-1 overflow-auto py-2">
+      <div
+        aria-disabled="true"
+        className="pointer-events-none flex-1 select-none overflow-auto py-2 opacity-35"
+      >
         {components.length === 0 ? (
-          <p className="px-3 py-4 text-[12px] text-text-dim">
-            No components yet.
+          <p className="px-3 py-4 text-[11px] uppercase text-text-dim">
+            Components
             <br />
-            <span className="text-[11px]">Select layers and press ⌥⌘K.</span>
+            <span className="text-[10px]">Reusable assets will appear here.</span>
           </p>
         ) : (
           components.map((component) => (
             <button
               key={component.id}
               type="button"
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/hyper-motion-component', component.id)
-                e.dataTransfer.effectAllowed = 'copy'
-              }}
-              onClick={() => setSelection([component.id])}
-              onDoubleClick={() => {
-                setComponentEditId(component.id)
-                setSelection([component.id])
-              }}
-              className="group flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-text-muted hover:bg-panel-raised hover:text-text"
+              disabled
+              draggable={false}
+              className="group flex w-full cursor-not-allowed items-center gap-2 px-3 py-2 text-left text-[11px] uppercase text-text-muted"
             >
               <span className="font-mono text-[11px] text-[oklch(0.7_0.24_300)]">
                 ◆
@@ -284,12 +289,15 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
           ))
         )}
       </div>
-      <div className="border-t border-border px-3 py-3">
+      <div
+        aria-disabled="true"
+        className="pointer-events-none select-none border-t border-border px-3 py-3 opacity-35"
+      >
         <div className="text-[10px] font-medium uppercase tracking-wider text-text-dim">
           Imported assets
         </div>
-        <div className="mt-2 rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-text-dim">
-          Images and media can be dropped directly onto the scene canvas.
+        <div className="mt-2 rounded-md border border-dashed border-border px-3 py-2 text-[10px] uppercase text-text-dim">
+          Images and media
         </div>
       </div>
     </div>

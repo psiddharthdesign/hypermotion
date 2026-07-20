@@ -72,6 +72,17 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: pnpm run build:win
 
+      - name: Package Figma plugin
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          (
+            cd figma-plugin
+            zip -q -r "../release/hyper-motion-figma-plugin-v${VERSION}.zip" \
+              manifest.json dist/code.js dist/ui.html LICENSE NOTICE README.md
+          )
+
       - name: Upload artifacts (macOS)
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
@@ -80,6 +91,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.dmg.blockmap
+            release/hyper-motion-figma-plugin-v*.zip
             release/latest-mac.yml
           if-no-files-found: error
 
@@ -119,6 +131,7 @@ jobs:
           files: |
             dist-release/*.dmg
             dist-release/*.blockmap
+            dist-release/hyper-motion-figma-plugin-v*.zip
             dist-release/latest-mac.yml
           generate_release_notes: true
           draft: false
