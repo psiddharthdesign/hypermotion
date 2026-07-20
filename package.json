@@ -1,7 +1,7 @@
 {
   "name": "hyper-motion-electron",
   "private": true,
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "main": "dist-electron/main.cjs",
   "description": "Native motion design tool with Figma-style structural layout. Auto-layout, 3D camera, semantic keyframes, pixel-correct MP4 / WebM / GIF.",

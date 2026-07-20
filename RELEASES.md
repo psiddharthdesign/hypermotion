@@ -3,6 +3,52 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## v0.1.15 — Built-in Figma importer and compact editor (2026-07-20)
+
+Figma import no longer requires cloning the repository, building plugin source,
+or keeping a release download folder. Hyper Motion now ships the importer inside
+the desktop app, installs it to a stable per-user location, and guides the
+one-time Figma setup directly from the editor. The editor interface is also
+denser while preserving typography inside authored compositions.
+
+### Figma setup from the app
+
+- Add a Figma import button to the editor top bar with a focused setup modal.
+- Reveal the exact manifest users should select in Figma Desktop instead of
+  making them locate an app bundle or copy a path manually.
+- Bundle the manifest, compiled plugin code, and plugin UI with every macOS
+  release; no repository checkout, package install, source build, or terminal
+  command is needed.
+- Keep Figma's registered manifest path stable across Hyper Motion updates and
+  refresh the installed plugin payload whenever the app launches.
+- Explain the one-time **Plugins → Development → Import plugin from manifest…**
+  flow while Community marketplace distribution remains a later option.
+
+### Denser editor chrome
+
+- Reduce oversized interface typography by roughly 12–16 percent with a
+  legible minimum size.
+- Scope the density pass to editor chrome so canvas text, imported designs, and
+  exported media retain their authored sizes.
+- Keep menus, inspectors, dialogs, timeline labels, and the Figma setup modal
+  readable without introducing clipped controls.
+
+### Safe packaging and updates
+
+- Copy bundled plugin files into Application Support atomically and retain the
+  last working copy if a packaged payload is incomplete.
+- Cover first installation, update refresh, and fallback behavior with focused
+  Electron tests.
+- Build the Figma plugin before development and release builds and include its
+  runtime files in the packaged application.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the one-line
+installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
+
 ## v0.1.14 — Camera-accurate selection and resize (2026-07-20)
 
 Selection chrome now uses the same world planes and live camera projection as
