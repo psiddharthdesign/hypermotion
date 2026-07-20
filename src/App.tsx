@@ -113,6 +113,18 @@ function Shell() {
   const api = useSceneAPI()
   const exportPhase = useExportProgress((s) => s.phase)
 
+  useEffect(() => {
+    const previousDensity = document.body.dataset.hmUiDensity
+    document.body.dataset.hmUiDensity = 'compact'
+    return () => {
+      if (previousDensity === undefined) {
+        delete document.body.dataset.hmUiDensity
+      } else {
+        document.body.dataset.hmUiDensity = previousDensity
+      }
+    }
+  }, [])
+
   // Global wiring — must be mounted once, at the top of the scene tree.
   useKeyboardShortcuts()
   useFigmaPaste()
@@ -229,7 +241,10 @@ function Shell() {
   }, [api, sceneVersion])
 
   return (
-    <div className="flex h-full w-full flex-col bg-app-bg text-text">
+    <div
+      data-hm-editor-ui="1"
+      className="flex h-full w-full flex-col bg-app-bg text-text"
+    >
       <AnimationHost />
       <TopBar />
       <div className="flex min-h-0 flex-1">

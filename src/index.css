@@ -209,6 +209,59 @@ body {
   overflow: hidden; /* the app owns the scrolling, not the page */
 }
 
+/*
+ * Compact editor typography.
+ *
+ * Hyper Motion's inspector and timeline deliberately use explicit pixel
+ * utilities so dense numeric controls remain aligned. Lowering only body's
+ * inherited size would leave most of the interface unchanged, so this layer
+ * remaps the larger UI tokens by roughly 12–16% and keeps 10px as the
+ * legibility floor. Authored content under the canvas/node markers is excluded:
+ * changing editor density must never resize a user's design.
+ */
+body[data-hm-ui-density='compact'] {
+  font-size: 11.5px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[28px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 24px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[18px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *),
+body[data-hm-ui-density='compact']
+  [class~='text-[17px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 15px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[15px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *),
+body[data-hm-ui-density='compact']
+  [class~='text-[16px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 13px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[14px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 12px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[13px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 11px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[12px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 10.5px;
+}
+
+body[data-hm-ui-density='compact']
+  [class~='text-[11px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
+  font-size: 10px;
+}
+
 [data-canvas-root],
 [data-canvas-root] *,
 [data-node-id],

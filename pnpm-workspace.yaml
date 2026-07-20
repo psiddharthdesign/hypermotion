@@ -1,6 +1,7 @@
 packages:
   - .
   - cli
+  - figma-plugin
 
 allowBuilds:
   electron: true
