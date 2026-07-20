@@ -4,6 +4,7 @@ import { useUI, type PanelKey, type ThemePreference } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { ExportMenu } from '@/ui/ExportMenu'
 import { ExportStatusPill } from '@/ui/ExportStatusPill'
+import { FigmaPluginSetupButton } from '@/ui/FigmaPluginSetup'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -182,6 +183,7 @@ export function TopBar() {
 
         <ThemeToggle />
         <PreviewButton />
+        <FigmaPluginSetupButton />
         <PanelTogglePopover panels={panels} togglePanel={togglePanel} />
 
         <span className="mx-1 h-4 w-px bg-border" />

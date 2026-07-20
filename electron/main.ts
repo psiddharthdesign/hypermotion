@@ -31,6 +31,10 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
+import {
+  prepareFigmaPlugin,
+  type FigmaPluginStatus,
+} from './figmaPlugin'
 
 // Hyper Motion is a desktop editor: pressing Play in our own timeline should
 // always be allowed to start timeline audio, even if React applies the state
@@ -1057,6 +1061,39 @@ function mimeForClipboardFile(filePath: string): string {
 ipcMain.handle('updates:check', () => checkForUpdates())
 ipcMain.handle('updates:get-status', () => lastUpdateInfo)
 
+function figmaPluginSourceDirectory(): string {
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, 'figma-plugin')]
+    : [
+        path.join(app.getAppPath(), 'figma-plugin'),
+        path.resolve(process.cwd(), 'figma-plugin'),
+      ]
+
+  return (
+    candidates.find((candidate) =>
+      fs.existsSync(path.join(candidate, 'manifest.json')),
+    ) ?? candidates[0]!
+  )
+}
+
+function prepareInstalledFigmaPlugin(): FigmaPluginStatus {
+  return prepareFigmaPlugin({
+    sourceDir: figmaPluginSourceDirectory(),
+    userDataDir: app.getPath('userData'),
+    appVersion: app.getVersion(),
+  })
+}
+
+ipcMain.handle('figma-plugin:get-manifest-status', () =>
+  prepareInstalledFigmaPlugin(),
+)
+
+ipcMain.handle('figma-plugin:reveal-manifest', () => {
+  const status = prepareInstalledFigmaPlugin()
+  if (status.exists) shell.showItemInFolder(status.path)
+  return status
+})
+
 ipcMain.handle('preview:open-window', async () => {
   if (previewWindow && !previewWindow.isDestroyed()) {
     if (previewWindow.isMinimized()) previewWindow.restore()
@@ -1786,6 +1823,14 @@ ipcMain.handle('export:headless-error', (_e, message: string) => {
 // reopen. Other platforms quit on last window close, matching native
 // expectations.
 app.whenReady().then(() => {
+  // Keep the Figma development plugin at one stable user-owned path. Figma
+  // remembers that path after the user's one-time manifest import, while app
+  // updates simply refresh the files in place on the next launch.
+  const figmaPluginStatus = prepareInstalledFigmaPlugin()
+  if (!figmaPluginStatus.ok) {
+    console.warn(`[figma-plugin] ${figmaPluginStatus.message}`)
+  }
+
   // Headless render branch — when the binary was launched with --render,
   // skip the menu + visible window entirely. The renderer carries out the
   // export and signals completion via IPC; the app exits when done.

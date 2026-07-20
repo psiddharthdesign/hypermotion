@@ -5,7 +5,19 @@ Motion editor recognizes when pasted. Auto layout, gradients, image
 fills, and text styles round-trip; vector shapes get rasterized to
 inline SVG.
 
-## Install (development)
+## Install from the Hyper Motion desktop app
+
+The packaged desktop app includes a built copy of this plugin. Open Hyper
+Motion and choose **Figma import** in the top bar, then click **Reveal
+manifest**. In the Figma desktop app choose **Plugins → Development → Import
+new plugin from manifest…** and select the revealed `manifest.json`.
+
+This is a one-time setup. Hyper Motion keeps the plugin at a stable path in
+the user's Application Support data and refreshes those files whenever the
+app starts, so application updates do not require importing the plugin again.
+No repository checkout or terminal command is needed.
+
+## Install while developing Hyper Motion
 
 1. From this folder:
    ```
