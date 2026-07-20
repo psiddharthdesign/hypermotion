@@ -3,6 +3,50 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## v0.1.13 — Figma v2 vector import (2026-07-20)
+
+Hyper Motion's Figma importer now brings supported vector artwork across as
+native vector-backed layers instead of flattening it to an image-only node.
+Payload v2 retains vector geometry, transforms, paint stacks, gradients, and
+detailed stroke metadata, while older payloads and complex artwork continue
+through safe compatibility paths.
+
+### Native vector-backed imports
+
+- Retain stable points, segments, Bézier controls, contours, regions, and path
+  winding in the scene document for supported Figma vectors.
+- Preserve direct-parent transforms through nested groups and boolean
+  operations, plus Figma sizing metadata for more faithful placement.
+- Keep version 1 clipboard payloads readable; legacy vectors continue through
+  the existing SVG image path.
+
+### Higher-fidelity appearance
+
+- Retain ordered fill and stroke stacks, opacity and blend metadata, gradient
+  stops and transforms, plus stroke width, alignment, dashes, offset, caps,
+  joins, and miter limits.
+- Keep a sanitized copy of the original SVG when artwork uses constructs that
+  cannot yet be converted losslessly to the canonical vector graph.
+- Use a PNG fallback only when Figma returns no usable SVG or reports collapsed
+  vector bounds.
+- Render vector-backed layers consistently in realtime preview and final Pixi
+  export, with a stable raster cache for animation frames.
+
+### More reliable paste flow
+
+- Prefer a fresh Figma clipboard payload over stale in-app copied layers.
+- Fall back to Electron's native clipboard bridge when the browser paste event
+  cannot expose text.
+- Show clear progress, success, unsupported-selection, malformed-data, and
+  plugin-version messages without interfering with ordinary text paste.
+
+### Install on macOS
+
+Download the Apple Silicon or Intel DMG from this release, or use the one-line
+installer in the [installation guide](https://hypermotion.app/docs#install).
+The v0.1.x builds remain unsigned and macOS-only, so macOS may require the
+first-time setup described in that guide.
+
 ## v0.1.12 — Curve-driven text motion + camera effects (2026-07-20)
 
 Hyper Motion's text system can now animate letters, words, lines, or whole

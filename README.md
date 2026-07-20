@@ -14,7 +14,7 @@ Plus everything you expect from a Jitter-class tool: a real timeline,
 in/out presets, easing curves, 3D camera with depth-of-field, and MP4 /
 WebM / GIF export.
 
-## Status — v0.1.12 research preview
+## Status — v0.1.13 research preview
 
 The semantic-layout-animation bet works end-to-end, with desktop
 editing, Figma import, pixel-correct export, and CLI / MCP workflows for
@@ -34,7 +34,7 @@ copies the app into `/Applications`, strips macOS's download quarantine,
 applies a local ad-hoc signature, and opens it. No drag-to-Applications,
 no "damaged" dialog, no per-version steps.
 
-For a specific version: `curl ... | bash -s -- v0.1.12`.
+For a specific version: `curl ... | bash -s -- v0.1.13`.
 
 ### Manual install
 
@@ -76,8 +76,13 @@ open release/mac-arm64/hyper-motion.app
 
 ## Figma plugin
 
-Copy frames, text, layout, and strokes from Figma straight into
-hyper-motion. The plugin source lives in
+Copy frames, text, layout, and vector artwork from Figma straight into
+hyper-motion. Payload v2 imports supported artwork as native vector-backed
+layers and retains the canonical point/segment graph, Bézier controls,
+transforms, ordered paints, gradient metadata, and detailed strokes. Version 1
+payloads remain compatible, while complex constructs keep a sanitized SVG
+fallback for visual fidelity. Direct point editing remains a follow-up. The
+plugin source lives in
 [`figma-plugin/`](./figma-plugin) inside this repo.
 
 ```sh
@@ -91,7 +96,7 @@ pnpm build
 Full step-by-step at [hypermotion.app/docs#figma-plugin](https://hypermotion.app/docs#figma-plugin).
 Figma Community publish (one-click install) is on the v0.2 roadmap.
 
-## What's in v0.1.12
+## What's in v0.1.13
 
 - **Curve-driven text animation.** Animate letters, words, lines, or whole
   layers with 21 presets, editable stagger curves, Bézier motion paths,
@@ -111,9 +116,10 @@ Figma Community publish (one-click install) is on the v0.2 roadmap.
 - **Pixel-correct export.** MP4 up to 4K (WebCodecs + mp4-muxer), WebM
   via tab capture, and GIF via gifenc, with stalled render workers cleaned
   up automatically.
-- **Figma import** — plugin that brings frames, text, layout sizing,
-  fills, strokes, gradients, per-corner radii, and layout grids into the
-  canvas with improved fidelity.
+- **Figma v2 vector import.** Bring supported Figma artwork across as native
+  vector-backed layers with retained geometry, transforms, paint stacks,
+  gradients, and detailed strokes; older payloads and complex SVGs continue
+  through safe compatibility fallbacks.
 - **Scriptable `.hype` scenes.** The included CLI and MCP server can create,
   inspect, patch, validate, open, and render saved scenes. See
   [`AGENTS.md`](./AGENTS.md).
