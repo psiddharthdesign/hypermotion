@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Fill, GradientStop, Stroke, StrokeStyle } from '@/scene'
+import type {
+  BlendMode,
+  Fill,
+  GradientStop,
+  Stroke,
+  StrokeStyle,
+  VectorMatrix,
+  VectorPaint,
+  VectorStroke,
+} from '@/scene'
 import type {
   FigmaCapturedFill,
   FigmaGradientFill,
   FigmaImageFill,
   FigmaSolidFill,
+  FigmaStrokeCap,
+  FigmaStrokeJoin,
 } from './types'
 
 /**
@@ -86,6 +97,66 @@ export function figmaToStroke(
     dashGap: dashes[1] ?? 4,
     fill: fill && fill.kind !== 'solid' ? fill : null,
   }
+}
+
+/** Map every visible Figma paint into the native vector paint stack. */
+export function figmaToVectorPaints(
+  fills: FigmaCapturedFill[],
+  assets: Record<string, string>,
+  width: number,
+  height: number,
+  idPrefix = 'fill',
+): VectorPaint[] {
+  const out: VectorPaint[] = []
+  fills.forEach((fill, index) => {
+    if (!fill.visible) return
+    const paint = figmaToVectorPaint(
+      fill,
+      assets,
+      width,
+      height,
+      `${idPrefix}-${index + 1}`,
+    )
+    if (paint) out.push(paint)
+  })
+  return out
+}
+
+export interface FigmaVectorStrokeOptions {
+  width: number
+  align: 'INSIDE' | 'OUTSIDE' | 'CENTER'
+  dashes: number[]
+  dashOffset?: number
+  cap?: FigmaStrokeCap | 'MIXED'
+  join?: FigmaStrokeJoin | 'MIXED'
+  miterLimit?: number
+}
+
+/** Keep multiple stroke paints and the complete line-style metadata. */
+export function figmaToVectorStrokes(
+  strokes: FigmaCapturedFill[],
+  assets: Record<string, string>,
+  width: number,
+  height: number,
+  options: FigmaVectorStrokeOptions,
+): VectorStroke[] {
+  const paints = figmaToVectorPaints(strokes, assets, width, height, 'stroke-paint')
+  return paints.map((paint, index) => ({
+    id: `stroke-${index + 1}`,
+    paint,
+    width: Math.max(0, options.width),
+    align: options.align.toLowerCase() as VectorStroke['align'],
+    cap: figmaStrokeCap(options.cap),
+    join: figmaStrokeJoin(options.join),
+    miterLimit: options.miterLimit ?? 4,
+    dash: [...options.dashes],
+    dashOffset: options.dashOffset ?? 0,
+    opacity: 1,
+    visible: paint.visible,
+    ...(options.cap && options.cap !== 'MIXED' && options.cap.includes('ARROW')
+      ? { startCap: options.cap, endCap: options.cap }
+      : {}),
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +248,92 @@ function image(f: FigmaImageFill, assets: Record<string, string>): Fill | null {
   return { kind: 'image', src, fit }
 }
 
+function figmaToVectorPaint(
+  fill: FigmaCapturedFill,
+  assets: Record<string, string>,
+  width: number,
+  height: number,
+  id: string,
+): VectorPaint | null {
+  const base = {
+    id,
+    visible: fill.visible,
+    opacity: fill.opacity,
+    blendMode: figmaPaintBlendMode(fill.blendMode),
+  }
+  if (fill.type === 'SOLID') {
+    return {
+      ...base,
+      kind: 'solid',
+      color: rgbToHex(fill.color.r, fill.color.g, fill.color.b),
+    }
+  }
+  if (fill.type === 'IMAGE') {
+    const mapped = image(fill, assets)
+    if (!mapped || mapped.kind !== 'image') return null
+    const transform = fill.imageTransform
+      ? figmaGradientTransformToItem(fill.imageTransform, width, height)
+      : undefined
+    return {
+      ...base,
+      kind: 'image',
+      src: mapped.src,
+      fit: mapped.fit,
+      ...(transform ? { transform } : {}),
+    }
+  }
+
+  const handles = fill.gradientHandlePositions
+  const first = handles[0] ?? { x: 0.5, y: 0.5 }
+  const second = handles[1] ?? { x: 0.5, y: 1 }
+  const third = handles[2] ?? { x: 1, y: 0.5 }
+  const stops = stopsToOurs(fill.gradientStops)
+  const transform = fill.gradientTransform
+    ? figmaGradientTransformToItem(fill.gradientTransform, width, height)
+    : undefined
+  if (fill.type === 'GRADIENT_LINEAR') {
+    return {
+      ...base,
+      kind: 'linear',
+      stops,
+      start: transform ? { x: 0, y: 0 } : { x: first.x * width, y: first.y * height },
+      end: transform ? { x: 1, y: 0 } : { x: second.x * width, y: second.y * height },
+      ...(transform ? { transform } : {}),
+    }
+  }
+  if (fill.type === 'GRADIENT_ANGULAR') {
+    const dx = second.x - first.x
+    const dy = second.y - first.y
+    return {
+      ...base,
+      kind: 'conic',
+      stops,
+      center: { x: first.x * width, y: first.y * height },
+      angle: (Math.atan2(dy, dx) * 180) / Math.PI,
+      ...(transform ? { transform } : {}),
+    }
+  }
+  const rx = Math.hypot((second.x - first.x) * width, (second.y - first.y) * height)
+  const ry = Math.hypot((third.x - first.x) * width, (third.y - first.y) * height)
+  return {
+    ...base,
+    kind: 'radial',
+    stops,
+    center: transform ? { x: 0, y: 0 } : { x: first.x * width, y: first.y * height },
+    radiusX: transform ? 1 : rx,
+    radiusY: transform ? 1 : ry,
+    rotation: transform
+      ? 0
+      : (Math.atan2(
+          (second.y - first.y) * height,
+          (second.x - first.x) * width,
+        ) *
+          180) /
+        Math.PI,
+    ...(transform ? { transform } : {}),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -217,6 +374,52 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${[r, g, b]
     .map((channel) => channelToByte(channel).toString(16).padStart(2, '0'))
     .join('')}`
+}
+
+function figmaStrokeCap(cap: FigmaStrokeCap | 'MIXED' | undefined): VectorStroke['cap'] {
+  if (cap === 'ROUND') return 'round'
+  if (cap === 'SQUARE') return 'square'
+  return 'butt'
+}
+
+function figmaStrokeJoin(
+  join: FigmaStrokeJoin | 'MIXED' | undefined,
+): VectorStroke['join'] {
+  if (join === 'ROUND') return 'round'
+  if (join === 'BEVEL') return 'bevel'
+  return 'miter'
+}
+
+function figmaPaintBlendMode(
+  mode: FigmaCapturedFill['blendMode'],
+): BlendMode {
+  if (!mode || mode === 'PASS_THROUGH') return 'normal'
+  if (mode === 'LINEAR_BURN') return 'color-burn'
+  if (mode === 'LINEAR_DODGE') return 'color-dodge'
+  return mode.toLowerCase().replace(/_/g, '-') as BlendMode
+}
+
+/** Figma stores item-UV -> gradient; native vectors store gradient -> item. */
+function figmaGradientTransformToItem(
+  transform: [[number, number, number], [number, number, number]],
+  width: number,
+  height: number,
+): VectorMatrix | undefined {
+  const [[a, c, e], [b, d, f]] = transform
+  const determinant = a * d - b * c
+  if (Math.abs(determinant) < 1e-12) return undefined
+  return [
+    normalizedZero((width * d) / determinant),
+    normalizedZero((-height * b) / determinant),
+    normalizedZero((-width * c) / determinant),
+    normalizedZero((height * a) / determinant),
+    normalizedZero((width * (c * f - d * e)) / determinant),
+    normalizedZero((height * (b * e - a * f)) / determinant),
+  ]
+}
+
+function normalizedZero(value: number): number {
+  return Math.abs(value) < 1e-12 ? 0 : value
 }
 
 function solidColorFor(fill: Fill | null): string {

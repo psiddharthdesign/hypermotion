@@ -37,7 +37,16 @@ import {
   textSegmentLinearProgress,
 } from '@/anim/textSegmentEnvelope'
 import type { Rect, SolvedLayout } from '@/layout'
-import type { BlendMode, CameraNode, Fill, GradientStop, Node, NodeId, SceneAPI } from '@/scene'
+import type {
+  BlendMode,
+  CameraNode,
+  Fill,
+  GradientStop,
+  Node,
+  NodeId,
+  SceneAPI,
+  VectorNode,
+} from '@/scene'
 import { displayedText } from '@/scene'
 import {
   buildWorldPlanes,
@@ -92,6 +101,11 @@ import {
   type CanvasTextLine,
 } from '@/render3d/textAnimationLayout'
 import { applyCanvasStrokePattern } from '@/render/strokePattern'
+import {
+  paintVectorNodeToCanvas,
+  vectorTrimState,
+} from '@/render/vectorPaint'
+import { getPreservedVectorSource } from '@/render/vectorSource'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
 
 interface ThreeSceneViewportProps {
@@ -3430,6 +3444,10 @@ function renderPlaneTexture(
   const ctx = canvas.getContext('2d')!
   ctx.scale(scale, scale)
   ctx.clearRect(0, 0, w, h)
+  if (node.kind === 'vector') {
+    paintVectorLayerToCanvas(ctx, node, w, h)
+    return canvas
+  }
   const cornerRadius =
     node.kind === 'ellipse'
       ? Math.min(w, h) / 2
@@ -3765,6 +3783,10 @@ function renderNodePaint(
 ) {
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
+  if (node.kind === 'vector') {
+    paintVectorLayerToCanvas(ctx, node, w, h)
+    return
+  }
   const cornerRadius =
     node.kind === 'ellipse'
       ? Math.min(w, h) / 2
@@ -4908,6 +4930,24 @@ function paintImageNode(
   } catch {
     paintImagePlaceholder(ctx, width, height)
   }
+}
+
+function paintVectorLayerToCanvas(
+  ctx: CanvasRenderingContext2D,
+  node: VectorNode,
+  width: number,
+  height: number,
+): void {
+  const trim = vectorTrimState(node)
+  const preserved = getPreservedVectorSource(node, trim)
+  if (preserved) {
+    const image = getCachedTextureImage(preserved.dataUrl)
+    if (image.complete && image.naturalWidth > 0) {
+      ctx.drawImage(image, 0, 0, width, height)
+      return
+    }
+  }
+  paintVectorNodeToCanvas(ctx, node, width, height, trim)
 }
 
 function getCachedTextureImage(src: string): HTMLImageElement {

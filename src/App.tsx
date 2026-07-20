@@ -19,6 +19,7 @@ import { ExportRecordingIndicator } from '@/ui/ExportRecordingIndicator'
 import { RenameDialog } from '@/ui/RenameDialog'
 import { ErrorBoundary } from '@/ui/ErrorBoundary'
 import { UpdateNotice } from '@/ui/UpdateNotice'
+import { ToastViewport } from '@/ui/Toast'
 import { useUI } from '@/state/ui'
 import { SceneProvider, useSceneAPI, useSceneVersion } from '@/scene'
 import type { SceneNode } from '@/scene'
@@ -246,6 +247,7 @@ function Shell() {
       <RenameDialog />
       <ExportRecordingIndicator />
       <UpdateNotice />
+      <ToastViewport />
     </div>
   )
 }

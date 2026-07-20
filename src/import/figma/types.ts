@@ -23,11 +23,17 @@
  */
 
 export const FIGMA_PAYLOAD_FORMAT = 'hyper-motion/figma' as const
-export const FIGMA_PAYLOAD_VERSION = 1 as const
+export const FIGMA_PAYLOAD_VERSION = 2 as const
+export const FIGMA_PAYLOAD_LEGACY_VERSION = 1 as const
+
+export type FigmaPayloadVersion =
+  | typeof FIGMA_PAYLOAD_LEGACY_VERSION
+  | typeof FIGMA_PAYLOAD_VERSION
 
 export interface FigmaPayload {
   format: typeof FIGMA_PAYLOAD_FORMAT
-  version: typeof FIGMA_PAYLOAD_VERSION
+  /** Version 1 is accepted for backwards compatibility; new plugins emit 2. */
+  version: FigmaPayloadVersion
   /** Root nodes from the user's selection. May be one or many. */
   nodes: FigmaCapturedNode[]
   /**
@@ -63,11 +69,19 @@ interface FigmaCapturedNodeBase {
   height: number
   /** Degrees, CSS convention (0 = up, increasing clockwise). */
   rotation: number
+  /** Complete child-to-parent affine matrix, preserved by payload v2. */
+  relativeTransform?: FigmaTransform
   /**
    * Figma's per-child "Absolute position" flag inside auto-layout /
    * flow parents. Missing on older plugin payloads.
    */
   layoutPositioning?: 'AUTO' | 'ABSOLUTE'
+  layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
+  layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
+  minWidth?: number | null
+  maxWidth?: number | null
+  minHeight?: number | null
+  maxHeight?: number | null
   /** Per-corner radii [tl, tr, br, bl]. */
   cornerRadius: [number, number, number, number]
   fills: FigmaCapturedFill[]
@@ -82,10 +96,31 @@ interface FigmaCapturedNodeBase {
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   /** Empty array means solid; presence means dashed. */
   strokeDashes: number[]
+  strokeDashOffset?: number
+  strokeCap?: FigmaStrokeCap | 'MIXED'
+  strokeJoin?: FigmaStrokeJoin | 'MIXED'
+  strokeMiterLimit?: number
   /** Figma layer blend mode. Missing on older plugin payloads. */
   blendMode?: FigmaBlendMode
   effects?: FigmaCapturedEffect[]
 }
+
+export type FigmaTransform = [
+  [number, number, number],
+  [number, number, number],
+]
+
+export type FigmaStrokeCap =
+  | 'NONE'
+  | 'ROUND'
+  | 'SQUARE'
+  | 'ARROW_LINES'
+  | 'ARROW_EQUILATERAL'
+  | 'DIAMOND_FILLED'
+  | 'CIRCLE_FILLED'
+  | 'TRIANGLE_FILLED'
+
+export type FigmaStrokeJoin = 'MITER' | 'BEVEL' | 'ROUND'
 
 export type FigmaBlendMode =
   | 'PASS_THROUGH'
@@ -178,16 +213,37 @@ export interface FigmaCapturedText extends FigmaCapturedNodeBase {
   layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
 }
 
-/**
- * Vector / boolean / star / polygon nodes get rasterized to SVG by the
- * plugin (via node.exportAsync({ format: 'SVG_STRING' })) and round-trip
- * as a single image fill. Cleaner than translating path commands; gets
- * users a faithful render until we add a real SVG node type.
- */
 export interface FigmaCapturedVector extends FigmaCapturedNodeBase {
   type: 'VECTOR'
-  /** Inline SVG markup, ready to embed via data URL. */
+  /** The Figma layer kind before it was normalized to a vector payload. */
+  sourceKind?:
+    | 'VECTOR'
+    | 'STAR'
+    | 'POLYGON'
+    | 'BOOLEAN_OPERATION'
+    | 'LINE'
+    | 'ELLIPSE'
+  /** Sanitized SVG retained as a visual-fidelity and forward-compat fallback. */
   svg: string
+  /** Intrinsic coordinate system parsed from the Figma SVG export. */
+  viewBox?: FigmaVectorViewBox
+  /** Simple path representation, sufficient for most editable Figma vectors. */
+  vectorPaths?: FigmaCapturedVectorPath[]
+  /** Figma's complete graph representation, including branching paths/regions. */
+  vectorNetwork?: FigmaCapturedVectorNetwork
+  /** Resolved fill outline used by shapes that do not expose vectorNetwork. */
+  fillGeometry?: FigmaCapturedVectorPath[]
+  /** Resolved centre-line stroke outline, kept separately from fill geometry. */
+  strokeGeometry?: FigmaCapturedVectorPath[]
+  /** Friendly generator data retained for inspector controls. */
+  primitive?: FigmaVectorPrimitive
+  /** Whether Hyper Motion can make the payload fully editable without fallback. */
+  fidelity?: 'editable' | 'partial' | 'preserved'
+  unsupported?: string[]
+  /** Exact Figma metadata retained for future variable-width rendering. */
+  variableWidthStroke?: unknown
+  /** Exact brush/dynamic stroke metadata retained with the SVG fallback. */
+  complexStroke?: unknown
   /**
    * Base64 PNG fallback exported by the Figma plugin. Used when SVG
    * export is blank, collapsed, or a vector-only group is safer to
@@ -197,6 +253,54 @@ export interface FigmaCapturedVector extends FigmaCapturedNodeBase {
   /** User-facing explanation shown when the fallback image is selected. */
   rasterReason?: string
 }
+
+export interface FigmaVectorViewBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface FigmaCapturedVectorPath {
+  windingRule: 'NONZERO' | 'EVENODD' | 'NONE'
+  data: string
+}
+
+export interface FigmaCapturedVectorVertex {
+  x: number
+  y: number
+  strokeCap?: FigmaStrokeCap
+  strokeJoin?: FigmaStrokeJoin
+  cornerRadius?: number
+  handleMirroring?: 'NONE' | 'ANGLE' | 'ANGLE_AND_LENGTH'
+}
+
+export interface FigmaCapturedVectorSegment {
+  start: number
+  end: number
+  tangentStart?: { x: number; y: number }
+  tangentEnd?: { x: number; y: number }
+}
+
+export interface FigmaCapturedVectorRegion {
+  windingRule: 'NONZERO' | 'EVENODD'
+  loops: number[][]
+  fills?: FigmaCapturedFill[]
+  fillStyleId?: string
+}
+
+export interface FigmaCapturedVectorNetwork {
+  vertices: FigmaCapturedVectorVertex[]
+  segments: FigmaCapturedVectorSegment[]
+  regions: FigmaCapturedVectorRegion[]
+}
+
+export type FigmaVectorPrimitive =
+  | { kind: 'star'; pointCount: number; innerRadius: number; cornerRadius: number }
+  | { kind: 'polygon'; pointCount: number; cornerRadius: number }
+  | { kind: 'ellipse'; startAngle: number; endAngle: number; innerRadius: number }
+  | { kind: 'line' }
+  | { kind: 'boolean'; operation: 'UNION' | 'INTERSECT' | 'SUBTRACT' | 'EXCLUDE' }
 
 export type FigmaCapturedEffect =
   | {
@@ -229,6 +333,7 @@ export interface FigmaSolidFill {
   /** 0..1; multiplied with the node's own opacity at render time. */
   opacity: number
   visible: boolean
+  blendMode?: FigmaBlendMode
 }
 
 export interface FigmaGradientFill {
@@ -242,9 +347,12 @@ export interface FigmaGradientFill {
    * are 0..1 relative to the node's bounding box.
    */
   gradientHandlePositions: Array<{ x: number; y: number }>
+  /** Raw layer-UV to gradient-space matrix; handles are retained for v1 clients. */
+  gradientTransform?: FigmaTransform
   gradientStops: Array<{ position: number; color: { r: number; g: number; b: number; a: number } }>
   opacity: number
   visible: boolean
+  blendMode?: FigmaBlendMode
 }
 
 export interface FigmaImageFill {
@@ -254,4 +362,17 @@ export interface FigmaImageFill {
   scaleMode: 'FILL' | 'FIT' | 'TILE' | 'CROP' | 'STRETCH'
   opacity: number
   visible: boolean
+  blendMode?: FigmaBlendMode
+  imageTransform?: FigmaTransform
+  scalingFactor?: number
+  rotation?: number
+  filters?: {
+    exposure?: number
+    contrast?: number
+    saturation?: number
+    temperature?: number
+    tint?: number
+    highlights?: number
+    shadows?: number
+  }
 }

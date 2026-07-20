@@ -11,8 +11,14 @@ import type {
 } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { figmaToFill, figmaToStroke } from './fillMap'
-import { figmaToLayout, figmaToSize, figmaToTransform } from './layoutMap'
+import {
+  figmaToLayout,
+  figmaToSize,
+  figmaToTransform,
+  figmaVectorAffine,
+} from './layoutMap'
 import { figmaToText } from './textMap'
+import { figmaToVectorDocument, sanitizeFigmaSvg } from './vectorMap'
 import type {
   FigmaCapturedFrame,
   FigmaCapturedNode,
@@ -24,6 +30,7 @@ import type {
 } from './types'
 import {
   FIGMA_PAYLOAD_FORMAT,
+  FIGMA_PAYLOAD_LEGACY_VERSION,
   FIGMA_PAYLOAD_VERSION,
 } from './types'
 
@@ -56,7 +63,14 @@ export function importFigmaPayload(
     // mode lets us drop the import where we want and have it stay there.
     ensureFreeCanvasRoot(api, parentId)
     for (const node of payload.nodes) {
-      const id = walk(node, api, parentId, payload.assets, null)
+      const id = walk(
+        node,
+        api,
+        parentId,
+        payload.assets,
+        null,
+        payload.version,
+      )
       if (id) created.push(id)
     }
     if (created.length > 0) {
@@ -221,10 +235,14 @@ export function parseFigmaPayload(text: string): FigmaPayload | null {
   if (!parsed || typeof parsed !== 'object') return null
   const p = parsed as Partial<FigmaPayload>
   if (p.format !== FIGMA_PAYLOAD_FORMAT) return null
-  if (p.version !== FIGMA_PAYLOAD_VERSION) {
+  if (
+    p.version !== FIGMA_PAYLOAD_VERSION &&
+    p.version !== FIGMA_PAYLOAD_LEGACY_VERSION
+  ) {
     console.warn(
       `[figma-import] unsupported payload version ${p.version}; ` +
-        `expected ${FIGMA_PAYLOAD_VERSION}. Reinstall the plugin.`,
+        `expected ${FIGMA_PAYLOAD_LEGACY_VERSION} or ${FIGMA_PAYLOAD_VERSION}. ` +
+        `Reinstall the plugin.`,
     )
     return null
   }
@@ -243,6 +261,7 @@ function walk(
   parentId: NodeId,
   assets: Record<string, string>,
   parentLayoutMode: 'NONE' | 'HORIZONTAL' | 'VERTICAL' | 'GRID' | null,
+  payloadVersion: FigmaPayload['version'],
 ): NodeId | null {
   // We force PIXEL SIZING on every imported frame, not just the
   // top-level root. Reasons:
@@ -264,7 +283,7 @@ function walk(
   // frames in the Inspector after import.
   const isImportRoot = parentLayoutMode === null
   void isImportRoot
-  const kind = pickKind(node)
+  const kind = pickKind(node, payloadVersion)
   if (!kind) {
     console.warn(`[figma-import] unsupported node type ${node.type}; skipping`)
     return null
@@ -310,6 +329,7 @@ function walk(
         appearance,
         position,
         true, // forceFixed: every frame, see comment in walk()
+        payloadVersion,
       )
     case 'rect':
     case 'ellipse':
@@ -341,12 +361,26 @@ function walk(
         appearance,
         position,
       )
+    case 'vector':
+      return createVector(
+        node as FigmaCapturedVector,
+        api,
+        parentId,
+        assets,
+        transform,
+        appearance,
+        position,
+        payloadVersion,
+      )
     default:
       return null
   }
 }
 
-function pickKind(node: FigmaCapturedNode): NodeKind | null {
+function pickKind(
+  node: FigmaCapturedNode,
+  payloadVersion: FigmaPayload['version'],
+): NodeKind | null {
   switch (node.type) {
     case 'FRAME':
     case 'GROUP':
@@ -360,10 +394,7 @@ function pickKind(node: FigmaCapturedNode): NodeKind | null {
     case 'TEXT':
       return 'text'
     case 'VECTOR':
-      // Vectors arrive as inline-SVG and round-trip as image fills on
-      // a synthetic image node. We use the 'image' NodeKind to take
-      // advantage of the existing ImageNode renderer.
-      return 'image'
+      return payloadVersion >= 2 ? 'vector' : 'image'
     default:
       return null
   }
@@ -378,6 +409,7 @@ function createFrame(
   appearance: Appearance,
   position: Position,
   forceFixed: boolean,
+  payloadVersion: FigmaPayload['version'],
 ): NodeId {
   const layout = figmaToLayout(node)
   const size = figmaToSize(node, forceFixed)
@@ -393,7 +425,7 @@ function createFrame(
     clipsContent: node.clipsContent,
   })
   for (const child of node.children) {
-    walk(child, api, id, assets, node.layoutMode)
+    walk(child, api, id, assets, node.layoutMode, payloadVersion)
   }
   return id
 }
@@ -447,6 +479,120 @@ function createText(
   })
 }
 
+function createVector(
+  node: FigmaCapturedVector,
+  api: SceneAPI,
+  parentId: NodeId,
+  assets: Record<string, string>,
+  transform: ReturnType<typeof figmaToTransform>,
+  appearance: Appearance,
+  position: Position,
+  payloadVersion: FigmaPayload['version'],
+): NodeId | null {
+  const mapped = figmaToVectorDocument(node, assets, payloadVersion)
+  if (!mapped) {
+    return createVectorAsImage(node, api, parentId, transform, appearance, position)
+  }
+  if (mapped.vector.items.length === 0) {
+    // The sanitized source remains visually faithful even if it contains an
+    // SVG construct not yet representable by native points/segments.
+    return createVectorAsImage(node, api, parentId, transform, appearance, position)
+  }
+  const capturedSize = figmaToSize(node)
+  const affine = figmaVectorAffine(node, transform)
+  const size = {
+    width:
+      typeof capturedSize.width === 'number'
+        ? pickVectorAxisSize(
+            capturedSize.width,
+            mapped.viewBox.width,
+            node.strokeWeight,
+          )
+        : capturedSize.width,
+    height:
+      typeof capturedSize.height === 'number'
+        ? pickVectorAxisSize(
+            capturedSize.height,
+            mapped.viewBox.height,
+            node.strokeWeight,
+          )
+        : capturedSize.height,
+  }
+  return api.createNode('vector', parentId, {
+    name: node.name || 'Vector',
+    visible: node.visible,
+    locked: node.locked,
+    transform: affine.layerTransform,
+    appearance: {
+      ...appearance,
+      // Paint stacks live on each vector item; the generic appearance is
+      // reserved for whole-layer opacity/effects.
+      fill: null,
+      stroke: null,
+    },
+    position,
+    size,
+    viewBox: mapped.viewBox,
+    vector: mapped.vector,
+    trimStart: 0,
+    trimEnd: 1,
+    trimOffset: 0,
+    source: {
+      provider: 'figma',
+      sourceNodeId: node.id,
+      payloadVersion,
+      ...(mapped.sanitizedSvg ? { originalSvg: mapped.sanitizedSvg } : {}),
+      ...(mapped.unsupported.length
+        ? { unsupportedFeatures: mapped.unsupported }
+        : {}),
+      metadata: compactMetadata({
+        sourceKind: node.sourceKind,
+        primitive: node.primitive,
+        relativeTransform: node.relativeTransform,
+        layoutSizingHorizontal: node.layoutSizingHorizontal,
+        layoutSizingVertical: node.layoutSizingVertical,
+        minWidth: node.minWidth,
+        maxWidth: node.maxWidth,
+        minHeight: node.minHeight,
+        maxHeight: node.maxHeight,
+        variableWidthStroke: node.variableWidthStroke,
+        complexStroke: node.complexStroke,
+        strokeCap: node.strokeCap,
+        strokeJoin: node.strokeJoin,
+        strokeMiterLimit: node.strokeMiterLimit,
+        strokeDashOffset: node.strokeDashOffset,
+        strokeWidths: node.strokeWidths,
+        figmaFills: node.fills,
+        figmaStrokes: node.strokes,
+        vectorVertexStyles: node.vectorNetwork?.vertices.map(
+          (vertex, index) =>
+            compactMetadata({
+              index,
+              strokeCap: vertex.strokeCap,
+              strokeJoin: vertex.strokeJoin,
+              cornerRadius: vertex.cornerRadius,
+              handleMirroring: vertex.handleMirroring,
+            }),
+        ),
+        regionFillStyleIds: node.vectorNetwork?.regions
+          .map((region, index) =>
+            region.fillStyleId ? { index, fillStyleId: region.fillStyleId } : null,
+          )
+          .filter((value) => value !== null),
+      }),
+    },
+    importFidelity: mapped.fidelity,
+  })
+}
+
+function compactMetadata(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  )
+}
+
 function createVectorAsImage(
   node: FigmaCapturedVector,
   api: SceneAPI,
@@ -459,7 +605,7 @@ function createVectorAsImage(
   // node. Renders correctly in the existing image path; users can
   // resize and animate transform / opacity. Replacing this with a real
   // SVG node type is a follow-up once vector authoring lands.
-  const svg = node.svg.trim()
+  const svg = sanitizeFigmaSvg(node.svg, `figma-${node.id}`)
   const shouldUseRasterFallback =
     !!node.rasterPng &&
     (!svg || node.width < 1 || node.height < 1)

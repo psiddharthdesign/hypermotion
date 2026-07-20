@@ -15,7 +15,7 @@
  */
 
 const FIGMA_PAYLOAD_FORMAT = 'hyper-motion/figma'
-const FIGMA_PAYLOAD_VERSION = 1
+const FIGMA_PAYLOAD_VERSION = 2
 
 figma.showUI(__html__, { width: 280, height: 220, themeColors: true })
 
@@ -74,7 +74,14 @@ interface CapturedNodeBase {
   width: number
   height: number
   rotation: number
+  relativeTransform?: CapturedTransform
   layoutPositioning?: 'AUTO' | 'ABSOLUTE'
+  layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
+  layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
+  minWidth?: number | null
+  maxWidth?: number | null
+  minHeight?: number | null
+  maxHeight?: number | null
   cornerRadius: [number, number, number, number]
   fills: CapturedFill[]
   strokes: CapturedFill[]
@@ -82,9 +89,21 @@ interface CapturedNodeBase {
   strokeWidths?: { top: number; right: number; bottom: number; left: number }
   strokeAlign: 'INSIDE' | 'OUTSIDE' | 'CENTER'
   strokeDashes: number[]
+  strokeDashOffset?: number
+  strokeCap?: CapturedStrokeCap | 'MIXED'
+  strokeJoin?: CapturedStrokeJoin | 'MIXED'
+  strokeMiterLimit?: number
   blendMode: CapturedBlendMode
   effects: CapturedEffect[]
 }
+
+type CapturedTransform = [
+  [number, number, number],
+  [number, number, number],
+]
+
+type CapturedStrokeCap = Exclude<StrokeCap, PluginAPI['mixed']>
+type CapturedStrokeJoin = Exclude<StrokeJoin, PluginAPI['mixed']>
 
 interface CapturedFrame extends CapturedNodeBase {
   type: 'FRAME' | 'GROUP' | 'COMPONENT' | 'INSTANCE'
@@ -144,10 +163,75 @@ interface CapturedText extends CapturedNodeBase {
 
 interface CapturedVector extends CapturedNodeBase {
   type: 'VECTOR'
+  sourceKind:
+    | 'VECTOR'
+    | 'STAR'
+    | 'POLYGON'
+    | 'BOOLEAN_OPERATION'
+    | 'LINE'
+    | 'ELLIPSE'
   svg: string
+  viewBox?: CapturedVectorViewBox
+  vectorPaths?: CapturedVectorPath[]
+  vectorNetwork?: CapturedVectorNetwork
+  fillGeometry?: CapturedVectorPath[]
+  strokeGeometry?: CapturedVectorPath[]
+  primitive?: CapturedVectorPrimitive
+  fidelity: 'editable' | 'partial' | 'preserved'
+  unsupported?: string[]
+  variableWidthStroke?: unknown
+  complexStroke?: unknown
   rasterPng?: string
   rasterReason?: string
 }
+
+interface CapturedVectorViewBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+interface CapturedVectorPath {
+  windingRule: 'NONZERO' | 'EVENODD' | 'NONE'
+  data: string
+}
+
+interface CapturedVectorVertex {
+  x: number
+  y: number
+  strokeCap?: CapturedStrokeCap
+  strokeJoin?: CapturedStrokeJoin
+  cornerRadius?: number
+  handleMirroring?: 'NONE' | 'ANGLE' | 'ANGLE_AND_LENGTH'
+}
+
+interface CapturedVectorSegment {
+  start: number
+  end: number
+  tangentStart?: { x: number; y: number }
+  tangentEnd?: { x: number; y: number }
+}
+
+interface CapturedVectorRegion {
+  windingRule: 'NONZERO' | 'EVENODD'
+  loops: number[][]
+  fills?: CapturedFill[]
+  fillStyleId?: string
+}
+
+interface CapturedVectorNetwork {
+  vertices: CapturedVectorVertex[]
+  segments: CapturedVectorSegment[]
+  regions: CapturedVectorRegion[]
+}
+
+type CapturedVectorPrimitive =
+  | { kind: 'star'; pointCount: number; innerRadius: number; cornerRadius: number }
+  | { kind: 'polygon'; pointCount: number; cornerRadius: number }
+  | { kind: 'ellipse'; startAngle: number; endAngle: number; innerRadius: number }
+  | { kind: 'line' }
+  | { kind: 'boolean'; operation: 'UNION' | 'INTERSECT' | 'SUBTRACT' | 'EXCLUDE' }
 
 type CapturedEffect =
   | {
@@ -192,6 +276,7 @@ interface SolidFill {
   color: { r: number; g: number; b: number }
   opacity: number
   visible: boolean
+  blendMode?: CapturedBlendMode
 }
 
 interface GradientFill {
@@ -201,12 +286,14 @@ interface GradientFill {
     | 'GRADIENT_ANGULAR'
     | 'GRADIENT_DIAMOND'
   gradientHandlePositions: Array<{ x: number; y: number }>
+  gradientTransform?: CapturedTransform
   gradientStops: Array<{
     position: number
     color: { r: number; g: number; b: number; a: number }
   }>
   opacity: number
   visible: boolean
+  blendMode?: CapturedBlendMode
 }
 
 interface ImageFill {
@@ -215,6 +302,11 @@ interface ImageFill {
   scaleMode: 'FILL' | 'FIT' | 'TILE' | 'CROP' | 'STRETCH'
   opacity: number
   visible: boolean
+  blendMode?: CapturedBlendMode
+  imageTransform?: CapturedTransform
+  scalingFactor?: number
+  rotation?: number
+  filters?: ImageFilters
 }
 
 async function buildPayload(selection: readonly SceneNode[]): Promise<Payload> {
@@ -222,7 +314,10 @@ async function buildPayload(selection: readonly SceneNode[]): Promise<Payload> {
   const assets: Record<string, string> = {}
   const nodes: CapturedNode[] = []
   for (const node of selection) {
-    const captured = await captureNode(node, assets)
+    // Selection roots deliberately keep Figma's container-relative transform.
+    // Descendants receive an explicit captured parent below so groups and
+    // boolean operations can be converted to true direct-parent coordinates.
+    const captured = await captureNode(node, assets, null)
     if (captured) nodes.push(captured)
   }
   return {
@@ -236,32 +331,28 @@ async function buildPayload(selection: readonly SceneNode[]): Promise<Payload> {
 async function captureNode(
   node: SceneNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedNode | null> {
   switch (node.type) {
     case 'FRAME':
     case 'GROUP':
     case 'COMPONENT':
     case 'INSTANCE':
-      if (shouldRasterizeVectorTree(node)) {
-        return captureVector(
-          node,
-          assets,
-          'Figma exported this icon as nested vector fragments, so Hyper Motion imports it as a PNG to preserve the exact appearance.',
-        )
-      }
-      return captureFrame(node as FrameNode, assets)
+      return captureFrame(node as FrameNode, assets, capturedParent)
     case 'RECTANGLE':
-      return captureRect(node as RectangleNode, assets)
+      return captureRect(node as RectangleNode, assets, capturedParent)
     case 'ELLIPSE':
-      return captureEllipse(node as EllipseNode, assets)
+      return isFullEllipse(node as EllipseNode)
+        ? captureEllipse(node as EllipseNode, assets, capturedParent)
+        : captureVector(node, assets, capturedParent)
     case 'TEXT':
-      return captureText(node as TextNode, assets)
+      return captureText(node as TextNode, assets, capturedParent)
     case 'VECTOR':
     case 'STAR':
     case 'POLYGON':
     case 'BOOLEAN_OPERATION':
     case 'LINE':
-      return captureVector(node, assets)
+      return captureVector(node, assets, capturedParent)
     default:
       console.warn(
         `[hyper-motion] Skipping unsupported node type: ${node.type}`,
@@ -277,11 +368,12 @@ async function captureNode(
 async function captureFrame(
   node: FrameNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedFrame> {
-  const base = await captureBase(node, assets)
+  const base = await captureBase(node, assets, capturedParent)
   const children: CapturedNode[] = []
   for (const child of node.children) {
-    const c = await captureNode(child, assets)
+    const c = await captureNode(child, assets, node)
     if (c) children.push(c)
   }
   // Cast guards: the typed Figma API returns specific union members per
@@ -331,48 +423,6 @@ async function captureFrame(
   }
 }
 
-function shouldRasterizeVectorTree(node: SceneNode): boolean {
-  if (
-    node.type !== 'FRAME' &&
-    node.type !== 'GROUP' &&
-    node.type !== 'COMPONENT' &&
-    node.type !== 'INSTANCE'
-  ) {
-    return false
-  }
-  const children = (node as ChildrenMixin).children
-  if (!children || children.length === 0) return false
-  const layoutMode = (node as Partial<FrameNode>).layoutMode
-  if (layoutMode && layoutMode !== 'NONE') return false
-  return children.every(isVectorTreeNode)
-}
-
-function isVectorTreeNode(node: SceneNode): boolean {
-  if (!node.visible) return true
-  if (
-    node.type === 'VECTOR' ||
-    node.type === 'STAR' ||
-    node.type === 'POLYGON' ||
-    node.type === 'BOOLEAN_OPERATION' ||
-    node.type === 'LINE'
-  ) {
-    return true
-  }
-  if (
-    node.type === 'FRAME' ||
-    node.type === 'GROUP' ||
-    node.type === 'COMPONENT' ||
-    node.type === 'INSTANCE'
-  ) {
-    const children = (node as ChildrenMixin).children
-    if (!children || children.length === 0) return false
-    const layoutMode = (node as Partial<FrameNode>).layoutMode
-    if (layoutMode && layoutMode !== 'NONE') return false
-    return children.every(isVectorTreeNode)
-  }
-  return false
-}
-
 function nodeTypeAsFrame(t: string): CapturedFrame['type'] {
   if (t === 'FRAME' || t === 'GROUP' || t === 'COMPONENT' || t === 'INSTANCE') {
     return t
@@ -383,22 +433,37 @@ function nodeTypeAsFrame(t: string): CapturedFrame['type'] {
 async function captureRect(
   node: RectangleNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedRect> {
-  return { ...(await captureBase(node, assets)), type: 'RECTANGLE' }
+  return {
+    ...(await captureBase(node, assets, capturedParent)),
+    type: 'RECTANGLE',
+  }
 }
 
 async function captureEllipse(
   node: EllipseNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedEllipse> {
-  return { ...(await captureBase(node, assets)), type: 'ELLIPSE' }
+  return {
+    ...(await captureBase(node, assets, capturedParent)),
+    type: 'ELLIPSE',
+  }
+}
+
+function isFullEllipse(node: EllipseNode): boolean {
+  const { startingAngle, endingAngle, innerRadius } = node.arcData
+  const sweep = Math.abs(endingAngle - startingAngle)
+  return innerRadius === 0 && Math.abs(sweep - Math.PI * 2) < 0.0001
 }
 
 async function captureText(
   node: TextNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedText> {
-  const base = await captureBase(node, assets)
+  const base = await captureBase(node, assets, capturedParent)
   // Mixed font/size across runs in a single text node returns
   // figma.mixed (a Symbol). For MVP we read the first run by passing
   // index 0; richer per-run capture is a follow-up.
@@ -433,37 +498,78 @@ async function captureText(
 async function captureVector(
   node: SceneNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
   rasterReason?: string,
 ): Promise<CapturedVector> {
   const base = await captureBase(
     node as unknown as SceneNode & GeometryMixin,
     assets,
+    capturedParent,
   )
-  // Round-trip vectors as inline SVG. exportAsync returns a Uint8Array
-  // when format is SVG; decode to text. The importer wraps the SVG in
-  // a data URL and renders it as an image fill — same as how external
-  // images get treated.
   let svg = ''
   try {
-    const bytes = await (
-      node as unknown as { exportAsync: (s: ExportSettings) => Promise<Uint8Array> }
-    ).exportAsync({ format: 'SVG' })
-    svg = bytesToString(bytes)
+    svg = await (
+      node as unknown as {
+        exportAsync: (s: ExportSettingsSVGString) => Promise<string>
+      }
+    ).exportAsync({
+      format: 'SVG_STRING',
+      svgOutlineText: true,
+      svgIdAttribute: true,
+      // Preserve inside/outside strokes with Figma's precise mask form.
+      svgSimplifyStroke: false,
+    })
+    svg = sanitizeSvgForTransport(svg)
   } catch (err) {
     console.warn('[hyper-motion] SVG export failed', err)
   }
+
+  const geometry = node as unknown as GeometryMixin
+  const vectorPaths = readVectorPaths(node)
+  const vectorNetwork = await readVectorNetwork(node, assets)
+  const fillGeometry = cloneVectorPaths(geometry.fillGeometry)
+  const strokeGeometry = cloneVectorPaths(geometry.strokeGeometry)
+  const primitive = captureVectorPrimitive(node)
+  const unsupported = detectUnsupportedVectorFeatures(
+    node,
+    base,
+    svg,
+    vectorNetwork,
+  )
+  const advancedStroke = readAdvancedStrokeMetadata(node)
+  const hasEditableGeometry =
+    vectorPaths.length > 0 ||
+    fillGeometry.length > 0 ||
+    strokeGeometry.length > 0 ||
+    !!vectorNetwork ||
+    !!primitive
+
+  const fidelity: CapturedVector['fidelity'] = !hasEditableGeometry
+    ? 'preserved'
+    : unsupported.length > 0
+      ? 'partial'
+      : 'editable'
+
+  // A PNG is only generated when there is no usable SVG or the layer has
+  // collapsed bounds. Normal vectors now remain native/editable and avoid
+  // the large raster payload paid by every v1 capture.
   let rasterPng = ''
   let reason = rasterReason
-  try {
-    const bytes = await (
-      node as unknown as { exportAsync: (s: ExportSettings) => Promise<Uint8Array> }
-    ).exportAsync({ format: 'PNG' })
-    rasterPng = bytesToBase64(bytes)
-  } catch (err) {
-    console.warn('[hyper-motion] PNG vector fallback export failed', err)
-    reason =
-      reason ??
-      'Figma could not export this vector as a fallback image. The SVG may not match exactly.'
+  const requiresRaster = !svg.trim() || base.width < 1 || base.height < 1
+  if (requiresRaster) {
+    try {
+      const bytes = await (
+        node as unknown as {
+          exportAsync: (s: ExportSettingsImage) => Promise<Uint8Array>
+        }
+      ).exportAsync({ format: 'PNG' })
+      rasterPng = bytesToBase64(bytes)
+    } catch (err) {
+      console.warn('[hyper-motion] PNG vector fallback export failed', err)
+      reason =
+        reason ??
+        'Figma could not export this vector as a fallback image. The SVG may not match exactly.'
+    }
   }
   if (!svg.trim()) {
     reason =
@@ -474,13 +580,227 @@ async function captureVector(
       reason ??
       'Figma reported collapsed bounds for this stroked vector. Hyper Motion used a PNG fallback to preserve the visual result.'
   }
+  const viewBox = readSvgViewBox(svg)
   return {
     ...base,
     type: 'VECTOR',
+    sourceKind: node.type as CapturedVector['sourceKind'],
     svg,
+    ...(viewBox ? { viewBox } : {}),
+    ...(vectorPaths.length > 0 ? { vectorPaths } : {}),
+    ...(vectorNetwork ? { vectorNetwork } : {}),
+    ...(fillGeometry.length > 0 ? { fillGeometry } : {}),
+    ...(strokeGeometry.length > 0 ? { strokeGeometry } : {}),
+    ...(primitive ? { primitive } : {}),
+    fidelity,
+    ...(unsupported.length > 0 ? { unsupported } : {}),
+    ...(advancedStroke.variableWidthStroke
+      ? { variableWidthStroke: advancedStroke.variableWidthStroke }
+      : {}),
+    ...(advancedStroke.complexStroke
+      ? { complexStroke: advancedStroke.complexStroke }
+      : {}),
     ...(rasterPng ? { rasterPng } : {}),
     ...(reason ? { rasterReason: reason } : {}),
   }
+}
+
+function cloneVectorPaths(paths: VectorPaths | undefined): CapturedVectorPath[] {
+  if (!paths) return []
+  return Array.from(paths, (path) => ({
+    windingRule: path.windingRule,
+    data: path.data,
+  }))
+}
+
+function readVectorPaths(node: SceneNode): CapturedVectorPath[] {
+  if (node.type !== 'VECTOR') return []
+  try {
+    return cloneVectorPaths(node.vectorPaths)
+  } catch (err) {
+    console.warn('[hyper-motion] Vector path capture failed', err)
+    return []
+  }
+}
+
+async function readVectorNetwork(
+  node: SceneNode,
+  assets: Record<string, string>,
+): Promise<CapturedVectorNetwork | undefined> {
+  if (node.type !== 'VECTOR') return undefined
+  try {
+    const network = node.vectorNetwork
+    const regions: CapturedVectorRegion[] = []
+    for (const region of network.regions ?? []) {
+      regions.push({
+        windingRule: region.windingRule,
+        loops: region.loops.map((loop) => Array.from(loop)),
+        ...(region.fills
+          ? { fills: await capturePaints(region.fills, assets) }
+          : {}),
+        ...(region.fillStyleId ? { fillStyleId: region.fillStyleId } : {}),
+      })
+    }
+    return {
+      vertices: network.vertices.map((vertex) => ({
+        x: vertex.x,
+        y: vertex.y,
+        ...(vertex.strokeCap ? { strokeCap: vertex.strokeCap } : {}),
+        ...(vertex.strokeJoin ? { strokeJoin: vertex.strokeJoin } : {}),
+        ...(typeof vertex.cornerRadius === 'number'
+          ? { cornerRadius: vertex.cornerRadius }
+          : {}),
+        ...(vertex.handleMirroring
+          ? { handleMirroring: vertex.handleMirroring }
+          : {}),
+      })),
+      segments: network.segments.map((segment) => ({
+        start: segment.start,
+        end: segment.end,
+        ...(segment.tangentStart
+          ? { tangentStart: { ...segment.tangentStart } }
+          : {}),
+        ...(segment.tangentEnd
+          ? { tangentEnd: { ...segment.tangentEnd } }
+          : {}),
+      })),
+      regions,
+    }
+  } catch (err) {
+    console.warn('[hyper-motion] Vector network capture failed', err)
+    return undefined
+  }
+}
+
+function captureVectorPrimitive(node: SceneNode): CapturedVectorPrimitive | undefined {
+  const radius = readUniformCornerRadius(node)
+  switch (node.type) {
+    case 'STAR':
+      return {
+        kind: 'star',
+        pointCount: node.pointCount,
+        innerRadius: node.innerRadius,
+        cornerRadius: radius,
+      }
+    case 'POLYGON':
+      return { kind: 'polygon', pointCount: node.pointCount, cornerRadius: radius }
+    case 'ELLIPSE':
+      return {
+        kind: 'ellipse',
+        startAngle: node.arcData.startingAngle,
+        endAngle: node.arcData.endingAngle,
+        innerRadius: node.arcData.innerRadius,
+      }
+    case 'LINE':
+      return { kind: 'line' }
+    case 'BOOLEAN_OPERATION':
+      return { kind: 'boolean', operation: node.booleanOperation }
+    default:
+      return undefined
+  }
+}
+
+function readUniformCornerRadius(node: SceneNode): number {
+  const value = (node as unknown as { cornerRadius?: number | symbol }).cornerRadius
+  return typeof value === 'number' ? value : 0
+}
+
+function detectUnsupportedVectorFeatures(
+  node: SceneNode,
+  base: CapturedNodeBase,
+  svg: string,
+  vectorNetwork: CapturedVectorNetwork | undefined,
+): string[] {
+  const unsupported: string[] = []
+  const complex = node as unknown as {
+    variableWidthStrokeProperties?: unknown
+    complexStrokeProperties?: unknown
+  }
+  if (complex.variableWidthStrokeProperties) unsupported.push('variable-width-stroke')
+  const complexType = (complex.complexStrokeProperties as { type?: string } | null)?.type
+  if (complexType && complexType !== 'BASIC') unsupported.push('brush-or-dynamic-stroke')
+  if (
+    base.strokeCap &&
+    base.strokeCap !== 'MIXED' &&
+    base.strokeCap !== 'NONE' &&
+    base.strokeCap !== 'ROUND' &&
+    base.strokeCap !== 'SQUARE'
+  ) {
+    unsupported.push('decorative-stroke-cap')
+  }
+  if (base.strokeCap === 'MIXED' || base.strokeJoin === 'MIXED') {
+    unsupported.push('mixed-stroke-style')
+  }
+  if (base.strokeAlign !== 'CENTER' && base.strokeWeight > 0) {
+    unsupported.push('non-center-stroke')
+  }
+  if (
+    vectorNetwork?.vertices.some(
+      (vertex) => vertex.strokeCap !== undefined || vertex.strokeJoin !== undefined,
+    )
+  ) {
+    unsupported.push('per-vertex-stroke-style')
+  }
+  if (vectorNetwork?.vertices.some((vertex) => (vertex.cornerRadius ?? 0) > 0)) {
+    unsupported.push('per-vertex-corner-radius')
+  }
+  const paints = [
+    ...readPaintArray((node as unknown as { fills?: ReadonlyArray<Paint> | symbol }).fills),
+    ...readPaintArray((node as unknown as { strokes?: ReadonlyArray<Paint> | symbol }).strokes),
+  ]
+  for (const paint of paints) {
+    if (paint.type === 'GRADIENT_DIAMOND') unsupported.push('diamond-gradient')
+    if (paint.type === 'PATTERN') unsupported.push('pattern-paint')
+    if (paint.type === 'VIDEO') unsupported.push('video-paint')
+    if (paint.type === 'IMAGE' && paint.filters) unsupported.push('image-filters')
+  }
+  if (/<(?:filter|pattern|text|image)\b/i.test(svg)) {
+    unsupported.push('advanced-svg-content')
+  }
+  return Array.from(new Set(unsupported))
+}
+
+function readPaintArray(
+  value: ReadonlyArray<Paint> | symbol | undefined,
+): ReadonlyArray<Paint> {
+  return Array.isArray(value) ? value : []
+}
+
+function readAdvancedStrokeMetadata(node: SceneNode): {
+  variableWidthStroke?: unknown
+  complexStroke?: unknown
+} {
+  const value = node as unknown as {
+    variableWidthStrokeProperties?: unknown
+    complexStrokeProperties?: { type?: string } | null
+  }
+  return {
+    ...(value.variableWidthStrokeProperties
+      ? { variableWidthStroke: value.variableWidthStrokeProperties }
+      : {}),
+    ...(value.complexStrokeProperties?.type &&
+    value.complexStrokeProperties.type !== 'BASIC'
+      ? { complexStroke: value.complexStrokeProperties }
+      : {}),
+  }
+}
+
+function readSvgViewBox(svg: string): CapturedVectorViewBox | undefined {
+  const raw = svg.match(/\bviewBox\s*=\s*["']([^"']+)["']/i)?.[1]
+  if (!raw) return undefined
+  const values = raw.trim().split(/[\s,]+/).map(Number)
+  if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+    return undefined
+  }
+  return { x: values[0], y: values[1], width: values[2], height: values[3] }
+}
+
+function sanitizeSvgForTransport(source: string): string {
+  return source
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject\s*>/gi, '')
+    .replace(/\s+on[a-z][\w:-]*\s*=\s*(?:"[^"]*"|'[^']*')/gi, '')
+    .replace(/\s+(?:href|xlink:href)\s*=\s*(["'])\s*(?:javascript:|https?:|\/\/)[\s\S]*?\1/gi, '')
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +810,7 @@ async function captureVector(
 async function captureBase(
   node: SceneNode,
   assets: Record<string, string>,
+  capturedParent: SceneNode | null,
 ): Promise<CapturedNodeBase> {
   const geo = node as SceneNode & {
     fills?: ReadonlyArray<Paint> | symbol
@@ -507,10 +828,21 @@ async function captureBase(
     bottomLeftRadius?: number
     bottomRightRadius?: number
     rotation?: number
+    relativeTransform?: Transform
     layoutPositioning?: 'AUTO' | 'ABSOLUTE'
+    layoutSizingHorizontal?: 'FIXED' | 'HUG' | 'FILL'
+    layoutSizingVertical?: 'FIXED' | 'HUG' | 'FILL'
+    minWidth?: number | null
+    maxWidth?: number | null
+    minHeight?: number | null
+    maxHeight?: number | null
     opacity?: number
     blendMode?: BlendMode
     effects?: ReadonlyArray<Effect> | symbol
+    strokeCap?: StrokeCap | symbol
+    strokeJoin?: StrokeJoin | symbol
+    strokeMiterLimit?: number
+    dashOffset?: number
   }
   const fills = await capturePaints(
     Array.isArray(geo.fills) ? geo.fills : [],
@@ -533,18 +865,32 @@ async function captureBase(
     ? Array.from(geo.dashPattern)
     : []
   const effects = Array.isArray(geo.effects) ? captureEffects(geo.effects) : []
+  const relativeTransform = capturedParent
+    ? transformRelativeToCapturedParent(node, capturedParent)
+    : geo.relativeTransform
+      ? cloneTransform(geo.relativeTransform)
+      : undefined
   return {
     id: node.id,
     name: node.name,
     visible: node.visible,
     locked: node.locked,
     opacity: typeof geo.opacity === 'number' ? geo.opacity : 1,
-    x: node.x,
-    y: node.y,
+    x: relativeTransform?.[0][2] ?? node.x,
+    y: relativeTransform?.[1][2] ?? node.y,
     width: node.width,
     height: node.height,
     rotation: typeof geo.rotation === 'number' ? geo.rotation : 0,
+    ...(relativeTransform
+      ? { relativeTransform }
+      : {}),
     layoutPositioning: geo.layoutPositioning,
+    layoutSizingHorizontal: geo.layoutSizingHorizontal,
+    layoutSizingVertical: geo.layoutSizingVertical,
+    minWidth: geo.minWidth,
+    maxWidth: geo.maxWidth,
+    minHeight: geo.minHeight,
+    maxHeight: geo.maxHeight,
     cornerRadius: cornerRadiiOf(geo),
     fills,
     strokes,
@@ -552,6 +898,22 @@ async function captureBase(
     ...(strokeWidths ? { strokeWidths } : {}),
     strokeAlign,
     strokeDashes,
+    ...(typeof geo.dashOffset === 'number'
+      ? { strokeDashOffset: geo.dashOffset }
+      : {}),
+    ...(typeof geo.strokeCap === 'string'
+      ? { strokeCap: geo.strokeCap as CapturedStrokeCap }
+      : geo.strokeCap
+        ? { strokeCap: 'MIXED' as const }
+        : {}),
+    ...(typeof geo.strokeJoin === 'string'
+      ? { strokeJoin: geo.strokeJoin as CapturedStrokeJoin }
+      : geo.strokeJoin
+        ? { strokeJoin: 'MIXED' as const }
+        : {}),
+    ...(typeof geo.strokeMiterLimit === 'number'
+      ? { strokeMiterLimit: geo.strokeMiterLimit }
+      : {}),
     blendMode: (geo.blendMode as CapturedBlendMode | undefined) ?? 'NORMAL',
     effects,
   }
@@ -656,6 +1018,7 @@ async function capturePaint(
       color: { r: paint.color.r, g: paint.color.g, b: paint.color.b },
       opacity: paint.opacity ?? 1,
       visible,
+      blendMode: (paint.blendMode as CapturedBlendMode | undefined) ?? 'NORMAL',
     }
   }
   if (
@@ -674,12 +1037,14 @@ async function capturePaint(
       gradientHandlePositions: gradientHandlesFromTransform(
         paint.gradientTransform,
       ),
+      gradientTransform: cloneTransform(paint.gradientTransform),
       gradientStops: paint.gradientStops.map((s) => ({
         position: s.position,
         color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a },
       })),
       opacity: paint.opacity ?? 1,
       visible,
+      blendMode: (paint.blendMode as CapturedBlendMode | undefined) ?? 'NORMAL',
     }
   }
   if (paint.type === 'IMAGE') {
@@ -703,9 +1068,78 @@ async function capturePaint(
       scaleMode: paint.scaleMode as ImageFill['scaleMode'],
       opacity: paint.opacity ?? 1,
       visible,
+      blendMode: (paint.blendMode as CapturedBlendMode | undefined) ?? 'NORMAL',
+      ...(paint.imageTransform
+        ? { imageTransform: cloneTransform(paint.imageTransform) }
+        : {}),
+      ...(typeof paint.scalingFactor === 'number'
+        ? { scalingFactor: paint.scalingFactor }
+        : {}),
+      ...(typeof paint.rotation === 'number' ? { rotation: paint.rotation } : {}),
+      ...(paint.filters ? { filters: { ...paint.filters } } : {}),
     }
   }
   return null
+}
+
+function cloneTransform(transform: Transform): CapturedTransform {
+  return [
+    [transform[0][0], transform[0][1], transform[0][2]],
+    [transform[1][0], transform[1][1], transform[1][2]],
+  ]
+}
+
+/**
+ * Figma's `relativeTransform` skips groups and boolean-operation parents: it
+ * is relative to the nearest container. Hyper Motion persists every captured
+ * parent, so descendants need a true direct-parent matrix or nested vectors
+ * are translated twice after import.
+ */
+function transformRelativeToCapturedParent(
+  node: SceneNode,
+  capturedParent: SceneNode,
+): CapturedTransform {
+  const childAbsolute = cloneTransform(node.absoluteTransform)
+  const parentAbsolute = cloneTransform(capturedParent.absoluteTransform)
+  const inverseParent = invertTransform(parentAbsolute)
+  if (!inverseParent) {
+    return cloneTransform(node.relativeTransform)
+  }
+  return multiplyTransforms(inverseParent, childAbsolute)
+}
+
+function invertTransform(transform: CapturedTransform): CapturedTransform | null {
+  const [[a, c, e], [b, d, f]] = transform
+  const determinant = a * d - b * c
+  if (Math.abs(determinant) < 1e-12) return null
+  return [
+    [d / determinant, -c / determinant, (c * f - d * e) / determinant],
+    [-b / determinant, a / determinant, (b * e - a * f) / determinant],
+  ]
+}
+
+function multiplyTransforms(
+  left: CapturedTransform,
+  right: CapturedTransform,
+): CapturedTransform {
+  const [[la, lc, le], [lb, ld, lf]] = left
+  const [[ra, rc, re], [rb, rd, rf]] = right
+  return [
+    [
+      normalizedTransformValue(la * ra + lc * rb),
+      normalizedTransformValue(la * rc + lc * rd),
+      normalizedTransformValue(la * re + lc * rf + le),
+    ],
+    [
+      normalizedTransformValue(lb * ra + ld * rb),
+      normalizedTransformValue(lb * rc + ld * rd),
+      normalizedTransformValue(lb * re + ld * rf + lf),
+    ],
+  ]
+}
+
+function normalizedTransformValue(value: number): number {
+  return Math.abs(value) < 1e-10 ? 0 : value
 }
 
 // ---------------------------------------------------------------------------
@@ -864,14 +1298,4 @@ function gradientHandlesFromTransform(
     y: invC * px + invD * py + invTy,
   })
   return [apply(0, 0), apply(1, 0), apply(0, 1)]
-}
-
-function bytesToString(bytes: Uint8Array): string {
-  // SVG export is UTF-8; decode it directly.
-  if (typeof TextDecoder !== 'undefined') {
-    return new TextDecoder('utf-8').decode(bytes)
-  }
-  let out = ''
-  for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i])
-  return out
 }

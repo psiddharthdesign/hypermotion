@@ -10,7 +10,11 @@ vi.mock('@/ui/fonts/googleFonts', () => ({
 }))
 
 import { figmaToFill, figmaToStroke } from './fillMap'
-import { figmaToLayout, figmaToTransform } from './layoutMap'
+import {
+  figmaToLayout,
+  figmaToTransform,
+  figmaVectorAffine,
+} from './layoutMap'
 import { figmaToText } from './textMap'
 import type {
   FigmaCapturedFrame,
@@ -141,6 +145,31 @@ describe('Figma import mapping regressions', () => {
     )
 
     expect(transform).toMatchObject({ x: 0, y: 0, rotation: 17.5 })
+  })
+
+  it('applies a vector affine exactly once across layer and item transforms', () => {
+    const node = capturedRect({
+      x: 999,
+      y: 888,
+      rotation: 42,
+      // Includes reflection, non-uniform scale and skew. Translation is the
+      // authoritative Figma child-to-parent position.
+      relativeTransform: [
+        [0, -2, 120],
+        [-1, 0.25, 45],
+      ],
+    })
+    const base = figmaToTransform(node, 'NONE')
+    const affine = figmaVectorAffine(node, base)
+
+    expect(affine.layerTransform).toMatchObject({
+      x: 120,
+      y: 45,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(affine.itemTransform).toEqual([0, -1, -2, 0.25, 0, 0])
   })
 
   it('retains a border made entirely from per-side stroke widths', () => {

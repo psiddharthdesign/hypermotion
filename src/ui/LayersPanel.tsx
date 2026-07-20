@@ -1002,6 +1002,7 @@ const GLYPHS: Record<NodeKind, string> = {
   frame: '▢',
   rect: '▪',
   ellipse: '●',
+  vector: '⌁',
   text: 'T',
   image: '▧',
   component: '◆',

@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Layout, Size, SizeAxis, Transform } from '@/scene'
+import type {
+  Layout,
+  Size,
+  SizeAxis,
+  Transform,
+  VectorMatrix,
+} from '@/scene'
 import type { FigmaCapturedFrame, FigmaCapturedNode } from './types'
 
 /**
@@ -108,7 +114,30 @@ export function figmaToSize(
     )
     return { width: horiz, height: vert }
   }
-  return { width: node.width, height: node.height }
+  // Payload v2 captures explicit sizing for every auto-layout child, not only
+  // frames. This is particularly important for imported SVG icons: a FILL
+  // vector must remain responsive and a HUG vector uses its intrinsic viewBox.
+  return {
+    width: sizeAxisFromCapturedNode(
+      node.layoutSizingHorizontal,
+      node.width,
+      forceFixed,
+    ),
+    height: sizeAxisFromCapturedNode(
+      node.layoutSizingVertical,
+      node.height,
+      forceFixed,
+    ),
+  }
+}
+
+function sizeAxisFromCapturedNode(
+  sizing: 'FIXED' | 'HUG' | 'FILL' | undefined,
+  px: number,
+  forceFixed: boolean,
+): SizeAxis {
+  if (forceFixed || !sizing || sizing === 'FIXED') return px
+  return sizing === 'HUG' ? 'hug' : 'fill'
 }
 
 function sizeAxisFromFrame(
@@ -152,6 +181,8 @@ export function figmaToTransform(
 ): Transform {
   const inAutoLayout = parentLayoutMode !== null && parentLayoutMode !== 'NONE'
   const absoluteInParent = node.layoutPositioning === 'ABSOLUTE'
+  const capturedX = node.relativeTransform?.[0][2] ?? node.x
+  const capturedY = node.relativeTransform?.[1][2] ?? node.y
   if (inAutoLayout && !absoluteInParent) {
     return {
       x: 0,
@@ -167,8 +198,8 @@ export function figmaToTransform(
     }
   }
   return {
-    x: node.x,
-    y: node.y,
+    x: capturedX,
+    y: capturedY,
     z: 0,
     rotation: node.rotation,
     rotationX: 0,
@@ -176,4 +207,53 @@ export function figmaToTransform(
     scaleX: 1,
     scaleY: 1,
   }
+}
+
+/**
+ * Split a Figma vector transform into layer translation and item-local affine.
+ *
+ * The generic scene transform can express rotation/scale but not skew. Native
+ * vector items can express the complete matrix, so payload-v2 vectors keep the
+ * linear 2×2 part there and the layer owns translation only. This also avoids
+ * applying Figma rotation twice (once as a layer rotation and once in SVG).
+ */
+export function figmaVectorAffine(
+  node: FigmaCapturedNode,
+  layerTransform: Transform,
+): { layerTransform: Transform; itemTransform: VectorMatrix } {
+  const matrix = node.relativeTransform
+  if (!matrix) {
+    return {
+      layerTransform,
+      itemTransform: [1, 0, 0, 1, 0, 0],
+    }
+  }
+  return {
+    layerTransform: {
+      ...layerTransform,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    },
+    itemTransform: figmaVectorItemTransform(node),
+  }
+}
+
+export function figmaVectorItemTransform(
+  node: FigmaCapturedNode,
+): VectorMatrix {
+  const matrix = node.relativeTransform
+  if (!matrix) return [1, 0, 0, 1, 0, 0]
+  return [
+    normalizedZero(matrix[0][0]),
+    normalizedZero(matrix[1][0]),
+    normalizedZero(matrix[0][1]),
+    normalizedZero(matrix[1][1]),
+    0,
+    0,
+  ]
+}
+
+function normalizedZero(value: number): number {
+  return Math.abs(value) < 1e-12 ? 0 : value
 }
