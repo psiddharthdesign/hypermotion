@@ -22,6 +22,7 @@ import {
 } from '@/ui/Canvas'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
+import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
 import { getAnimEngine } from '@/anim'
 import {
   createElectronCapture,
@@ -349,37 +350,18 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     ? fillBackgroundStyle(cameraBackgroundFill)
     : null
 
-  const cameraFocalLength =
-    camera && camera.kind === 'camera'
-      ? Math.max(50, camera.focalLength ?? 1000)
-      : 1000
-  const cameraZ =
-    camera && camera.kind === 'camera'
-      ? cameraAnim?.z ?? camera.transform.z
-      : 0
-  const cameraDollyZ = cameraZ / 100
-  const cameraScaleFromZ = useMemo(() => {
-    const denom = Math.max(1, cameraFocalLength - cameraDollyZ)
-    return cameraFocalLength / denom
-  }, [cameraDollyZ, cameraFocalLength])
-
-  const cameraTransform = useMemo(() => {
-    if (!camera || camera.kind !== 'camera') return null
-    const cx = cameraAnim?.x ?? camera.transform.x
-    const cy = cameraAnim?.y ?? camera.transform.y
-    const rZ = cameraAnim?.rotation ?? camera.transform.rotation
-    const rX = cameraAnim?.rotationX ?? camera.transform.rotationX
-    const rY = cameraAnim?.rotationY ?? camera.transform.rotationY
-    const s = cameraScaleFromZ
-    const w = canvasWidth
-    const h = canvasHeight
-    return (
-      `translate(${w / 2}px, ${h / 2}px) ` +
-      `scale(${s}, ${s}) ` +
-      `rotateX(${-rX}deg) rotateY(${rY}deg) rotateZ(${-rZ}deg) ` +
-      `translate(${-cx}px, ${-cy}px)`
-    )
-  }, [camera, cameraAnim, cameraScaleFromZ, canvasWidth, canvasHeight])
+  const cameraDomProjection = useMemo(
+    () =>
+      resolveCameraDomProjection(
+        camera && camera.kind === 'camera' ? camera : null,
+        cameraAnim,
+        { width: canvasWidth, height: canvasHeight },
+      ),
+    [camera, cameraAnim, canvasWidth, canvasHeight],
+  )
+  const cameraFocalLength = cameraDomProjection.focalLength
+  const cameraScaleFromZ = cameraDomProjection.scale
+  const cameraTransform = cameraDomProjection.transform
 
   const cameraDepthOfField = useMemo(
     () => {
@@ -489,7 +471,10 @@ function RenderCanvas({ job }: { job: RenderJob }) {
           >
             <div
               className="absolute inset-0"
-              style={{ opacity: threeCameraAvailable ? 0 : 1 }}
+              style={{
+                opacity: threeCameraAvailable ? 0 : 1,
+                transformStyle: 'preserve-3d',
+              }}
             >
               <ScenePostProcessLayer
                 rootId={rootId}
@@ -908,11 +893,11 @@ function resolveRenderWindowFocusEffect(
   const camera = cameraId ? api.getNode(cameraId) : null
   if (!camera || camera.kind !== 'camera' || !camera.depthOfField) return null
   const cameraAnim = animated[camera.id]
-  const cameraFocalLength = Math.max(50, camera.focalLength ?? 1000)
-  const cameraZ = cameraAnim?.z ?? camera.transform.z
-  const cameraDollyZ = cameraZ / 100
-  const cameraScale =
-    cameraFocalLength / Math.max(1, cameraFocalLength - cameraDollyZ)
+  const cameraScale = resolveCameraDomProjection(
+    camera,
+    cameraAnim,
+    sceneCanvas,
+  ).scale
   const dof = computeCameraDepthOfField(
     camera,
     cameraAnim,
