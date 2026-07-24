@@ -156,7 +156,6 @@ function dragTrackIdsFor(trackId: string): string[] {
  * labels don't disappear when you scroll right.
  */
 
-const TRACK_HEADER_WIDTH = 180
 // Live horizontal zoom in pixels-per-second. Mirrors the value held
 // in useUI's `timelinePxPerSecond`. We mirror it into a module-level
 // mutable so all the timeline's helper components, callbacks, and
@@ -288,6 +287,8 @@ export function Timeline() {
   // don't each have to subscribe.
   const pxPerSecond = useUI((s) => s.timelinePxPerSecond)
   const setTimelinePxPerSecond = useUI((s) => s.setTimelinePxPerSecond)
+  const timelineSidebarWidth = useUI((s) => s.timelineSidebarWidth)
+  const setTimelineSidebarWidth = useUI((s) => s.setTimelineSidebarWidth)
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   const setSelectedTrackIds = useUI((s) => s.setSelectedTrackIds)
   const staggerDelay = useUI((s) => s.staggerDelay)
@@ -471,9 +472,9 @@ export function Timeline() {
         const cursorXInScroller = e.clientX - scrollerRect.left
         // Cursor should be at (cursorTime * next) inside right-column
         // content. That corresponds to scroller.scrollLeft + cursorX
-        // − TRACK_HEADER_WIDTH (left column eats the first chunk).
+        // − timelineSidebarWidth (the sticky left column eats the first chunk).
         const target =
-          cursorTime * next - (cursorXInScroller - TRACK_HEADER_WIDTH)
+          cursorTime * next - (cursorXInScroller - timelineSidebarWidth)
         scroller.scrollLeft = Math.max(0, target)
       })
     }
@@ -481,7 +482,7 @@ export function Timeline() {
     // ignores preventDefault for wheel events on scroll containers.
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [setTimelinePxPerSecond])
+  }, [setTimelinePxPerSecond, timelineSidebarWidth])
   const scrollerRef = useRef<HTMLDivElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   // The right column wrapper — the element whose `getBoundingClientRect`
@@ -2428,6 +2429,34 @@ export function Timeline() {
     window.addEventListener('pointerup', onUp)
   }
 
+  const onSidebarResizePointerDown = (
+    e: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const handle = e.currentTarget
+    const startX = e.clientX
+    const startWidth = timelineSidebarWidth
+    handle.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      setTimelineSidebarWidth(startWidth + ev.clientX - startX)
+    }
+    const onUp = () => {
+      try {
+        handle.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
   return (
     <section
       className="relative flex shrink-0 flex-col border-t border-border bg-panel"
@@ -2615,8 +2644,33 @@ export function Timeline() {
             scroll automatically (no overflow of its own). */}
         <div
           className="sticky left-0 z-20 shrink-0 border-r border-border bg-panel"
-          style={{ width: TRACK_HEADER_WIDTH }}
+          style={{ width: timelineSidebarWidth }}
         >
+          <div
+            role="separator"
+            aria-label="Resize timeline sidebar"
+            aria-orientation="vertical"
+            aria-valuemin={160}
+            aria-valuemax={600}
+            aria-valuenow={Math.round(timelineSidebarWidth)}
+            tabIndex={0}
+            onPointerDown={onSidebarResizePointerDown}
+            onDoubleClick={() => setTimelineSidebarWidth(180)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                return
+              }
+              event.preventDefault()
+              const direction = event.key === 'ArrowRight' ? 1 : -1
+              setTimelineSidebarWidth(
+                timelineSidebarWidth + direction * (event.shiftKey ? 32 : 8),
+              )
+            }}
+            title="Drag to resize track sidebar · Double-click to reset"
+            className="group absolute top-0 right-0 z-40 h-full w-2 translate-x-1/2 cursor-col-resize touch-none outline-none"
+          >
+            <span className="pointer-events-none absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-transparent group-hover:bg-accent/70 group-focus-visible:bg-accent" />
+          </div>
           {/* sticky-top-AND-bumped-z so this corner stays above both
               the ruler (z-10) and the left labels (z-20) at the top-
               left intersection during scrolling.
