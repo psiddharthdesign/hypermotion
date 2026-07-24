@@ -156,6 +156,9 @@ The desktop UI should call the same domain functions, not a second algorithm.
 - Low-confidence half-time and dotted-quarter ambiguities are resolved against
   strong double-time and 3:2 candidates; candidate evidence remains available
   for manual correction.
+- Tempo scoring combines the full-band onset envelope with a bass-focused
+  envelope so dense hats and five-accent figures do not outrank the underlying
+  quarter-note pulse (for example, ~95 BPM over a true 75 BPM track).
 - Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
   eighth, and sixteenth-note overrides can be applied immediately.
 - Selected keyframes spread over unique note slots in one transaction, and

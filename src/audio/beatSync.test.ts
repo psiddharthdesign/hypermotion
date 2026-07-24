@@ -97,6 +97,40 @@ describe('analyzeBeatPcm', () => {
     expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(114, 0)
     expect(result.candidates[0]!.bpm).toBeLessThan(80)
   })
+
+  it('uses repeating bar structure instead of a denser false pulse', () => {
+    const sampleRate = 8_000
+    const duration = 24
+    const beatSeconds = 60 / 75
+    const barSeconds = beatSeconds * 4
+    const samples = new Float32Array(sampleRate * duration)
+    const addTone = (
+      time: number,
+      amplitude: number,
+      frequency: number,
+      length: number,
+    ) => {
+      const start = Math.round(time * sampleRate)
+      for (let i = 0; i < length; i++) {
+        samples[start + i] +=
+          amplitude *
+          Math.exp(-i / (length / 3)) *
+          Math.sin(2 * Math.PI * frequency * i / sampleRate)
+      }
+    }
+    for (let time = 0.2; time < duration; time += beatSeconds) {
+      addTone(time, 0.22, 80, 560)
+    }
+    for (let bar = 0.2; bar < duration; bar += barSeconds) {
+      for (let accent = 0; accent < 5; accent++) {
+        addTone(bar + accent * barSeconds / 5, 1.2, 2_400, 128)
+      }
+    }
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(75, 0)
+  })
 })
 
 describe('createNoteMarkers', () => {

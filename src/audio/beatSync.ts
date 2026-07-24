@@ -153,9 +153,19 @@ export function analyzeBeatPcm(
   )
   const mono = mixToMono(audio.channels)
   const novelty = onsetNovelty(mono, hopSize)
+  const bassNovelty = onsetNovelty(
+    lowPassSamples(mono, sampleRate, 180),
+    hopSize,
+  )
   const noveltyRate = sampleRate / hopSize
   const transients = pickTransients(novelty, noveltyRate)
-  const candidates = tempoCandidates(novelty, noveltyRate, minBpm, maxBpm)
+  const candidates = tempoCandidates(
+    novelty,
+    bassNovelty,
+    noveltyRate,
+    minBpm,
+    maxBpm,
+  )
   const winner = selectTempoCandidate(candidates) ?? {
     bpm: clamp(120, minBpm, maxBpm),
     confidence: 0,
@@ -341,6 +351,26 @@ function mixToMono(channels: readonly Float32Array[]): Float32Array {
   return mono
 }
 
+/**
+ * A lightweight one-pole low-pass used to give kick/bass recurrence a voice
+ * alongside the full-band onset envelope. Dense hats and melodic attacks can
+ * otherwise look like a convincing but unrelated tempo.
+ */
+function lowPassSamples(
+  samples: Float32Array,
+  sampleRate: number,
+  cutoffHz: number,
+): Float32Array {
+  const filtered = new Float32Array(samples.length)
+  const alpha = 1 - Math.exp(-2 * Math.PI * cutoffHz / sampleRate)
+  let value = 0
+  for (let i = 0; i < samples.length; i++) {
+    value += alpha * (samples[i]! - value)
+    filtered[i] = value
+  }
+  return filtered
+}
+
 function onsetNovelty(samples: Float32Array, hopSize: number): Float32Array {
   const frameCount = Math.ceil(samples.length / hopSize)
   const energy = new Float32Array(frameCount)
@@ -401,6 +431,7 @@ function pickTransients(
 
 function tempoCandidates(
   novelty: Float32Array,
+  bassNovelty: Float32Array,
   noveltyRate: number,
   minBpm: number,
   maxBpm: number,
@@ -408,10 +439,15 @@ function tempoCandidates(
   const scored: Array<{ bpm: number; score: number }> = []
   for (let bpm = minBpm; bpm <= maxBpm; bpm += 0.25) {
     const lag = noveltyRate * 60 / bpm
-    const score =
+    const broadbandScore =
       correlationAtLag(novelty, lag) +
       correlationAtLag(novelty, lag * 2) * 0.35 +
       correlationAtLag(novelty, lag / 2) * 0.15
+    const bassScore =
+      correlationAtLag(bassNovelty, lag) +
+      correlationAtLag(bassNovelty, lag * 2) * 0.35 +
+      correlationAtLag(bassNovelty, lag / 2) * 0.15
+    const score = broadbandScore + bassScore * 0.85
     // A gentle centre-tempo prior resolves common half/double-time ties while
     // remaining weak enough for a clear 70 or 180 BPM pulse to win.
     const prior = 0.92 + 0.08 * Math.exp(-Math.pow((bpm - 120) / 55, 2))
@@ -447,6 +483,23 @@ function selectTempoCandidate(
 ): TempoCandidate | undefined {
   const primary = candidates[0]
   if (!primary) return undefined
+
+  // A five-accent figure repeated over four quarter-note beats can dominate
+  // the full-band envelope and read around 94–96 BPM over a true 75 BPM
+  // pulse. Only prefer the slower 4:5 candidate when the overall result is
+  // explicitly ambiguous and the bass-aware candidate is nearly as strong.
+  const fourUnderFive = candidates.find(
+    (candidate, index) =>
+      index > 0 &&
+      candidate.bpm < primary.bpm &&
+      candidate.bpm / primary.bpm >= 0.76 &&
+      candidate.bpm / primary.bpm <= 0.82 &&
+      candidate.confidence >= 0.75,
+  )
+  if (primary.confidence < 0.55 && fourUnderFive) {
+    return { bpm: fourUnderFive.bpm, confidence: primary.confidence }
+  }
+
   if (primary.bpm >= 85 || primary.confidence >= 0.65) return primary
 
   const doubled = candidates.find(
