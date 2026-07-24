@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
+import { Music2, RefreshCw, Volume2, Wand2 } from 'lucide-react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { getAnimEngine, removeKeyframe, removeTrack } from '@/anim'
@@ -2567,6 +2568,26 @@ export function Timeline() {
           />
         </div>
       </div>
+      {timelineMode === 'sound' && selectedAudio && (
+        <AudioBeatToolbar
+          node={selectedAudio}
+          api={api}
+          analyzing={analyzingAudioId === selectedAudio.id}
+          selectedBarRange={
+            selectedBarRange?.audioNodeId === selectedAudio.id
+              ? selectedBarRange
+              : null
+          }
+          selectedKeyframeCount={selectedKfs.size}
+          message={beatSyncMessage}
+          onAnalyze={() => void analyzeAudio(selectedAudio)}
+          onGridChange={(patch) => updateBeatGrid(selectedAudio, patch)}
+          onSetDivision={(division) =>
+            setBarDivision(selectedAudio, division)
+          }
+          onSync={() => syncSelectedKeyframes(selectedAudio)}
+        />
+      )}
       {/* Single scroll container handles BOTH axes for the whole
           timeline. Left column sticks to the left during horizontal
           scroll; the ruler sticks to the top during vertical scroll;
@@ -2688,25 +2709,15 @@ export function Timeline() {
               </div>
             ) : (
               <>
-                {selectedAudio && (
-                  <AudioBeatControls
-                    node={selectedAudio}
-                    api={api}
-                    analyzing={analyzingAudioId === selectedAudio.id}
-                    selectedBarRange={
-                      selectedBarRange?.audioNodeId === selectedAudio.id
-                        ? selectedBarRange
-                        : null
-                    }
-                    selectedKeyframeCount={selectedKfs.size}
-                    message={beatSyncMessage}
-                    onAnalyze={() => void analyzeAudio(selectedAudio)}
-                    onGridChange={(patch) => updateBeatGrid(selectedAudio, patch)}
-                    onSetDivision={(division) =>
-                      setBarDivision(selectedAudio, division)
-                    }
-                    onSync={() => syncSelectedKeyframes(selectedAudio)}
-                  />
+                {selectedAudio?.beatGrid && (
+                  <div className="flex h-6 items-center border-b border-border bg-panel-raised/35 px-3">
+                    <span className="font-mono text-[9px] font-semibold tracking-[0.08em] text-text-dim uppercase">
+                      Bars
+                    </span>
+                    <span className="ml-auto text-[9px] text-text-dim">
+                      Shift-click for range
+                    </span>
+                  </div>
                 )}
                 {mediaClips.map((clip) => (
                   <MediaClipLabel
@@ -3261,14 +3272,6 @@ export function Timeline() {
                         })
                       }
                     />
-                  )}
-                  {selectedAudio && !selectedAudio.beatGrid && (
-                    <div
-                      className="flex h-[116px] items-center border-b border-border/50 bg-panel/35 px-4 text-[10px] text-text-dim"
-                      style={{ width: totalWidth }}
-                    >
-                      Analyze the selected audio to create its musical grid.
-                    </div>
                   )}
                   {mediaClips.map((clip) => (
                     <MediaClipRow
@@ -4462,7 +4465,7 @@ function AudioImportButton({ onClick }: { onClick: () => void }) {
   )
 }
 
-function AudioBeatControls({
+function AudioBeatToolbar({
   node,
   api,
   analyzing,
@@ -4489,34 +4492,42 @@ function AudioBeatControls({
   const range = selectedBarRange ?? { startBar: 1, endBar: 1 }
   const division = grid ? divisionForBar(grid, range.startBar) : 4
   const fieldClass =
-    'h-5 min-w-0 rounded border border-border bg-panel px-1 font-mono text-[9px] text-text outline-none focus:border-accent'
+    'h-7 rounded border border-border bg-panel px-2 font-mono text-[10px] tabular-nums text-text outline-none focus:border-accent disabled:text-text-dim'
+  const groupClass =
+    'flex h-7 shrink-0 items-center gap-1.5 border-l border-border/70 pl-3'
 
   return (
-    <div className="h-[116px] space-y-1 border-b border-border bg-panel-raised/55 px-2 py-1.5">
-      <div className="flex items-center gap-1">
+    <div className="h-12 shrink-0 overflow-x-auto border-b border-border bg-panel-raised/70">
+      <div className="flex h-full min-w-max items-center gap-3 px-3">
+        <div className="flex shrink-0 items-center gap-2">
+          <Music2 size={15} strokeWidth={1.8} className="text-accent" />
+          <div className="max-w-32">
+            <div className="truncate text-[10px] font-semibold text-text">
+              {node.name}
+            </div>
+            <div className="text-[8px] font-medium tracking-[0.08em] text-text-dim uppercase">
+              Beat sync
+            </div>
+          </div>
+        </div>
         <button
           type="button"
           onClick={onAnalyze}
           disabled={analyzing}
-          className="h-6 flex-1 rounded bg-accent px-2 text-[9px] font-semibold text-white disabled:opacity-50"
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded bg-accent px-3 text-[10px] font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-50"
         >
-          {analyzing ? 'Analyzing…' : grid ? 'Analyze again' : 'Analyze beats'}
+          <RefreshCw
+            size={12}
+            strokeWidth={2}
+            className={analyzing ? 'animate-spin' : ''}
+          />
+          {analyzing ? 'Analyzing…' : grid ? 'Reanalyze' : 'Analyze beats'}
         </button>
-        <button
-          type="button"
-          onClick={onSync}
-          disabled={!grid || selectedKeyframeCount === 0}
-          className="h-6 flex-1 rounded border border-accent/60 bg-accent-soft px-1 text-[9px] font-semibold text-accent disabled:border-border disabled:bg-panel disabled:text-text-dim"
-          title="Spread selected keyframes across the selected note grid"
-        >
-          Sync {selectedKeyframeCount || ''} keys
-        </button>
-      </div>
-      <div className="grid grid-cols-[1fr_1fr] gap-1">
-        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
-          BPM
+
+        <div className={groupClass}>
+          <span className="text-[9px] font-medium text-text-dim">Tempo</span>
           <input
-            className={fieldClass}
+            className={`${fieldClass} w-[68px]`}
             type="number"
             min="30"
             max="360"
@@ -4527,11 +4538,34 @@ function AudioBeatControls({
               onGridChange({ bpm: clamp(Number(event.target.value), 30, 360) })
             }
           />
-        </label>
-        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
-          Meter
+          <button
+            type="button"
+            disabled={!grid}
+            onClick={() =>
+              grid && onGridChange({ bpm: clamp(grid.bpm / 2, 30, 360) })
+            }
+            className="h-7 rounded border border-border bg-panel px-2 font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text disabled:text-text-dim"
+            title="Use half tempo"
+          >
+            ÷2
+          </button>
+          <button
+            type="button"
+            disabled={!grid}
+            onClick={() =>
+              grid && onGridChange({ bpm: clamp(grid.bpm * 2, 30, 360) })
+            }
+            className="h-7 rounded border border-border bg-panel px-2 font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text disabled:text-text-dim"
+            title="Use double tempo"
+          >
+            ×2
+          </button>
+        </div>
+
+        <div className={groupClass}>
+          <span className="text-[9px] font-medium text-text-dim">Meter</span>
           <input
-            className={fieldClass}
+            className={`${fieldClass} w-10`}
             type="number"
             min="1"
             max="16"
@@ -4544,7 +4578,7 @@ function AudioBeatControls({
             }
           />
           <select
-            className={fieldClass}
+            className={`${fieldClass} w-14`}
             disabled={!grid}
             value={grid?.beatUnit ?? 4}
             onChange={(event) =>
@@ -4555,13 +4589,14 @@ function AudioBeatControls({
               <option key={value} value={value}>/{value}</option>
             ))}
           </select>
-        </label>
-      </div>
-      <div className="grid grid-cols-[1fr_1fr] gap-1">
-        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
+        </div>
+
+        <label className={groupClass}>
+          <span className="text-[9px] font-medium text-text-dim">
           Downbeat
+          </span>
           <input
-            className={fieldClass}
+            className={`${fieldClass} w-[68px]`}
             type="number"
             step="0.001"
             disabled={!grid}
@@ -4571,10 +4606,11 @@ function AudioBeatControls({
             }
           />
         </label>
-        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
-          Vol
+
+        <label className={groupClass}>
+          <Volume2 size={13} strokeWidth={1.8} className="text-text-dim" />
           <input
-            className="min-w-0 flex-1 accent-[var(--color-accent)]"
+            className="w-20 accent-[var(--color-accent)]"
             type="range"
             min="0"
             max="1"
@@ -4584,37 +4620,62 @@ function AudioBeatControls({
               api.setNodeProperty(node.id, 'volume', Number(event.target.value))
             }
           />
-          <span className="w-7 text-right font-mono text-[8px] text-text-muted">
+          <span className="w-8 text-right font-mono text-[9px] tabular-nums text-text-muted">
             {Math.round(node.volume * 100)}%
           </span>
         </label>
-      </div>
-      <div className="flex items-center gap-1">
-        <span className="shrink-0 text-[8px] text-text-dim">
-          B{range.startBar}{range.endBar !== range.startBar ? `–${range.endBar}` : ''}
-        </span>
-        {([4, 8, 16] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            disabled={!grid}
-            onClick={() => onSetDivision(value)}
-            className={[
-              'h-5 flex-1 rounded border text-[8px] font-semibold',
-              division === value
-                ? 'border-accent bg-accent-soft text-accent'
-                : 'border-border bg-panel text-text-muted',
-            ].join(' ')}
-          >
-            1/{value}
-          </button>
-        ))}
-      </div>
-      <div className="truncate text-[8px] text-text-dim" title={message}>
-        {grid
-          ? `${Math.round((node.beatAnalysis?.confidence ?? 0) * 100)}% confidence`
-          : 'Select this clip and analyze it.'}
-        {message ? ` · ${message}` : ''}
+
+        <div className={groupClass}>
+          <span className="text-[9px] font-medium text-text-dim">
+            Bar {range.startBar}{range.endBar !== range.startBar ? `–${range.endBar}` : ''}
+          </span>
+          <div className="flex overflow-hidden rounded border border-border">
+            {([4, 8, 16] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                disabled={!grid}
+                onClick={() => onSetDivision(value)}
+                className={[
+                  'h-7 min-w-11 border-l border-border px-2 font-mono text-[9px] font-semibold first:border-l-0',
+                  division === value
+                    ? 'bg-accent-soft text-accent'
+                    : 'bg-panel text-text-muted hover:text-text',
+                ].join(' ')}
+              >
+                1/{value}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className="max-w-44 truncate text-[9px] text-text-dim"
+          title={[
+            message,
+            node.beatAnalysis?.candidates.length
+              ? `Tempo candidates: ${node.beatAnalysis.candidates
+                  .map((candidate) => candidate.bpm.toFixed(1))
+                  .join(', ')} BPM`
+              : '',
+          ].filter(Boolean).join(' · ') || undefined}
+        >
+          {grid
+            ? `${Math.round((node.beatAnalysis?.confidence ?? 0) * 100)}% confidence`
+            : 'No beat grid'}
+          {message ? ` · ${message}` : ''}
+        </div>
+
+        <button
+          type="button"
+          onClick={onSync}
+          disabled={!grid || selectedKeyframeCount === 0}
+          className="ml-auto flex h-7 shrink-0 items-center gap-1.5 rounded border border-accent/60 bg-accent-soft px-3 text-[10px] font-semibold text-accent hover:bg-accent/20 disabled:border-border disabled:bg-panel disabled:text-text-dim"
+          title="Spread selected keyframes across the selected note grid"
+        >
+          <Wand2 size={12} strokeWidth={2} />
+          Sync {selectedKeyframeCount || ''} keyframes
+        </button>
       </div>
     </div>
   )
@@ -4643,10 +4704,10 @@ function AudioBeatGridLane({
   )
   return (
     <div
-      className="relative h-[116px] overflow-hidden border-b border-border bg-panel/35"
+      className="relative h-6 overflow-hidden border-b border-border bg-panel/35"
       style={{ width: totalWidth }}
     >
-      <div className="absolute inset-x-0 top-0 h-5 border-b border-border/60 bg-panel-raised/70">
+      <div className="absolute inset-0 bg-panel-raised/35">
         {barStarts.map((marker, index) => {
           const next = barStarts[index + 1]
           const end = next?.time ?? Math.min(duration, marker.time + 2)
@@ -4659,7 +4720,7 @@ function AudioBeatGridLane({
               key={`bar-${marker.bar}-${marker.time}`}
               type="button"
               className={[
-                'absolute top-0 h-5 border-l border-accent/45 px-1 text-left font-mono text-[8px]',
+                'absolute inset-y-0 border-l border-accent/45 px-1 text-left font-mono text-[8px]',
                 selected
                   ? 'bg-accent-soft text-accent'
                   : 'text-text-dim hover:bg-panel-raised hover:text-text',
@@ -4684,9 +4745,6 @@ function AudioBeatGridLane({
             </button>
           )
         })}
-      </div>
-      <div className="pointer-events-none absolute top-7 left-2 rounded bg-panel/75 px-1.5 py-1 text-[8px] text-text-dim">
-        Beat markers live on the seconds ruler · select bars here for 1/8 or 1/16
       </div>
     </div>
   )

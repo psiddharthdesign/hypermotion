@@ -147,7 +147,7 @@ export function analyzeBeatPcm(
   const noveltyRate = sampleRate / hopSize
   const transients = pickTransients(novelty, noveltyRate)
   const candidates = tempoCandidates(novelty, noveltyRate, minBpm, maxBpm)
-  const winner = candidates[0] ?? {
+  const winner = selectTempoCandidate(candidates) ?? {
     bpm: clamp(120, minBpm, maxBpm),
     confidence: 0,
   }
@@ -391,6 +391,47 @@ function tempoCandidates(
     separated[0].confidence = round(clamp(1 - runnerUp * 0.65, 0, 1), 4)
   }
   return separated
+}
+
+/**
+ * Resolve common low-tempo ambiguities when a musically useful quarter-note
+ * interpretation is nearly as strong. Genuine slow material stays untouched,
+ * while half-time and dotted-quarter accent patterns get a practical grid.
+ */
+function selectTempoCandidate(
+  candidates: readonly TempoCandidate[],
+): TempoCandidate | undefined {
+  const primary = candidates[0]
+  if (!primary) return undefined
+  if (primary.bpm >= 85 || primary.confidence >= 0.65) return primary
+
+  const doubled = candidates.find(
+    (candidate, index) =>
+      index > 0 &&
+      Math.abs(candidate.bpm - primary.bpm * 2) <= 3 &&
+      candidate.confidence >= 0.55,
+  )
+  if (doubled) {
+    // Keep the ambiguity reflected in confidence even though we choose the
+    // more useful double-time interpretation.
+    return { bpm: doubled.bpm, confidence: primary.confidence }
+  }
+
+  // Syncopated material frequently emphasizes dotted quarter notes, making
+  // the autocorrelation prefer two beats for every three quarter-note beats
+  // (for example 76 instead of 114 BPM). When the underlying 3:2 candidate is
+  // also strong, prefer it as the editable quarter-note grid.
+  const threeOverTwo = candidates.find(
+    (candidate, index) =>
+      index > 0 &&
+      Math.abs(candidate.bpm - primary.bpm * 1.5) <= 3 &&
+      candidate.confidence >= 0.6,
+  )
+  if (threeOverTwo) {
+    return { bpm: threeOverTwo.bpm, confidence: primary.confidence }
+  }
+
+  return primary
 }
 
 function correlationAtLag(values: Float32Array, lag: number): number {

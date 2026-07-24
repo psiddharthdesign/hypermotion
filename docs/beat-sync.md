@@ -148,9 +148,14 @@ The desktop UI should call the same domain functions, not a second algorithm.
 - Versioned beat analysis and musical-grid data persist on audio nodes and
   survive desktop/CLI `.hype` round trips.
 - The selected clip exposes Analyse, BPM, confidence, meter, downbeat, volume,
-  bar subdivision, and Sync controls in the Audio timeline.
-- Transients, beats, subdivisions, and bar boundaries render over the waveform
-  and in a dedicated interactive musical lane.
+  bar subdivision, half/double-tempo correction, and Sync controls in a compact
+  full-width Audio toolbar.
+- Transients stay on the waveform. Beats, subdivisions, and bar boundaries
+  render on the shared seconds ruler, with a slim lane reserved for selecting
+  bar ranges.
+- Low-confidence half-time and dotted-quarter ambiguities are resolved against
+  strong double-time and 3:2 candidates; candidate evidence remains available
+  for manual correction.
 - Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
   eighth, and sixteenth-note overrides can be applied immediately.
 - Selected keyframes spread over unique note slots in one transaction, and

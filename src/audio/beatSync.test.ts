@@ -50,6 +50,53 @@ describe('analyzeBeatPcm', () => {
     expect(result.beatTransients.some((item) => Math.abs(item.time - 2.45) < 0.03))
       .toBe(false)
   })
+
+  it('prefers double-time for an ambiguous alternating-accent rhythm', () => {
+    const sampleRate = 8_000
+    const duration = 10
+    const beatSeconds = 60 / 148
+    const samples = new Float32Array(sampleRate * duration)
+    let beat = 0
+    for (let time = 0.2; time < duration; time += beatSeconds) {
+      const start = Math.round(time * sampleRate)
+      const amplitude = beat % 2 === 0 ? 1 : 0.36
+      for (let i = 0; i < 64; i++) {
+        samples[start + i] =
+          amplitude * Math.exp(-i / 12) * (i % 2 === 0 ? 1 : -1)
+      }
+      beat++
+    }
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm).toBeCloseTo(148, 0)
+    expect(result.candidates.some((candidate) => candidate.bpm < 80)).toBe(true)
+  })
+
+  it('resolves a dotted-quarter pulse to the underlying 114 BPM beat', () => {
+    const sampleRate = 8_000
+    const duration = 12
+    const beatSeconds = 60 / 114
+    const samples = new Float32Array(sampleRate * duration)
+    const addClick = (time: number, amplitude: number) => {
+      const start = Math.round(time * sampleRate)
+      for (let i = 0; i < 64; i++) {
+        samples[start + i] +=
+          amplitude * Math.exp(-i / 12) * (i % 2 === 0 ? 1 : -1)
+      }
+    }
+    for (let time = 0.2; time < duration; time += beatSeconds) {
+      addClick(time, 0.6)
+    }
+    for (let time = 0.2; time < duration; time += beatSeconds * 1.5) {
+      addClick(time, 1)
+    }
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(114, 0)
+    expect(result.candidates[0]!.bpm).toBeLessThan(80)
+  })
 })
 
 describe('createNoteMarkers', () => {
