@@ -1187,6 +1187,32 @@ export type EasingKind =
   | { bezier: [number, number, number, number] }
   | { spring: { stiffness: number; damping: number; mass: number } }
 
+export type KeyframeEasingPresetId =
+  | 'none'
+  | 'smooth'
+  | 'natural'
+  | 'slow-down'
+  | 'accelerate'
+  | 'elastic'
+  | 'bounce'
+  | 'overshoot'
+  | 'impulse'
+  | 'swing'
+  | 'custom'
+
+/**
+ * Authoring provenance for a keyframe's outgoing easing.
+ *
+ * Playback always uses `easingOut`; this small companion lets the Animate
+ * panel restore the exact named preset and strength when the same segment is
+ * selected again. Custom curves keep `presetId: "custom"` while their four
+ * concrete control points remain in `easingOut`.
+ */
+export interface KeyframeEasingPreset {
+  presetId: KeyframeEasingPresetId
+  strength: number
+}
+
 /**
  * Keyframe values are typed dynamically — the shape depends on the
  * track's PropertyId. Validated at the anim-engine boundary.
@@ -1199,6 +1225,8 @@ export interface Keyframe {
   value: KeyframeValue
   /** Curve leaving this keyframe. Defaults to the track's global easing. */
   easingOut?: EasingKind
+  /** Saved picker state for the outgoing curve. */
+  easingPreset?: KeyframeEasingPreset
   /**
    * Which kind of preset produced this keyframe, if any. Set by
    * `applyPreset` so "apply another IN preset" can cleanly replace the

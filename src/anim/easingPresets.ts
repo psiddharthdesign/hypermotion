@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { EasingKind } from '@/scene'
+import type {
+  EasingKind,
+  KeyframeEasingPresetId,
+} from '@/scene'
 
 /**
  * Named easing presets, Jitter-style.
@@ -17,22 +20,11 @@ import type { EasingKind } from '@/scene'
  * beyond their old ceiling. Calibrated against Jitter's feel by eyeballing,
  * not measured — refine as users complain.
  *
- * `None` is the linear escape hatch. `Custom` is a stub for a future
- * hand-editable bezier editor; for now it behaves like Smooth.
+ * `None` is the linear escape hatch. `Custom` supplies the initial curve
+ * shown by the hand-editable cubic Bezier control.
  */
 
-export type EasingPresetId =
-  | 'none'
-  | 'smooth'
-  | 'natural'
-  | 'slow-down'
-  | 'accelerate'
-  | 'elastic'
-  | 'bounce'
-  | 'overshoot'
-  | 'impulse'
-  | 'swing'
-  | 'custom'
+export type EasingPresetId = KeyframeEasingPresetId
 
 export interface EasingPresetDef {
   id: EasingPresetId
@@ -204,9 +196,8 @@ export const EASING_PRESETS: EasingPresetDef[] = [
     id: 'custom',
     label: 'Custom',
     hint: 'Hand-authored',
-    // No real editor yet — mirror Smooth so "Custom" feels selectable
-    // without doing anything bizarre. The dedicated bezier editor comes
-    // in a follow-up; until then the strength slider still works.
+    // Start custom editing from a familiar Smooth curve. Once selected,
+    // the concrete saved control points become the source of truth.
     build: (strength) => ({
       bezier: lerpBezier(
         [0.42, 0, 0.58, 1],

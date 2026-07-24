@@ -29,9 +29,13 @@ import {
   textMotionPathDistance,
   updateTextAnimationEasing,
   updateTextAnimationTrackMetadata,
+  applyEasingToSelection,
+  inspectEasingSelection,
 } from '@/anim'
 import type {
   AnimPresetId,
+  EasingPresetId,
+  EasingSelectionSummary,
   TextAnimationApplyTo,
   TextAnimationConfig,
   TextAnimationDirection,
@@ -62,7 +66,6 @@ import {
 import {
   findStaggerSetMemberTrack,
   registerStaggerSetKeyframes,
-  resolveStaggerKeyframeBundle,
   resolveStaggerTrackBundle,
   retimeStaggerSet,
   staggerLayerOffset,
@@ -140,25 +143,17 @@ export function PresetsPanel() {
     if (!set) return
     retimeStaggerSet(api, activeStaggerSetId, set.delay, order)
   }
-  // Timeline selection sources, in order of precedence:
-  //   1. selectedKeyframes — individual diamonds the user marquee'd or
-  //      shift-clicked. Compound keys "trackId:kfId" — we derive track
-  //      IDs to scope the easing to whatever tracks own those kfs.
-  //   2. selectedTrackIds  — whole-track selection (clicked the row
-  //      header / track name). Less common.
-  // Either populated → easing changes scope to those tracks. Both
-  // empty → fall back to "every track on every selected layer."
+  // Exact timeline selection remains intact all the way into the timing
+  // mutation. `trackFilter` is still useful for resolving text-animation
+  // panels, but timing itself consumes the full compound keyframe refs.
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   const selectedKeyframes = useUI((s) => s.selectedKeyframes)
-  const trackFilter = (() => {
-    const set = new Set<string>()
-    for (const k of selectedKeyframes) {
-      const colon = k.indexOf(':')
-      if (colon > 0) set.add(k.slice(0, colon))
-    }
-    for (const id of selectedTrackIds) set.add(id)
-    return set.size > 0 ? set : undefined
-  })()
+  const hasTimelineTimingSelection =
+    selectedKeyframes.length > 0 || selectedTrackIds.length > 0
+  const trackFilter = timelineTrackFilter(
+    selectedTrackIds,
+    selectedKeyframes,
+  )
 
   const selectedTextNodes = textNodesFromSelectionOrTimeline(
     api,
@@ -193,7 +188,11 @@ export function PresetsPanel() {
     })
   }
 
-  if (selection.length === 0 && selectedTextNodes.length === 0) {
+  if (
+    selection.length === 0 &&
+    selectedTextNodes.length === 0 &&
+    !hasTimelineTimingSelection
+  ) {
     if (selectedStaggerSetId) {
       return (
         <StaggerGroupPanel
@@ -273,21 +272,68 @@ export function PresetsPanel() {
         ),
       )
     }
-    rewriteEasing(api, targets, easing, trackFilter)
+    applyEasingToSelection(
+      api,
+      { nodeIds: targets },
+      easing,
+      { presetId: easingPresetId, strength: easingStrength },
+    )
   }
 
-  // Update the easing preset + strength AND push the resulting easing
-  // onto every existing track/keyframe on every target. This is what
-  // makes the easing slider feel "live" on the canvas — drag it, see
-  // every staggered child re-tune together.
+  // Update the easing preset + strength and push the resulting curve to
+  // exactly the current timeline selection (or the layer fallback).
+  // Continuous controls preview locally, then commit here once on release.
   const pickEasing = (next: {
     presetId: typeof easingPresetId
     strength: number
     easing: typeof easing
+    source: 'preset' | 'strength' | 'custom'
   }) => {
     setEasing(next.presetId, next.strength)
-    rewriteEasing(api, targets, next.easing, trackFilter)
+    applyEasingToSelection(
+      api,
+      {
+        keyframeKeys: selectedKeyframes,
+        trackIds: selectedTrackIds,
+        nodeIds: targets,
+      },
+      next.easing,
+      { presetId: next.presetId, strength: next.strength },
+    )
   }
+
+  const timingSummary = inspectEasingSelection(api, {
+    keyframeKeys: selectedKeyframes,
+    trackIds: selectedTrackIds,
+    nodeIds: targets,
+  })
+  const savedTimingPreset = timingSummary.commonPreset
+  const pickerPresetId =
+    !timingSummary.mixed && savedTimingPreset
+      ? savedTimingPreset.presetId
+      : !timingSummary.mixed && timingSummary.commonEasing
+        ? presetIdForLegacyEasing(timingSummary.commonEasing)
+        : easingPresetId
+  const pickerStrength =
+    !timingSummary.mixed && savedTimingPreset
+      ? savedTimingPreset.strength
+      : easingStrength
+  const timelineTimingCard = hasTimelineTimingSelection ? (
+    <EasingPicker
+      title={
+        timingSummary.scope === 'keyframes'
+          ? 'Selected keyframe timing'
+          : 'Selected track timing'
+      }
+      description={describeTimingSelection(timingSummary)}
+      presetId={pickerPresetId}
+      strength={pickerStrength}
+      easingValue={timingSummary.commonEasing ?? undefined}
+      mixed={timingSummary.mixed}
+      disabled={timingSummary.eligibleSegmentCount === 0}
+      onChange={pickEasing}
+    />
+  ) : null
 
   const ins = PRESETS.filter((p) => p.direction === 'in')
   const outs = PRESETS.filter((p) => p.direction === 'out')
@@ -363,11 +409,17 @@ export function PresetsPanel() {
       />
       <PresetGrid presets={visibleLayerPresets} onPick={stampPreset} />
 
-      <EasingPicker
-        presetId={easingPresetId}
-        strength={easingStrength}
-        onChange={pickEasing}
-      />
+      {!hasTimelineTimingSelection ? (
+        <EasingPicker
+          title="Layer timing"
+          description={describeTimingSelection(timingSummary)}
+          presetId={pickerPresetId}
+          strength={pickerStrength}
+          easingValue={timingSummary.commonEasing ?? undefined}
+          mixed={timingSummary.mixed}
+          onChange={pickEasing}
+        />
+      ) : null}
 
       {/* Per-segment bezier graph editor. Surfaces only when the
           live timeline keyframe selection narrows to a single
@@ -375,7 +427,7 @@ export function PresetsPanel() {
           logic. The placeholder it renders for "no target" is what
           guides the user to select keyframes if they haven't yet,
           so we always mount it (no conditional). */}
-      <GraphEditor />
+      {!hasTimelineTimingSelection ? <GraphEditor /> : null}
 
       <button
         onClick={clearAll}
@@ -407,14 +459,15 @@ export function PresetsPanel() {
           setId={selectedStaggerSetId}
         />
       ) : null}
+      {timelineTimingCard}
       {hasTextSelection ? (
         <>
           {textSection}
-          {layerSection}
+          {selection.length > 0 ? layerSection : null}
         </>
       ) : (
         <>
-          {layerSection}
+          {selection.length > 0 ? layerSection : null}
           {textSection}
         </>
       )}
@@ -1279,11 +1332,17 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
               allowedPresetIds={[...TEXT_EASING_PRESETS]}
               presetId={current.easingPresetId}
               strength={current.easingStrength}
-              onChange={({ presetId, strength }) =>
+              easingValue={
+                current.easingPresetId === 'custom'
+                  ? current.customEasing
+                  : undefined
+              }
+              onChange={({ presetId, strength, easing }) =>
                 patch({
                   easingPresetId: presetId,
                   easingStrength: strength,
-                  customEasing: undefined,
+                  customEasing:
+                    presetId === 'custom' ? easing : undefined,
                 })
               }
             />
@@ -2007,11 +2066,14 @@ function timelineTrackFilter(
   selectedKeyframes: string[],
 ): ReadonlySet<string> | undefined {
   const ids = new Set<string>()
-  for (const key of selectedKeyframes) {
-    const colon = key.indexOf(':')
-    if (colon > 0) ids.add(key.slice(0, colon))
+  if (selectedKeyframes.length > 0) {
+    for (const key of selectedKeyframes) {
+      const colon = key.indexOf(':')
+      if (colon > 0) ids.add(key.slice(0, colon))
+    }
+  } else {
+    for (const id of selectedTrackIds) ids.add(id)
   }
-  for (const id of selectedTrackIds) ids.add(id)
   return ids.size > 0 ? ids : undefined
 }
 
@@ -2382,73 +2444,43 @@ function describeTargets(
   return 'Applies to 1 layer'
 }
 
-/**
- * Rewrite track/keyframe easing.
- *
- *   - With `trackIdFilter` set (timeline has a track selection): apply
- *     ONLY to those tracks, regardless of whose layer they belong to.
- *     This is the path that solves "I selected a sequence of tracks in
- *     the timeline and want them all to share an easing curve."
- *   - Without a filter: apply to every track on every `target` layer.
- *     Same behavior as before — preset stamps still drive this path.
- */
-function rewriteEasing(
-  api: SceneAPI,
-  targets: NodeId[],
+function describeTimingSelection(summary: EasingSelectionSummary): string {
+  const transitions = `${summary.eligibleSegmentCount} outgoing ${
+    summary.eligibleSegmentCount === 1 ? 'transition' : 'transitions'
+  }`
+  const skipped = [
+    summary.skippedEndpointCount > 0
+      ? `${summary.skippedEndpointCount} ${
+          summary.skippedEndpointCount === 1 ? 'endpoint' : 'endpoints'
+        } skipped`
+      : '',
+    summary.skippedDiscreteCount > 0
+      ? `${summary.skippedDiscreteCount} step-only skipped`
+      : '',
+  ].filter(Boolean)
+  const suffix = skipped.length > 0 ? ` · ${skipped.join(' · ')}` : ''
+
+  if (summary.scope === 'keyframes') {
+    return `${summary.requestedKeyframeCount} selected ${
+      summary.requestedKeyframeCount === 1 ? 'keyframe' : 'keyframes'
+    } · ${transitions}${suffix}`
+  }
+  if (summary.scope === 'tracks') {
+    return `${summary.selectedTrackCount} selected ${
+      summary.selectedTrackCount === 1 ? 'track' : 'tracks'
+    } · ${transitions}${suffix}`
+  }
+  return `${summary.selectedLayerCount} ${
+    summary.selectedLayerCount === 1 ? 'layer' : 'layers'
+  } · ${transitions}${suffix}`
+}
+
+function presetIdForLegacyEasing(
   easing: EasingKind,
-  trackIdFilter?: ReadonlySet<string>,
-): void {
-  const selectedTracks: ReturnType<typeof listTracksForNode> = []
-  if (trackIdFilter && trackIdFilter.size > 0) {
-    // Walk every node in the scene; cheap because the filter membership
-    // check short-circuits anything that doesn't match.
-    for (const id of api.getAllNodeIds()) {
-      for (const t of listTracksForNode(api, id)) {
-        if (trackIdFilter.has(t.id)) selectedTracks.push(t)
-      }
-    }
-  } else {
-    for (const id of targets) selectedTracks.push(...listTracksForNode(api, id))
-  }
-  if (selectedTracks.length === 0) return
-
-  // Expand every selected keyframe through its persistent stagger bundle.
-  // This keeps the right-panel easing control and graph-editor curve handles
-  // consistent: editing any member applies the exact curve to its peers.
-  const keyframeIdsByTrack = new Map<string, Set<string>>()
-  const add = (trackId: string, keyframeId: string) => {
-    const ids = keyframeIdsByTrack.get(trackId) ?? new Set<string>()
-    ids.add(keyframeId)
-    keyframeIdsByTrack.set(trackId, ids)
-  }
-  for (const track of selectedTracks) {
-    for (const keyframe of track.keyframes) {
-      const bundle = resolveStaggerKeyframeBundle(api, track.id, keyframe.id)
-      if (bundle) {
-        for (const member of bundle.members) {
-          add(member.trackId, member.keyframeId)
-        }
-      } else {
-        add(track.id, keyframe.id)
-      }
-    }
-  }
-
-  api.doc.transact(() => {
-    for (const [trackId, keyframeIds] of keyframeIdsByTrack) {
-      const track = api.getTrack(trackId)
-      if (!track) continue
-      api.setTrack({
-        ...track,
-        defaultEasing: easing,
-        // Rewrite per-keyframe easingOut too — otherwise curves baked in by
-        // presets win over the chosen easing and make the control feel inert.
-        keyframes: track.keyframes.map((keyframe) =>
-          keyframeIds.has(keyframe.id)
-            ? { ...keyframe, easingOut: easing }
-            : keyframe,
-        ),
-      })
-    }
-  })
+): EasingPresetId {
+  if (easing === 'linear') return 'none'
+  if (easing === 'ease-in') return 'accelerate'
+  if (easing === 'ease-out') return 'slow-down'
+  if (easing === 'ease-in-out') return 'smooth'
+  return 'custom'
 }

@@ -3,6 +3,7 @@
 import type {
   EasingKind,
   Keyframe,
+  KeyframeEasingPreset,
   KeyframeId,
   KeyframeValue,
   NodeId,
@@ -77,6 +78,11 @@ export function removeTrack(api: SceneAPI, trackId: TrackId): void {
  * stamp without touching hand-authored keyframes. Leave it off for any
  * direct user action (Inspector button, timeline drag) so user-stamped
  * work is never eligible for auto-pruning.
+ *
+ * Value-only edits preserve an existing segment's curve and picker metadata.
+ * Exact replacement workflows such as clipboard paste can pass
+ * `existingEasing: "replace"` so an omitted curve intentionally falls back
+ * to the track default instead of inheriting the destination override.
  */
 export function addKeyframe(
   api: SceneAPI,
@@ -86,6 +92,8 @@ export function addKeyframe(
   value: KeyframeValue,
   easingOut?: EasingKind,
   presetOrigin?: 'in' | 'out',
+  easingPreset?: KeyframeEasingPreset,
+  options: { existingEasing?: 'preserve' | 'replace' } = {},
 ): Keyframe {
   const track = ensureTrack(api, nodeId, propertyId)
   const kfs = [...track.keyframes]
@@ -95,12 +103,27 @@ export function addKeyframe(
   // Standard motion-tool authoring puts keyframes more than ~30ms apart.
   const epsilon = 0.01
   const existingIdx = kfs.findIndex((k) => Math.abs(k.time - time) < epsilon)
+  const existing = existingIdx >= 0 ? kfs[existingIdx] : undefined
+  const preserveExistingEasing = options.existingEasing !== 'replace'
+  const resolvedEasingOut =
+    easingOut ??
+    (preserveExistingEasing ? existing?.easingOut : undefined)
+  const resolvedEasingPreset =
+    easingPreset ??
+    (easingOut === undefined && preserveExistingEasing
+      ? existing?.easingPreset
+      : undefined)
   const kf: Keyframe = {
-    id: existingIdx >= 0 ? kfs[existingIdx]!.id : genId(),
+    id: existing?.id ?? genId(),
     time,
     value,
-    ...(easingOut ? { easingOut } : {}),
+    ...(resolvedEasingOut !== undefined
+      ? { easingOut: resolvedEasingOut }
+      : {}),
     ...(presetOrigin ? { presetOrigin } : {}),
+    ...(resolvedEasingPreset !== undefined
+      ? { easingPreset: resolvedEasingPreset }
+      : {}),
   }
   if (existingIdx >= 0) kfs[existingIdx] = kf
   else {

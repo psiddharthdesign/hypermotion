@@ -461,6 +461,31 @@ export type EasingJson =
   | { bezier: [number, number, number, number] }
   | { spring: { stiffness: number; damping: number; mass: number } }
 
+export const KEYFRAME_EASING_PRESET_IDS = [
+  'none',
+  'smooth',
+  'natural',
+  'slow-down',
+  'accelerate',
+  'elastic',
+  'bounce',
+  'overshoot',
+  'impulse',
+  'swing',
+  'custom',
+] as const
+
+export type KeyframeEasingPresetIdJson =
+  (typeof KEYFRAME_EASING_PRESET_IDS)[number]
+
+const KEYFRAME_EASING_PRESET_ID_SET: ReadonlySet<KeyframeEasingPresetIdJson> =
+  new Set(KEYFRAME_EASING_PRESET_IDS)
+
+export interface KeyframeEasingPresetJson {
+  presetId: KeyframeEasingPresetIdJson
+  strength: number
+}
+
 export interface VariantTransitionJson {
   duration: number
   easing: EasingJson
@@ -553,6 +578,7 @@ export interface KeyframeJson {
   time: number
   value: KeyframeValueJson
   easingOut?: EasingJson
+  easingPreset?: KeyframeEasingPresetJson
   presetOrigin?: 'in' | 'out'
 }
 
@@ -1133,6 +1159,30 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
         }
         if (keyframeIsObject && (!('value' in keyframe) || !isJsonValue(keyframe.value))) {
           errors.push(`track ${id} keyframe ${label} value must be JSON-compatible`)
+        }
+        if (keyframe.easingPreset !== undefined) {
+          const easingPreset = asRecord(keyframe.easingPreset)
+          if (
+            !isPlainObject(keyframe.easingPreset) ||
+            typeof easingPreset.presetId !== 'string' ||
+            !KEYFRAME_EASING_PRESET_ID_SET.has(
+              easingPreset.presetId as KeyframeEasingPresetIdJson,
+            )
+          ) {
+            errors.push(
+              `track ${id} keyframe ${label} easingPreset.presetId is invalid`,
+            )
+          }
+          if (
+            typeof easingPreset.strength !== 'number' ||
+            !Number.isFinite(easingPreset.strength) ||
+            easingPreset.strength < 0 ||
+            easingPreset.strength > 200
+          ) {
+            errors.push(
+              `track ${id} keyframe ${label} easingPreset.strength must be between 0 and 200`,
+            )
+          }
         }
       })
     }

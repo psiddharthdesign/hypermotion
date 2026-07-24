@@ -277,6 +277,7 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
       if (
         patchStaggerKeyframeBundle(api, trackId, liveKf.id, {
           easingOut: { bezier: next } as EasingKind,
+          easingPreset: { presetId: 'custom', strength: 100 },
         })
       ) {
         return
@@ -284,6 +285,7 @@ function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
       const updated = {
         ...liveKf,
         easingOut: { bezier: next } as EasingKind,
+        easingPreset: { presetId: 'custom' as const, strength: 100 },
       }
       const nextKfs = live.keyframes.map((k, i) =>
         i === segIndex ? updated : k,

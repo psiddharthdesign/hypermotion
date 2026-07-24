@@ -4167,6 +4167,7 @@ function VariantsSection({
           title="Transition"
           presetId={(transition.presetId as EasingPresetId | undefined) ?? 'smooth'}
           strength={transition.strength ?? 50}
+          easingValue={transition.easing}
           onChange={({ presetId, strength, easing }) =>
             patchTransition({ presetId, strength, easing })
           }

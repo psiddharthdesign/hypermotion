@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   EASING_PRESETS,
   MAX_EASING_STRENGTH,
@@ -9,6 +10,7 @@ import {
   type EasingPresetId,
 } from '@/anim'
 import type { EasingKind } from '@/scene'
+import { BezierTimingEditor } from '@/ui/BezierTimingEditor'
 
 /**
  * Jitter-style easing picker.
@@ -36,11 +38,19 @@ export interface EasingPickerProps {
     presetId: EasingPresetId
     strength: number
     easing: EasingKind
+    source: 'preset' | 'strength' | 'custom'
   }) => void
   /** Title shown above the picker; hidden when null. */
   title?: string | null
   /** Optional subset for contexts where some curves are too noisy. */
   allowedPresetIds?: EasingPresetId[]
+  /** Concrete saved curve, used for custom and persisted selections. */
+  easingValue?: EasingKind
+  /** Differing curves in the current selection. */
+  mixed?: boolean
+  /** Supporting selection-scope copy beneath the title. */
+  description?: string
+  disabled?: boolean
 }
 
 export function EasingPicker({
@@ -49,6 +59,10 @@ export function EasingPicker({
   onChange,
   title = 'Easing',
   allowedPresetIds,
+  easingValue,
+  mixed = false,
+  description,
+  disabled = false,
 }: EasingPickerProps) {
   const allowedKey = allowedPresetIds?.join('|') ?? ''
   const presets = useMemo(
@@ -61,48 +75,126 @@ export function EasingPicker({
   )
   const current = presets.find((p) => p.id === presetId) ?? presets[0] ?? EASING_PRESETS[0]!
   const safeStrength = clampEasingStrength(strength)
-  const easing = current.build(safeStrength)
+  const strengthGestureRef = useRef(false)
+  const strengthDraftRef = useRef(safeStrength)
+  const [strengthDragging, setStrengthDragging] = useState(false)
+  const [strengthDraft, setStrengthDraft] = useState(safeStrength)
+  const displayStrength = strengthDragging ? strengthDraft : safeStrength
+  const easing = strengthDragging
+    ? current.build(displayStrength)
+    : easingValue ?? current.build(displayStrength)
   const curve = bezierOf(easing)
 
+  useEffect(() => {
+    if (strengthGestureRef.current) return
+    strengthDraftRef.current = safeStrength
+    setStrengthDraft(safeStrength)
+  }, [safeStrength])
+
   const pickPreset = (id: EasingPresetId) => {
+    if (disabled) return
     const def = presets.find((p) => p.id === id) ?? current
+    const nextEasing =
+      id === 'custom'
+        ? ({ bezier: curve } as EasingKind)
+        : def.build(displayStrength)
     onChange({
       presetId: id,
-      strength: safeStrength,
-      easing: def.build(safeStrength),
+      strength: displayStrength,
+      easing: nextEasing,
+      source: 'preset',
     })
   }
 
   const pickStrength = (n: number) => {
+    if (disabled || mixed || presetId === 'custom') return
     const clamped = clampEasingStrength(n)
-    onChange({ presetId, strength: clamped, easing: current.build(clamped) })
+    onChange({
+      presetId,
+      strength: clamped,
+      easing: current.build(clamped),
+      source: 'strength',
+    })
   }
 
-  const strengthDisabled = presetId === 'none'
+  const beginStrengthGesture = (
+    event: ReactPointerEvent<HTMLInputElement>,
+  ) => {
+    if (strengthDisabled) return
+    strengthGestureRef.current = true
+    strengthDraftRef.current = safeStrength
+    setStrengthDraft(safeStrength)
+    setStrengthDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const previewStrength = (n: number) => {
+    const clamped = clampEasingStrength(n)
+    strengthDraftRef.current = clamped
+    setStrengthDraft(clamped)
+    if (!strengthGestureRef.current) pickStrength(clamped)
+  }
+
+  const finishStrengthGesture = (commit: boolean) => {
+    if (!strengthGestureRef.current) return
+    strengthGestureRef.current = false
+    setStrengthDragging(false)
+    if (commit) {
+      pickStrength(strengthDraftRef.current)
+    } else {
+      strengthDraftRef.current = safeStrength
+      setStrengthDraft(safeStrength)
+    }
+  }
+
+  const pickCustomCurve = (
+    next: [number, number, number, number],
+  ) => {
+    if (disabled) return
+    onChange({
+      presetId: 'custom',
+      strength: safeStrength,
+      easing: { bezier: next },
+      source: 'custom',
+    })
+  }
+
+  const strengthDisabled =
+    disabled || mixed || presetId === 'none' || presetId === 'custom'
 
   return (
     <div className="rounded border border-border bg-panel-raised">
       {title ? (
-        <div className="border-b border-border px-2.5 py-1.5 text-[10px] font-medium tracking-wider text-text-dim uppercase">
-          {title}
+        <div className="border-b border-border px-2.5 py-2">
+          <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
+            {title}
+          </div>
+          {description ? (
+            <div className="mt-1 text-[10px] leading-snug text-text-muted">
+              {description}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {/* Preset tile grid — 3 columns, compact. */}
       <div className="grid grid-cols-3 gap-1 p-2">
         {presets.map((p) => {
-          const active = p.id === presetId
-          const curveForTile = bezierOf(p.build(safeStrength))
+          const active = !mixed && p.id === presetId
+          const curveForTile = bezierOf(p.build(displayStrength))
           return (
             <button
               key={p.id}
+              type="button"
               onClick={() => pickPreset(p.id)}
+              disabled={disabled}
               title={p.hint}
               className={
                 'flex flex-col items-stretch gap-1 rounded border px-1.5 py-1.5 text-left transition-colors ' +
                 (active
                   ? 'border-accent bg-accent-soft/40 text-text'
-                  : 'border-border bg-panel hover:border-border-strong hover:bg-panel-raised text-text-muted')
+                  : 'border-border bg-panel hover:border-border-strong hover:bg-panel-raised text-text-muted') +
+                (disabled ? ' cursor-not-allowed opacity-45' : '')
               }
             >
               <CurveMini curve={curveForTile} active={active} />
@@ -114,38 +206,66 @@ export function EasingPicker({
         })}
       </div>
 
-      {/* Detail strip: big curve + strength slider. */}
-      <div className="border-t border-border p-2.5">
-        <div className="flex items-start gap-2.5">
-          <CurvePreview curve={curve} />
-          <div className="flex min-w-0 flex-1 flex-col justify-between">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[11px] font-medium text-text">
-                {current.label}
-              </span>
-              <span className="font-mono text-[10px] text-text-dim tabular-nums">
-                {strengthDisabled ? '—' : `${Math.round(safeStrength)}%`}
-              </span>
-            </div>
-            <div className="mt-2">
-              <input
-                type="range"
-                min={0}
-                max={MAX_EASING_STRENGTH}
-                step={1}
-                value={strengthDisabled ? 0 : safeStrength}
-                disabled={strengthDisabled}
-                onChange={(e) => pickStrength(parseInt(e.currentTarget.value, 10))}
-                className="h-1 w-full appearance-none rounded-full bg-border accent-accent disabled:opacity-40"
-              />
-              <div className="mt-1 flex justify-between font-mono text-[9px] text-text-dim">
-                <span>Soft</span>
-                <span>Extreme</span>
+      {/* Custom exposes editable control points; named presets use strength. */}
+      {presetId === 'custom' && !mixed ? (
+        <div className="border-t border-border p-2">
+          <div className="mb-2 flex items-baseline justify-between px-0.5">
+            <span className="text-[11px] font-medium text-text">
+              Custom curve
+            </span>
+            <span className="text-[9px] text-text-dim">
+              Drag handles or enter values
+            </span>
+          </div>
+          <BezierTimingEditor
+            value={curve}
+            onChange={pickCustomCurve}
+            disabled={disabled}
+          />
+        </div>
+      ) : (
+        <div className="border-t border-border p-2.5">
+          <div className="flex items-start gap-2.5">
+            <CurvePreview curve={curve} />
+            <div className="flex min-w-0 flex-1 flex-col justify-between">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] font-medium text-text">
+                  {mixed ? 'Mixed timing' : current.label}
+                </span>
+                <span className="font-mono text-[10px] text-text-dim tabular-nums">
+                  {mixed
+                    ? 'Choose a preset'
+                    : strengthDisabled
+                      ? '—'
+                      : `${Math.round(displayStrength)}%`}
+                </span>
+              </div>
+              <div className="mt-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={MAX_EASING_STRENGTH}
+                  step={1}
+                  value={strengthDisabled ? 0 : displayStrength}
+                  disabled={strengthDisabled}
+                  onPointerDown={beginStrengthGesture}
+                  onPointerUp={() => finishStrengthGesture(true)}
+                  onPointerCancel={() => finishStrengthGesture(false)}
+                  onBlur={() => finishStrengthGesture(true)}
+                  onChange={(e) =>
+                    previewStrength(parseInt(e.currentTarget.value, 10))
+                  }
+                  className="h-1 w-full appearance-none rounded-full bg-border accent-accent disabled:opacity-40"
+                />
+                <div className="mt-1 flex justify-between font-mono text-[9px] text-text-dim">
+                  <span>Soft</span>
+                  <span>Extreme</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

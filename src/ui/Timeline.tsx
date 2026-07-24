@@ -4928,8 +4928,7 @@ function BeatSyncActionBar({
           <span className="w-8 font-mono text-[8px] tabular-nums text-text-muted">
             {(grid.swingPercent ?? 50).toFixed(
               (grid.swingPercent ?? 50) % 1 === 0 ? 0 : 1,
-            )
-            %
+            )}%
           </span>
         </div>
 

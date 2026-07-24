@@ -283,6 +283,10 @@ export function stampTextAnimationKeyframes(
       start,
       end,
       easingForText(config),
+      {
+        presetId: config.easingPresetId,
+        strength: config.easingStrength,
+      },
       config.mode,
     ),
   }
@@ -324,6 +328,7 @@ function reconcileTextAnimationKeyframes(
   start: number,
   end: number,
   easing: EasingKind,
+  easingPreset: NonNullable<Keyframe['easingPreset']>,
   mode: TextAnimationMode,
 ): Keyframe[] {
   const existing = [...(existingTrack?.keyframes ?? [])]
@@ -334,7 +339,14 @@ function reconcileTextAnimationKeyframes(
     )
     .map((entry) => entry.keyframe)
   if (existing.length < 2) {
-    const first = textKeyframe(start, 0, easing, mode, existing[0]?.id)
+    const first = textKeyframe(
+      start,
+      0,
+      easing,
+      mode,
+      easingPreset,
+      existing[0]?.id,
+    )
     return [first, textKeyframe(end, 1, undefined, mode)]
   }
 
@@ -344,10 +356,17 @@ function reconcileTextAnimationKeyframes(
   const nextSpan = end - start
   return existing.map((keyframe, index) => {
     if (index === 0) {
-      return textKeyframe(start, 0, easing, mode, keyframe.id)
+      return textKeyframe(
+        start,
+        0,
+        easing,
+        mode,
+        easingPreset,
+        keyframe.id,
+      )
     }
     if (index === existing.length - 1) {
-      return textKeyframe(end, 1, undefined, mode, keyframe.id)
+      return textKeyframe(end, 1, undefined, mode, undefined, keyframe.id)
     }
     const progress =
       Math.abs(oldSpan) > 1e-9
@@ -387,7 +406,14 @@ export function updateTextAnimationEasing(
     const keyframes = track.keyframes.map((keyframe, index) => {
       const isLast = index === track.keyframes.length - 1
       if (keyframe.presetOrigin !== config.mode || isLast) return keyframe
-      return { ...keyframe, easingOut: easing }
+      return {
+        ...keyframe,
+        easingOut: easing,
+        easingPreset: {
+          presetId: config.easingPresetId,
+          strength: config.easingStrength,
+        },
+      }
     })
     api.setTrack({ ...track, defaultEasing: easing, textAnimation: config, keyframes })
   }
@@ -434,6 +460,7 @@ function textKeyframe(
   value: number,
   easingOut?: EasingKind,
   presetOrigin?: TextAnimationMode,
+  easingPreset?: Keyframe['easingPreset'],
   id = genId(),
 ): Keyframe {
   return {
@@ -442,6 +469,7 @@ function textKeyframe(
     value,
     ...(easingOut ? { easingOut } : {}),
     ...(presetOrigin ? { presetOrigin } : {}),
+    ...(easingPreset ? { easingPreset } : {}),
   }
 }
 
