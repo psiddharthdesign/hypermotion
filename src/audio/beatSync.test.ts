@@ -30,6 +30,14 @@ describe('analyzeBeatPcm', () => {
     expect(result.firstBeatTime).toBeCloseTo(0.25, 1)
     expect(result.transients.length).toBeGreaterThanOrEqual(14)
     expect(result.beatTransients.length).toBe(result.transients.length)
+    for (const candidate of result.candidates) {
+      const period = 60 / candidate.bpm
+      const phase = candidate.firstBeatTime
+      expect(phase).toBeTypeOf('number')
+      if (phase === undefined) throw new Error('candidate phase was not inferred')
+      expect(phase).toBeGreaterThanOrEqual(0)
+      expect(phase).toBeLessThan(period)
+    }
   })
 
   it('keeps strong off-grid transients out of beat markers', () => {
@@ -51,7 +59,7 @@ describe('analyzeBeatPcm', () => {
       .toBe(false)
   })
 
-  it('prefers double-time for an ambiguous alternating-accent rhythm', () => {
+  it('reports the half/double-time alternatives for an ambiguous alternating accent', () => {
     const sampleRate = 8_000
     const duration = 10
     const beatSeconds = 60 / 148
@@ -69,11 +77,13 @@ describe('analyzeBeatPcm', () => {
 
     const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
 
-    expect(result.bpm).toBeCloseTo(148, 0)
+    expect(result.status).toBe('ambiguous')
+    expect(result.candidates.some((candidate) => Math.abs(candidate.bpm - 148) < 1))
+      .toBe(true)
     expect(result.candidates.some((candidate) => candidate.bpm < 80)).toBe(true)
   })
 
-  it('resolves a dotted-quarter pulse to the underlying 114 BPM beat', () => {
+  it('does not overclaim a dotted-quarter versus quarter-note ambiguity', () => {
     const sampleRate = 8_000
     const duration = 12
     const beatSeconds = 60 / 114
@@ -94,11 +104,12 @@ describe('analyzeBeatPcm', () => {
 
     const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
 
-    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(114, 0)
-    expect(result.candidates[0]!.bpm).toBeLessThan(80)
+    expect(result.status).toBe('ambiguous')
+    expect(result.candidates.some((candidate) => Math.abs(candidate.bpm - 114) < 1))
+      .toBe(true)
   })
 
-  it('uses repeating bar structure instead of a denser false pulse', () => {
+  it('keeps the true low pulse available when a five-over-four figure dominates', () => {
     const sampleRate = 8_000
     const duration = 24
     const beatSeconds = 60 / 75
@@ -129,7 +140,87 @@ describe('analyzeBeatPcm', () => {
 
     const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
 
-    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(75, 0)
+    expect(result.status).toBe('ambiguous')
+    expect(result.candidates.some((candidate) => Math.abs(candidate.bpm - 75) < 1))
+      .toBe(true)
+  })
+
+  it.each([75, 114])('detects a stable %i BPM pulse without ratio-specific rules', (bpm) => {
+    const sampleRate = 8_000
+    const duration = 18
+    const beatSeconds = 60 / bpm
+    const samples = new Float32Array(sampleRate * duration)
+    const addClick = (time: number, amplitude: number) => {
+      const start = Math.round(time * sampleRate)
+      for (let i = 0; i < 72; i++) {
+        samples[start + i] +=
+          amplitude * Math.exp(-i / 14) * (i % 2 === 0 ? 1 : -1)
+      }
+    }
+    for (let time = 0.17; time < duration; time += beatSeconds) {
+      addClick(time, 1)
+      // A weak syncopated hit prevents this from being a sterile metronome.
+      if (time + beatSeconds * 0.37 < duration) {
+        addClick(time + beatSeconds * 0.37, 0.12)
+      }
+    }
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(bpm, 0)
+    expect(result.status).not.toBe('no-pulse')
+  })
+
+  it('returns no-pulse instead of a fabricated 60 or 120 BPM for silence', () => {
+    const result = analyzeBeatPcm({
+      sampleRate: 8_000,
+      channels: [new Float32Array(8_000 * 8)],
+    })
+
+    expect(result).toMatchObject({
+      status: 'no-pulse',
+      confidence: 0,
+      firstBeatTime: 0,
+      candidates: [],
+      beatTransients: [],
+    })
+  })
+
+  it('returns no-pulse for deterministic broadband noise', () => {
+    const samples = new Float32Array(8_000 * 8)
+    let seed = 0x1234_5678
+    for (let i = 0; i < samples.length; i++) {
+      seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0
+      samples[i] = ((seed / 0xffff_ffff) * 2 - 1) * 0.2
+    }
+
+    const result = analyzeBeatPcm({ sampleRate: 8_000, channels: [samples] })
+
+    expect(result.status, JSON.stringify(result)).toBe('no-pulse')
+    expect(result.confidence).toBe(0)
+    expect(result.candidates).toEqual([])
+  })
+
+  it('preserves pulse evidence in antiphase stereo', () => {
+    const sampleRate = 8_000
+    const left = new Float32Array(sampleRate * 8)
+    const right = new Float32Array(sampleRate * 8)
+    for (let time = 0.2; time < 8; time += 0.5) {
+      const start = Math.round(time * sampleRate)
+      for (let i = 0; i < 64; i++) {
+        const sample = Math.exp(-i / 12) * (i % 2 === 0 ? 1 : -1)
+        left[start + i] = sample
+        right[start + i] = -sample
+      }
+    }
+
+    const result = analyzeBeatPcm(
+      { sampleRate, channels: [left, right] },
+      { minBpm: 90, maxBpm: 150 },
+    )
+
+    expect(result.bpm).toBeCloseTo(120, 0)
+    expect(result.status).not.toBe('no-pulse')
   })
 })
 

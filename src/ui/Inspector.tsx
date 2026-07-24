@@ -8,6 +8,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import {
+  Activity,
+  AlertTriangle,
+  Check,
+  RefreshCw,
+} from 'lucide-react'
 import { useUI } from '@/state/ui'
 import {
   MAX_CAMERA_SCROLL_SENSITIVITY,
@@ -109,6 +115,13 @@ import {
   upsertComponentVariant,
   wrapInAutoLayout,
 } from '@/ui/actions'
+import {
+  analyzeBeatPcm,
+  type AudioBeatGrid,
+  type NoteDivision,
+  type TempoCandidate,
+} from '@/audio/beatSync'
+import { loadAudioBuffer } from '@/audio/audioBuffer'
 import {
   findKeyframeAt,
   findTrack,
@@ -1818,6 +1831,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </FieldRow>
       </Section>
 
+      {node.kind === 'audio' && (
+        <>
+          <AudioBeatSection key={node.src} node={node} api={api} />
+          <MediaSection node={node} api={api} />
+        </>
+      )}
+
       {(node.kind === 'component' || node.kind === 'instance') ? (
         <>
           <ComponentVariablesSection node={node} api={api} />
@@ -1828,7 +1848,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ExposeComponentPropertiesSection node={node} api={api} />
       )}
 
-      <PositionSection node={node} api={api} />
+      {node.kind !== 'audio' && <PositionSection node={node} api={api} />}
 
       {node.kind === 'camera' && (
         <>
@@ -2000,7 +2020,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </>
       )}
 
-      {node.kind !== 'camera' && (
+      {node.kind !== 'camera' && node.kind !== 'audio' && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
         <div className="mb-3">
@@ -2185,7 +2205,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       </Section>
       )}
 
-      {'size' in node && (
+      {'size' in node && node.kind !== 'audio' && (
         <Section title="Size">
           <FieldRow label="Width">
             <SizeAxisField
@@ -2210,7 +2230,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ImageSection node={node} api={api} />
       )}
 
-      {(node.kind === 'audio' || node.kind === 'video') && (
+      {node.kind === 'video' && (
         <MediaSection node={node} api={api} />
       )}
 
@@ -2230,7 +2250,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           apply to a viewpoint. A camera-specific section with
           projection + a future "enabled" toggle slots in here when we
           expand the camera feature surface. */}
-      {node.kind !== 'camera' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' ? (
         <Section title="Appearance">
           <FieldRow
             label="Opacity"
@@ -5168,6 +5188,9 @@ function MediaSection({
           width: Math.max(1, Math.round(videoMeta.width * ratio)),
           height: Math.max(1, Math.round(videoMeta.height * ratio)),
         })
+      } else {
+        api.setNodeProperty(node.id, 'beatAnalysis', undefined)
+        api.setNodeProperty(node.id, 'beatGrid', undefined)
       }
     }, 'media-replace')
   }
@@ -5390,6 +5413,359 @@ function MediaSection({
           onCommit={(v) => api.setNodeProperty(node.id, 'loop', v)}
         />
       </FieldRow>
+    </Section>
+  )
+}
+
+function AudioBeatSection({
+  node,
+  api,
+}: {
+  node: Extract<Node, { kind: 'audio' }>
+  api: SceneAPI
+}) {
+  const [analyzing, setAnalyzing] = useState(false)
+  const [message, setMessage] = useState('')
+  const tapTimesRef = useRef<number[]>([])
+  const analysis = node.beatAnalysis
+  const grid = node.beatGrid
+  const status = analysis?.status ??
+    (analysis ? (analysis.confidence >= 0.58 ? 'ok' : 'ambiguous') : null)
+
+  const writeGrid = useCallback(
+    (patch: Partial<AudioBeatGrid>, fallbackBpm = analysis?.bpm ?? 120) => {
+      const current: AudioBeatGrid = grid ?? {
+        version: 1,
+        bpm: fallbackBpm,
+        firstBeatTime: analysis?.firstBeatTime ?? 0,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        subdivisions: [],
+      }
+      api.setNodeProperty(node.id, 'beatGrid', { ...current, ...patch })
+    },
+    [analysis?.bpm, analysis?.firstBeatTime, api, grid, node.id],
+  )
+
+  const applyCandidate = useCallback(
+    (candidate: TempoCandidate) => {
+      writeGrid(
+        {
+          bpm: candidate.bpm,
+          firstBeatTime:
+            candidate.firstBeatTime ??
+            (
+              analysis && Math.abs(candidate.bpm - analysis.bpm) < 0.001
+                ? analysis.firstBeatTime
+                : grid?.firstBeatTime ?? 0
+            ),
+        },
+        candidate.bpm,
+      )
+      setMessage(`Using ${candidate.bpm.toFixed(1)} BPM. You can fine-tune it below.`)
+    },
+    [analysis, grid?.firstBeatTime, writeGrid],
+  )
+
+  const analyze = useCallback(async () => {
+    setAnalyzing(true)
+    setMessage('Decoding audio…')
+    try {
+      const buffer = await loadAudioBuffer(node.src)
+      setMessage('Listening for a stable pulse…')
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+      const result = analyzeBeatPcm({
+        sampleRate: buffer.sampleRate,
+        channels: Array.from(
+          { length: buffer.numberOfChannels },
+          (_, channel) => buffer.getChannelData(channel),
+        ),
+      })
+      api.doc.transact(() => {
+        api.setNodeProperty(node.id, 'beatAnalysis', result)
+        if (!grid && result.status === 'ok') {
+          api.setNodeProperty(node.id, 'beatGrid', {
+            version: 1,
+            bpm: result.bpm,
+            firstBeatTime: result.firstBeatTime,
+            beatsPerBar: 4,
+            beatUnit: 4,
+            subdivisions: [],
+          })
+        }
+      }, 'analyze-audio-beats')
+      if (result.status === 'no-pulse') {
+        setMessage('No stable pulse found. Set the tempo manually or use Tap.')
+      } else if (result.status === 'ambiguous') {
+        setMessage('Several tempos fit. Review a candidate before applying it.')
+      } else if (grid) {
+        setMessage(
+          `Detected ${result.bpm.toFixed(1)} BPM. Your current grid was kept.`,
+        )
+      } else {
+        setMessage(`Created a ${result.bpm.toFixed(1)} BPM grid.`)
+      }
+    } catch (error) {
+      console.warn('[beat-sync] analysis failed', error)
+      setMessage('Could not analyze this file. Try WAV, MP3, M4A, or FLAC.')
+    } finally {
+      setAnalyzing(false)
+    }
+  }, [api, grid, node.id, node.src])
+
+  const tapTempo = useCallback(() => {
+    const now = performance.now()
+    const previous = tapTimesRef.current
+    const recent =
+      previous.length > 0 && now - previous[previous.length - 1]! <= 2_000
+        ? [...previous, now].slice(-8)
+        : [now]
+    tapTimesRef.current = recent
+    if (recent.length >= 2) {
+      const intervals = recent
+        .slice(1)
+        .map((time, index) => time - recent[index]!)
+        .filter((interval) => interval > 180 && interval < 2_000)
+      if (intervals.length > 0) {
+        const sorted = [...intervals].sort((a, b) => a - b)
+        const median = sorted[Math.floor(sorted.length / 2)]!
+        const bpm = Math.max(30, Math.min(300, 60_000 / median))
+        writeGrid({ bpm }, bpm)
+        setMessage(
+          `${bpm.toFixed(1)} BPM from ${recent.length} taps${recent.length < 4 ? ' — keep tapping' : ''}.`,
+        )
+      }
+    } else {
+      setMessage('Tap at least twice; four taps is better.')
+    }
+  }, [writeGrid])
+
+  const candidates = (analysis?.candidates ?? [])
+    .filter(
+      (candidate, index, list) =>
+        list.findIndex((item) => Math.abs(item.bpm - candidate.bpm) < 0.5) ===
+        index,
+    )
+    .slice(0, 4)
+  const currentMatchesDetection =
+    !!grid && !!analysis && Math.abs(grid.bpm - analysis.bpm) < 0.25
+  const statusLabel =
+    status === 'ok'
+      ? 'Stable pulse'
+      : status === 'ambiguous'
+        ? 'Review tempo'
+        : status === 'no-pulse'
+          ? 'No pulse'
+          : 'Not analyzed'
+  const statusTone =
+    status === 'ok'
+      ? 'border-[oklch(0.72_0.16_150)]/40 bg-[oklch(0.72_0.16_150)]/10 text-[oklch(0.72_0.16_150)]'
+      : status === 'ambiguous' || status === 'no-pulse'
+        ? 'border-[oklch(0.82_0.15_80)]/40 bg-[oklch(0.82_0.15_80)]/10 text-[oklch(0.82_0.15_80)]'
+        : 'border-border bg-panel-raised text-text-muted'
+
+  return (
+    <Section
+      title="Beat sync"
+      action={
+        <span
+          className={[
+            'rounded-full border px-2 py-0.5 text-[9px] font-medium',
+            statusTone,
+          ].join(' ')}
+        >
+          {statusLabel}
+        </span>
+      }
+    >
+      <div className="rounded-lg border border-border bg-panel-raised/55 p-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+            <Activity size={14} strokeWidth={1.9} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-medium text-text">
+              Detect tempo and beat positions
+            </div>
+            <div className="mt-0.5 text-[10px] leading-4 text-text-dim">
+              Analysis is an estimate. Markers appear on the seconds ruler;
+              you stay in control of the applied grid.
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void analyze()}
+          disabled={analyzing || !node.src}
+          className="mt-3 flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-accent text-[11px] font-semibold text-white shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <RefreshCw
+            size={13}
+            strokeWidth={2}
+            className={analyzing ? 'animate-spin' : ''}
+          />
+          {analyzing ? 'Analyzing audio…' : analysis ? 'Analyze again' : 'Analyze beats'}
+        </button>
+      </div>
+
+      {analysis && status !== 'no-pulse' && (
+        <div className="rounded-md border border-border bg-panel px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            {status === 'ok' ? (
+              <Check size={12} className="text-[oklch(0.72_0.16_150)]" />
+            ) : (
+              <AlertTriangle size={12} className="text-[oklch(0.82_0.15_80)]" />
+            )}
+            <span className="text-[10px] font-medium text-text">
+              Detected {analysis.bpm.toFixed(1)} BPM
+            </span>
+            <span className="ml-auto font-mono text-[9px] text-text-dim">
+              evidence {Math.round(analysis.confidence * 100)}%
+            </span>
+          </div>
+          {!currentMatchesDetection && (
+            <button
+              type="button"
+              onClick={() =>
+                applyCandidate({
+                  bpm: analysis.bpm,
+                  confidence: analysis.confidence,
+                  firstBeatTime: analysis.firstBeatTime,
+                })
+              }
+              className="mt-2 h-6 w-full rounded border border-accent/50 bg-accent-soft text-[9px] font-semibold text-accent hover:bg-accent/20"
+            >
+              Apply detected tempo
+            </button>
+          )}
+        </div>
+      )}
+
+      {candidates.length > 1 && (
+        <div>
+          <div className="mb-1.5 text-[9px] font-medium tracking-[0.05em] text-text-dim uppercase">
+            Other candidates
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {candidates.map((candidate) => {
+              const active =
+                !!grid && Math.abs(grid.bpm - candidate.bpm) < 0.25
+              return (
+                <button
+                  key={candidate.bpm}
+                  type="button"
+                  onClick={() => applyCandidate(candidate)}
+                  className={[
+                    'h-7 rounded border font-mono text-[10px] tabular-nums',
+                    active
+                      ? 'border-accent/60 bg-accent-soft font-semibold text-accent'
+                      : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+                  ].join(' ')}
+                >
+                  {candidate.bpm.toFixed(1)} BPM
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      <FieldRow label="Tempo">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+          <NumberField
+            value={grid?.bpm ?? analysis?.bpm ?? 120}
+            onCommit={(value) =>
+              writeGrid({ bpm: Math.max(30, Math.min(360, value)) }, value)
+            }
+            min={30}
+            max={360}
+            step={0.1}
+            suffix="BPM"
+          />
+          <button
+            type="button"
+            onClick={tapTempo}
+            className="h-7 shrink-0 rounded border border-border bg-panel px-2 text-[9px] font-semibold text-text-muted hover:border-border-strong hover:text-text"
+            title="Tap in time with the music"
+          >
+            Tap
+          </button>
+        </div>
+      </FieldRow>
+
+      {grid && (
+        <>
+          <FieldRow label="Tempo range">
+            <div className="flex min-w-0 flex-1 justify-end gap-1">
+              <button
+                type="button"
+                onClick={() => writeGrid({ bpm: Math.max(30, grid.bpm / 2) })}
+                className="h-7 flex-1 rounded border border-border bg-panel font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text"
+              >
+                Half
+              </button>
+              <button
+                type="button"
+                onClick={() => writeGrid({ bpm: Math.min(360, grid.bpm * 2) })}
+                className="h-7 flex-1 rounded border border-border bg-panel font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text"
+              >
+                Double
+              </button>
+            </div>
+          </FieldRow>
+          <FieldRow label="Meter">
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+              <NumberField
+                value={grid.beatsPerBar}
+                onCommit={(value) =>
+                  writeGrid({
+                    beatsPerBar: Math.max(1, Math.min(16, Math.round(value))),
+                  })
+                }
+                min={1}
+                max={16}
+                step={1}
+              />
+              <SelectField<string>
+                value={String(grid.beatUnit)}
+                options={([2, 4, 8, 16] as NoteDivision[]).map((value) => ({
+                  value: String(value),
+                  label: `/${value}`,
+                }))}
+                onCommit={(value) =>
+                  writeGrid({ beatUnit: Number(value) as NoteDivision })
+                }
+                width="w-16"
+              />
+            </div>
+          </FieldRow>
+          <FieldRow label="Bar 1 offset">
+            <NumberField
+              value={grid.firstBeatTime}
+              onCommit={(value) =>
+                writeGrid({ firstBeatTime: Math.max(0, value) })
+              }
+              min={0}
+              step={0.001}
+              suffix="s"
+            />
+          </FieldRow>
+        </>
+      )}
+
+      <div
+        className={[
+          'rounded-md border px-2.5 py-2 text-[10px] leading-4',
+          status === 'no-pulse'
+            ? 'border-[oklch(0.82_0.15_80)]/35 bg-[oklch(0.82_0.15_80)]/8 text-text-muted'
+            : 'border-border/70 bg-panel-raised/35 text-text-dim',
+        ].join(' ')}
+      >
+        {message ||
+          (grid
+            ? 'Select bars and keyframes in the timeline, then choose Distribute to beats.'
+            : 'Analyze the clip, enter a known BPM, or tap the tempo to create a grid.')}
+      </div>
     </Section>
   )
 }

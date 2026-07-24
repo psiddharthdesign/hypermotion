@@ -10,7 +10,7 @@ note grid.
 The implementation should keep three concepts separate:
 
 1. **Audio evidence** — detected transients and tempo candidates.
-2. **Musical intent** — chosen BPM, downbeat, time signature, and bar-specific
+2. **Musical intent** — chosen BPM, bar-one anchor, time signature, and bar-specific
    note divisions.
 3. **Animation action** — an explicit, undoable rewrite of selected keyframe
    times.
@@ -39,7 +39,8 @@ Persist evidence on the analysed audio node:
 
 ```ts
 interface AudioBeatAnalysis {
-  version: 1
+  algorithmVersion: 2
+  status: 'ok' | 'ambiguous' | 'no-pulse'
   bpm: number
   confidence: number
   firstBeatTime: number       // source-relative seconds
@@ -84,13 +85,14 @@ Looped clips repeat the derived grid inside the visible clip range.
 
 ### Analyse
 
-In the Audio tab, selecting an audio clip reveals a compact music strip:
+Selecting an audio clip reveals a compact Beat section in its Audio inspector:
 
 - **Analyse beats** button, then progress/cancel.
-- Detected BPM with confidence and nearby tempo candidates.
-- Editable BPM, downbeat, and meter (`4/4` initially).
+- Detected BPM with evidence strength, ambiguity status, and nearby candidates.
+- Editable BPM, bar-one/downbeat offset, and meter (`4/4` initially).
 - Strong transient ticks over the waveform.
-- Beat ticks and stronger bar lines on the shared ruler.
+- Beat ticks and stronger bar lines in a dedicated musical ruler below the
+  seconds/frame ruler.
 
 Analysis should run in a Web Worker. The current pure PCM API makes that move
 mechanical; decoding remains in the renderer through `AudioContext`.
@@ -147,18 +149,19 @@ The desktop UI should call the same domain functions, not a second algorithm.
 
 - Versioned beat analysis and musical-grid data persist on audio nodes and
   survive desktop/CLI `.hype` round trips.
-- The selected clip exposes Analyse, BPM, confidence, meter, downbeat, volume,
-  bar subdivision, half/double-tempo correction, and Sync controls in a compact
-  full-width Audio toolbar.
-- Transients stay on the waveform. Beats, subdivisions, and bar boundaries
-  render on the shared seconds ruler, with a slim lane reserved for selecting
-  bar ranges.
-- Low-confidence half-time and dotted-quarter ambiguities are resolved against
-  strong double-time and 3:2 candidates; candidate evidence remains available
-  for manual correction.
-- Tempo scoring combines the full-band onset envelope with a bass-focused
-  envelope so dense hats and five-accent figures do not outrank the underlying
-  quarter-note pulse (for example, ~95 BPM over a true 75 BPM track).
+- The selected clip exposes Analyze, BPM evidence, meter, bar-one offset, volume,
+  and half/double-tempo correction in the Audio inspector. Bar subdivisions and
+  keyframe sync stay in a compact timeline action row beside their range.
+- Transients stay on the waveform. The seconds/frame ruler remains strictly
+  absolute time; beats, subdivisions, bar boundaries, and bar-range selection
+  render together in a separate musical ruler directly beneath it.
+- Analysis reports `no-pulse` for silence/noise and `ambiguous` when competing
+  tempo peaks are too close to apply safely. Nearby local-maxima candidates
+  remain available for manual correction; the detector does not silently force
+  half-time, double-time, 3:2, or 4:5 interpretations.
+- Tempo evidence combines full-band and bass-focused onset envelopes, uses
+  mean-centred autocorrelation and multi-segment consensus, and preserves
+  stereo energy without cancelling antiphase channels.
 - Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
   eighth, and sixteenth-note overrides can be applied immediately.
 - Selected keyframes spread over unique note slots in one transaction, and
@@ -180,8 +183,10 @@ The desktop UI should call the same domain functions, not a second algorithm.
 ## Trade-offs and growth path
 
 - Browser-side onset autocorrelation is private, offline, and dependency-light,
-  but complex music will need manual correction. A future optional Essentia or
-  aubio WASM analyser can implement the same result contract.
+  but complex music still needs review and manual correction. `status` and
+  candidate evidence are part of the contract so the UI never has to present
+  an ambiguous estimate as ground truth. A future model-backed analyser can
+  implement the same result contract.
 - One constant tempo and time signature covers the first useful release.
   `MusicTiming` should migrate later to ordered tempo/meter segments for live
   recordings and songs with changes.

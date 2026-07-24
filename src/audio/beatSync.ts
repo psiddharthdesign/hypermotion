@@ -26,13 +26,29 @@ export interface BeatTransient {
 
 export interface TempoCandidate {
   bpm: number
+  /**
+   * Beat phase inferred specifically for this tempo, in source-relative
+   * seconds. Older persisted analyses may not have this field.
+   */
+  firstBeatTime?: number
+  /**
+   * Strength of the periodic evidence for this tempo, 0..1. This is not a
+   * probability and intentionally remains low when the signal has no stable
+   * pulse.
+   */
   confidence: number
 }
+
+export type BeatAnalysisStatus = 'ok' | 'ambiguous' | 'no-pulse'
 
 export interface BeatAnalysis {
   bpm: number
   /** Confidence in the selected tempo, 0..1. */
   confidence: number
+  /** Whether the estimate is safe to apply without asking the user to review. */
+  status?: BeatAnalysisStatus
+  /** Lets persisted analyses be invalidated when the detector changes. */
+  algorithmVersion?: 2
   /** First recurring beat phase in source-relative seconds. */
   firstBeatTime: number
   transients: BeatTransient[]
@@ -151,27 +167,56 @@ export function analyzeBeatPcm(
     32,
     Math.round(sampleRate * finitePositive(options.hopMs, 10) / 1_000),
   )
-  const mono = mixToMono(audio.channels)
+  const mono = mixToMonoEnergySafe(audio.channels)
   const novelty = onsetNovelty(mono, hopSize)
-  const bassNovelty = onsetNovelty(
-    lowPassSamples(mono, sampleRate, 180),
-    hopSize,
+  const bass = mixToMonoEnergySafe(
+    audio.channels.map((channel) => lowPassSamples(channel, sampleRate, 180)),
   )
+  const bassNovelty = onsetNovelty(bass, hopSize)
   const noveltyRate = sampleRate / hopSize
   const transients = pickTransients(novelty, noveltyRate)
-  const candidates = tempoCandidates(
+  const bassTransients = pickTransients(bassNovelty, noveltyRate)
+  const signalLevel = rootMeanSquare(mono)
+  const candidateEvidence = tempoCandidates(
     novelty,
     bassNovelty,
+    transients,
+    bassTransients,
     noveltyRate,
     minBpm,
     maxBpm,
   )
-  const winner = selectTempoCandidate(candidates) ?? {
+  const bestEvidence = candidateEvidence[0]
+  const hasPulse =
+    signalLevel >= 1e-5 &&
+    transients.length >= 4 &&
+    (bestEvidence?.periodicity ?? 0) >= 0.11 &&
+    (bestEvidence?.score ?? 0) >= 0.16
+  const confidence = hasPulse
+    ? tempoConfidence(candidateEvidence)
+    : 0
+  const status: BeatAnalysisStatus = !hasPulse
+    ? 'no-pulse'
+    : confidence >= 0.58
+      ? 'ok'
+      : 'ambiguous'
+  const winner = bestEvidence ?? {
     bpm: clamp(120, minBpm, maxBpm),
-    confidence: 0,
+    score: 0,
+    periodicity: 0,
   }
   const period = 60 / winner.bpm
-  const firstBeatTime = inferBeatPhase(transients, period)
+  const firstBeatTime = hasPulse ? inferBeatPhase(transients, period) : 0
+  const candidates = hasPulse
+    ? candidateEvidence.slice(0, 4).map((candidate) => ({
+        bpm: round(candidate.bpm, 3),
+        firstBeatTime: round(
+          inferBeatPhase(transients, 60 / candidate.bpm),
+          6,
+        ),
+        confidence: round(candidateEvidenceConfidence(candidate), 4),
+      }))
+    : []
   const tolerance = Math.min(
     period * 0.24,
     finitePositive(options.beatToleranceMs, 90) / 1_000,
@@ -183,10 +228,12 @@ export function analyzeBeatPcm(
 
   return {
     bpm: round(winner.bpm, 3),
-    confidence: round(winner.confidence, 4),
+    confidence: round(confidence, 4),
+    status,
+    algorithmVersion: 2,
     firstBeatTime: round(firstBeatTime, 6),
     transients,
-    beatTransients,
+    beatTransients: hasPulse ? beatTransients : [],
     candidates,
   }
 }
@@ -301,8 +348,15 @@ export function alignKeyframesToNoteMarkers(
   // A bar contains N note attacks plus the next bar's boundary. When there
   // are exactly N musical events, map them one-to-one to those attacks rather
   // than stretching the last event onto the following bar and skipping a note.
+  const endsOnBarBoundary = markers.some(
+    (marker) =>
+      marker.isBarStart &&
+      Math.abs(marker.time - allSlots[allSlots.length - 1]!) <= EPSILON,
+  )
   const slots =
-    allSlots.length > 1 && clusters.length === allSlots.length - 1
+    endsOnBarBoundary &&
+    allSlots.length > 1 &&
+    clusters.length === allSlots.length - 1
       ? allSlots.slice(0, -1)
       : allSlots
 
@@ -336,7 +390,12 @@ export function alignKeyframesToNoteMarkers(
   return { ok: true, times, availableSlots: slots.length }
 }
 
-function mixToMono(channels: readonly Float32Array[]): Float32Array {
+/**
+ * Produce an energy envelope without summing channel polarity. A conventional
+ * `(left + right) / 2` mono fold-down erases antiphase material and used to
+ * turn a valid stereo click track into silence.
+ */
+function mixToMonoEnergySafe(channels: readonly Float32Array[]): Float32Array {
   const length = channels.reduce(
     (max, channel) => Math.max(max, channel.length),
     0,
@@ -344,10 +403,13 @@ function mixToMono(channels: readonly Float32Array[]): Float32Array {
   const mono = new Float32Array(length)
   if (channels.length === 0) return mono
   for (const channel of channels) {
-    for (let i = 0; i < channel.length; i++) mono[i] += channel[i]!
+    for (let i = 0; i < channel.length; i++) {
+      mono[i] += channel[i]! * channel[i]!
+    }
   }
-  const scale = 1 / channels.length
-  for (let i = 0; i < mono.length; i++) mono[i] *= scale
+  for (let i = 0; i < mono.length; i++) {
+    mono[i] = Math.sqrt(mono[i]! / channels.length)
+  }
   return mono
 }
 
@@ -432,109 +494,140 @@ function pickTransients(
 function tempoCandidates(
   novelty: Float32Array,
   bassNovelty: Float32Array,
+  transients: readonly BeatTransient[],
+  bassTransients: readonly BeatTransient[],
   noveltyRate: number,
   minBpm: number,
   maxBpm: number,
-): TempoCandidate[] {
-  const scored: Array<{ bpm: number; score: number }> = []
+): TempoEvidence[] {
+  const scored: TempoEvidence[] = []
   for (let bpm = minBpm; bpm <= maxBpm; bpm += 0.25) {
     const lag = noveltyRate * 60 / bpm
-    const broadbandScore =
-      correlationAtLag(novelty, lag) +
-      correlationAtLag(novelty, lag * 2) * 0.35 +
-      correlationAtLag(novelty, lag / 2) * 0.15
-    const bassScore =
-      correlationAtLag(bassNovelty, lag) +
-      correlationAtLag(bassNovelty, lag * 2) * 0.35 +
-      correlationAtLag(bassNovelty, lag / 2) * 0.15
-    const score = broadbandScore + bassScore * 0.85
-    // A gentle centre-tempo prior resolves common half/double-time ties while
-    // remaining weak enough for a clear 70 or 180 BPM pulse to win.
-    const prior = 0.92 + 0.08 * Math.exp(-Math.pow((bpm - 120) / 55, 2))
-    scored.push({ bpm, score: score * prior })
+    const broadbandPeriodicity = robustCorrelationAtLag(
+      novelty,
+      lag,
+      noveltyRate,
+    )
+    const bassPeriodicity = robustCorrelationAtLag(
+      bassNovelty,
+      lag,
+      noveltyRate,
+    )
+    const broadbandFit = gridFitAtTempo(transients, 60 / bpm)
+    const bassFit = gridFitAtTempo(bassTransients, 60 / bpm)
+    const periodicity =
+      broadbandPeriodicity * 0.62 +
+      bassPeriodicity * 0.38
+    const fit = broadbandFit * 0.58 + bassFit * 0.42
+    // The prior only breaks true octave ties. It cannot rescue a tempo without
+    // matching onsets, unlike the old literal ×2, 3:2, and 4:5 corrections.
+    const prior = 0.96 + 0.04 * Math.exp(-Math.pow((bpm - 120) / 58, 2))
+    scored.push({
+      bpm,
+      periodicity,
+      score: (periodicity * 0.72 + fit * 0.28) * prior,
+    })
   }
-  scored.sort((a, b) => b.score - a.score)
-  const winnerScore = Math.max(EPSILON, scored[0]?.score ?? 0)
-  const separated: TempoCandidate[] = []
-  for (const item of scored) {
-    if (separated.some((candidate) => Math.abs(candidate.bpm - item.bpm) < 2)) {
+
+  // Candidates are genuine peaks in the tempo curve, then non-max suppressed.
+  // Reporting adjacent samples from one broad peak made the old confidence
+  // margin meaningless.
+  const peaks = scored.filter((item, index) => {
+    const left = scored[index - 1]?.score ?? -Infinity
+    const right = scored[index + 1]?.score ?? -Infinity
+    return item.score >= left && item.score >= right
+  })
+  peaks.sort((a, b) => b.score - a.score)
+  const separated: TempoEvidence[] = []
+  for (const item of peaks) {
+    if (separated.some((candidate) => Math.abs(candidate.bpm - item.bpm) < 3)) {
       continue
     }
-    separated.push({
-      bpm: round(item.bpm, 3),
-      confidence: round(clamp(item.score / winnerScore, 0, 1), 4),
-    })
-    if (separated.length === 4) break
-  }
-  const runnerUp = separated[1]?.confidence ?? 0
-  if (separated[0]) {
-    separated[0].confidence = round(clamp(1 - runnerUp * 0.65, 0, 1), 4)
+    separated.push(item)
+    if (separated.length === 8) break
   }
   return separated
 }
 
-/**
- * Resolve common low-tempo ambiguities when a musically useful quarter-note
- * interpretation is nearly as strong. Genuine slow material stays untouched,
- * while half-time and dotted-quarter accent patterns get a practical grid.
- */
-function selectTempoCandidate(
-  candidates: readonly TempoCandidate[],
-): TempoCandidate | undefined {
-  const primary = candidates[0]
-  if (!primary) return undefined
+interface TempoEvidence {
+  bpm: number
+  score: number
+  periodicity: number
+}
 
-  // A five-accent figure repeated over four quarter-note beats can dominate
-  // the full-band envelope and read around 94–96 BPM over a true 75 BPM
-  // pulse. Only prefer the slower 4:5 candidate when the overall result is
-  // explicitly ambiguous and the bass-aware candidate is nearly as strong.
-  const fourUnderFive = candidates.find(
-    (candidate, index) =>
-      index > 0 &&
-      candidate.bpm < primary.bpm &&
-      candidate.bpm / primary.bpm >= 0.76 &&
-      candidate.bpm / primary.bpm <= 0.82 &&
-      candidate.confidence >= 0.75,
-  )
-  if (primary.confidence < 0.55 && fourUnderFive) {
-    return { bpm: fourUnderFive.bpm, confidence: primary.confidence }
+function candidateEvidenceConfidence(candidate: TempoEvidence): number {
+  return clamp((candidate.score - 0.08) / 0.62, 0, 1)
+}
+
+function tempoConfidence(candidates: readonly TempoEvidence[]): number {
+  const winner = candidates[0]
+  if (!winner) return 0
+  const runnerUp = candidates[1]
+  const evidence = candidateEvidenceConfidence(winner)
+  const margin = runnerUp
+    ? clamp((winner.score - runnerUp.score) / Math.max(winner.score, EPSILON), 0, 1)
+    : 1
+  // Tempo ambiguity matters at least as much as absolute periodic strength.
+  // A loud repeating polyrhythm can have two individually strong candidates;
+  // calling that 90% confident is actively misleading.
+  return clamp(evidence * (0.35 + margin * 0.65), 0, 1)
+}
+
+function robustCorrelationAtLag(
+  values: Float32Array,
+  lag: number,
+  valuesPerSecond: number,
+): number {
+  const global = correlationAtLag(values, lag)
+  const windowSize = Math.max(Math.ceil(lag * 4), Math.round(valuesPerSecond * 6))
+  if (values.length <= windowSize * 1.5) return global
+  const segmentScores: number[] = []
+  for (let start = 0; start + Math.ceil(lag) + 4 < values.length; start += windowSize) {
+    const end = Math.min(values.length, start + windowSize)
+    const segment = values.slice(start, end)
+    if (segment.length > lag + 4) segmentScores.push(correlationAtLag(segment, lag))
   }
+  if (segmentScores.length < 2) return global
+  // Median segment evidence prevents one loud intro or fill from deciding the
+  // tempo for an otherwise steady track.
+  return global * 0.58 + percentile(segmentScores, 0.5) * 0.42
+}
 
-  if (primary.bpm >= 85 || primary.confidence >= 0.65) return primary
-
-  const doubled = candidates.find(
-    (candidate, index) =>
-      index > 0 &&
-      Math.abs(candidate.bpm - primary.bpm * 2) <= 3 &&
-      candidate.confidence >= 0.55,
-  )
-  if (doubled) {
-    // Keep the ambiguity reflected in confidence even though we choose the
-    // more useful double-time interpretation.
-    return { bpm: doubled.bpm, confidence: primary.confidence }
+function gridFitAtTempo(
+  transients: readonly BeatTransient[],
+  period: number,
+): number {
+  if (transients.length < 3 || !Number.isFinite(period) || period <= 0) return 0
+  const phase = inferBeatPhase(transients, period)
+  let alignedStrength = 0
+  let totalStrength = 0
+  for (const transient of transients) {
+    const distance = distanceToRecurringGrid(transient.time, phase, period)
+    const weight = Math.exp(-Math.pow(distance / (period * 0.085), 2))
+    alignedStrength += transient.strength * weight
+    totalStrength += transient.strength
   }
-
-  // Syncopated material frequently emphasizes dotted quarter notes, making
-  // the autocorrelation prefer two beats for every three quarter-note beats
-  // (for example 76 instead of 114 BPM). When the underlying 3:2 candidate is
-  // also strong, prefer it as the editable quarter-note grid.
-  const threeOverTwo = candidates.find(
-    (candidate, index) =>
-      index > 0 &&
-      Math.abs(candidate.bpm - primary.bpm * 1.5) <= 3 &&
-      candidate.confidence >= 0.6,
-  )
-  if (threeOverTwo) {
-    return { bpm: threeOverTwo.bpm, confidence: primary.confidence }
-  }
-
-  return primary
+  return alignedStrength / Math.max(EPSILON, totalStrength)
 }
 
 function correlationAtLag(values: Float32Array, lag: number): number {
   const whole = Math.floor(lag)
   const fraction = lag - whole
   if (whole < 1 || whole >= values.length - 1) return 0
+  let meanCurrent = 0
+  let meanShifted = 0
+  let count = 0
+  for (let i = whole + 1; i < values.length; i++) {
+    const shifted =
+      values[i - whole]! * (1 - fraction) +
+      values[i - whole - 1]! * fraction
+    meanCurrent += values[i]!
+    meanShifted += shifted
+    count++
+  }
+  if (count === 0) return 0
+  meanCurrent /= count
+  meanShifted /= count
   let score = 0
   let normA = 0
   let normB = 0
@@ -542,10 +635,11 @@ function correlationAtLag(values: Float32Array, lag: number): number {
     const shifted =
       values[i - whole]! * (1 - fraction) +
       values[i - whole - 1]! * fraction
-    const current = values[i]!
-    score += current * shifted
+    const current = values[i]! - meanCurrent
+    const centeredShifted = shifted - meanShifted
+    score += current * centeredShifted
     normA += current * current
-    normB += shifted * shifted
+    normB += centeredShifted * centeredShifted
   }
   return score / Math.sqrt(Math.max(EPSILON, normA * normB))
 }
@@ -589,6 +683,13 @@ function normalizeArray(values: Float32Array): Float32Array {
   if (max <= EPSILON) return values
   for (let i = 0; i < values.length; i++) values[i] /= max
   return values
+}
+
+function rootMeanSquare(values: Float32Array): number {
+  if (values.length === 0) return 0
+  let sum = 0
+  for (const value of values) sum += value * value
+  return Math.sqrt(sum / values.length)
 }
 
 function percentile(values: number[], fraction: number): number {
