@@ -66,6 +66,10 @@ import { SnapshotCompositor } from '@/render/SnapshotCompositor'
 import { CameraPostEffectsFallback } from '@/render/CameraPostEffectsFallback'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
+import {
+  LivePaperShaderCanvas,
+  PaperShaderSourceLayer,
+} from '@/render/PaperShaderLayer'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import {
@@ -105,10 +109,20 @@ import {
 import { scrambleTextForSegment } from '@/anim/textScramble'
 import {
   cameraPreviewStore,
-  cameraTransformPreview,
   mergeCameraAnimationPreview,
 } from '@/ui/cameraPreviewStore'
-import { cameraWheelStartZ, cameraZFromWheel } from '@/ui/cameraWheel'
+import {
+  cameraDollyFromWheel,
+  cameraOrbitFromPointer,
+  cameraOrbitFromWheel,
+  cameraPanFromPointer,
+  cameraPanFromWheel,
+  cameraZFromPointerDrag,
+  resolveCameraPointerNavigation,
+  resolveCameraWheelNavigation,
+  type CameraNavigationMode,
+} from '@/ui/cameraNavigation'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
 
 const MemoizedThreeSceneViewport = memo(ThreeSceneViewport)
@@ -133,6 +147,24 @@ const EMPTY_THREE_SELECTION_IDS: NodeId[] = []
 const CAMERA_CONTROL_DRAG_THRESHOLD_PX = 6
 const subscribeToNothing = () => () => {}
 const getNoCameraPreview = () => undefined
+
+type CameraControlSample = {
+  time: number
+  patch: Record<string, number>
+  mode: 'record' | 'active-track'
+}
+
+type CameraGestureSession = {
+  cameraId: NodeId
+  mode: CameraNavigationMode
+  transform: CameraNode['transform']
+  latestTransform: CameraNode['transform']
+  startPlayhead: number
+  startPerfTime: number
+  lastSampleTime: number
+  didStampStart: boolean
+  samples: CameraControlSample[]
+}
 
 /**
  * Subscribe one small render leaf to the camera engine + transient gesture
@@ -174,9 +206,32 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     void props.sceneVersion
     return hasNodeDrivenTextAnimation(props.api, animationIds)
   }, [animationIds, props.api, props.sceneVersion])
+  const needsPaperShaderClock = useMemo(() => {
+    void props.sceneVersion
+    return animationIds.some((id) => {
+      const node = props.api.getNode(id)
+      return (
+        node?.kind === 'shader' &&
+        node.visible &&
+        node.speed > 0.0001
+      )
+    })
+  }, [animationIds, props.api, props.sceneVersion])
   const nodeTextClockEnabled =
     props.playing === true && props.showPlanes !== false && needsNodeTextClock
-  const nodeTextPlayhead = useAnimationPlaybackClock(nodeTextClockEnabled)
+  const paperShaderClockEnabled =
+    props.playing === true &&
+    props.showPlanes !== false &&
+    needsPaperShaderClock
+  const temporalVhsEnabled =
+    props.playing === true &&
+    camera.vhsEnabled === true &&
+    (cameraAnim?.vhsIntensity ?? camera.vhsIntensity ?? 0.65) > 0.001
+  const playbackClockEnabled =
+    nodeTextClockEnabled ||
+    paperShaderClockEnabled ||
+    temporalVhsEnabled
+  const playbackClock = useAnimationPlaybackClock(playbackClockEnabled)
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
   )
@@ -184,8 +239,8 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   // Read the engine-owned time during that render instead of subscribing this
   // WebGL leaf to the slower 15 Hz UI mirror as a second render source.
   const playbackPlayhead = props.playing
-    ? nodeTextClockEnabled
-      ? nodeTextPlayhead
+    ? playbackClockEnabled
+      ? playbackClock
       : getAnimEngine().getPlayhead()
     : (pausedPlayhead ?? props.playhead ?? 0)
   return (
@@ -1024,6 +1079,8 @@ export function Canvas() {
     ],
   )
   const [isCameraManipulating, setIsCameraManipulating] = useState(false)
+  const [cameraNavigationMode, setCameraNavigationMode] =
+    useState<CameraNavigationMode | null>(null)
   const previewCameraDepthOfField = isCameraManipulating
     ? null
     : cameraDepthOfField
@@ -1037,18 +1094,34 @@ export function Canvas() {
   )
 
   const displayedCameraTransform = useCallback(
-    (node: CameraNode): CameraNode['transform'] => ({
-      ...node.transform,
-      x: liveCameraAnim?.x ?? node.transform.x,
-      y: liveCameraAnim?.y ?? node.transform.y,
-      z: liveCameraAnim?.z ?? node.transform.z,
-      rotation: liveCameraAnim?.rotation ?? node.transform.rotation,
-      rotationX: liveCameraAnim?.rotationX ?? node.transform.rotationX,
-      rotationY: liveCameraAnim?.rotationY ?? node.transform.rotationY,
-      scaleX: liveCameraAnim?.scaleX ?? node.transform.scaleX,
-      scaleY: liveCameraAnim?.scaleY ?? node.transform.scaleY,
-    }),
-    [liveCameraAnim],
+    (node: CameraNode): CameraNode['transform'] => {
+      // The normal WebGL path intentionally does not subscribe all of Canvas
+      // to every animation frame. Read the current engine and gesture preview
+      // at the input boundary so a new navigation gesture starts from the pose
+      // the user can actually see.
+      const engineValue = getAnimEngine().getSnapshot()[node.id]
+      const previewSnapshot = cameraPreviewStore.getSnapshot()
+      const previewValue =
+        previewSnapshot?.cameraId === node.id
+          ? previewSnapshot.value
+          : undefined
+      const animated = {
+        ...engineValue,
+        ...previewValue,
+      }
+      return {
+        ...node.transform,
+        x: animated.x ?? node.transform.x,
+        y: animated.y ?? node.transform.y,
+        z: animated.z ?? node.transform.z,
+        rotation: animated.rotation ?? node.transform.rotation,
+        rotationX: animated.rotationX ?? node.transform.rotationX,
+        rotationY: animated.rotationY ?? node.transform.rotationY,
+        scaleX: animated.scaleX ?? node.transform.scaleX,
+        scaleY: animated.scaleY ?? node.transform.scaleY,
+      }
+    },
+    [],
   )
 
   // --- pointer events: workspace-level click to clear / pan with H ----
@@ -1082,25 +1155,15 @@ export function Canvas() {
   const [marqueeRect, setMarqueeRect] = useState<
     (Rect & { workspaceOnly?: boolean }) | null
   >(null)
-  const cameraControlRef = useRef<{
-    pointerId: number
-    cameraId: NodeId
-    mode: 'rotate' | 'pan'
-    startX: number
-    startY: number
-    transform: CameraNode['transform']
-    latestTransform: CameraNode['transform']
-    startPlayhead: number
-    startPerfTime: number
-    lastSampleTime: number
-    didStampStart: boolean
-    moved: boolean
-    samples: Array<{
-      time: number
-      patch: Record<string, number>
-      mode: 'record' | 'active-track'
-    }>
-  } | null>(null)
+  const cameraControlRef = useRef<
+    (CameraGestureSession & {
+      pointerId: number
+      startX: number
+      startY: number
+      moved: boolean
+    })
+    | null
+  >(null)
   const focusMaskDragRef = useRef<{
     pointerId: number
     cameraId: NodeId
@@ -1150,18 +1213,6 @@ export function Canvas() {
     [stampCanvasPatch],
   )
 
-  const applyCameraControlTransform = useCallback(
-    (cameraId: NodeId, transform: CameraNode['transform']) => {
-      const current = api.getNode(cameraId)
-      if (!current || current.kind !== 'camera') return
-      api.setNodeProperty(current.id, 'transform', {
-        ...current.transform,
-        ...transform,
-      })
-    },
-    [api],
-  )
-
   const currentAnimationAuthorTime = useCallback(() => {
     const ui = useUI.getState()
     return ui.playing ? getAnimEngine().getPlayhead() : ui.playhead
@@ -1169,24 +1220,26 @@ export function Canvas() {
 
   const cameraControlPatch = useCallback(
     (
-      mode: 'rotate' | 'pan',
+      mode: CameraNavigationMode,
       transform: CameraNode['transform'],
     ): Record<string, number> =>
-      mode === 'rotate'
+      mode === 'orbit'
         ? {
             rotationX: transform.rotationX,
             rotationY: transform.rotationY,
           }
-        : {
-            x: transform.x,
-            y: transform.y,
-          },
+        : mode === 'pan'
+          ? {
+              x: transform.x,
+              y: transform.y,
+            }
+          : { z: transform.z },
     [],
   )
 
   const maybeStampCameraControlSample = useCallback(
     (
-      cameraControl: NonNullable<typeof cameraControlRef.current>,
+      cameraControl: CameraGestureSession,
       nextTransform: CameraNode['transform'],
     ) => {
       const ui = useUI.getState()
@@ -1212,7 +1265,6 @@ export function Canvas() {
           )
       const minStep = frameStep * 0.75
       if (
-        ui.playing &&
         Math.abs(sampleTime - cameraControl.lastSampleTime) < minStep
       ) {
         return
@@ -1229,6 +1281,74 @@ export function Canvas() {
       currentAnimationAuthorTime,
       frameStep,
       duration,
+    ],
+  )
+
+  const commitCameraGesture = useCallback(
+    (gesture: CameraGestureSession): boolean => {
+      const current = api.getNode(gesture.cameraId)
+      if (!current || current.kind !== 'camera') {
+        cameraPreviewStore.clear(gesture.cameraId)
+        return false
+      }
+
+      const ui = useUI.getState()
+      const releaseTime = ui.playing
+        ? currentAnimationAuthorTime()
+        : ui.recording
+          ? Math.min(
+              duration,
+              gesture.startPlayhead +
+                (performance.now() - gesture.startPerfTime) / 1000,
+            )
+          : ui.playhead
+      const finalPatch = cameraControlPatch(
+        gesture.mode,
+        gesture.latestTransform,
+      )
+
+      // Persist one field-scoped transaction for the entire gesture. This
+      // keeps undo atomic and avoids overwriting animated axes that the active
+      // navigation mode does not own.
+      api.doc.transact(() => {
+        api.setNodeProperty(current.id, 'transform', {
+          ...current.transform,
+          ...finalPatch,
+        })
+        for (const sample of gesture.samples) {
+          if (sample.mode === 'record') {
+            recordKeyframesForPatch(
+              api,
+              current.id,
+              sample.time,
+              'transform',
+              sample.patch,
+            )
+          } else {
+            stampToActiveTracksForPatch(
+              api,
+              current.id,
+              sample.time,
+              'transform',
+              sample.patch,
+            )
+          }
+        }
+        stampCanvasTransformPatch(
+          current.id,
+          finalPatch,
+          releaseTime,
+        )
+      }, UNDOABLE_GESTURE_ORIGIN)
+      cameraPreviewStore.finish(current.id)
+      return true
+    },
+    [
+      api,
+      cameraControlPatch,
+      currentAnimationAuthorTime,
+      duration,
+      stampCanvasTransformPatch,
     ],
   )
 
@@ -1526,10 +1646,60 @@ export function Canvas() {
     }
   }, [])
 
+  const startCameraNavigation = useCallback(
+    (
+      e: React.PointerEvent<HTMLElement>,
+      mode: CameraNavigationMode,
+    ): boolean => {
+      if (
+        editingTextId ||
+        !camera ||
+        camera.kind !== 'camera' ||
+        !isInsideArtboard(clientToViewport(e.clientX, e.clientY))
+      ) {
+        return false
+      }
+      const current = api.getNode(camera.id)
+      if (!current || current.kind !== 'camera') return false
+
+      const startTransform = displayedCameraTransform(current)
+      const startPlayhead = currentAnimationAuthorTime()
+      cameraControlRef.current = {
+        pointerId: e.pointerId,
+        cameraId: current.id,
+        mode,
+        startX: e.clientX,
+        startY: e.clientY,
+        transform: startTransform,
+        latestTransform: startTransform,
+        startPlayhead,
+        startPerfTime: performance.now(),
+        lastSampleTime: startPlayhead,
+        didStampStart: false,
+        moved: false,
+        samples: [],
+      }
+      setIsCameraManipulating(true)
+      setCameraNavigationMode(mode)
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      e.preventDefault()
+      e.stopPropagation()
+      return true
+    },
+    [
+      api,
+      camera,
+      clientToViewport,
+      currentAnimationAuthorTime,
+      displayedCameraTransform,
+      editingTextId,
+      isInsideArtboard,
+    ],
+  )
+
   const onFocusPickPointerDownCapture = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
-      if (e.button !== 0) return
-      if (!focusPickingCameraId && spacePanning) {
+      if (!focusPickingCameraId && spacePanning && e.button === 0) {
         panStateRef.current = {
           startX: e.clientX,
           startY: e.clientY,
@@ -1541,6 +1711,16 @@ export function Canvas() {
         e.stopPropagation()
         return
       }
+      if (!focusPickingCameraId) {
+        const cameraMode = resolveCameraPointerNavigation({
+          button: e.button,
+          altKey: e.altKey,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+        })
+        if (cameraMode && startCameraNavigation(e, cameraMode)) return
+      }
+      if (e.button !== 0) return
       if (!focusPickingCameraId) return
       const point = clientToViewport(e.clientX, e.clientY)
       const canvasPoint = clientToCanvas(e.clientX, e.clientY)
@@ -1584,6 +1764,7 @@ export function Canvas() {
       focusPickingCameraId,
       setFocusPickingCameraId,
       setSelection,
+      startCameraNavigation,
       stampCanvasCameraPatch,
       spacePanning,
       view.panX,
@@ -1921,38 +2102,7 @@ export function Canvas() {
 	            }
 	          }
 	        }
-	        if (
-	          tool === 'select' &&
-	          !e.metaKey &&
-	          !e.ctrlKey &&
-	          camera &&
-	          camera.kind === 'camera' &&
-	          selection.includes(camera.id)
-	        ) {
-	          const startTransform = displayedCameraTransform(camera)
-	          cameraControlRef.current = {
-	            pointerId: e.pointerId,
-	            cameraId: camera.id,
-	            mode: e.shiftKey ? 'pan' : 'rotate',
-	            startX: e.clientX,
-	            startY: e.clientY,
-	            transform: startTransform,
-	            latestTransform: startTransform,
-	            startPlayhead: currentAnimationAuthorTime(),
-	            startPerfTime: performance.now(),
-	            lastSampleTime: currentAnimationAuthorTime(),
-	            didStampStart: false,
-	            moved: false,
-	            samples: [],
-	          }
-	          cameraPreviewStore.set(camera.id, cameraTransformPreview(startTransform))
-	          setIsCameraManipulating(true)
-	          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-	          e.preventDefault()
-	          e.stopPropagation()
-	          return
-	        }
-	        // Select-tool marquee: start a rubber-band on the empty bg.
+        // Select-tool marquee: start a rubber-band on the empty bg.
         // Shift extends the existing selection; plain drag replaces.
         // We snapshot the initial selection here so pointer-move can
         // recompute union-with-marquee idempotently without losing the
@@ -2004,9 +2154,7 @@ export function Canvas() {
 	      api,
 	      setSelection,
 	      setEditingTextId,
-	      currentAnimationAuthorTime,
 		      camera,
-		      displayedCameraTransform,
 		      selection,
 		      spacePanning,
 		      view.panX,
@@ -2015,49 +2163,69 @@ export function Canvas() {
 	    ],
 	  )
 
-	  const onBackgroundPointerMove = useCallback(
-	    (e: React.PointerEvent<HTMLDivElement>) => {
-	      const cameraControl = cameraControlRef.current
-	      if (cameraControl && e.pointerId === cameraControl.pointerId) {
-	        const current = api.getNode(cameraControl.cameraId)
-	        if (!current || current.kind !== 'camera') return
-	        const dx = e.clientX - cameraControl.startX
-	        const dy = e.clientY - cameraControl.startY
-	        if (
-	          !cameraControl.moved &&
-	          Math.hypot(dx, dy) < CAMERA_CONTROL_DRAG_THRESHOLD_PX
-	        ) return
-	        cameraControl.moved = true
-	        let nextTransform: CameraNode['transform']
-	        if (cameraControl.mode === 'rotate') {
-	          const rotationX = Math.max(
-	            -89,
-	            Math.min(89, cameraControl.transform.rotationX - dy * 0.16),
-	          )
-	          const rotationY = cameraControl.transform.rotationY + dx * 0.16
-	          nextTransform = {
-	            ...cameraControl.transform,
-	            rotationX,
-	            rotationY,
-	          }
-	        } else {
-	          const divisor = Math.max(0.1, view.zoom * cameraScaleFromZ)
-	          nextTransform = {
-	            ...cameraControl.transform,
-	            x: cameraControl.transform.x - dx / divisor,
-	            y: cameraControl.transform.y - dy / divisor,
-	          }
-	        }
-	        cameraControl.latestTransform = nextTransform
-	        maybeStampCameraControlSample(cameraControl, nextTransform)
-	        cameraPreviewStore.set(
-	          cameraControl.cameraId,
-	          cameraTransformPreview(nextTransform),
-	        )
-	        e.preventDefault()
-	        return
-	      }
-	      const p = panStateRef.current
+  const onBackgroundPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const cameraControl = cameraControlRef.current
+      if (cameraControl && e.pointerId === cameraControl.pointerId) {
+        const current = api.getNode(cameraControl.cameraId)
+        if (!current || current.kind !== 'camera') return
+        const dx = e.clientX - cameraControl.startX
+        const dy = e.clientY - cameraControl.startY
+        if (
+          !cameraControl.moved &&
+          Math.hypot(dx, dy) < CAMERA_CONTROL_DRAG_THRESHOLD_PX
+        ) {
+          return
+        }
+        cameraControl.moved = true
+        const effectiveCamera = resolveCamera3D(
+          current,
+          cameraControl.transform,
+          { width: canvasWidth, height: canvasHeight },
+        )
+        const cameraApparentScale =
+          effectiveCamera.focalLength /
+          Math.max(
+            1,
+            effectiveCamera.focalLength - cameraControl.transform.z,
+          )
+        const patch =
+          cameraControl.mode === 'orbit'
+            ? cameraOrbitFromPointer({
+                startRotationX: cameraControl.transform.rotationX,
+                startRotationY: cameraControl.transform.rotationY,
+                deltaX: dx,
+                deltaY: dy,
+              })
+            : cameraControl.mode === 'pan'
+              ? cameraPanFromPointer({
+                  startX: cameraControl.transform.x,
+                  startY: cameraControl.transform.y,
+                  deltaX: dx,
+                  deltaY: dy,
+                  workspaceZoom: view.zoom,
+                  cameraApparentScale,
+                })
+              : {
+                  z: cameraZFromPointerDrag({
+                    startZ: cameraControl.transform.z,
+                    focalLength: effectiveCamera.focalLength,
+                    deltaY: dy,
+                    scrollSensitivity: current.scrollSensitivity,
+                  }),
+                }
+        const nextTransform = {
+          ...cameraControl.transform,
+          ...patch,
+        }
+        cameraControl.latestTransform = nextTransform
+        maybeStampCameraControlSample(cameraControl, nextTransform)
+        cameraPreviewStore.set(cameraControl.cameraId, patch)
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      const p = panStateRef.current
       if (p) {
         setView({
           panX: p.panX + e.clientX - p.startX,
@@ -2090,67 +2258,41 @@ export function Canvas() {
         const height = Math.abs(cur.y - m.startY)
         setMarqueeRect({ x, y, width, height, workspaceOnly: m.workspaceOnly })
       }
-	    },
-	    [
-	      api,
-	      maybeStampCameraControlSample,
-	      cameraScaleFromZ,
-	      clientToCanvas,
-	      clientToViewport,
-	      setView,
-	      view.zoom,
-	    ],
-	  )
+    },
+    [
+      api,
+      canvasHeight,
+      canvasWidth,
+      maybeStampCameraControlSample,
+      clientToCanvas,
+      clientToViewport,
+      setView,
+      view.zoom,
+    ],
+  )
 
-	  const onBackgroundPointerUp = useCallback(
-	    (e: React.PointerEvent<HTMLDivElement>) => {
-	      const cameraControl = cameraControlRef.current
-		      if (cameraControl && e.pointerId === cameraControl.pointerId) {
-		        const current = api.getNode(cameraControl.cameraId)
-	        if (cameraControl.moved && current && current.kind === 'camera') {
-	          const nextTransform = cameraControl.latestTransform
-	          // Pointer-move is a transient WebGL preview. Commit the scene
-	          // document once on release so dragging the camera cannot trigger
-	          // Yoga, track recompilation, and texture invalidation per packet.
-	          api.doc.transact(() => {
-	            applyCameraControlTransform(current.id, nextTransform)
-	            for (const sample of cameraControl.samples) {
-	              if (sample.mode === 'record') {
-	                recordKeyframesForPatch(
-	                  api,
-	                  current.id,
-	                  sample.time,
-	                  'transform',
-	                  sample.patch,
-	                )
-	              } else {
-	                stampToActiveTracksForPatch(
-	                  api,
-	                  current.id,
-	                  sample.time,
-	                  'transform',
-	                  sample.patch,
-	                )
-	              }
-	            }
-	            stampCanvasTransformPatch(
-	              current.id,
-	              cameraControlPatch(cameraControl.mode, nextTransform),
-	              currentAnimationAuthorTime(),
-	            )
-	          })
-		        }
-		        cameraControlRef.current = null
-		        cameraPreviewStore.clear(cameraControl.cameraId)
-		        setIsCameraManipulating(false)
-	        try {
-	          ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
-	        } catch {
-	          /* already released */
-	        }
-	        return
-	      }
-	      if (panStateRef.current) {
+  const onBackgroundPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const cameraControl = cameraControlRef.current
+      if (cameraControl && e.pointerId === cameraControl.pointerId) {
+        if (cameraControl.moved) {
+          commitCameraGesture(cameraControl)
+        } else {
+          cameraPreviewStore.clear(cameraControl.cameraId)
+        }
+        cameraControlRef.current = null
+        setIsCameraManipulating(false)
+        setCameraNavigationMode(null)
+        try {
+          ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+        } catch {
+          /* already released */
+        }
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      if (panStateRef.current) {
         panStateRef.current = null
         ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
         return
@@ -2356,62 +2498,62 @@ export function Canvas() {
       setTool,
       solved,
       workspaceOrder,
-      applyCameraControlTransform,
-      cameraControlPatch,
-      currentAnimationAuthorTime,
-      stampCanvasTransformPatch,
+      commitCameraGesture,
       clearSelection,
     ],
   )
 
+  const onBackgroundPointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const cameraControl = cameraControlRef.current
+      if (!cameraControl || e.pointerId !== cameraControl.pointerId) return
+      cameraControlRef.current = null
+      cameraPreviewStore.clear(cameraControl.cameraId)
+      setIsCameraManipulating(false)
+      setCameraNavigationMode(null)
+      try {
+        ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [],
+  )
+
   const wheelFrameRef = useRef<number | null>(null)
-  const pendingWheelRef = useRef({
+  const pendingWheelRef = useRef<{
+    zoomDeltaY: number
+    zoomClientX: number
+    zoomClientY: number
+    panDeltaX: number
+    panDeltaY: number
+    cameraGesture: CameraGestureSession | null
+    cameraCommitTimer: number | null
+  }>({
     zoomDeltaY: 0,
     zoomClientX: 0,
     zoomClientY: 0,
     panDeltaX: 0,
     panDeltaY: 0,
-    cameraId: null as NodeId | null,
-    cameraZ: null as number | null,
-    cameraAuthorTime: null as number | null,
-    cameraCommitTimer: null as number | null,
+    cameraGesture: null,
+    cameraCommitTimer: null,
   })
 
   const flushPendingCameraWheel = useCallback(() => {
     const pending = pendingWheelRef.current
-    const cameraId = pending.cameraId
-    const cameraZ = pending.cameraZ
+    const gesture = pending.cameraGesture
     if (pending.cameraCommitTimer !== null) {
       window.clearTimeout(pending.cameraCommitTimer)
       pending.cameraCommitTimer = null
     }
-    if (!cameraId || cameraZ === null) return
-    const authorTime =
-      pending.cameraAuthorTime ?? currentAnimationAuthorTime()
-    pending.cameraId = null
-    pending.cameraZ = null
-    pending.cameraAuthorTime = null
-    const current = api.getNode(cameraId)
-    if (!current || current.kind !== 'camera') {
-      cameraPreviewStore.clear(cameraId)
-      return
-    }
-    // A trackpad dolly can emit dozens of packets. Keep those packets in
-    // the shared rAF preview and author one scene/track mutation after the
-    // gesture goes idle, just like pointer-based camera movement.
-    api.doc.transact(() => {
-      api.setNodeProperty(current.id, 'transform', {
-        ...current.transform,
-        z: cameraZ,
-      })
-      stampCanvasTransformPatch(current.id, { z: cameraZ }, authorTime)
-    })
-    // Keep the final transient Z for one paint while the scene update and
-    // newly-authored track reach the WebGL leaf. Clearing synchronously can
-    // reveal its previous engine snapshot for one frame and looks like the
-    // zoom jumped backwards at the end of every wheel burst.
-    cameraPreviewStore.finish(cameraId)
-  }, [api, currentAnimationAuthorTime, stampCanvasTransformPatch])
+    if (!gesture) return
+    pending.cameraGesture = null
+    commitCameraGesture(gesture)
+    setIsCameraManipulating(false)
+    setCameraNavigationMode(null)
+  }, [commitCameraGesture])
 
   useEffect(() => {
     if (!editingTextId) return
@@ -2429,7 +2571,7 @@ export function Canvas() {
     pending.panDeltaY = 0
   }, [editingTextId, flushPendingCameraWheel])
 
-  // --- wheel: cmd/ctrl + wheel = zoom, otherwise pan -------------------
+  // --- wheel: camera navigation over the artboard, workspace elsewhere ---
   useEffect(() => {
     const el = workspaceRef.current
     if (!el) return
@@ -2486,6 +2628,7 @@ export function Canvas() {
             ? Math.max(1, el.clientHeight)
             : 1
       if (e.ctrlKey || e.metaKey) {
+        if (pendingWheel.cameraGesture) flushPendingCameraWheel()
         // Trackpad pinch can deliver packets faster than the display can
         // paint. Accumulate them and commit one current-state update per
         // animation frame so WebGL never receives a backlog of stale zooms.
@@ -2497,54 +2640,105 @@ export function Canvas() {
       } else if (
         camera &&
         camera.kind === 'camera' &&
-        selection.includes(camera.id) &&
-        tool === 'select'
+        !focusPickingCameraId &&
+        isInsideArtboard(clientToViewport(e.clientX, e.clientY))
       ) {
         const current = api.getNode(camera.id)
         if (!current || current.kind !== 'camera') return
-        // Canvas deliberately avoids subscribing its whole tree to the
-        // camera's per-frame animation. Read the engine imperatively at the
-        // event boundary instead, then layer any still-visible wheel preview
-        // over it. This makes every new burst begin at what is actually on
-        // screen rather than a stale React closure/static transform.
-        const engineValue = getAnimEngine().getSnapshot()[current.id]
-        const previewSnapshot = cameraPreviewStore.getSnapshot()
-        const activePreview =
-          previewSnapshot?.cameraId === current.id
-            ? previewSnapshot.value
-            : undefined
-        const baseZ = cameraWheelStartZ({
-          pendingZ:
-            pendingWheel.cameraId === current.id &&
-            pendingWheel.cameraZ !== null
-              ? pendingWheel.cameraZ
-              : undefined,
-          previewZ: activePreview?.z,
-          animatedZ: engineValue?.z,
-          staticZ: current.transform.z,
+        const mode = resolveCameraWheelNavigation({
+          altKey: e.altKey,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
         })
+        if (!mode) return
+
+        const activeGesture = pendingWheel.cameraGesture
+        if (
+          activeGesture &&
+          (activeGesture.cameraId !== current.id ||
+            activeGesture.mode !== mode)
+        ) {
+          // A modifier change starts a distinct, undoable gesture and prevents
+          // one mode from accidentally persisting another mode's axes.
+          flushPendingCameraWheel()
+        }
+
+        let gesture = pendingWheel.cameraGesture
+        if (!gesture) {
+          const startTransform = displayedCameraTransform(current)
+          const startPlayhead = currentAnimationAuthorTime()
+          gesture = {
+            cameraId: current.id,
+            mode,
+            transform: startTransform,
+            latestTransform: startTransform,
+            startPlayhead,
+            startPerfTime: performance.now(),
+            lastSampleTime: startPlayhead,
+            didStampStart: false,
+            samples: [],
+          }
+          pendingWheel.cameraGesture = gesture
+        }
+
+        // Canvas deliberately avoids subscribing its whole tree to the
+        // camera's per-frame animation. Start with the current gesture pose,
+        // while still resolving animated lens settings imperatively.
+        const engineValue = getAnimEngine().getSnapshot()[current.id]
+        const baseTransform = gesture.latestTransform
         const effectiveCamera = resolveCamera3D(
           current,
-          { ...engineValue, ...activePreview },
+          { ...engineValue, ...baseTransform },
           { width: canvasWidth, height: canvasHeight },
         )
-        const nextZ = cameraZFromWheel({
-          currentZ: baseZ,
-          focalLength: effectiveCamera.focalLength,
-          deltaY: e.deltaY,
-          deltaMode: e.deltaMode,
-          pageHeight: el.clientHeight,
-          scrollSensitivity: current.scrollSensitivity,
-          fine: e.altKey,
-        })
-        pendingWheel.cameraId = current.id
-        pendingWheel.cameraZ = nextZ
-        pendingWheel.cameraAuthorTime = currentAnimationAuthorTime()
-        // Only Z belongs to this gesture. Publishing a full transform here
-        // would override the WebGL leaf's fresher animated X/Y/rotation values.
-        // The preview store already coalesces packets to one rAF, so routing it
-        // through scheduleViewCommit would add a second frame of latency.
-        cameraPreviewStore.set(current.id, { z: nextZ })
+        const cameraApparentScale =
+          effectiveCamera.focalLength /
+          Math.max(1, effectiveCamera.focalLength - baseTransform.z)
+        const patch =
+          mode === 'orbit'
+            ? cameraOrbitFromWheel({
+                currentRotationX: baseTransform.rotationX,
+                currentRotationY: baseTransform.rotationY,
+                deltaX: e.deltaX,
+                deltaY: e.deltaY,
+                deltaMode: e.deltaMode,
+                pageWidth: el.clientWidth,
+                pageHeight: el.clientHeight,
+              })
+            : mode === 'pan'
+              ? cameraPanFromWheel({
+                  currentX: baseTransform.x,
+                  currentY: baseTransform.y,
+                  deltaX: e.deltaX,
+                  deltaY: e.deltaY,
+                  deltaMode: e.deltaMode,
+                  pageWidth: el.clientWidth,
+                  pageHeight: el.clientHeight,
+                  workspaceZoom: useUI.getState().view.zoom,
+                  cameraApparentScale,
+                })
+              : cameraDollyFromWheel({
+                  currentZ: baseTransform.z,
+                  focalLength: effectiveCamera.focalLength,
+                  deltaY: e.deltaY,
+                  deltaMode: e.deltaMode,
+                  pageHeight: el.clientHeight,
+                  scrollSensitivity: current.scrollSensitivity,
+                })
+        const nextTransform = {
+          ...baseTransform,
+          ...patch,
+        }
+        gesture.latestTransform = nextTransform
+        maybeStampCameraControlSample(gesture, nextTransform)
+
+        // Publish only the axes owned by this mode. The preview store already
+        // coalesces trackpad packets to one rAF, keeping the gesture responsive
+        // without making the full editor rerender for every packet.
+        cameraPreviewStore.set(current.id, patch)
+        setIsCameraManipulating(true)
+        setCameraNavigationMode(mode)
         if (pendingWheel.cameraCommitTimer !== null) {
           window.clearTimeout(pendingWheel.cameraCommitTimer)
         }
@@ -2553,6 +2747,7 @@ export function Canvas() {
           180,
         )
       } else {
+        if (pendingWheel.cameraGesture) flushPendingCameraWheel()
         const pending = pendingWheel
         pending.panDeltaX += e.deltaX * deltaScale
         pending.panDeltaY += e.deltaY * deltaScale
@@ -2578,24 +2773,28 @@ export function Canvas() {
     camera,
     canvasHeight,
     canvasWidth,
+    clientToViewport,
     currentAnimationAuthorTime,
+    displayedCameraTransform,
     editingTextId,
+    focusPickingCameraId,
     flushPendingCameraWheel,
-    selection,
-    stampCanvasTransformPatch,
-    tool,
+    isInsideArtboard,
+    maybeStampCameraControlSample,
   ])
 
   const workspaceCursor =
     focusPickingCameraId
       ? 'crosshair'
-      : tool === 'hand' || spacePanning
-      ? panStateRef.current
+      : isCameraManipulating
         ? 'grabbing'
-        : 'grab'
-      : isDrawTool
-        ? 'crosshair'
-        : undefined
+        : tool === 'hand' || spacePanning
+          ? panStateRef.current
+            ? 'grabbing'
+            : 'grab'
+          : isDrawTool
+            ? 'crosshair'
+            : undefined
 
   // --- native drag-drop: component / image import ----------------------
   // Tracks the "a dragged file is hovering over the canvas" state so the
@@ -2752,6 +2951,7 @@ export function Canvas() {
       onPointerDown={onBackgroundPointerDown}
       onPointerMove={onBackgroundPointerMove}
       onPointerUp={onBackgroundPointerUp}
+      onPointerCancel={onBackgroundPointerCancel}
       onDoubleClick={onCanvasDoubleClick}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
@@ -2759,6 +2959,16 @@ export function Canvas() {
       onDrop={handleDrop}
       style={{ cursor: workspaceCursor, touchAction: 'none' }}
     >
+      {solved &&
+      camera?.kind === 'camera' &&
+      threeCameraAvailable &&
+      !textEditPresentation.suspendWebglScene ? (
+        <PaperShaderSourceLayer
+          api={api}
+          layout={solved}
+          sceneVersion={version}
+        />
+      ) : null}
       {/* Single transform container for both scene paint + selection overlay.
           Placing the transform here (absolute, top-left) with explicit pan
           and scale is more predictable than transforming a flex-centered
@@ -3077,12 +3287,14 @@ export function Canvas() {
             }
           >
             {solved && (!camera || !cameraAccurateSelectionActive) && (
-              <SelectionOverlay
-                solved={solved}
-                animated={animated}
-                inherited={inherited}
-                zoom={view.zoom}
-              />
+              <div>
+                <SelectionOverlay
+                  solved={solved}
+                  animated={animated}
+                  inherited={inherited}
+                  zoom={view.zoom}
+                />
+              </div>
             )}
             {solved && (
               <DistanceOverlay
@@ -3166,6 +3378,20 @@ export function Canvas() {
           App.Shell) so it's positioned relative to the canvas
           workspace and never bleeds into the Timeline below. */}
       <FloatingDock />
+
+      {cameraNavigationMode ? (
+        <div
+          className="pointer-events-none absolute bottom-20 left-1/2 z-30 -translate-x-1/2 rounded border border-border-strong bg-panel/95 px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-text-muted shadow-lg backdrop-blur"
+          data-export-hide="1"
+        >
+          Camera ·{' '}
+          {cameraNavigationMode === 'orbit'
+            ? 'Orbit'
+            : cameraNavigationMode === 'pan'
+              ? 'Pan'
+              : 'Dolly'}
+        </div>
+      ) : null}
 
       {focusPickingCameraId ? (
         <div
@@ -4588,8 +4814,8 @@ function NodeView({
         // imported Figma blend modes look broken.
         isolation: node.kind === 'frame' ? 'isolate' : undefined,
         mixBlendMode:
-          node.appearance.blendMode && node.appearance.blendMode !== 'normal'
-            ? node.appearance.blendMode
+          (anim?.blendMode ?? node.appearance.blendMode) !== 'normal'
+            ? anim?.blendMode ?? node.appearance.blendMode
             : undefined,
         filter: effectFilterCss || undefined,
         overflow: clips ? 'hidden' : undefined,
@@ -4637,6 +4863,9 @@ function NodeView({
             pointerEvents: 'none',
           }}
         />
+      ) : null}
+      {node.kind === 'shader' ? (
+        <LivePaperShaderCanvas node={node} />
       ) : null}
       {node.kind === 'video' ? (
         <MediaVideo node={node} />

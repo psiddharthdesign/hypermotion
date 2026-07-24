@@ -17,6 +17,7 @@ node_modules/<package>/ after `pnpm install`.
 
 Runtime dependencies:
   - React, React-DOM (MIT)              https://github.com/facebook/react
+  - Paper Shaders (Apache-2.0)          https://github.com/paper-design/shaders
   - Yjs (MIT)                           https://github.com/yjs/yjs
   - y-indexeddb (MIT)                   https://github.com/yjs/y-indexeddb
   - Yoga Layout (MIT)                   https://github.com/facebook/yoga
@@ -48,3 +49,11 @@ versions is maintained in pnpm-lock.yaml.
 The Apache 2.0 license requires that any redistribution of this work
 (or derivative works) preserve the LICENSE and NOTICE files. See
 §4(a)–(d) of LICENSE for the full conditions.
+
+---
+
+Paper Shaders
+Copyright 2026 Paper
+
+Powered by Paper Shaders:
+https://shaders.paper.design

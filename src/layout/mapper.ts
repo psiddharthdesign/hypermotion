@@ -67,7 +67,7 @@ export function applySize(yNode: YogaNode, axis: 'width' | 'height', value: Size
 
 /**
  * Copy all layout-affecting properties from a scene node onto a Yoga node.
- * Leaves (rect, ellipse, image, text) just get size. Containers (frame,
+ * Leaves (rect, ellipse, image, shader, text) just get size. Containers (frame,
  * component) branch on `layout.mode`:
  *
  *   - 'none' — padding + align/justify still honored (so a plain frame

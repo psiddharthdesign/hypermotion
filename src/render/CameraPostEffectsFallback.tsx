@@ -40,6 +40,8 @@ export function CameraPostEffectsFallback({
     effects.chromaticAberrationEnabled &&
     effects.chromaticAberrationAmount > 0.001
   const bloomActive = effects.bloomEnabled && effects.bloomStrength > 0.001
+  const vhsActive = effects.vhsEnabled && effects.vhsIntensity > 0.001
+  const svgFilterActive = chromaticActive || bloomActive
   const filterId = `hm-camera-post-${reactId.replaceAll(':', '')}`
   const safeWidth = Math.max(1, finiteFallbackNumber(width, 1))
   const safeHeight = Math.max(1, finiteFallbackNumber(height, 1))
@@ -57,6 +59,7 @@ export function CameraPostEffectsFallback({
   const activeNames = [
     bloomActive ? 'bloom' : null,
     chromaticActive ? 'chromatic' : null,
+    vhsActive ? 'vhs' : null,
   ]
     .filter(Boolean)
     .join(' ')
@@ -67,24 +70,25 @@ export function CameraPostEffectsFallback({
       data-camera-post-effects={activeNames}
       style={{ isolation: 'isolate' }}
     >
-      <svg
-        aria-hidden="true"
-        focusable="false"
-        width="0"
-        height="0"
-        className="pointer-events-none absolute"
-      >
-        <defs>
-          <filter
-            id={filterId}
-            x={-padding}
-            y={-padding}
-            width={safeWidth + padding * 2}
-            height={safeHeight + padding * 2}
-            filterUnits="userSpaceOnUse"
-            primitiveUnits="userSpaceOnUse"
-            colorInterpolationFilters="linearRGB"
-          >
+      {svgFilterActive ? (
+        <svg
+          aria-hidden="true"
+          focusable="false"
+          width="0"
+          height="0"
+          className="pointer-events-none absolute"
+        >
+          <defs>
+            <filter
+              id={filterId}
+              x={-padding}
+              y={-padding}
+              width={safeWidth + padding * 2}
+              height={safeHeight + padding * 2}
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              colorInterpolationFilters="linearRGB"
+            >
             {bloomActive ? (
               <>
                 <feColorMatrix
@@ -177,19 +181,43 @@ export function CameraPostEffectsFallback({
                 />
               </>
             ) : null}
-          </filter>
-        </defs>
-      </svg>
+            </filter>
+          </defs>
+        </svg>
+      ) : null}
       <div
         className="absolute inset-0"
         style={{
-          filter: `url("#${filterId}")`,
+          filter: [
+            svgFilterActive ? `url("#${filterId}")` : null,
+            vhsActive
+              ? `saturate(${1 - effects.vhsIntensity * 0.14}) contrast(${
+                  1 + effects.vhsIntensity * 0.08
+                })`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' '),
           transformStyle: 'preserve-3d',
           willChange: 'filter',
         }}
       >
         {children}
       </div>
+      {vhsActive ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          data-vhs-fallback-scanlines="true"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(to bottom, transparent 0, transparent 1px, rgba(0, 0, 0, 0.55) 1px, rgba(0, 0, 0, 0.55) 2px)',
+            mixBlendMode: 'multiply',
+            opacity:
+              effects.vhsIntensity * effects.vhsScanlines * 0.18,
+          }}
+        />
+      ) : null}
     </div>
   )
 }

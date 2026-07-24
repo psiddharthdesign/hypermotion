@@ -40,6 +40,11 @@ describe('camera lens and post-effects model', () => {
       storedCamera.delete('bloomStrength')
       storedCamera.delete('bloomRadius')
       storedCamera.delete('bloomThreshold')
+      storedCamera.delete('vhsEnabled')
+      storedCamera.delete('vhsIntensity')
+      storedCamera.delete('vhsNoise')
+      storedCamera.delete('vhsScanlines')
+      storedCamera.delete('vhsColorBleed')
     })
 
     expect(api.getActiveCamera()).toMatchObject({
@@ -57,6 +62,11 @@ describe('camera lens and post-effects model', () => {
       bloomStrength: 0.8,
       bloomRadius: 0.35,
       bloomThreshold: 0.75,
+      vhsEnabled: false,
+      vhsIntensity: 0.65,
+      vhsNoise: 0.35,
+      vhsScanlines: 0.5,
+      vhsColorBleed: 3,
     })
   })
 
@@ -71,6 +81,11 @@ describe('camera lens and post-effects model', () => {
       api.setNodeProperty(camera.id, 'bloomStrength', 1.4)
       api.setNodeProperty(camera.id, 'bloomRadius', 0.6)
       api.setNodeProperty(camera.id, 'bloomThreshold', 0.42)
+      api.setNodeProperty(camera.id, 'vhsEnabled', true)
+      api.setNodeProperty(camera.id, 'vhsIntensity', 0.8)
+      api.setNodeProperty(camera.id, 'vhsNoise', 0.7)
+      api.setNodeProperty(camera.id, 'vhsScanlines', 0.6)
+      api.setNodeProperty(camera.id, 'vhsColorBleed', 6)
     })
 
     expect(api.getActiveCamera()).toMatchObject({
@@ -81,6 +96,11 @@ describe('camera lens and post-effects model', () => {
       bloomStrength: 1.4,
       bloomRadius: 0.6,
       bloomThreshold: 0.42,
+      vhsEnabled: true,
+      vhsIntensity: 0.8,
+      vhsNoise: 0.7,
+      vhsScanlines: 0.6,
+      vhsColorBleed: 6,
     })
   })
 
@@ -131,6 +151,11 @@ describe('camera lens and post-effects model', () => {
       bloomStrength: 1.25,
       bloomRadius: 0.55,
       bloomThreshold: 0.6,
+      vhsEnabled: true,
+      vhsIntensity: 0.9,
+      vhsNoise: 0.4,
+      vhsScanlines: 0.75,
+      vhsColorBleed: 5,
     })
 
     expect(values).toEqual([
@@ -139,6 +164,10 @@ describe('camera lens and post-effects model', () => {
       { propertyId: 'camera.bloomStrength', value: 1.25 },
       { propertyId: 'camera.bloomRadius', value: 0.55 },
       { propertyId: 'camera.bloomThreshold', value: 0.6 },
+      { propertyId: 'camera.vhsIntensity', value: 0.9 },
+      { propertyId: 'camera.vhsNoise', value: 0.4 },
+      { propertyId: 'camera.vhsScanlines', value: 0.75 },
+      { propertyId: 'camera.vhsColorBleed', value: 5 },
     ])
     expect(PROPERTIES['camera.chromaticAberrationAmount'].defaultValue).toBe(4)
     expect(PROPERTIES['camera.chromaticAberrationAngle'].interpolation).toBe(
@@ -147,6 +176,10 @@ describe('camera lens and post-effects model', () => {
     expect(PROPERTIES['camera.bloomStrength'].defaultValue).toBe(0.8)
     expect(PROPERTIES['camera.bloomRadius'].defaultValue).toBe(0.35)
     expect(PROPERTIES['camera.bloomThreshold'].defaultValue).toBe(0.75)
+    expect(PROPERTIES['camera.vhsIntensity'].defaultValue).toBe(0.65)
+    expect(PROPERTIES['camera.vhsNoise'].defaultValue).toBe(0.35)
+    expect(PROPERTIES['camera.vhsScanlines'].defaultValue).toBe(0.5)
+    expect(PROPERTIES['camera.vhsColorBleed'].defaultValue).toBe(3)
   })
 
   it('evaluates physical aperture tracks without mutating static camera values', () => {
@@ -196,6 +229,10 @@ describe('camera lens and post-effects model', () => {
       ['bloom-strength', 'camera.bloomStrength', 0.4, 1.6],
       ['bloom-radius', 'camera.bloomRadius', 0.1, 0.7],
       ['bloom-threshold', 'camera.bloomThreshold', 0.2, 0.8],
+      ['vhs-intensity', 'camera.vhsIntensity', 0.2, 0.8],
+      ['vhs-noise', 'camera.vhsNoise', 0.1, 0.7],
+      ['vhs-scanlines', 'camera.vhsScanlines', 0.3, 0.9],
+      ['vhs-color-bleed', 'camera.vhsColorBleed', 2, 8],
     ].map(([id, propertyId, start, end]) => ({
       id: String(id),
       nodeId: camera.id,
@@ -214,19 +251,28 @@ describe('camera lens and post-effects model', () => {
     engine.attach(api)
     engine.seek(0.5)
 
-    expect(engine.getSnapshot()[camera.id]).toMatchObject({
+    const animatedPostEffects = engine.getSnapshot()[camera.id]
+    expect(animatedPostEffects).toMatchObject({
       chromaticAberrationAmount: 6,
       chromaticAberrationAngle: 45,
       bloomStrength: 1,
       bloomRadius: 0.4,
       bloomThreshold: 0.5,
+      vhsIntensity: 0.5,
+      vhsNoise: 0.4,
+      vhsColorBleed: 5,
     })
+    expect(animatedPostEffects?.vhsScanlines).toBeCloseTo(0.6)
     expect(api.getActiveCamera()).toMatchObject({
       chromaticAberrationAmount: 4,
       chromaticAberrationAngle: 0,
       bloomStrength: 0.8,
       bloomRadius: 0.35,
       bloomThreshold: 0.75,
+      vhsIntensity: 0.65,
+      vhsNoise: 0.35,
+      vhsScanlines: 0.5,
+      vhsColorBleed: 3,
     })
   })
 

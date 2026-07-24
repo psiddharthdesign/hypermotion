@@ -86,6 +86,7 @@ import {
   TextField,
 } from '@/ui/fields'
 import { PresetsPanel } from '@/ui/PresetsPanel'
+import { PaperShaderInspector } from '@/ui/PaperShaderInspector'
 import { AlignTools } from '@/ui/AlignTools'
 import { EasingPicker } from '@/ui/EasingPicker'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
@@ -333,7 +334,6 @@ function SceneDetails({ api }: { api: SceneAPI }) {
       api.setNodeProperty(root.id, 'size', { width: safeW, height: safeH })
     }
   }
-
   return (
     <div className="space-y-6">
       <Section title="Scene">
@@ -786,6 +786,9 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             mixedY={cSY.mixed}
             onCommitX={(v) => patchTransformAll({ scaleX: v })}
             onCommitY={(v) => patchTransformAll({ scaleY: v })}
+            onCommitPair={({ scaleX, scaleY }) =>
+              patchTransformAll({ scaleX, scaleY })
+            }
           />
         </FieldRow>
       </Section>
@@ -1450,6 +1453,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera'
       ? anim?.bloomThreshold ?? node.bloomThreshold ?? 0.75
       : 0.75
+  const liveVhsIntensity =
+    node.kind === 'camera'
+      ? anim?.vhsIntensity ?? node.vhsIntensity ?? 0.65
+      : 0.65
+  const liveVhsNoise =
+    node.kind === 'camera'
+      ? anim?.vhsNoise ?? node.vhsNoise ?? 0.35
+      : 0.35
+  const liveVhsScanlines =
+    node.kind === 'camera'
+      ? anim?.vhsScanlines ?? node.vhsScanlines ?? 0.5
+      : 0.5
+  const liveVhsColorBleed =
+    node.kind === 'camera'
+      ? anim?.vhsColorBleed ?? node.vhsColorBleed ?? 3
+      : 3
   const focusTargetOptions = useMemo(() => {
     // `version` makes this list react to layer additions, deletions and names.
     void version
@@ -1623,6 +1642,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'bloomStrength'
         | 'bloomRadius'
         | 'bloomThreshold'
+        | 'vhsEnabled'
+        | 'vhsIntensity'
+        | 'vhsNoise'
+        | 'vhsScanlines'
+        | 'vhsColorBleed'
         | 'showFocusPlane'
       >
     >,
@@ -1753,6 +1777,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     if (patch.bloomThreshold !== undefined) {
       api.setNodeProperty(node.id, 'bloomThreshold', patch.bloomThreshold)
     }
+    if (patch.vhsEnabled !== undefined) {
+      api.setNodeProperty(node.id, 'vhsEnabled', patch.vhsEnabled)
+    }
+    if (patch.vhsIntensity !== undefined) {
+      api.setNodeProperty(node.id, 'vhsIntensity', patch.vhsIntensity)
+    }
+    if (patch.vhsNoise !== undefined) {
+      api.setNodeProperty(node.id, 'vhsNoise', patch.vhsNoise)
+    }
+    if (patch.vhsScanlines !== undefined) {
+      api.setNodeProperty(node.id, 'vhsScanlines', patch.vhsScanlines)
+    }
+    if (patch.vhsColorBleed !== undefined) {
+      api.setNodeProperty(node.id, 'vhsColorBleed', patch.vhsColorBleed)
+    }
     if (patch.showFocusPlane !== undefined) {
       api.setNodeProperty(node.id, 'showFocusPlane', patch.showFocusPlane)
     }
@@ -1803,7 +1842,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       }
     }
   }
-
   return (
     <div className="space-y-6">
       <Section title="Node">
@@ -1815,7 +1853,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           />
         </FieldRow>
         <FieldRow label="Kind">
-          <span className="pr-1.5 text-[12px] text-text">{node.kind}</span>
+          <span className="pr-1.5 text-[12px] text-text">
+            {node.kind}
+          </span>
         </FieldRow>
         <FieldRow label="Id">
           <span className="pr-1.5 font-mono text-[11px] text-text-muted">
@@ -1857,6 +1897,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
+          <CameraViewportControlsHint />
+
           <Section
             title="Camera Position"
             action={
@@ -2157,6 +2199,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             scaleY={liveSY}
             onCommitX={(v) => patchTransform({ scaleX: v })}
             onCommitY={(v) => patchTransform({ scaleY: v })}
+            onCommitPair={({ scaleX, scaleY }) =>
+              patchTransform({ scaleX, scaleY })
+            }
           />
         </FieldRow>
         <FieldRow label="Pivot">
@@ -2235,7 +2280,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ImageSection node={node} api={api} />
       )}
 
-      {node.kind === 'video' && (
+      {node.kind === 'shader' && (
+        <PaperShaderInspector node={node} api={api} />
+      )}
+
+      {(node.kind === 'audio' || node.kind === 'video') && (
         <MediaSection node={node} api={api} />
       )}
 
@@ -2320,7 +2369,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             <FieldRow label="Clip">
               <CheckboxField
                 value={node.clipsContent}
-                onCommit={(v) => api.setNodeProperty(node.id, 'clipsContent', v)}
+                onCommit={(v) =>
+                  api.setNodeProperty(node.id, 'clipsContent', v)
+                }
               />
             </FieldRow>
           ) : null}
@@ -2923,11 +2974,178 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 </FieldRow>
               </>
             ) : null}
+
+            <div className="!my-3 border-t border-border" />
+
+            <FieldRow label="VHS tape">
+              <CheckboxField
+                value={node.vhsEnabled ?? false}
+                onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
+              />
+            </FieldRow>
+            {node.vhsEnabled ? (
+              <>
+                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                  Adds frame-stable tape wobble, grain, scanlines and color
+                  bleed driven by the scene playhead.
+                </p>
+                <FieldRow
+                  label="Intensity"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.vhsIntensity"
+                      currentValue={liveVhsIntensity}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveVhsIntensity * 100}
+                    onCommit={(v) =>
+                      patchCamera({
+                        vhsIntensity: Math.max(0, Math.min(1, v / 100)),
+                      })
+                    }
+                    min={0}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    ariaLabel="VHS intensity"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Noise"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.vhsNoise"
+                      currentValue={liveVhsNoise}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveVhsNoise * 100}
+                    onCommit={(v) =>
+                      patchCamera({
+                        vhsNoise: Math.max(0, Math.min(1, v / 100)),
+                      })
+                    }
+                    min={0}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    ariaLabel="VHS noise"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Scanlines"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.vhsScanlines"
+                      currentValue={liveVhsScanlines}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveVhsScanlines * 100}
+                    onCommit={(v) =>
+                      patchCamera({
+                        vhsScanlines: Math.max(0, Math.min(1, v / 100)),
+                      })
+                    }
+                    min={0}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    ariaLabel="VHS scanlines"
+                  />
+                </FieldRow>
+                <FieldRow
+                  label="Color bleed"
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={node.id}
+                      propertyId="camera.vhsColorBleed"
+                      currentValue={liveVhsColorBleed}
+                    />
+                  }
+                >
+                  <NumberField
+                    value={liveVhsColorBleed}
+                    onCommit={(v) =>
+                      patchCamera({
+                        vhsColorBleed: Math.max(0, Math.min(32, v)),
+                      })
+                    }
+                    min={0}
+                    max={32}
+                    step={0.5}
+                    suffix="px"
+                    ariaLabel="VHS color bleed"
+                  />
+                </FieldRow>
+              </>
+            ) : null}
           </Section>
           <CameraAnimationActions node={node} api={api} />
         </>
       )}
     </div>
+  )
+}
+
+function CameraViewportControlsHint() {
+  const recording = useUI((state) => state.recording)
+  const controls = [
+    { shortcut: 'MMB / Option-drag', action: 'Orbit' },
+    { shortcut: 'Shift+MMB / Shift-scroll', action: 'Pan' },
+    { shortcut: 'Ctrl+MMB / Scroll', action: 'Dolly' },
+    { shortcut: 'Cmd/Ctrl-scroll', action: 'Canvas zoom' },
+  ] as const
+
+  return (
+    <aside
+      aria-label="Camera viewport controls"
+      className="rounded border border-border bg-panel-raised px-2.5 py-2"
+    >
+      <div className="mb-2 text-[10px] font-semibold tracking-[0.08em] text-text-muted uppercase">
+        Viewport controls
+      </div>
+      <dl className="space-y-1">
+        {controls.map(({ shortcut, action }) => (
+          <div
+            key={action}
+            className="flex min-w-0 items-center justify-between gap-2 text-[10px]"
+          >
+            <dt>
+              <kbd className="font-mono text-text-muted">{shortcut}</kbd>
+            </dt>
+            <dd className="shrink-0 text-text-dim">{action}</dd>
+          </div>
+        ))}
+      </dl>
+      <div
+        aria-live="polite"
+        className={[
+          'mt-2 flex items-start gap-1.5 border-t border-border pt-2 text-[10px] leading-4',
+          recording ? 'text-red-500' : 'text-text-dim',
+        ].join(' ')}
+      >
+        <span
+          aria-hidden
+          className={[
+            'mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full',
+            recording ? 'bg-red-500' : 'bg-text-dim',
+          ].join(' ')}
+        />
+        <span>
+          {recording
+            ? 'Auto Key is on — camera gestures record to the timeline.'
+            : 'Enable Auto Key in the timeline to record camera gestures.'}
+        </span>
+      </div>
+    </aside>
   )
 }
 

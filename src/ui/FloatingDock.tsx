@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import {
   Circle,
   Frame,
   Hand,
   ImageIcon,
   MousePointer2,
+  Sparkles,
   Square,
   Type,
   Video,
 } from 'lucide-react'
 import { useUI, type Tool } from '@/state/ui'
 import { useSceneAPI } from '@/scene'
+import {
+  getPaperShaderDefinition,
+  type PaperShaderType,
+} from '@/scene/paperShaders'
 import { importImageFiles } from '@/ui/importImage'
 import { importMediaFiles } from '@/ui/importMedia'
+import { PaperShaderPicker } from '@/ui/PaperShaderPicker'
 
 /**
  * FloatingDock — the tool palette as a floating pill at the bottom of
@@ -59,6 +65,8 @@ export function FloatingDock() {
 
   const imageInputRef = useRef<HTMLInputElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
+  const [shaderPickerAnchor, setShaderPickerAnchor] =
+    useState<HTMLButtonElement | null>(null)
   const onImageFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const rootId = api.getRoot()
@@ -79,7 +87,36 @@ export function FloatingDock() {
       setTool('select')
     }
   }
-
+  const insertPaperShader = (shaderType: PaperShaderType) => {
+    const rootId = api.getRoot()
+    if (!rootId) return
+    const meta = api.getMeta()
+    const definition = getPaperShaderDefinition(shaderType)
+    const width = Math.min(640, Math.max(1, meta.canvas.width))
+    const height = Math.min(360, Math.max(1, meta.canvas.height))
+    const id = api.createNode('shader', rootId, {
+      name: `Paper ${definition.label}`,
+      position: 'absolute',
+      size: { width, height },
+      shaderType,
+      colors: [...definition.defaults.colors],
+      speed: definition.defaults.speed,
+      scale: definition.defaults.scale,
+      params: { ...definition.defaults.params },
+      transform: {
+        x: (meta.canvas.width - width) / 2,
+        y: (meta.canvas.height - height) / 2,
+        z: 0,
+        rotation: 0,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+    })
+    setSelection([id])
+    setTool('select')
+  }
   return (
     <div
       // The dock excludes itself from `data-export-hide` because it's
@@ -144,8 +181,33 @@ export function FloatingDock() {
         )
       })}
 
-      {/* Place-image group — separator + the image button. */}
+      {/* Generator and media group. */}
       <span aria-hidden className="mx-1 h-[22px] w-px bg-border" />
+      <button
+        type="button"
+        title="Add Paper shader…"
+        aria-expanded={Boolean(shaderPickerAnchor)}
+        aria-haspopup="dialog"
+        onClick={(event) => {
+          const button = event.currentTarget
+          setShaderPickerAnchor((current) => (current ? null : button))
+        }}
+        className={[
+          'flex h-[34px] w-[34px] items-center justify-center rounded-lg transition-colors',
+          shaderPickerAnchor
+            ? 'bg-accent text-white shadow-sm'
+            : 'text-text-muted hover:bg-white/[0.07] hover:text-text',
+        ].join(' ')}
+      >
+        <Sparkles size={18} />
+      </button>
+      {shaderPickerAnchor ? (
+        <PaperShaderPicker
+          anchor={shaderPickerAnchor}
+          onSelect={insertPaperShader}
+          onClose={() => setShaderPickerAnchor(null)}
+        />
+      ) : null}
       <button
         type="button"
         title="Place image…"

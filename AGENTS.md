@@ -325,8 +325,38 @@ A single-frame artboard with a title:
 | `ellipse`   | `size`                                                                             |
 | `text`      | `text`, `fontFamily`, `fontSize` (default Inter / 16 / weight 400)                 |
 | `image`     | `src` (data URL or absolute path), `size`, `fit`                                   |
+| `shader`    | `size`, `shaderType`, `colors`, `speed`, `scale`, `params`; optional `sourceNodeId` / `sourceImage`; legacy Mesh Gradient `distortion`, `swirl`, `grain` |
 | `camera`    | `transform` (one scene-level camera only; `parent: null`, referenced by `activeCameraId`) |
 | `video` / `audio` | `src`, `duration`, `volume` — for sequences with media; rarely used by agents |
+
+Shader nodes use the pinned Apache-2.0 Paper Shaders runtime. Supported
+`shaderType` ids are:
+
+```
+mesh-gradient, smoke-ring, neuro-noise, dot-orbit, dot-grid,
+simplex-noise, metaballs, waves, perlin-noise, voronoi, warp, god-rays,
+spiral, swirl, dithering, grain-gradient, pulsing-border, color-panels,
+static-mesh-gradient, static-radial-gradient, paper-texture, fluted-glass,
+water, image-dithering, halftone-dots, halftone-cmyk, heatmap,
+liquid-metal, gem-smoke
+```
+
+Put shader-specific Paper props in the JSON-serializable `params` object.
+Common `colors`, `speed`, and `scale` fields stay at the node level.
+Animation is driven by the scene playhead rather than wall-clock time, so
+preview, seeks, and frame-by-frame exports stay deterministic. `speed: 0`
+freezes the shader; `speed: 1` advances at normal timeline speed. Keep
+`speed` in `0..2` and `scale` in `0.1..4`. Colors use `#RGB`, `#RRGGBB`,
+or `#RRGGBBAA`; individual shader color-count limits are applied.
+
+Image-consuming shaders can use `sourceNodeId` to sample another scene layer
+or `sourceImage` for a data URL, URL, or absolute path. Fluted Glass, Image
+Dithering, Halftone Dots, Halftone CMYK, and Heatmap require a source. Paper
+Texture, Water, Liquid Metal, and Gem Smoke accept a source optionally.
+
+Older Mesh Gradient scenes remain compatible. Their top-level `distortion`,
+`swirl`, and `grain` fields are still supported and stay in `0..1`; `grain`
+maps to Paper's `grainOverlay`.
 
 Use Lucide or Phosphor assets for UI icons. Prefer placing them as
 image/vector assets inside auto-layout frames, sized consistently with
@@ -403,6 +433,8 @@ camera.aperture, camera.fStop, camera.bladeCount, camera.bladeRotation,
 camera.bokehRatio, camera.iso, camera.blurLevel, camera.blurQuality,
 camera.chromaticAberrationAmount, camera.chromaticAberrationAngle,
 camera.bloomStrength, camera.bloomRadius, camera.bloomThreshold,
+camera.vhsIntensity, camera.vhsNoise, camera.vhsScanlines,
+camera.vhsColorBleed,
 appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
@@ -422,7 +454,11 @@ green channel; `chromaticAberrationAmount` is each channel's offset in
 composition pixels (0-64) and `chromaticAberrationAngle` sets its direction in
 degrees. Set `bloomEnabled: true` to glow bright pixels, then tune
 `bloomStrength` (0-4), `bloomRadius` (0-1), and `bloomThreshold` (0-1). The five
-numeric fields are keyframeable; the enable flags are static scene settings.
+numeric fields are keyframeable. Set `vhsEnabled: true` for an analog tape
+treatment driven deterministically by scene time, then tune `vhsIntensity`,
+`vhsNoise`, and `vhsScanlines` (each 0-1), plus `vhsColorBleed` in composition
+pixels (0-32). All nine numeric fields are keyframeable; the enable flags are
+static scene settings.
 
 EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
 

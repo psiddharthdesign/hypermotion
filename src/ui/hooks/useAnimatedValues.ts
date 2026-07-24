@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useSyncExternalStore } from 'react'
-import type { NodeId, SceneAPI } from '@/scene'
+import type { BlendMode, NodeId, SceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
 
@@ -35,6 +35,7 @@ export interface AnimatedValue {
   opacity?: number
   cornerRadius?: number
   fill?: string
+  blendMode?: BlendMode
   textProgress?: number
   textAnimation?: TextAnimationConfig
   focusDistance?: number
@@ -64,6 +65,10 @@ export interface AnimatedValue {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vhsIntensity?: number
+  vhsNoise?: number
+  vhsScanlines?: number
+  vhsColorBleed?: number
 }
 
 const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<

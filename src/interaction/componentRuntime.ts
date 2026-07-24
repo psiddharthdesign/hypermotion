@@ -368,6 +368,10 @@ function writeProperty(
     case 'camera.bloomStrength': into.bloomStrength = value; break
     case 'camera.bloomRadius': into.bloomRadius = value; break
     case 'camera.bloomThreshold': into.bloomThreshold = value; break
+    case 'camera.vhsIntensity': into.vhsIntensity = value; break
+    case 'camera.vhsNoise': into.vhsNoise = value; break
+    case 'camera.vhsScanlines': into.vhsScanlines = value; break
+    case 'camera.vhsColorBleed': into.vhsColorBleed = value; break
     default: break
   }
 }

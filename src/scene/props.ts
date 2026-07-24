@@ -195,6 +195,22 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'camera.bloomThreshold', group: 'camera', label: 'Bloom Threshold',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.75,
   },
+  'camera.vhsIntensity': {
+    id: 'camera.vhsIntensity', group: 'camera', label: 'VHS Intensity',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.65,
+  },
+  'camera.vhsNoise': {
+    id: 'camera.vhsNoise', group: 'camera', label: 'VHS Noise',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.35,
+  },
+  'camera.vhsScanlines': {
+    id: 'camera.vhsScanlines', group: 'camera', label: 'VHS Scanlines',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.5,
+  },
+  'camera.vhsColorBleed': {
+    id: 'camera.vhsColorBleed', group: 'camera', label: 'VHS Color Bleed',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 3,
+  },
 
   // appearance group — also post-layout
   'appearance.opacity': {

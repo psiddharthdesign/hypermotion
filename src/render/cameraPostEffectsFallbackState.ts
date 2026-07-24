@@ -26,6 +26,11 @@ export function resolveFallbackCameraPostEffects(
     bloomStrength: animated?.bloomStrength ?? camera.bloomStrength,
     bloomRadius: animated?.bloomRadius ?? camera.bloomRadius,
     bloomThreshold: animated?.bloomThreshold ?? camera.bloomThreshold,
+    vhsEnabled: camera.vhsEnabled,
+    vhsIntensity: animated?.vhsIntensity ?? camera.vhsIntensity,
+    vhsNoise: animated?.vhsNoise ?? camera.vhsNoise,
+    vhsScanlines: animated?.vhsScanlines ?? camera.vhsScanlines,
+    vhsColorBleed: animated?.vhsColorBleed ?? camera.vhsColorBleed,
   })
 }
 

@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from 'react'
 import type { NodeId } from '@/scene'
 import { useUI } from '@/state/ui'
 import { KeyframeButton } from './KeyframeButton'
+import {
+  commitScaleAxisEdit,
+  type ScaleAxis,
+  type ScalePair,
+} from './scalePairEdit'
 
 /**
  * Scale editor — two percentage fields with leading "X" / "Y" labels,
@@ -27,13 +32,15 @@ import { KeyframeButton } from './KeyframeButton'
  *
  * Link state lives in UI state (`scaleLinked`) so it survives selection
  * changes. Default OFF — surprise mirroring on type was disorienting.
- * Click the chain icon on the right to opt into uniform scaling.
+ * Click the chain icon on the right to preserve the current X:Y proportion
+ * while either axis is edited.
  */
 export function ScalePairField({
   scaleX,
   scaleY,
   onCommitX,
   onCommitY,
+  onCommitPair,
   mixedX = false,
   mixedY = false,
   nodeId,
@@ -42,6 +49,11 @@ export function ScalePairField({
   scaleY: number
   onCommitX: (next: number) => void
   onCommitY: (next: number) => void
+  /**
+   * Optional atomic pair writer. Linked edits prefer this over the two
+   * per-axis callbacks so the owner can commit one transaction.
+   */
+  onCommitPair?: (next: ScalePair) => void
   mixedX?: boolean
   mixedY?: boolean
   /**
@@ -54,16 +66,46 @@ export function ScalePairField({
   const scaleLinked = useUI((s) => s.scaleLinked)
   const toggleScaleLinked = useUI((s) => s.toggleScaleLinked)
 
-  const commit = (axis: 'x' | 'y', percent: number) => {
-    // The link toggle no longer mirrors edits across axes — it
-    // surprised users who wanted to nudge one channel without losing
-    // the other. The toggle is kept around for a future
-    // ratio-preserving behavior (drag X, Y scales to match the
-    // original aspect) but for now both axes always edit
-    // independently regardless of `scaleLinked`.
-    const next = percent / 100
-    if (axis === 'x') onCommitX(next)
-    else onCommitY(next)
+  const currentPairRef = useRef<ScalePair>({ scaleX, scaleY })
+  const editRef = useRef<{
+    axis: ScaleAxis
+    baseline: ScalePair
+  } | null>(null)
+
+  // External changes (selection, timeline seeks, undo/redo) become the next
+  // edit's baseline. During an active edit the captured baseline stays fixed,
+  // which avoids ratio drift from rounded intermediate values.
+  useEffect(() => {
+    if (!editRef.current) currentPairRef.current = { scaleX, scaleY }
+  }, [scaleX, scaleY])
+
+  const beginEdit = (axis: ScaleAxis) => {
+    editRef.current = {
+      axis,
+      baseline: { ...currentPairRef.current },
+    }
+  }
+
+  const endEdit = (axis: ScaleAxis) => {
+    if (editRef.current?.axis === axis) editRef.current = null
+  }
+
+  const commit = (axis: ScaleAxis, percent: number) => {
+    const activeEdit = editRef.current
+    const baseline =
+      activeEdit?.axis === axis
+        ? activeEdit.baseline
+        : { ...currentPairRef.current }
+    currentPairRef.current = commitScaleAxisEdit({
+      baseline,
+      current: currentPairRef.current,
+      axis,
+      next: percent / 100,
+      linked: scaleLinked,
+      onCommitX,
+      onCommitY,
+      onCommitPair,
+    })
   }
 
   return (
@@ -73,6 +115,8 @@ export function ScalePairField({
         value={scaleX}
         mixed={mixedX}
         onCommit={(p) => commit('x', p)}
+        onEditStart={() => beginEdit('x')}
+        onEditEnd={() => endEdit('x')}
       />
       {nodeId ? (
         <KeyframeButton
@@ -86,6 +130,8 @@ export function ScalePairField({
         value={scaleY}
         mixed={mixedY}
         onCommit={(p) => commit('y', p)}
+        onEditStart={() => beginEdit('y')}
+        onEditEnd={() => endEdit('y')}
       />
       {nodeId ? (
         <KeyframeButton
@@ -113,11 +159,15 @@ function PercentField({
   value,
   mixed,
   onCommit,
+  onEditStart,
+  onEditEnd,
 }: {
   axis: 'X' | 'Y'
   value: number
   mixed: boolean
   onCommit: (percent: number) => void
+  onEditStart: () => void
+  onEditEnd: () => void
 }) {
   if (mixed) {
     return (
@@ -153,7 +203,12 @@ function PercentField({
       >
         {axis}
       </span>
-      <PercentInput value={value} onCommit={onCommit} />
+      <PercentInput
+        value={value}
+        onCommit={onCommit}
+        onEditStart={onEditStart}
+        onEditEnd={onEditEnd}
+      />
       <span
         className="pointer-events-none select-none pr-1.5 pl-0.5 text-[11px]"
         style={{ color: 'var(--color-text-dim)' }}
@@ -174,58 +229,75 @@ function PercentField({
 function PercentInput({
   value,
   onCommit,
+  onEditStart,
+  onEditEnd,
 }: {
   value: number
   onCommit: (percent: number) => void
+  onEditStart: () => void
+  onEditEnd: () => void
 }) {
   const [draft, setDraft] = useState(() => formatPercent(value))
   const [focused, setFocused] = useState(false)
-  const ref = useRef<HTMLInputElement>(null)
+  const livePercentRef = useRef(toPercent(value))
+  const cancelBlurCommitRef = useRef(false)
 
-  // Keep the draft in sync with the prop while the user isn't typing.
-  useEffect(() => {
-    if (!focused) setDraft(formatPercent(value))
-  }, [value, focused])
+  const emit = (percent: number) => {
+    if (!Number.isFinite(percent)) return false
+    if (percent !== livePercentRef.current) {
+      livePercentRef.current = percent
+      onCommit(percent)
+    }
+    return true
+  }
 
-  const commit = () => {
-    const parsed = parseFloat(draft)
-    if (!Number.isFinite(parsed)) {
+  const commitDraft = () => {
+    const parsed = Number.parseFloat(draft)
+    if (!emit(parsed)) {
       setDraft(formatPercent(value))
       return
     }
-    if (parsed !== toPercent(value)) onCommit(parsed)
     setDraft(formatPercentNumber(parsed))
   }
 
   return (
     <input
-      ref={ref}
       type="text"
       inputMode="decimal"
-      value={draft}
+      value={focused ? draft : formatPercent(value)}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={(e) => {
+        setDraft(formatPercent(value))
         setFocused(true)
+        livePercentRef.current = toPercent(value)
+        cancelBlurCommitRef.current = false
+        onEditStart()
         e.currentTarget.select()
       }}
       onBlur={() => {
         setFocused(false)
-        commit()
+        if (cancelBlurCommitRef.current) {
+          cancelBlurCommitRef.current = false
+        } else {
+          commitDraft()
+        }
+        onEditEnd()
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()
-          commit()
-          ref.current?.blur()
+          e.currentTarget.blur()
         } else if (e.key === 'Escape') {
+          e.preventDefault()
+          cancelBlurCommitRef.current = true
           setDraft(formatPercent(value))
-          ref.current?.blur()
+          e.currentTarget.blur()
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault()
           const delta = (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)
-          const next = (parseFloat(draft) || 0) + delta
+          const next = (Number.parseFloat(draft) || 0) + delta
           setDraft(formatPercentNumber(next))
-          onCommit(next)
+          emit(next)
         }
       }}
       className="min-w-0 flex-1 bg-transparent py-0.5 text-right font-mono text-[12px] tabular-nums text-text outline-none"

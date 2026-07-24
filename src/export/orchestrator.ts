@@ -301,6 +301,7 @@ async function runCaptureRect(
   const originalPlayhead = engine.getPlayhead()
 
   const ui = useUI.getState()
+  const originalUiPlayhead = ui.playhead
   const originalView = { ...ui.view }
   // Drop zoom to 1 and pan to 0 so the artboard sits at native CSS
   // size centered in the viewport. Necessary because CDP's clip rect
@@ -376,6 +377,7 @@ async function runCaptureRect(
         const frameStart = performance.now()
         const t = f / fps
         engine.seek(t)
+        ui.setPlayhead(t)
 
         // engine.seek schedules a React re-render through the
         // useSyncExternalStore subscription, which then has to
@@ -487,6 +489,7 @@ async function runCaptureRect(
       /* best effort */
     }
     ui.setView(originalView)
+    ui.setPlayhead(originalUiPlayhead)
     engine.seek(originalPlayhead)
     if (wasPlaying) engine.play()
   }
