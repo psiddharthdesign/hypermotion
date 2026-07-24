@@ -56,6 +56,15 @@ export {
   type EasingPresetDef,
 } from './easingPresets'
 export {
+  applyEasingToSelection,
+  easingKindsEqual,
+  inspectEasingSelection,
+  type ApplyEasingResult,
+  type EasingSelection,
+  type EasingSelectionScope,
+  type EasingSelectionSummary,
+} from './keyframeEasing'
+export {
   DEFAULT_TEXT_ANIMATION,
   TEXT_ANIMATION_PRESETS,
   applyTextAnimation,

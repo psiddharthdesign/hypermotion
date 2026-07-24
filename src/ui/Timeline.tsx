@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
+import { Music2, Wand2 } from 'lucide-react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { getAnimEngine, removeKeyframe, removeTrack } from '@/anim'
@@ -47,6 +48,7 @@ import {
 } from '@/state/groupActions'
 import { importAudioFile } from '@/ui/importMedia'
 import {
+  commitKeyframeTimes,
   createKeyframeDragSession,
   keyframeDragPreviewStore,
   type KeyframeDragMember,
@@ -60,6 +62,25 @@ import {
   sectionDragPreviewStore,
 } from '@/ui/sectionDragPreviewStore'
 import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
+import {
+  createNoteMarkersForBars,
+  divisionForBar,
+  musicalBarSegmentsForRange,
+  type AudioBeatGrid,
+  type NoteDivision,
+  type NoteMarker,
+} from '@/audio/beatSync'
+import {
+  getCachedAudioBuffer,
+  loadAudioBuffer,
+} from '@/audio/audioBuffer'
+import {
+  planKeyframeBeatSync,
+  proposeKeyframeBeatRespace,
+  type BeatSyncPlan,
+  type BeatSyncRespaceChange,
+  type BeatSyncRespaceProposal,
+} from '@/audio/beatSyncPlan'
 
 /**
  * Keyframe multi-select keys are the compound `trackId:kfId` string.
@@ -140,7 +161,6 @@ function dragTrackIdsFor(trackId: string): string[] {
  * labels don't disappear when you scroll right.
  */
 
-const TRACK_HEADER_WIDTH = 180
 // Live horizontal zoom in pixels-per-second. Mirrors the value held
 // in useUI's `timelinePxPerSecond`. We mirror it into a module-level
 // mutable so all the timeline's helper components, callbacks, and
@@ -149,10 +169,23 @@ const TRACK_HEADER_WIDTH = 180
 // every render — child components re-render in lockstep with the
 // store, so closures see fresh values.
 let PX_PER_SECOND = 80
+let BEAT_SNAP_TIMES: number[] = []
+function setBeatSnapTimes(times: number[]): void {
+  BEAT_SNAP_TIMES = times
+}
 let smoothSeekAnimationId: number | null = null
 const ROW_HEIGHT = 24
 type TimelineMode = 'animated' | 'sound'
 type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
+
+function insufficientBeatTargetsMessage(
+  requiredEvents: number,
+  availableTargets: number,
+): string {
+  return availableTargets < requiredEvents
+    ? `${requiredEvents} separate events need different beat points; only ${availableTargets} are available before the clip ends.`
+    : `${requiredEvents} separate events need different beat points, but one or more matching points are already occupied on the same animation property.`
+}
 
 type ResolvedStaggerTimelineSet = {
   id: string
@@ -268,6 +301,8 @@ export function Timeline() {
   // don't each have to subscribe.
   const pxPerSecond = useUI((s) => s.timelinePxPerSecond)
   const setTimelinePxPerSecond = useUI((s) => s.setTimelinePxPerSecond)
+  const timelineSidebarWidth = useUI((s) => s.timelineSidebarWidth)
+  const setTimelineSidebarWidth = useUI((s) => s.setTimelineSidebarWidth)
   const selectedTrackIds = useUI((s) => s.selectedTrackIds)
   const setSelectedTrackIds = useUI((s) => s.setSelectedTrackIds)
   const staggerDelay = useUI((s) => s.staggerDelay)
@@ -451,9 +486,9 @@ export function Timeline() {
         const cursorXInScroller = e.clientX - scrollerRect.left
         // Cursor should be at (cursorTime * next) inside right-column
         // content. That corresponds to scroller.scrollLeft + cursorX
-        // − TRACK_HEADER_WIDTH (left column eats the first chunk).
+        // − timelineSidebarWidth (the sticky left column eats the first chunk).
         const target =
-          cursorTime * next - (cursorXInScroller - TRACK_HEADER_WIDTH)
+          cursorTime * next - (cursorXInScroller - timelineSidebarWidth)
         scroller.scrollLeft = Math.max(0, target)
       })
     }
@@ -461,7 +496,7 @@ export function Timeline() {
     // ignores preventDefault for wheel events on scroll containers.
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [setTimelinePxPerSecond])
+  }, [setTimelinePxPerSecond, timelineSidebarWidth])
   const scrollerRef = useRef<HTMLDivElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   // The right column wrapper — the element whose `getBoundingClientRect`
@@ -478,6 +513,15 @@ export function Timeline() {
   // tests; the store sees a serializable array.
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
+  const [beatSyncMessage, setBeatSyncMessage] = useState('')
+  const [pendingBeatRespace, setPendingBeatRespace] =
+    useState<BeatSyncRespaceProposal | null>(null)
+  const [activeBeatAudioId, setActiveBeatAudioId] = useState<string | null>(null)
+  const [selectedBarRange, setSelectedBarRange] = useState<{
+    audioNodeId: string
+    startBar: number
+    endBar: number
+  } | null>(null)
   const [staggerSettingsSetId, setStaggerSettingsSetId] = useState<
     string | null
   >(null)
@@ -513,6 +557,20 @@ export function Timeline() {
   const clearKfs = useCallback(() => {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
+  const isNearPlayheadClientX = useCallback(
+    (clientX: number) => {
+      const right = rightRef.current
+      if (!right) return false
+      const ui = useUI.getState()
+      const playhead = ui.playing
+        ? getAnimEngine().getPlayhead()
+        : ui.playhead
+      const playheadClientX =
+        right.getBoundingClientRect().left + playhead * pxPerSecond
+      return Math.abs(clientX - playheadClientX) <= 8
+    },
+    [pxPerSecond],
+  )
   const toggleStaggerSetExpanded = useCallback((setId: string) => {
     setExpandedStaggerSetIds((previous) => {
       const next = new Set(previous)
@@ -597,12 +655,18 @@ export function Timeline() {
       const target = e.target as HTMLElement | null
       if (!target) return
       if (target.closest('[data-timeline-selection-surface]')) return
+      if (
+        rightRef.current?.contains(target) &&
+        isNearPlayheadClientX(e.clientX)
+      ) {
+        return
+      }
       clearKfs()
       useUI.getState().setSelectedTrackIds([])
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [clearKfs])
+  }, [clearKfs, isNearPlayheadClientX])
 
   // Delete handler for the keyframe-set selection. Lives here (not in
   // the global keyboard hook) because the selection itself is local
@@ -1131,6 +1195,259 @@ export function Timeline() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, version])
 
+  const selectedAudio = useMemo(
+    () =>
+      mediaClips.find(
+        (clip): clip is Extract<SceneNode, { kind: 'audio' }> =>
+          clip.kind === 'audio' && selection.includes(clip.id),
+      ) ?? null,
+    [mediaClips, selection],
+  )
+  useEffect(() => {
+    if (!selectedAudio?.beatGrid) return
+    const timeout = window.setTimeout(
+      () => setActiveBeatAudioId(selectedAudio.id),
+      0,
+    )
+    return () => window.clearTimeout(timeout)
+  }, [selectedAudio])
+  const beatAudio =
+    mediaClips.find(
+      (clip): clip is Extract<SceneNode, { kind: 'audio' }> =>
+        clip.kind === 'audio' &&
+        clip.id === activeBeatAudioId &&
+        !!clip.beatGrid,
+    ) ??
+    selectedAudio ??
+    mediaClips.find(
+      (clip): clip is Extract<SceneNode, { kind: 'audio' }> =>
+        clip.kind === 'audio' && !!clip.beatGrid,
+    ) ??
+    null
+  const beatMarkers = useMemo(
+    () => beatAudio ? sceneBeatMarkers(beatAudio, duration) : [],
+    [beatAudio, duration],
+  )
+  const beatSyncTracks = useMemo(
+    () => tracksByNode.flatMap((group) => group.tracks),
+    [tracksByNode],
+  )
+  const beatSyncPlanOptions = useMemo(() => {
+    if (!beatAudio?.beatGrid) return null
+    return {
+      grid: beatAudio.beatGrid,
+      audio: beatAudio,
+      tracks: beatSyncTracks,
+      selectedKeyframeKeys: selectedKfs,
+      selectedBars:
+        selectedBarRange?.audioNodeId === beatAudio.id
+          ? {
+              startBar: selectedBarRange.startBar,
+              endBar: selectedBarRange.endBar,
+            }
+          : null,
+      isolatedRange,
+      workAreaRange: normalizedWorkArea,
+      sceneEndTime: duration,
+      coincidentTolerance: frameStep / 2,
+    }
+  }, [
+    beatAudio,
+    beatSyncTracks,
+    duration,
+    frameStep,
+    isolatedRange,
+    normalizedWorkArea,
+    selectedBarRange,
+    selectedKfs,
+  ])
+  const beatSyncPlan = useMemo(
+    () =>
+      beatSyncPlanOptions
+        ? planKeyframeBeatSync(beatSyncPlanOptions)
+        : null,
+    [beatSyncPlanOptions],
+  )
+  const beatRespaceProposal = useMemo(
+    () =>
+      beatSyncPlanOptions
+        ? proposeKeyframeBeatRespace(beatSyncPlanOptions)
+        : null,
+    [beatSyncPlanOptions],
+  )
+  const beatSyncRange = useMemo(() => {
+    if (!beatAudio?.beatGrid) return null
+    if (selectedBarRange?.audioNodeId === beatAudio.id) {
+      return {
+        audioNodeId: beatAudio.id,
+        startBar: selectedBarRange.startBar,
+        endBar: selectedBarRange.endBar,
+      }
+    }
+    return beatSyncPlan?.preview.barRange
+      ? { audioNodeId: beatAudio.id, ...beatSyncPlan.preview.barRange }
+      : null
+  }, [beatAudio, beatSyncPlan, selectedBarRange])
+  const beatGridSignature = beatAudio?.beatGrid
+    ? JSON.stringify({
+        bpm: beatAudio.beatGrid.bpm,
+        firstBeatTime: beatAudio.beatGrid.firstBeatTime,
+        beatsPerBar: beatAudio.beatGrid.beatsPerBar,
+        beatUnit: beatAudio.beatGrid.beatUnit,
+        swingPercent: beatAudio.beatGrid.swingPercent ?? 50,
+        subdivisions: beatAudio.beatGrid.subdivisions,
+      })
+    : ''
+  const beatAnalysisSignature = beatAudio?.beatAnalysis
+    ? [
+        beatAudio.beatAnalysis.algorithmVersion ?? 0,
+        beatAudio.beatAnalysis.status ?? '',
+        beatAudio.beatAnalysis.bpm,
+        beatAudio.beatAnalysis.firstBeatTime,
+        beatAudio.beatAnalysis.confidence,
+        beatAudio.beatAnalysis.transients.length,
+      ].join(':')
+    : ''
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setBeatSyncMessage('')
+      setPendingBeatRespace(null)
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [
+    beatAnalysisSignature,
+    beatAudio?.id,
+    selectedBarRange,
+    selectedKfs,
+  ])
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPendingBeatRespace(null)
+      setBeatSyncMessage((current) =>
+        current.startsWith('Bars ') ? current : '',
+      )
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [beatGridSignature])
+  useEffect(() => {
+    setBeatSnapTimes(beatMarkers.map((marker) => marker.time))
+    return () => setBeatSnapTimes([])
+  }, [beatMarkers])
+
+  const updateBeatGrid = useCallback(
+    (
+      node: Extract<SceneNode, { kind: 'audio' }>,
+      patch: Partial<AudioBeatGrid>,
+    ) => {
+      const current = node.beatGrid
+      if (!current) return
+      api.setNodeProperty(node.id, 'beatGrid', { ...current, ...patch })
+    },
+    [api],
+  )
+
+  const setBarDivision = useCallback(
+    (
+      node: Extract<SceneNode, { kind: 'audio' }>,
+      division: NoteDivision,
+    ) => {
+      if (!node.beatGrid) return
+      const range =
+        beatSyncRange?.audioNodeId === node.id ? beatSyncRange : null
+      if (!range) {
+        setBeatSyncMessage('Select a bar range or keyframes first.')
+        return
+      }
+      const nextRegion = {
+        id: `bars_${Math.random().toString(36).slice(2, 9)}`,
+        startBar: range.startBar,
+        endBar: range.endBar,
+        division,
+      }
+      updateBeatGrid(node, {
+        subdivisions: [...node.beatGrid.subdivisions, nextRegion],
+      })
+      setBeatSyncMessage(
+        `Bars ${range.startBar}–${range.endBar} set to 1/${division} notes`,
+      )
+    },
+    [beatSyncRange, updateBeatGrid],
+  )
+
+  const applyBeatSyncPlan = useCallback(
+    (plan: BeatSyncPlan, respaceChange?: BeatSyncRespaceChange) => {
+      if (!plan.ok) return
+      commitKeyframeTimes(
+        api,
+        plan.targets.map((target) => ({
+          trackId: target.trackId,
+          kfId: target.keyframeId,
+          time: target.targetTime,
+        })),
+      )
+      const range = plan.preview.barRange
+      const targetRange = plan.preview.targetBarRange
+      const overflowed =
+        !!range &&
+        !!targetRange &&
+        targetRange.endBar > range.endBar
+      const overflowCopy = overflowed
+        ? ` · continued through bar ${targetRange.endBar}`
+        : ''
+      if (respaceChange) {
+        const action =
+          respaceChange === 'increase'
+            ? 'spacing increased'
+            : respaceChange === 'decrease'
+              ? 'spacing decreased'
+              : 'spacing redistributed'
+        setBeatSyncMessage(
+          `${plan.preview.eventCount} events re-snapped · ${action}${overflowCopy}`,
+        )
+        return
+      }
+      setBeatSyncMessage(
+        range
+          ? `${plan.preview.eventCount} events snapped to the beat grid${overflowCopy}`
+          : `${plan.preview.eventCount} events snapped to their nearest beat points`,
+      )
+    },
+    [api],
+  )
+
+  const syncSelectedKeyframes = useCallback(
+    (node: Extract<SceneNode, { kind: 'audio' }>) => {
+      if (!node.beatGrid || !beatSyncPlan?.ok) {
+        const reason = beatSyncPlan?.reason
+        const requiredEvents = beatSyncPlan?.preview.eventCount ?? 0
+        const availableTargets = beatSyncPlan?.preview.availableSlots ?? 0
+        setBeatSyncMessage(
+          reason === 'insufficient-grid-slots'
+            ? insufficientBeatTargetsMessage(
+                requiredEvents,
+                availableTargets,
+              )
+            : reason === 'range-outside-clip'
+              ? 'That musical range is outside the trimmed audio clip.'
+              : reason === 'no-valid-keyframes'
+                ? 'The keyframe selection is stale. Select the keyframes again.'
+                : 'Select keyframes, then choose a musical range.',
+        )
+        return
+      }
+      if (beatRespaceProposal) {
+        setPendingBeatRespace(beatRespaceProposal)
+        return
+      }
+      applyBeatSyncPlan(beatSyncPlan)
+    },
+    [
+      applyBeatSyncPlan,
+      beatRespaceProposal,
+      beatSyncPlan,
+    ],
+  )
+
   const duplicateMediaClip = useCallback(
     (node: MediaTimelineNode) => {
       const parent = node.parent ?? api.getRoot()
@@ -1145,7 +1462,12 @@ export function Timeline() {
         trimStart: node.trimStart,
         trimEnd: node.trimEnd,
         loop: node.loop,
-        ...(node.kind === 'video' ? { fit: node.fit } : {}),
+        ...(node.kind === 'video'
+          ? { fit: node.fit }
+          : {
+              beatAnalysis: node.beatAnalysis,
+              beatGrid: node.beatGrid,
+            }),
       } as Partial<SceneNode>)
       setSelection([id])
       setInspectorMode('properties')
@@ -1986,12 +2308,16 @@ export function Timeline() {
         clamp(dragPlayhead + delta, nextStart, nextStart + span),
       )
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onUp = () => cleanup()
+    const onCancel = () => cleanup()
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   /**
@@ -2009,6 +2335,7 @@ export function Timeline() {
         for (const k of t.keyframes) set.add(k.time)
       }
     }
+    for (const time of BEAT_SNAP_TIMES) set.add(time)
     return Array.from(set).sort((a, b) => a - b)
   }
   const snapTime = (time: number, bypass: boolean, snapTimes: number[]) => {
@@ -2044,17 +2371,22 @@ export function Timeline() {
       setPlayheadImmediate(
         snapTime(timeFromClientX(ev.clientX), ev.altKey, snapTimes),
       )
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onUp = () => cleanup()
+    const onCancel = () => cleanup()
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   /**
    * Start a marquee (rubber-band) selection on empty timeline space.
-   * Activated by Shift+drag — unmodified drag still scrubs on row click.
+   * Plain drag replaces the keyframe selection; Shift+drag extends it.
+   * A click that never crosses the drag threshold still scrubs the row.
    * While the marquee is live we track pointer movement in scroller-
    * local coordinates and visually draw a rect. On release we enumerate
    * every rendered keyframe diamond (via the DOM) and compare its
@@ -2081,6 +2413,7 @@ export function Timeline() {
     // double-check the data-* attributes for safety.
     const target = e.target as HTMLElement
     if (target.closest('[data-timeline-ruler]')) return
+    if (target.closest('[data-timeline-selection-surface]')) return
     if (
       target.dataset.kfId ||
       target.dataset.segmentBar ||
@@ -2093,6 +2426,16 @@ export function Timeline() {
     if (e.button !== 0) return
     const right = rightRef.current
     if (!right) return
+    // The visible playhead is intentionally pointer-transparent so a
+    // keyframe directly beneath it remains clickable. Treat the 16px
+    // band around the line as its drag handle when empty space receives
+    // the gesture. Without this guard, the row scrub and marquee handlers
+    // both run: the playhead moves, then every keyframe crossed by that
+    // movement becomes selected.
+    if (isNearPlayheadClientX(e.clientX)) {
+      onRulerPointerDown(e)
+      return
+    }
     // Use the right wrapper's bounding rect as the coordinate frame.
     // It already accounts for both horizontal and vertical scroll —
     // when the user scrolls, the rect's left/top shift negative and
@@ -2123,9 +2466,17 @@ export function Timeline() {
       const y1 = ev.clientY - r.top
       setMarquee({ x0, y0, x1, y1 })
     }
-    const onUp = (ev: PointerEvent) => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onCancel = () => {
+      cleanup()
+      setMarquee(null)
+    }
+    const onUp = (ev: PointerEvent) => {
+      cleanup()
       if (!started) {
         // No drag — let the row handler's click-to-scrub run. Nothing
         // to commit here.
@@ -2202,6 +2553,7 @@ export function Timeline() {
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   // Drag the 4px top edge of the timeline to resize it. The handle is
@@ -2224,6 +2576,34 @@ export function Timeline() {
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+  }
+
+  const onSidebarResizePointerDown = (
+    e: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const handle = e.currentTarget
+    const startX = e.clientX
+    const startWidth = timelineSidebarWidth
+    handle.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      setTimelineSidebarWidth(startWidth + ev.clientX - startX)
+    }
+    const onUp = () => {
+      try {
+        handle.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   return (
@@ -2367,6 +2747,48 @@ export function Timeline() {
           />
         </div>
       </div>
+      {beatAudio?.beatGrid && (
+        <BeatSyncActionBar
+          node={beatAudio}
+          selectedBarRange={beatSyncRange}
+          selectedKeyframeCount={beatSyncPlan?.preview.validKeyframeCount ?? 0}
+          eventCount={beatSyncPlan?.preview.eventCount ?? 0}
+          respaceChange={beatRespaceProposal?.change ?? null}
+          overflowEndBar={
+            beatSyncPlan?.preview.targetBarRange &&
+            beatSyncPlan.preview.barRange &&
+            beatSyncPlan.preview.targetBarRange.endBar >
+              beatSyncPlan.preview.barRange.endBar
+              ? beatSyncPlan.preview.targetBarRange.endBar
+              : null
+          }
+          syncReady={!!beatSyncPlan?.ok}
+          syncUnavailableReason={
+            beatSyncPlan?.reason === 'insufficient-grid-slots'
+              ? insufficientBeatTargetsMessage(
+                  beatSyncPlan.preview.eventCount,
+                  beatSyncPlan.preview.availableSlots,
+                )
+              : beatSyncPlan?.reason === 'range-outside-clip'
+                ? 'Selected bars are outside the trimmed clip'
+                : beatSyncPlan?.reason === 'no-valid-keyframes'
+                  ? 'Select the keyframes again'
+                  : ''
+          }
+          message={beatSyncMessage}
+          onSetDivision={(division) =>
+            setBarDivision(beatAudio, division)
+          }
+          onSetSwing={(swingPercent) =>
+            updateBeatGrid(beatAudio, { swingPercent })
+          }
+          onOpenSettings={() => {
+            setSelection([beatAudio.id])
+            setInspectorMode('properties')
+          }}
+          onSync={() => syncSelectedKeyframes(beatAudio)}
+        />
+      )}
       {/* Single scroll container handles BOTH axes for the whole
           timeline. Left column sticks to the left during horizontal
           scroll; the ruler sticks to the top during vertical scroll;
@@ -2387,8 +2809,33 @@ export function Timeline() {
             scroll automatically (no overflow of its own). */}
         <div
           className="sticky left-0 z-20 shrink-0 border-r border-border bg-panel"
-          style={{ width: TRACK_HEADER_WIDTH }}
+          style={{ width: timelineSidebarWidth }}
         >
+          <div
+            role="separator"
+            aria-label="Resize timeline sidebar"
+            aria-orientation="vertical"
+            aria-valuemin={160}
+            aria-valuemax={600}
+            aria-valuenow={Math.round(timelineSidebarWidth)}
+            tabIndex={0}
+            onPointerDown={onSidebarResizePointerDown}
+            onDoubleClick={() => setTimelineSidebarWidth(180)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                return
+              }
+              event.preventDefault()
+              const direction = event.key === 'ArrowRight' ? 1 : -1
+              setTimelineSidebarWidth(
+                timelineSidebarWidth + direction * (event.shiftKey ? 32 : 8),
+              )
+            }}
+            title="Drag to resize track sidebar · Double-click to reset"
+            className="group absolute top-0 right-0 z-40 h-full w-2 translate-x-1/2 cursor-col-resize touch-none outline-none"
+          >
+            <span className="pointer-events-none absolute top-0 left-1/2 h-full w-px -translate-x-1/2 bg-transparent group-hover:bg-accent/70 group-focus-visible:bg-accent" />
+          </div>
           {/* sticky-top-AND-bumped-z so this corner stays above both
               the ruler (z-10) and the left labels (z-20) at the top-
               left intersection during scrolling.
@@ -2477,6 +2924,25 @@ export function Timeline() {
               onCancel={() => setStaggerOn(false)}
             />
           )}
+          {beatAudio?.beatGrid && (
+            <div className="flex h-7 items-center border-b border-border bg-panel-raised/55 px-3">
+              <span className="whitespace-nowrap font-mono text-[9px] font-semibold tracking-[0.08em] text-text-muted uppercase">
+                Musical
+              </span>
+              <span className="ml-2 whitespace-nowrap font-mono text-[8px] tabular-nums text-accent">
+                {`${beatAudio.beatGrid.bpm.toFixed(1)} BPM${
+                  (beatAudio.beatGrid.swingPercent ?? 50) !== 50
+                    ? ` · ${(
+                        beatAudio.beatGrid.swingPercent ?? 50
+                      ).toFixed(1)}% swing`
+                    : ''
+                }`}
+              </span>
+              <span className="ml-auto whitespace-nowrap text-[8px] text-text-dim">
+                Shift range
+              </span>
+            </div>
+          )}
           {timelineMode === 'sound' ? (
             mediaClips.length === 0 ? (
               <div className="space-y-3 px-4 py-5 text-[11px] leading-relaxed text-text-dim">
@@ -2496,6 +2962,12 @@ export function Timeline() {
                     onSelect={() => {
                       setSelection([clip.id])
                       setInspectorMode('properties')
+                      if (clip.kind === 'audio') {
+                        setSelectedBarRange((current) =>
+                          current?.audioNodeId === clip.id ? current : null,
+                        )
+                        setBeatSyncMessage('')
+                      }
                     }}
                     onContextMenu={(e) => openMediaMenu(e, clip)}
                   />
@@ -2839,7 +3311,7 @@ export function Timeline() {
             instead of stopping at "5s 300f"). */}
         <div
           ref={rightRef}
-          className="relative flex-1"
+          className="relative flex-1 select-none"
           style={{ minWidth: totalWidth }}
           onPointerDown={onMarqueePointerDown}
         >
@@ -2997,31 +3469,58 @@ export function Timeline() {
                 totalWidth={totalWidth}
               />
             )}
+            {beatAudio?.beatGrid && (
+              <AudioBeatGridLane
+                node={beatAudio}
+                duration={duration}
+                totalWidth={totalWidth}
+                selectedRange={
+                  selectedBarRange?.audioNodeId === beatAudio.id
+                    ? selectedBarRange
+                    : null
+                }
+                onSelectRange={(startBar, endBar) =>
+                  setSelectedBarRange({
+                    audioNodeId: beatAudio.id,
+                    startBar,
+                    endBar,
+                  })
+                }
+              />
+            )}
 
             {/* Track rows */}
             {timelineMode === 'sound' ? (
               mediaClips.length === 0 ? (
                 <div className="h-20" />
               ) : (
-                mediaClips.map((clip) => (
-                  <MediaClipRow
-                    key={clip.id}
-                    node={clip}
-                    api={api}
-                    duration={duration}
-                    totalWidth={totalWidth}
-                    selected={selection.includes(clip.id)}
-                    onSelect={() => {
-                      setSelection([clip.id])
-                      setInspectorMode('properties')
-                    }}
-                    onScrub={(time) => {
-                      setPlaying(false)
-                      smoothSeekPlayhead(time)
-                    }}
-                    onContextMenu={(e) => openMediaMenu(e, clip)}
-                  />
-                ))
+                <>
+                  {mediaClips.map((clip) => (
+                    <MediaClipRow
+                      key={clip.id}
+                      node={clip}
+                      api={api}
+                      duration={duration}
+                      totalWidth={totalWidth}
+                      selected={selection.includes(clip.id)}
+                      onSelect={() => {
+                        setSelection([clip.id])
+                        setInspectorMode('properties')
+                        if (clip.kind === 'audio') {
+                          setSelectedBarRange((current) =>
+                            current?.audioNodeId === clip.id ? current : null,
+                          )
+                          setBeatSyncMessage('')
+                        }
+                      }}
+                      onScrub={(time) => {
+                        setPlaying(false)
+                        smoothSeekPlayhead(time)
+                      }}
+                      onContextMenu={(e) => openMediaMenu(e, clip)}
+                    />
+                  ))}
+                </>
               )
             ) : tracksByNode.length === 0 ? (
               <div className="h-20" />
@@ -3434,7 +3933,7 @@ export function Timeline() {
               </>
             )}
 
-            {/* Marquee rectangle — drawn while a shift-drag is in
+            {/* Marquee rectangle — drawn while a timeline drag is in
                 progress. scroller-local coordinates, same frame as
                 tracksByNode rows, so rect corners line up exactly with
                 the diamonds they're hit-testing against. */}
@@ -3452,6 +3951,29 @@ export function Timeline() {
         </div> {/* /right wrapper */}
         </div> {/* /flex min-w-max */}
       </div> {/* /outer scroller */}
+      {pendingBeatRespace ? (
+        <BeatResnapConfirmDialog
+          proposal={pendingBeatRespace}
+          onClose={() => setPendingBeatRespace(null)}
+          onConfirm={() => {
+            if (
+              !beatRespaceProposal ||
+              beatRespaceProposal.signature !== pendingBeatRespace.signature
+            ) {
+              setPendingBeatRespace(null)
+              setBeatSyncMessage(
+                'The keyframe selection or beat range changed. Review it and snap again.',
+              )
+              return
+            }
+            applyBeatSyncPlan(
+              beatRespaceProposal.plan,
+              beatRespaceProposal.change,
+            )
+            setPendingBeatRespace(null)
+          }}
+        />
+      ) : null}
       {staggerSettingsSet ? (
         <StaggerSettingsModal
           key={staggerSettingsSet.id}
@@ -3499,6 +4021,132 @@ export function Timeline() {
         />
       ) : null}
     </section>
+  )
+}
+
+function BeatResnapConfirmDialog({
+  proposal,
+  onClose,
+  onConfirm,
+}: {
+  proposal: BeatSyncRespaceProposal
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  const range = proposal.plan.preview.barRange
+  const rangeLabel = range
+    ? range.startBar === range.endBar
+      ? `Bar ${range.startBar}`
+      : `Bars ${range.startBar}–${range.endBar}`
+    : 'the selected range'
+  const description =
+    proposal.change === 'increase'
+      ? `These events are already aligned. Re-snapping across ${rangeLabel} will move later keyframes forward and increase their spacing.`
+      : proposal.change === 'decrease'
+        ? `These events are already aligned. Re-snapping across ${rangeLabel} will move the keyframes closer together and decrease their spacing.`
+        : `These events are already aligned. Re-snapping across ${rangeLabel} will redistribute their spacing on the beat grid.`
+  const confirmLabel =
+    proposal.change === 'increase'
+      ? 'Increase spacing'
+      : proposal.change === 'decrease'
+        ? 'Decrease spacing'
+        : 'Redistribute keyframes'
+
+  return (
+    <div
+      data-timeline-selection-surface="1"
+      role="presentation"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-6 backdrop-blur-[2px]"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="beat-resnap-title"
+        className="w-full max-w-[420px] overflow-hidden rounded-xl border border-border-strong bg-panel-raised text-text shadow-2xl"
+      >
+        <header className="border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+              <Wand2 size={14} strokeWidth={2} />
+            </span>
+            <div>
+              <h2
+                id="beat-resnap-title"
+                className="text-[12px] font-semibold"
+              >
+                Keyframes already snapped
+              </h2>
+              <p className="mt-0.5 text-[9px] font-medium tracking-[0.08em] text-text-dim uppercase">
+                Confirm spacing change
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-text-muted">
+            {description}
+          </p>
+        </header>
+
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-4">
+          <div className="rounded-md border border-border bg-panel px-3 py-2.5">
+            <div className="text-[8px] font-semibold tracking-wider text-text-dim uppercase">
+              Current
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-text">
+              {proposal.currentSpacing.toFixed(2)}s
+            </div>
+            <div className="mt-0.5 text-[9px] text-text-dim">
+              average gap
+            </div>
+          </div>
+          <span className="text-[14px] text-text-dim" aria-hidden>
+            →
+          </span>
+          <div className="rounded-md border border-accent/35 bg-accent-soft/50 px-3 py-2.5">
+            <div className="text-[8px] font-semibold tracking-wider text-accent uppercase">
+              Proposed
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-text">
+              {proposal.targetSpacing.toFixed(2)}s
+            </div>
+            <div className="mt-0.5 text-[9px] text-text-dim">
+              average gap
+            </div>
+          </div>
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-border bg-panel px-5 py-3">
+          <button
+            autoFocus
+            type="button"
+            onClick={onClose}
+            className="h-8 rounded-md border border-border px-3 text-[10px] font-medium text-text-muted hover:border-border-strong hover:text-text"
+          >
+            Keep current
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="h-8 rounded-md bg-accent px-3 text-[10px] font-semibold text-white shadow-sm hover:brightness-110"
+          >
+            {confirmLabel}
+          </button>
+        </footer>
+      </div>
+    </div>
   )
 }
 
@@ -4112,6 +4760,7 @@ function TimelineTabButton({
   return (
     <button
       type="button"
+      data-timeline-selection-surface="1"
       onClick={onClick}
       className={[
         'h-5 shrink-0 whitespace-nowrap rounded px-1.5 text-[9px] font-semibold uppercase tracking-[0.04em]',
@@ -4135,6 +4784,315 @@ function AudioImportButton({ onClick }: { onClick: () => void }) {
     >
       Import audio
     </button>
+  )
+}
+
+function BeatSyncActionBar({
+  node,
+  selectedBarRange,
+  selectedKeyframeCount,
+  eventCount,
+  respaceChange,
+  overflowEndBar,
+  syncReady,
+  syncUnavailableReason,
+  message,
+  onSetDivision,
+  onSetSwing,
+  onOpenSettings,
+  onSync,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+  selectedBarRange: {
+    audioNodeId: string
+    startBar: number
+    endBar: number
+  } | null
+  selectedKeyframeCount: number
+  eventCount: number
+  respaceChange: BeatSyncRespaceChange | null
+  overflowEndBar: number | null
+  syncReady: boolean
+  syncUnavailableReason: string
+  message: string
+  onSetDivision: (division: NoteDivision) => void
+  onSetSwing: (swingPercent: number) => void
+  onOpenSettings: () => void
+  onSync: () => void
+}) {
+  const grid = node.beatGrid
+  if (!grid) return null
+  const division = selectedBarRange
+    ? divisionForBar(grid, selectedBarRange.startBar)
+    : grid.beatUnit
+  const rangeLabel = selectedBarRange
+    ? selectedBarRange.startBar === selectedBarRange.endBar
+      ? `Bar ${selectedBarRange.startBar}`
+      : `Bars ${selectedBarRange.startBar}–${selectedBarRange.endBar}`
+    : 'Choose bars'
+  const canSync = syncReady && selectedKeyframeCount > 0 && !!selectedBarRange
+  const targetPointCopy = `1/${division} points`
+  const respaceHelper =
+    respaceChange === 'increase'
+      ? 'Already snapped · confirm wider spacing'
+      : respaceChange === 'decrease'
+        ? 'Already snapped · confirm tighter spacing'
+        : respaceChange === 'redistribute'
+          ? 'Already snapped · confirm redistribution'
+          : ''
+  const helper =
+    syncUnavailableReason ||
+    (selectedKeyframeCount === 0
+      ? 'Select keyframes to sync'
+      : respaceHelper ||
+        message ||
+        (selectedBarRange
+          ? `${eventCount} events · nearest ${targetPointCopy}${overflowEndBar ? ` · continues into B${overflowEndBar}` : ''}`
+          : 'Choose a bar range'))
+
+  return (
+    <div
+      data-timeline-selection-surface="1"
+      className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-panel-raised/65 px-3"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex min-w-28 max-w-44 shrink items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-panel-raised"
+          title="Open audio beat settings"
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-accent-soft text-accent">
+            <Music2 size={12} strokeWidth={1.9} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[10px] font-medium text-text">
+              {node.name}
+            </span>
+            <span className="block font-mono text-[8px] text-text-dim">
+              {grid.bpm.toFixed(1)} BPM
+            </span>
+          </span>
+        </button>
+
+        <div className="h-5 w-px shrink-0 bg-border" />
+
+        <span className="shrink-0 text-[10px] font-medium text-text-muted">
+          {rangeLabel}
+        </span>
+        <div className="flex shrink-0 overflow-hidden rounded border border-border">
+          {([4, 8, 16] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              disabled={!selectedBarRange}
+              onClick={() => onSetDivision(value)}
+              className={[
+                'h-6 min-w-10 border-l border-border px-2 font-mono text-[9px] first:border-l-0',
+                division === value
+                  ? 'bg-accent-soft font-semibold text-accent'
+                  : 'bg-panel text-text-muted hover:text-text',
+                !selectedBarRange
+                  ? 'cursor-not-allowed opacity-45'
+                  : '',
+              ].join(' ')}
+              title={`Set selected bars to 1/${value} notes`}
+            >
+              1/{value}
+            </button>
+          ))}
+        </div>
+
+        <div
+          className="flex shrink-0 items-center gap-1.5"
+          title="50% is straight; 66.7% is a triplet feel"
+        >
+          <span className="text-[8px] font-medium tracking-wide text-text-dim uppercase">
+            Swing
+          </span>
+          <input
+            aria-label="Timeline beat-grid swing"
+            type="range"
+            min={50}
+            max={75}
+            step={0.5}
+            value={grid.swingPercent ?? 50}
+            onDoubleClick={() => onSetSwing(50)}
+            onChange={(event) =>
+              onSetSwing(
+                Math.max(50, Math.min(75, Number(event.currentTarget.value))),
+              )
+            }
+            className="w-14 accent-[var(--color-accent)]"
+          />
+          <span className="w-8 font-mono text-[8px] tabular-nums text-text-muted">
+            {(grid.swingPercent ?? 50).toFixed(
+              (grid.swingPercent ?? 50) % 1 === 0 ? 0 : 1,
+            )}%
+          </span>
+        </div>
+
+        <span className="min-w-0 flex-1 truncate text-[9px] text-text-dim">
+          {helper}
+        </span>
+      </div>
+
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={!canSync}
+        className="flex h-6 shrink-0 items-center gap-1.5 rounded bg-accent px-2.5 text-[9px] font-semibold text-white shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:bg-panel disabled:text-text-dim disabled:shadow-none"
+        title={
+          canSync
+            ? `Snap ${eventCount} events to their nearest ${targetPointCopy}`
+            : helper
+        }
+      >
+        <Wand2 size={11} strokeWidth={2} />
+        Snap to beats
+      </button>
+    </div>
+  )
+}
+
+function AudioBeatGridLane({
+  node,
+  duration,
+  totalWidth,
+  selectedRange,
+  onSelectRange,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+  duration: number
+  totalWidth: number
+  selectedRange: { startBar: number; endBar: number } | null
+  onSelectRange: (startBar: number, endBar: number) => void
+}) {
+  const markers = useMemo(() => sceneBeatMarkers(node, duration), [duration, node])
+  const transients = useMemo(
+    () => sceneTransientMarkers(node, duration),
+    [duration, node],
+  )
+  const playbackRate = Math.max(0.01, node.playbackRate || 1)
+  const sourceEnd = Math.max(
+    node.trimStart,
+    node.trimEnd || node.duration,
+  )
+  const visibleSceneStart = Math.max(0, node.startTime)
+  const visibleSceneEnd = Math.min(
+    duration,
+    audioSourceTimeToSceneTime(node, sourceEnd),
+  )
+  const visibleSourceStart =
+    node.trimStart +
+    (visibleSceneStart - node.startTime) * playbackRate
+  const visibleSourceEnd =
+    node.trimStart +
+    (visibleSceneEnd - node.startTime) * playbackRate
+  const barSegments = node.beatGrid
+    ? musicalBarSegmentsForRange(
+        node.beatGrid,
+        visibleSourceStart,
+        visibleSourceEnd,
+      ).map((segment) => ({
+        ...segment,
+        startTime: audioSourceTimeToSceneTime(node, segment.startTime),
+        endTime: audioSourceTimeToSceneTime(node, segment.endTime),
+      }))
+    : []
+  return (
+    <div
+      data-timeline-selection-surface="1"
+      aria-label={`Musical ruler with transients and beat markers for ${node.name} at ${node.beatGrid?.bpm.toFixed(1)} BPM`}
+      className="relative h-7 overflow-hidden border-b border-border bg-panel-raised/35"
+      style={{ width: totalWidth }}
+    >
+      <div className="absolute inset-0">
+        {barSegments.map((segment) => {
+          if (segment.isLeadIn) {
+            return (
+              <div
+                key={`lead-${segment.startTime}`}
+                aria-label="Lead-in before Bar 1"
+                className="pointer-events-none absolute inset-y-0 overflow-hidden whitespace-nowrap border-r border-dashed border-border-strong bg-panel-raised/70 px-1.5 pt-1 font-mono text-[8px] font-medium tracking-wide text-text-dim"
+                style={{
+                  left: segment.startTime * PX_PER_SECOND,
+                  width: Math.max(
+                    1,
+                    (segment.endTime - segment.startTime) * PX_PER_SECOND,
+                  ),
+                }}
+                title="Lead-in before Bar 1. Edit or clear it in Audio > Beat sync."
+              >
+                LEAD-IN
+              </div>
+            )
+          }
+          const selected =
+            !!selectedRange &&
+            segment.bar >= selectedRange.startBar &&
+            segment.bar <= selectedRange.endBar
+          return (
+            <button
+              key={`bar-${segment.bar}-${segment.isLeadIn ? 'lead' : 'measure'}-${segment.startTime}`}
+              type="button"
+              className={[
+                'absolute inset-y-0 px-1.5 pt-1 text-left font-mono text-[8px] font-semibold tabular-nums',
+                selected
+                  ? 'bg-accent-soft/70 text-accent'
+                  : 'text-text-dim hover:bg-panel-raised/80 hover:text-text',
+              ].join(' ')}
+              style={{
+                left: segment.startTime * PX_PER_SECOND,
+                width: Math.max(
+                  1,
+                  (segment.endTime - segment.startTime) * PX_PER_SECOND,
+                ),
+              }}
+              onClick={(event) => {
+                if (event.shiftKey && selectedRange) {
+                  onSelectRange(
+                    Math.min(selectedRange.startBar, segment.bar),
+                    Math.max(selectedRange.endBar, segment.bar),
+                  )
+                } else {
+                  onSelectRange(segment.bar, segment.bar)
+                }
+              }}
+              title="Click to select a bar. Shift-click to extend the range."
+            >
+              B{segment.bar}
+            </button>
+          )
+        })}
+        <div className="pointer-events-none absolute inset-0">
+          {transients.map((transient, index) => (
+            <span
+              key={`transient-${transient.time}-${index}`}
+              className="absolute bottom-0 w-px bg-[oklch(0.80_0.10_75)]/55"
+              style={{
+                left: transient.time * PX_PER_SECOND,
+                height: Math.max(2, Math.round(2 + transient.strength * 5)),
+              }}
+            />
+          ))}
+          {markers.map((marker) => (
+            <span
+              key={`musical-tick-${marker.bar}-${marker.beat}-${marker.subdivision}-${marker.time}`}
+              className={[
+                'absolute bottom-0 w-px',
+                marker.isBarStart
+                  ? 'h-full bg-accent/70'
+                  : marker.subdivision === 1
+                    ? 'h-3 bg-accent/65'
+                    : 'h-1.5 bg-accent/40',
+              ].join(' ')}
+              style={{ left: marker.time * PX_PER_SECOND }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -4305,34 +5263,24 @@ function MediaClipRow({
   )
 }
 
-const waveformCache = new Map<string, AudioBuffer>()
-
 function WaveformBars({ node }: { node: MediaTimelineNode }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [buffer, setBuffer] = useState<AudioBuffer | null>(
-    () => waveformCache.get(node.src) ?? null,
+    () => getCachedAudioBuffer(node.src),
   )
   const [barCount, setBarCount] = useState(64)
 
   useEffect(() => {
     let cancelled = false
-    if (!node.src || waveformCache.has(node.src)) {
-      setBuffer(node.src ? waveformCache.get(node.src) ?? null : null)
+    const cached = getCachedAudioBuffer(node.src)
+    if (!node.src || cached) {
+      setBuffer(cached)
       return
     }
     async function load() {
-      if (typeof AudioContext === 'undefined') return
       try {
-        const response = await fetch(node.src)
-        const bytes = await response.arrayBuffer()
-        const ctx = new AudioContext()
-        try {
-          const decoded = await ctx.decodeAudioData(bytes.slice(0))
-          waveformCache.set(node.src, decoded)
-          if (!cancelled) setBuffer(decoded)
-        } finally {
-          void ctx.close()
-        }
+        const decoded = await loadAudioBuffer(node.src)
+        if (!cancelled) setBuffer(decoded)
       } catch {
         if (!cancelled) setBuffer(null)
       }
@@ -4415,6 +5363,69 @@ function formatMediaDuration(node: MediaTimelineNode): string {
   const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
   const seconds = Math.max(0, trimEnd - trimStart)
   return `${seconds.toFixed(seconds < 10 ? 2 : 1)}S`
+}
+
+function audioSourceTimeToSceneTime(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  sourceTime: number,
+): number {
+  const playbackRate = Math.max(0.01, node.playbackRate || 1)
+  return node.startTime + (sourceTime - node.trimStart) / playbackRate
+}
+
+function sourceBeatMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+): NoteMarker[] {
+  const grid = node.beatGrid
+  if (!grid) return []
+  const secondsPerBar =
+    (60 / Math.max(1, grid.bpm)) * Math.max(1, grid.beatsPerBar)
+  const sourceEnd = Math.max(node.trimStart, node.trimEnd || node.duration)
+  const barCount = Math.max(
+    1,
+    Math.ceil((sourceEnd - grid.firstBeatTime) / secondsPerBar),
+  )
+  return createNoteMarkersForBars(grid, 1, barCount).filter(
+    (marker) =>
+      marker.time >= node.trimStart - 0.001 &&
+      marker.time <= sourceEnd + 0.001,
+  )
+}
+
+function sceneBeatMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  duration: number,
+): NoteMarker[] {
+  return sourceBeatMarkers(node)
+    .map((marker) => ({
+      ...marker,
+      time: audioSourceTimeToSceneTime(node, marker.time),
+    }))
+    .filter((marker) => marker.time >= 0 && marker.time <= duration)
+}
+
+function sceneTransientMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  duration: number,
+) {
+  const sourceEnd = Math.max(
+    node.trimStart,
+    node.trimEnd || node.duration,
+  )
+  return (node.beatAnalysis?.transients ?? [])
+    .filter(
+      (transient) =>
+        transient.time >= node.trimStart - 0.001 &&
+        transient.time <= sourceEnd + 0.001,
+    )
+    .map((transient) => ({
+      ...transient,
+      time: audioSourceTimeToSceneTime(node, transient.time),
+    }))
+    .filter(
+      (transient) =>
+        transient.time >= 0 && transient.time <= duration,
+    )
 }
 
 /** Visible placeholder for the interval after S is pressed and before the
@@ -7412,7 +8423,7 @@ function snapTime(
       }
     }
   }
-  for (const mt of markerTimes) {
+  for (const mt of [...markerTimes, ...BEAT_SNAP_TIMES]) {
     const d = Math.abs(mt - time)
     if (d < bestDist) {
       bestDist = d

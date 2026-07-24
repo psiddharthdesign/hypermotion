@@ -119,6 +119,7 @@ export interface StaggerKeyframePatch {
   time?: number
   value?: KeyframeValue
   easingOut?: EasingKind | null
+  easingPreset?: Keyframe['easingPreset'] | null
   presetOrigin?: Keyframe['presetOrigin'] | null
 }
 
@@ -408,6 +409,8 @@ export function toggleStaggerSetPropertyKeyframes(
           time,
           target.currentValue,
           existingKeyframe?.easingOut,
+          existingKeyframe?.presetOrigin,
+          existingKeyframe?.easingPreset,
         )
         addMember(set, nodeId, propertyId, keyframe.id)
         const track = findTrack(api, nodeId, propertyId)
@@ -651,6 +654,8 @@ export function stampStaggerSetPatch(
           time,
           value,
           existingKeyframe?.easingOut,
+          existingKeyframe?.presetOrigin,
+          existingKeyframe?.easingPreset,
         )
         addMember(set, nodeId, propertyId, keyframe.id)
         const track = findTrack(api, nodeId, propertyId)
@@ -1046,6 +1051,10 @@ export function patchStaggerKeyframeBundle(
           if ('easingOut' in patch) {
             if (patch.easingOut == null) delete next.easingOut
             else next.easingOut = patch.easingOut
+          }
+          if ('easingPreset' in patch) {
+            if (patch.easingPreset == null) delete next.easingPreset
+            else next.easingPreset = patch.easingPreset
           }
           if ('presetOrigin' in patch) {
             if (patch.presetOrigin == null) delete next.presetOrigin
@@ -1477,6 +1486,7 @@ function adoptStaggerPropertyTrackIntoSet(
         sourceKeyframe.value,
         sourceKeyframe.easingOut,
         sourceKeyframe.presetOrigin,
+        sourceKeyframe.easingPreset,
       )
       addMember(set, nodeId, propertyId, keyframe.id)
       maxTime = Math.max(maxTime, time)
@@ -1738,8 +1748,10 @@ function withOutgoingEasing(
     next.easingOut = mirrorEasing(
       sourceSegmentStart.easingOut ?? sourceDefault,
     )
+    next.easingPreset = { presetId: 'custom', strength: 100 }
   } else {
     delete next.easingOut
+    delete next.easingPreset
   }
   return next
 }

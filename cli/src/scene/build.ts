@@ -234,6 +234,35 @@ export interface NodeJson {
   trimEnd?: number
   loop?: boolean
   muted?: boolean
+  beatAnalysis?: {
+    algorithmVersion?: 2 | 3
+    status?: 'ok' | 'ambiguous' | 'no-pulse'
+    bpm: number
+    confidence: number
+    firstBeatTime: number
+    transients: Array<{ time: number; strength: number }>
+    beatTransients: Array<{ time: number; strength: number }>
+    candidates: Array<{
+      bpm: number
+      confidence: number
+      relationship?: 'direct' | '3:2' | '2:3'
+      firstBeatTime?: number
+    }>
+  }
+  beatGrid?: {
+    version: 1
+    bpm: number
+    firstBeatTime: number
+    beatsPerBar: number
+    beatUnit: 1 | 2 | 4 | 8 | 16 | 32
+    swingPercent?: number
+    subdivisions: Array<{
+      id?: string
+      startBar: number
+      endBar: number
+      division: 1 | 2 | 4 | 8 | 16 | 32
+    }>
+  }
   projection?: '2d' | 'perspective'
   enabled?: boolean
   background?: FillJson | null
@@ -432,6 +461,31 @@ export type EasingJson =
   | { bezier: [number, number, number, number] }
   | { spring: { stiffness: number; damping: number; mass: number } }
 
+export const KEYFRAME_EASING_PRESET_IDS = [
+  'none',
+  'smooth',
+  'natural',
+  'slow-down',
+  'accelerate',
+  'elastic',
+  'bounce',
+  'overshoot',
+  'impulse',
+  'swing',
+  'custom',
+] as const
+
+export type KeyframeEasingPresetIdJson =
+  (typeof KEYFRAME_EASING_PRESET_IDS)[number]
+
+const KEYFRAME_EASING_PRESET_ID_SET: ReadonlySet<KeyframeEasingPresetIdJson> =
+  new Set(KEYFRAME_EASING_PRESET_IDS)
+
+export interface KeyframeEasingPresetJson {
+  presetId: KeyframeEasingPresetIdJson
+  strength: number
+}
+
 export interface VariantTransitionJson {
   duration: number
   easing: EasingJson
@@ -524,6 +578,7 @@ export interface KeyframeJson {
   time: number
   value: KeyframeValueJson
   easingOut?: EasingJson
+  easingPreset?: KeyframeEasingPresetJson
   presetOrigin?: 'in' | 'out'
 }
 
@@ -836,6 +891,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('trimEnd', node.trimEnd ?? node.duration ?? 0)
       y.set('loop', node.loop ?? false)
       y.set('muted', node.muted ?? node.kind === 'video')
+      if (node.kind === 'audio') {
+        if (node.beatAnalysis !== undefined) y.set('beatAnalysis', node.beatAnalysis)
+        if (node.beatGrid !== undefined) y.set('beatGrid', node.beatGrid)
+      }
       if (node.kind === 'video') {
         y.set('fit', node.fit ?? 'cover')
       }
@@ -1100,6 +1159,30 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
         }
         if (keyframeIsObject && (!('value' in keyframe) || !isJsonValue(keyframe.value))) {
           errors.push(`track ${id} keyframe ${label} value must be JSON-compatible`)
+        }
+        if (keyframe.easingPreset !== undefined) {
+          const easingPreset = asRecord(keyframe.easingPreset)
+          if (
+            !isPlainObject(keyframe.easingPreset) ||
+            typeof easingPreset.presetId !== 'string' ||
+            !KEYFRAME_EASING_PRESET_ID_SET.has(
+              easingPreset.presetId as KeyframeEasingPresetIdJson,
+            )
+          ) {
+            errors.push(
+              `track ${id} keyframe ${label} easingPreset.presetId is invalid`,
+            )
+          }
+          if (
+            typeof easingPreset.strength !== 'number' ||
+            !Number.isFinite(easingPreset.strength) ||
+            easingPreset.strength < 0 ||
+            easingPreset.strength > 200
+          ) {
+            errors.push(
+              `track ${id} keyframe ${label} easingPreset.strength must be between 0 and 200`,
+            )
+          }
         }
       })
     }

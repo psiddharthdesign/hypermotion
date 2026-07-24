@@ -280,6 +280,11 @@ interface UIState {
   /** Inspector panel width in pixels. Symmetric to layersWidth. */
   inspectorWidth: number
   /**
+   * Width of the timeline's sticky track-label column. This is editor-local
+   * layout state and persists independently from the scene.
+   */
+  timelineSidebarWidth: number
+  /**
    * Active color theme preference. Persists to localStorage so reloads
    * honor the user's pick. Components should read CSS tokens (which
    * the index.css palette switches on `data-theme`) rather than this
@@ -453,6 +458,8 @@ interface UIState {
   setLayersWidth: (px: number) => void
   /** Clamp + commit a new Inspector panel width. */
   setInspectorWidth: (px: number) => void
+  /** Clamp + commit the timeline's track-label column width. */
+  setTimelineSidebarWidth: (px: number) => void
   /**
    * Set the active theme. Updates the <html> data-theme attribute and
    * persists to localStorage. Pass 'system' to defer to the OS
@@ -549,6 +556,10 @@ export const useUI = create<UIState>((set) => ({
   selectedTrackId: null,
   layersWidth: readStoredNumber('hyper-motion.layersWidth', 256),
   inspectorWidth: readStoredNumber('hyper-motion.inspectorWidth', 288),
+  timelineSidebarWidth: readStoredNumber(
+    'hyper-motion.timelineSidebarWidth',
+    180,
+  ),
   // Read once at store init, then immediately apply to <html>. The
   // store init runs before React hydrates so the FIRST paint already
   // matches the user's preference — no flash of wrong theme.
@@ -734,6 +745,11 @@ export const useUI = create<UIState>((set) => ({
     const next = clamp(px, 220, 600)
     writeStoredNumber('hyper-motion.inspectorWidth', next)
     set({ inspectorWidth: next })
+  },
+  setTimelineSidebarWidth: (px) => {
+    const next = clamp(px, 160, 600)
+    writeStoredNumber('hyper-motion.timelineSidebarWidth', next)
+    set({ timelineSidebarWidth: next })
   },
   setTheme: (theme) => {
     applyThemeToDocument(theme)

@@ -6,6 +6,7 @@ import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useSceneAPI } from '@/scene'
 import type {
   EasingKind,
+  KeyframeEasingPreset,
   KeyframeValue,
   NodeId,
   Node as SceneNode,
@@ -834,6 +835,7 @@ interface ClipboardKeyframe {
   offset: number
   value: KeyframeValue
   easingOut?: EasingKind
+  easingPreset?: KeyframeEasingPreset
   presetOrigin?: 'in' | 'out'
 }
 
@@ -849,6 +851,7 @@ interface ClipboardTextAnimation {
     time: number
     value: KeyframeValue
     easingOut?: EasingKind
+    easingPreset?: KeyframeEasingPreset
     presetOrigin?: 'in' | 'out'
   }>
 }
@@ -951,6 +954,9 @@ function copySelectedTextAnimations(
         time: keyframe.time,
         value: keyframe.value,
         ...(keyframe.easingOut ? { easingOut: keyframe.easingOut } : {}),
+        ...(keyframe.easingPreset
+          ? { easingPreset: keyframe.easingPreset }
+          : {}),
         ...(keyframe.presetOrigin
           ? { presetOrigin: keyframe.presetOrigin }
           : {}),
@@ -1007,6 +1013,9 @@ function pasteTextAnimationsAtPlayhead(
             value: keyframe.value,
             ...(keyframe.easingOut
               ? { easingOut: keyframe.easingOut }
+              : {}),
+            ...(keyframe.easingPreset
+              ? { easingPreset: keyframe.easingPreset }
               : {}),
             ...(keyframe.presetOrigin
               ? { presetOrigin: keyframe.presetOrigin }
@@ -1097,6 +1106,7 @@ function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
     time: number
     value: KeyframeValue
     easingOut?: EasingKind
+    easingPreset?: KeyframeEasingPreset
     presetOrigin?: 'in' | 'out'
   }> = []
 
@@ -1117,6 +1127,7 @@ function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
       time: kf.time,
       value: kf.value,
       ...(kf.easingOut ? { easingOut: kf.easingOut } : {}),
+      ...(kf.easingPreset ? { easingPreset: kf.easingPreset } : {}),
       ...(kf.presetOrigin ? { presetOrigin: kf.presetOrigin } : {}),
     })
   }
@@ -1131,6 +1142,7 @@ function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
       offset: entry.time - start,
       value: entry.value,
       ...(entry.easingOut ? { easingOut: entry.easingOut } : {}),
+      ...(entry.easingPreset ? { easingPreset: entry.easingPreset } : {}),
       ...(entry.presetOrigin ? { presetOrigin: entry.presetOrigin } : {}),
     }))
   textAnimationClipboard = []
@@ -1158,6 +1170,8 @@ function pasteKeyframesAtPlayhead(api: ReturnType<typeof useSceneAPI>): boolean 
         item.value,
         item.easingOut,
         item.presetOrigin,
+        item.easingPreset,
+        { existingEasing: 'replace' },
       )
       const track = api
         .getTracksForNode(targetNodeId)

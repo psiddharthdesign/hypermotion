@@ -245,6 +245,8 @@ export interface NodeBaseMutable {
   trimStart: number
   trimEnd: number
   loop: boolean
+  beatAnalysis: import('@/audio/beatSync').BeatAnalysis | undefined
+  beatGrid: import('@/audio/beatSync').AudioBeatGrid | undefined
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
@@ -656,7 +658,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
                 importWarning:
                   (y.get('importWarning') as string | undefined) ?? undefined,
               }
-            : {}),
+            : {
+                beatAnalysis:
+                  (y.get('beatAnalysis') as import('@/audio/beatSync').BeatAnalysis | undefined) ??
+                  undefined,
+                beatGrid:
+                  (y.get('beatGrid') as import('@/audio/beatSync').AudioBeatGrid | undefined) ??
+                  undefined,
+              }),
         } as Node
       case 'text':
         return {
@@ -982,6 +991,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             startTime: number; trimStart: number; trimEnd: number; loop: boolean;
             fit: 'cover' | 'contain' | 'fill' | 'none'; muted: boolean;
             importWarning: string;
+            beatAnalysis: import('@/audio/beatSync').BeatAnalysis;
+            beatGrid: import('@/audio/beatSync').AudioBeatGrid;
           }>
           const mp = (props ?? {}) as MediaProps
           const defaultSize: Size =
@@ -997,6 +1008,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('trimEnd', mp.trimEnd ?? mp.duration ?? 0)
           y.set('loop', mp.loop ?? false)
           y.set('muted', mp.muted ?? (kind === 'video'))
+          if (kind === 'audio') {
+            if (mp.beatAnalysis) y.set('beatAnalysis', mp.beatAnalysis)
+            if (mp.beatGrid) y.set('beatGrid', mp.beatGrid)
+          }
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
             if (mp.importWarning) y.set('importWarning', mp.importWarning)
