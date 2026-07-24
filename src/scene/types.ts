@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  PaperShaderParams,
+  PaperShaderType,
+} from '@/scene/paperShaders'
+
+export type {
+  PaperShaderCategory,
+  PaperShaderDefinition,
+  PaperShaderParams,
+  PaperShaderParamValue,
+  PaperShaderType,
+} from '@/scene/paperShaders'
+
 /**
  * Scene graph types.
  *
@@ -726,6 +739,37 @@ export interface ImageNode extends NodeBase {
 }
 
 /**
+ * Generated shader layer rendered by Paper Shaders.
+ *
+ * Common parameters stay directly on the node for backward compatibility
+ * with the original Mesh Gradient schema. Shader-specific Paper props live in
+ * `params`, while image-consuming shaders can resolve either another scene
+ * layer (`sourceNodeId`) or a self-contained/path-based source (`sourceImage`).
+ */
+export interface ShaderNode extends NodeBase {
+  kind: 'shader'
+  size: Size
+  shaderType: PaperShaderType
+  /** Paper-compatible #RGB, #RRGGBB, or #RRGGBBAA colors. */
+  colors: string[]
+  /** Shader-specific JSON-serializable Paper props. */
+  params: PaperShaderParams
+  /** Optional source layer for Paper image filters and shape effects. */
+  sourceNodeId?: NodeId
+  /** Optional data URL, URL, or absolute path used as the image source. */
+  sourceImage?: string
+  /** Timeline multiplier shared by animated shaders. */
+  speed: number
+  /** Paper's global shader graphic scale. */
+  scale: number
+  /** Legacy Mesh Gradient fields retained for old scenes and callers. */
+  distortion: number
+  swirl: number
+  /** Paper MeshGradient's grainOverlay value. */
+  grain: number
+}
+
+/**
  * Video node. Visual layer backed by an HTMLVideoElement. The source
  * media is stored as a data URL on `src` for MVP (same strategy as
  * ImageNode — keeps the Yjs doc self-contained, heavy but simple).
@@ -930,6 +974,16 @@ export interface CameraNode extends NodeBase {
   bloomRadius: number
   /** Normalized luminance threshold above which pixels bloom. */
   bloomThreshold: number
+  /** Enables the camera-wide analog VHS signal treatment. */
+  vhsEnabled: boolean
+  /** Overall VHS contribution, from a clean signal at 0 to a worn tape at 1. */
+  vhsIntensity: number
+  /** Fine luminance grain mixed into the VHS signal, from 0 to 1. */
+  vhsNoise: number
+  /** Horizontal tape scanline contrast, from 0 to 1. */
+  vhsScanlines: number
+  /** Horizontal red/blue tape bleed in composition pixels. */
+  vhsColorBleed: number
   /** Whether editor helpers should draw the focus plane. */
   showFocusPlane: boolean
 }
@@ -992,6 +1046,7 @@ export type Node =
   | VectorNode
   | TextNode
   | ImageNode
+  | ShaderNode
   | VideoNode
   | AudioNode
   | ComponentNode
@@ -1160,6 +1215,10 @@ export type PropertyId =
   | 'camera.bloomStrength'
   | 'camera.bloomRadius'
   | 'camera.bloomThreshold'
+  | 'camera.vhsIntensity'
+  | 'camera.vhsNoise'
+  | 'camera.vhsScanlines'
+  | 'camera.vhsColorBleed'
   // appearance group — post-layout, cheap
   | 'appearance.opacity'
   | 'appearance.cornerRadius'

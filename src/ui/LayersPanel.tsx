@@ -1013,6 +1013,7 @@ const GLYPHS: Record<NodeKind, string> = {
   vector: '⌁',
   text: 'T',
   image: '▧',
+  shader: '✦',
   component: '◆',
   instance: '◇',
   camera: '◉',
@@ -1042,7 +1043,7 @@ function KindGlyph({ node }: { node: Node }) {
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
   return (
     <span
-      className="w-3 shrink-0 text-center font-mono text-[10px] text-text-dim"
+      className="flex w-3 shrink-0 items-center justify-center text-center font-mono text-[10px] text-text-dim"
       style={{
         color: isComponentNode ? 'oklch(0.7 0.24 300)' : undefined,
       }}

@@ -2,6 +2,7 @@
 
 import * as Y from 'yjs'
 import { createSceneAPI, snapshotScene, type SceneAPI } from '@/scene/doc'
+import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
 import type { NodeId, Scene } from '@/scene/types'
 
 /**
@@ -40,6 +41,7 @@ export function sceneToBytes(doc: Y.Doc): Uint8Array {
  */
 export function applyBytesToScene(doc: Y.Doc, bytes: Uint8Array): void {
   Y.applyUpdate(doc, bytes)
+  removeLegacy3DObjects(doc)
 }
 
 /**
@@ -63,6 +65,7 @@ export function applyBytesToScene(doc: Y.Doc, bytes: Uint8Array): void {
 export function loadSceneIntoDoc(targetDoc: Y.Doc, bytes: Uint8Array): void {
   const sideDoc = new Y.Doc()
   Y.applyUpdate(sideDoc, bytes)
+  removeLegacy3DObjects(sideDoc)
 
   const sideScene = sideDoc.getMap('scene')
   const targetScene = targetDoc.getMap('scene')

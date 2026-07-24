@@ -22,6 +22,7 @@ describe('DOM camera post-effects fallback', () => {
     api.setNodeProperty(camera.id, 'chromaticAberrationAmount', 4)
     api.setNodeProperty(camera.id, 'bloomEnabled', true)
     api.setNodeProperty(camera.id, 'bloomStrength', 0.8)
+    api.setNodeProperty(camera.id, 'vhsEnabled', true)
     const authored = api.getActiveCamera()
     if (!authored) throw new Error('Expected the updated camera')
 
@@ -32,6 +33,10 @@ describe('DOM camera post-effects fallback', () => {
         bloomStrength: 1.4,
         bloomRadius: 0.6,
         bloomThreshold: 0.25,
+        vhsIntensity: 0.8,
+        vhsNoise: 0.6,
+        vhsScanlines: 0.7,
+        vhsColorBleed: 5,
       }),
     ).toMatchObject({
       chromaticAberrationEnabled: true,
@@ -41,6 +46,11 @@ describe('DOM camera post-effects fallback', () => {
       bloomStrength: 1.4,
       bloomRadius: 0.6,
       bloomThreshold: 0.25,
+      vhsEnabled: true,
+      vhsIntensity: 0.8,
+      vhsNoise: 0.6,
+      vhsScanlines: 0.7,
+      vhsColorBleed: 5,
     })
   })
 
@@ -125,5 +135,27 @@ describe('DOM camera post-effects fallback', () => {
     expect(fallbackPostEffectPadding(effects)).toBe(
       Math.ceil(fallbackBloomSigma(0.5) * 3 + 6 + 2),
     )
+  })
+
+  it('provides a lightweight static VHS fallback without an empty SVG filter', () => {
+    const markup = renderToStaticMarkup(
+      <CameraPostEffectsFallback
+        effects={normalizeCameraPostEffects({
+          vhsEnabled: true,
+          vhsIntensity: 0.8,
+          vhsScanlines: 0.5,
+        })}
+        width={960}
+        height={540}
+      >
+        <span>Scene</span>
+      </CameraPostEffectsFallback>,
+    )
+
+    expect(markup).toContain('data-camera-post-effects="vhs"')
+    expect(markup).toContain('data-vhs-fallback-scanlines="true"')
+    expect(markup).toContain('saturate(')
+    expect(markup).not.toContain('<filter')
+    expect(markup).not.toContain('url(&quot;#hm-camera-post-')
   })
 })

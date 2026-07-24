@@ -81,6 +81,10 @@ test('create_scene description lists supported camera property ids', () => {
     'camera.bloomStrength',
     'camera.bloomRadius',
     'camera.bloomThreshold',
+    'camera.vhsIntensity',
+    'camera.vhsNoise',
+    'camera.vhsScanlines',
+    'camera.vhsColorBleed',
   ]) {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
@@ -141,6 +145,43 @@ test('create_scene description lists supported layout property ids', () => {
     const escapedPropertyId = propertyId.replaceAll('.', '\\.')
     assert.match(description, new RegExp(`${escapedPropertyId}(?:,|\\.)`))
   }
+})
+
+test('create_scene description documents all Paper shader nodes', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /'shader'/)
+  assert.match(description, /all 29 Paper Shaders/)
+  for (const field of [
+    'shaderType',
+    'colors',
+    'params',
+    'sourceNodeId',
+    'sourceImage',
+    'speed',
+    'scale',
+    'distortion',
+    'swirl',
+    'grain',
+  ]) {
+    assert.match(description, new RegExp(field))
+  }
+  for (const shaderType of [
+    'mesh-gradient',
+    'paper-texture',
+    'halftone-cmyk',
+    'liquid-metal',
+    'gem-smoke',
+  ]) {
+    assert.match(description, new RegExp(shaderType))
+  }
+  assert.match(description, /require a source/)
+  assert.match(description, /size 640x360/)
+  assert.match(description, /Shader parameters are static node fields/)
+  assert.doesNotMatch(description, /primitive3d/i)
 })
 
 test('create_scene description mentions text animation track fields', () => {

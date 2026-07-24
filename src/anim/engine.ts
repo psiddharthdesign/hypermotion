@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NodeId, PropertyId, Track, TrackId } from '@/scene'
+import type { BlendMode, NodeId, PropertyId, Track, TrackId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { PROPERTIES } from '@/scene/props'
 import { lerpOklchStrings } from './color'
@@ -73,6 +73,8 @@ export interface AnimatedValue {
   cornerRadius?: number
   /** Override for the node's `appearance.fill` solid color. */
   fill?: string
+  /** Discrete override for `node.appearance.blendMode`. */
+  blendMode?: BlendMode
   /** 0→1 progress for text-specific animation effects. */
   textProgress?: number
   /** Text effect config attached to the active text.progress track. */
@@ -105,6 +107,10 @@ export interface AnimatedValue {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vhsIntensity?: number
+  vhsNoise?: number
+  vhsScanlines?: number
+  vhsColorBleed?: number
 }
 
 /** Empty snapshot value — no tracks means no overrides. */
@@ -597,6 +603,10 @@ function writeProperty(
     if (typeof value === 'string') into.fill = value
     return
   }
+  if (id === 'appearance.blendMode') {
+    if (isBlendMode(value)) into.blendMode = value
+    return
+  }
   if (typeof value !== 'number') return
   // REPLACE semantics — a track's keyframe value is the absolute value
   // the rendered property should take on at that instant. Composition
@@ -728,8 +738,44 @@ function writeProperty(
     case 'camera.bloomThreshold':
       into.bloomThreshold = value
       break
+    case 'camera.vhsIntensity':
+      into.vhsIntensity = value
+      break
+    case 'camera.vhsNoise':
+      into.vhsNoise = value
+      break
+    case 'camera.vhsScanlines':
+      into.vhsScanlines = value
+      break
+    case 'camera.vhsColorBleed':
+      into.vhsColorBleed = value
+      break
     // Other PropertyIds ignored for MVP (layout + variant go through FLIP).
     default:
       break
+  }
+}
+
+function isBlendMode(value: unknown): value is BlendMode {
+  switch (value) {
+    case 'normal':
+    case 'multiply':
+    case 'screen':
+    case 'overlay':
+    case 'darken':
+    case 'lighten':
+    case 'color-dodge':
+    case 'color-burn':
+    case 'hard-light':
+    case 'soft-light':
+    case 'difference':
+    case 'exclusion':
+    case 'hue':
+    case 'saturation':
+    case 'color':
+    case 'luminosity':
+      return true
+    default:
+      return false
   }
 }

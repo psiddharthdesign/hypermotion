@@ -104,6 +104,31 @@ describe('animation engine track preview', () => {
     expect(engine.getSnapshot()[nodeId]?.opacity).toBe(1)
   })
 
+  it('steps animated layer blend modes at their authored keyframes', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('rect', null)
+    api.setTrack({
+      id: 'blend-mode-track',
+      nodeId,
+      propertyId: 'appearance.blendMode',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'normal', time: 0, value: 'normal' },
+        { id: 'overlay', time: 1, value: 'overlay' },
+      ],
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+
+    engine.seek(0)
+    expect(engine.getSnapshot()[nodeId]?.blendMode).toBe('normal')
+    engine.seek(0.999)
+    expect(engine.getSnapshot()[nodeId]?.blendMode).toBe('normal')
+    engine.seek(1)
+    expect(engine.getSnapshot()[nodeId]?.blendMode).toBe('overlay')
+  })
+
   it('evaluates transient keyframe timing without mutating the scene', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('rect', null)

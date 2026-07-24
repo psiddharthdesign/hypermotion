@@ -2,7 +2,12 @@
 
 import type { AnimatedValue } from '@/anim'
 import type { Rect, SolvedLayout } from '@/layout'
-import type { CameraNode, Node, NodeId, SceneAPI } from '@/scene'
+import type {
+  CameraNode,
+  Node,
+  NodeId,
+  SceneAPI,
+} from '@/scene'
 import {
   add3,
   cross3,
@@ -329,6 +334,15 @@ export function resolveCamera3D(
       animated?.bloomRadius ?? camera.bloomRadius,
     bloomThreshold:
       animated?.bloomThreshold ?? camera.bloomThreshold,
+    vhsEnabled: camera.vhsEnabled,
+    vhsIntensity:
+      animated?.vhsIntensity ?? camera.vhsIntensity,
+    vhsNoise:
+      animated?.vhsNoise ?? camera.vhsNoise,
+    vhsScanlines:
+      animated?.vhsScanlines ?? camera.vhsScanlines,
+    vhsColorBleed:
+      animated?.vhsColorBleed ?? camera.vhsColorBleed,
   })
   const fieldOfView =
     animated?.fieldOfView ??
@@ -562,6 +576,7 @@ export function buildWorldPlanes(
     ? collectTargetPathNodeIds(context, targetNodeIds)
     : null
   const planes: Plane3D[] = []
+  let paintOrder = 0
   const getNode = (nodeId: NodeId): Node | null =>
     context.nodesById.get(nodeId) ?? null
   const segmentTextNodeIds = context.segmentTextNodeIds
@@ -717,7 +732,7 @@ export function buildWorldPlanes(
         rect,
         renderKind: segmentText ? 'segment-text' : 'canvas',
         contentMode,
-        paintOrder: planes.length,
+        paintOrder: paintOrder++,
         // Opacity belongs to the emitted plane, irrespective of whether its
         // pixels come from the node itself or a flattened subtree. Baking a
         // subtree root's animated opacity into a CanvasTexture forced a full

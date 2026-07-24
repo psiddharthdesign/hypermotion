@@ -8,6 +8,7 @@ import {
   CHROMATIC_ABERRATION_SHADER,
   PostEffectsIdleQualityController,
   ScenePostEffectsRenderer,
+  VHS_SHADER,
   cameraPostEffectsActive,
   cameraPostEffectsEnabled,
   cameraPostEffectsInteractionChanged,
@@ -28,6 +29,11 @@ describe('camera post effects', () => {
       bloomStrength: 0.8,
       bloomRadius: 0.35,
       bloomThreshold: 0.75,
+      vhsEnabled: false,
+      vhsIntensity: 0.65,
+      vhsNoise: 0.35,
+      vhsScanlines: 0.5,
+      vhsColorBleed: 3,
     })
 
     expect(
@@ -39,6 +45,11 @@ describe('camera post effects', () => {
         bloomStrength: 12,
         bloomRadius: -1,
         bloomThreshold: 2,
+        vhsEnabled: true,
+        vhsIntensity: 9,
+        vhsNoise: -2,
+        vhsScanlines: Number.NaN,
+        vhsColorBleed: 80,
       }),
     ).toEqual({
       chromaticAberrationEnabled: true,
@@ -49,6 +60,11 @@ describe('camera post effects', () => {
       bloomStrength: 4,
       bloomRadius: 0,
       bloomThreshold: 1,
+      vhsEnabled: true,
+      vhsIntensity: 1,
+      vhsNoise: 0,
+      vhsScanlines: 0.5,
+      vhsColorBleed: 32,
     })
   })
 
@@ -62,6 +78,8 @@ describe('camera post effects', () => {
         chromaticAberrationAmount: 0,
         bloomEnabled: true,
         bloomStrength: 0,
+        vhsEnabled: true,
+        vhsIntensity: 0,
       }),
     ).toBe(false)
     expect(
@@ -76,6 +94,12 @@ describe('camera post effects', () => {
         bloomEnabled: true,
       }),
     ).toBe(true)
+    expect(
+      cameraPostEffectsActive({
+        ...disabled,
+        vhsEnabled: true,
+      }),
+    ).toBe(true)
   })
 
   it('ties resource lifetime to authored toggles, not animated zeroes', () => {
@@ -88,12 +112,18 @@ describe('camera post effects', () => {
       bloomEnabled: true,
       bloomStrength: 0,
     })
+    const zeroVhs = normalizeCameraPostEffects({
+      vhsEnabled: true,
+      vhsIntensity: 0,
+    })
 
     expect(cameraPostEffectsEnabled(disabled)).toBe(false)
     expect(cameraPostEffectsEnabled(zeroChromatic)).toBe(true)
     expect(cameraPostEffectsEnabled(zeroBloom)).toBe(true)
+    expect(cameraPostEffectsEnabled(zeroVhs)).toBe(true)
     expect(cameraPostEffectsActive(zeroChromatic)).toBe(false)
     expect(cameraPostEffectsActive(zeroBloom)).toBe(false)
+    expect(cameraPostEffectsActive(zeroVhs)).toBe(false)
   })
 
   it('converts composition-pixel separation into aspect-correct UV offsets', () => {
@@ -179,6 +209,7 @@ describe('camera post effects', () => {
       chromaticAberrationEnabled: true,
     })
     const after = { ...before, chromaticAberrationAmount: 12 }
+    const vhsAfter = { ...before, vhsNoise: 0.8 }
 
     expect(cameraPostEffectsInteractionChanged(before, before, 1, 1)).toBe(
       false,
@@ -186,6 +217,9 @@ describe('camera post effects', () => {
     expect(cameraPostEffectsInteractionChanged(before, after, 1, 1)).toBe(
       true,
     )
+    expect(
+      cameraPostEffectsInteractionChanged(before, vhsAfter, 1, 1),
+    ).toBe(true)
     expect(cameraPostEffectsInteractionChanged(before, before, 1, 1.25)).toBe(
       true,
     )
@@ -267,6 +301,11 @@ describe('camera post effects', () => {
     api.setNodeProperty(camera.id, 'bloomStrength', 1.1)
     api.setNodeProperty(camera.id, 'bloomRadius', 0.4)
     api.setNodeProperty(camera.id, 'bloomThreshold', 0.7)
+    api.setNodeProperty(camera.id, 'vhsEnabled', true)
+    api.setNodeProperty(camera.id, 'vhsIntensity', 0.6)
+    api.setNodeProperty(camera.id, 'vhsNoise', 0.3)
+    api.setNodeProperty(camera.id, 'vhsScanlines', 0.4)
+    api.setNodeProperty(camera.id, 'vhsColorBleed', 4)
     const authored = api.getActiveCamera()
     if (!authored) throw new Error('Expected the updated camera')
 
@@ -278,6 +317,10 @@ describe('camera post effects', () => {
         bloomStrength: 2,
         bloomRadius: 0.6,
         bloomThreshold: 0.25,
+        vhsIntensity: 0.9,
+        vhsNoise: 0.7,
+        vhsScanlines: 0.8,
+        vhsColorBleed: 7,
       },
       { width: 960, height: 540 },
     )
@@ -289,6 +332,11 @@ describe('camera post effects', () => {
       bloomStrength: 2,
       bloomRadius: 0.6,
       bloomThreshold: 0.25,
+      vhsEnabled: true,
+      vhsIntensity: 0.9,
+      vhsNoise: 0.7,
+      vhsScanlines: 0.8,
+      vhsColorBleed: 7,
     })
   })
 
@@ -320,5 +368,21 @@ describe('camera post effects', () => {
     expect(CHROMATIC_ABERRATION_SHADER.fragmentShader).toContain(
       '#include <colorspace_fragment>',
     )
+  })
+
+  it('builds VHS variation only from scene time and composition pixels', () => {
+    expect(VHS_SHADER.uniforms).toHaveProperty('hmTime')
+    expect(VHS_SHADER.uniforms).toHaveProperty('hmResolution')
+    expect(VHS_SHADER.fragmentShader).toContain(
+      'floor(sceneTime * 60.0 + 0.0001)',
+    )
+    expect(VHS_SHADER.fragmentShader).toContain('floor(vUv * resolution)')
+    expect(VHS_SHADER.fragmentShader).toContain(
+      'hmColorBleedPx * amount / resolution.x',
+    )
+    expect(VHS_SHADER.fragmentShader).toContain('hash21')
+    expect(VHS_SHADER.fragmentShader).not.toContain('random(')
+    expect(VHS_SHADER.fragmentShader).not.toContain('tonemapping_fragment')
+    expect(VHS_SHADER.fragmentShader).not.toContain('colorspace_fragment')
   })
 })

@@ -23,6 +23,11 @@ import {
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
+import {
+  PaperShaderRenderQualityProvider,
+  PaperShaderSourceLayer,
+} from '@/render/PaperShaderLayer'
+import { waitForPaperShadersReady } from '@/render/paperShaderSource'
 import { getAnimEngine } from '@/anim'
 import {
   createElectronCapture,
@@ -409,9 +414,18 @@ function RenderCanvas({ job }: { job: RenderJob }) {
   // resolveDimensions guarantees they match, but defensive math here
   // keeps a misconfigured job from producing letterboxed exports.
   const scale = Math.min(scaleX, scaleY)
+  const paperShaderMinPixelRatio = Math.max(2, scaleX, scaleY)
+  const paperShaderMaxPixelCount = Math.max(
+    1920 * 1080 * 4,
+    job.outputWidth * job.outputHeight,
+  )
 
   return (
-    <div
+    <PaperShaderRenderQualityProvider
+      minPixelRatio={paperShaderMinPixelRatio}
+      maxPixelCount={paperShaderMaxPixelCount}
+    >
+      <div
       // Black backdrop fills the window completely — any window pixels
       // outside the artboard (shouldn't happen if main sized correctly,
       // but defensive) will encode as flat black, not random GPU
@@ -426,6 +440,17 @@ function RenderCanvas({ job }: { job: RenderJob }) {
         overflow: 'hidden',
       }}
     >
+      {solved &&
+      camera?.kind === 'camera' &&
+      threeCameraAvailable ? (
+        <PaperShaderSourceLayer
+          api={api}
+          layout={solved}
+          sceneVersion={version}
+          minPixelRatio={paperShaderMinPixelRatio}
+          maxPixelCount={paperShaderMaxPixelCount}
+        />
+      ) : null}
       <div
         data-canvas-root
         data-render-camera-backend={
@@ -469,33 +494,27 @@ function RenderCanvas({ job }: { job: RenderJob }) {
             className="absolute inset-0"
             style={{ transformStyle: 'preserve-3d' }}
           >
-            <div
-              className="absolute inset-0"
-              style={{
-                opacity: threeCameraAvailable ? 0 : 1,
-                transformStyle: 'preserve-3d',
-              }}
-            >
-              <ScenePostProcessLayer
-                rootId={rootId}
-                solved={solved}
-                order={renderOrder}
-                animated={animated}
-                inherited={inherited}
-                cameraDepthOfField={threeCameraAvailable ? null : cameraDepthOfField}
-                cameraPostEffects={
-                  threeCameraAvailable ? null : cameraPostEffects
-                }
-                sceneFill={sceneFill}
-                canvasWidth={canvasWidth}
-                canvasHeight={canvasHeight}
-                sceneCorner={sceneCorner}
-                includeSceneFill
-                textureSource
-                sceneContentStyle={
-                  threeCameraAvailable
-                    ? undefined
-                    : cameraTransform
+            {!threeCameraAvailable ? (
+              <div
+                className="absolute inset-0"
+                style={{ transformStyle: 'preserve-3d' }}
+              >
+                <ScenePostProcessLayer
+                  rootId={rootId}
+                  solved={solved}
+                  order={renderOrder}
+                  animated={animated}
+                  inherited={inherited}
+                  cameraDepthOfField={cameraDepthOfField}
+                  cameraPostEffects={cameraPostEffects}
+                  sceneFill={sceneFill}
+                  canvasWidth={canvasWidth}
+                  canvasHeight={canvasHeight}
+                  sceneCorner={sceneCorner}
+                  includeSceneFill
+                  textureSource
+                  sceneContentStyle={
+                    cameraTransform
                       ? {
                           transform: cameraTransform,
                           transformOrigin: '0 0',
@@ -503,9 +522,10 @@ function RenderCanvas({ job }: { job: RenderJob }) {
                           backfaceVisibility: 'visible',
                         }
                       : undefined
-                }
-              />
-            </div>
+                  }
+                />
+              </div>
+            ) : null}
             <ThreeSceneViewport
               api={api}
               layout={solved}
@@ -556,7 +576,8 @@ function RenderCanvas({ job }: { job: RenderJob }) {
           </>
         )}
       </div>
-    </div>
+      </div>
+    </PaperShaderRenderQualityProvider>
   )
 }
 
@@ -601,6 +622,17 @@ async function runExportLoop(
   // solve has fully committed + the canvas has painted at least once
   // before the first capture.
   await waitForFrames(4)
+  const paperShadersReady = await waitForPaperShadersReady()
+  if (!paperShadersReady) {
+    reportError(
+      requestId,
+      'A Paper shader image could not be prepared for export. Check its source image and CORS access, then try again.',
+    )
+    return
+  }
+  // Paper's processed object URL still needs to reach ShaderMount and paint
+  // into its WebGL canvas after Suspense resolves.
+  await waitForFrames(3)
 
   const sceneCanvas = {
     width: api.getMeta().canvas?.width ?? job.outputWidth,

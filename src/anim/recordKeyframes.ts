@@ -87,6 +87,10 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   bloomStrength: 'camera.bloomStrength',
   bloomRadius: 'camera.bloomRadius',
   bloomThreshold: 'camera.bloomThreshold',
+  vhsIntensity: 'camera.vhsIntensity',
+  vhsNoise: 'camera.vhsNoise',
+  vhsScanlines: 'camera.vhsScanlines',
+  vhsColorBleed: 'camera.vhsColorBleed',
 }
 
 export type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'

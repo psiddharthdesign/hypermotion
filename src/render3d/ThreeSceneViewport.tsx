@@ -82,6 +82,11 @@ import {
   updateDepthOfFieldShader,
 } from '@/render3d/depthOfFieldShader'
 import {
+  captureBackdropForMaterial,
+  disposeBackdropBlendMode,
+  setBackdropBlendMode,
+} from '@/render3d/layerBlendMode'
+import {
   PostEffectsIdleQualityController,
   ScenePostEffectsRenderer,
   cameraPostEffectsActive,
@@ -105,6 +110,10 @@ import {
   paintVectorNodeToCanvas,
   vectorTrimState,
 } from '@/render/vectorPaint'
+import {
+  getPaperShaderSourceCanvas,
+  paperShaderSourceEventName,
+} from '@/render/paperShaderSource'
 import { getPreservedVectorSource } from '@/render/vectorSource'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
 
@@ -340,6 +349,7 @@ function disposePlaneRecord(record: PlaneRecord) {
   record.video?.load()
   record.video = undefined
   record.mesh.geometry.dispose()
+  disposeBackdropBlendMode(record.mesh.material)
   record.mesh.material.dispose()
   record.texture.dispose()
 }
@@ -568,8 +578,15 @@ export function ThreeSceneViewport({
     void sceneVersion
     const ranges = new Map<NodeId, PlayheadDrivenTextureRange>()
     if (!showPlanes) return ranges
+    const duration = Math.max(0, api.getMeta().duration)
     for (const id of api.getAllNodeIds()) {
       const node = api.getNode(id)
+      if (node?.kind === 'shader') {
+        if (node.speed > 0.0001) {
+          ranges.set(id, { start: 0, end: duration })
+        }
+        continue
+      }
       if (node?.kind !== 'text' || !node.textAnimation) continue
       const engineDriven = api
         .getTracksForNode(id)
@@ -607,8 +624,13 @@ export function ThreeSceneViewport({
 
   useEffect(() => {
     const onImageLoaded = () => setImageRevision((revision) => revision + 1)
+    const paperShaderEvent = paperShaderSourceEventName()
     window.addEventListener(IMAGE_TEXTURE_LOADED_EVENT, onImageLoaded)
-    return () => window.removeEventListener(IMAGE_TEXTURE_LOADED_EVENT, onImageLoaded)
+    window.addEventListener(paperShaderEvent, onImageLoaded)
+    return () => {
+      window.removeEventListener(IMAGE_TEXTURE_LOADED_EVENT, onImageLoaded)
+      window.removeEventListener(paperShaderEvent, onImageLoaded)
+    }
   }, [])
 
   useEffect(
@@ -876,6 +898,7 @@ export function ThreeSceneViewport({
         width,
         height,
         postEffectsPixelRatio,
+        playhead,
       )
       if (postEffectsActive) {
         postEffects.render()
@@ -1254,6 +1277,9 @@ function syncPlanes(
       installDepthOfFieldShader(material)
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = plane.node.name
+      mesh.onBeforeRender = (activeRenderer) => {
+        captureBackdropForMaterial(activeRenderer, material)
+      }
       const outline = makePlaneOutline(plane.rect.width, plane.rect.height)
       scene.add(mesh)
       scene.add(outline)
@@ -1343,7 +1369,14 @@ function syncPlanes(
     applyPlaneTransform(record.outline, plane)
     record.mesh.renderOrder = plane.paintOrder
     record.outline.renderOrder = 100000 + plane.paintOrder
-    applyMaterialBlendMode(record.mesh.material, plane.node.appearance.blendMode)
+    const blendMode =
+      animated[plane.nodeId]?.blendMode ??
+      plane.node.appearance.blendMode
+    if (plane.node.kind === 'shader') {
+      setBackdropBlendMode(record.mesh.material, blendMode)
+    } else {
+      applyMaterialBlendMode(record.mesh.material, blendMode)
+    }
     syncMaterialClipping(record, plane)
     record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
     record.mesh.visible = plane.node.visible
@@ -1708,7 +1741,10 @@ function syncTextSegmentPlane({
   applyPlaneTransform(record.outline, plane)
   record.mesh.renderOrder = plane.paintOrder
   record.outline.renderOrder = 100000 + plane.paintOrder
-  applyMaterialBlendMode(record.mesh.material, plane.node.appearance.blendMode)
+  applyMaterialBlendMode(
+    record.mesh.material,
+    anim?.blendMode ?? plane.node.appearance.blendMode,
+  )
   syncMaterialClipping(record, plane)
   record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
   record.mesh.visible = plane.node.visible
@@ -3226,8 +3262,14 @@ function syncMaterialClipping(record: PlaneRecord, plane: Plane3D) {
 }
 
 function clippingSignatureForPlane(plane: Plane3D): string {
-  if (!plane.clips?.length) return 'none'
-  return plane.clips
+  return clippingSignatureForClips(plane.clips)
+}
+
+function clippingSignatureForClips(
+  clips: readonly PlaneClip3D[] | undefined,
+): string {
+  if (!clips?.length) return 'none'
+  return clips
     .map((clip) => [
       clip.center.x,
       clip.center.y,
@@ -3245,8 +3287,14 @@ function clippingSignatureForPlane(plane: Plane3D): string {
 }
 
 function clippingPlanesForPlane(plane: Plane3D): THREE.Plane[] | null {
-  if (!plane.clips?.length) return null
-  return plane.clips.flatMap((clip) => clippingPlanesForClip(clip))
+  return clippingPlanesForClips(plane.clips)
+}
+
+function clippingPlanesForClips(
+  clips: readonly PlaneClip3D[] | undefined,
+): THREE.Plane[] | null {
+  if (!clips?.length) return null
+  return clips.flatMap((clip) => clippingPlanesForClip(clip))
 }
 
 function clippingPlanesForClip(clip: PlaneClip3D): THREE.Plane[] {
@@ -3456,6 +3504,9 @@ function renderPlaneTexture(
     paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
     if (node.kind === 'image' && node.src) {
       paintImageNode(ctx, node, w, h)
+    }
+    if (node.kind === 'shader') {
+      paintPaperShaderNode(ctx, node, w, h)
     }
   })
   if (node.kind === 'text') {
@@ -3699,7 +3750,7 @@ function paintNodeIntoSubtree(
   ctx.globalAlpha *= ownOpacity * inherited.opacity
   const previousComposite = ctx.globalCompositeOperation
   ctx.globalCompositeOperation = canvasCompositeForBlendMode(
-    node.appearance.blendMode,
+    anim?.blendMode ?? node.appearance.blendMode,
   )
   ctx.translate(x + inherited.x + tx + w / 2, y + inherited.y + ty + h / 2)
   const inheritedRotation = inherited.rotation + rot
@@ -3794,6 +3845,7 @@ function renderNodePaint(
   withRoundedClip(ctx, w, h, cornerRadius, () => {
     paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
     if (node.kind === 'image' && node.src) paintImageNode(ctx, node, w, h)
+    if (node.kind === 'shader') paintPaperShaderNode(ctx, node, w, h)
   })
   if (node.kind === 'text') {
     paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
@@ -3859,6 +3911,40 @@ function paintFill(
     paintImageFill(ctx, fill, width, height)
     return
   }
+}
+
+function paintPaperShaderNode(
+  ctx: CanvasRenderingContext2D,
+  node: Extract<Node, { kind: 'shader' }>,
+  width: number,
+  height: number,
+) {
+  const source = getPaperShaderSourceCanvas(node.id)
+  if (source && source.width > 0 && source.height > 0) {
+    ctx.drawImage(source, 0, 0, width, height)
+    return
+  }
+
+  // Paper's WebGL2 mount initializes after the first scene raster. Keep that
+  // frame useful—and make unsupported-WebGL fallbacks graceful—by painting a
+  // deterministic approximation from the authored colors until the live
+  // source canvas announces readiness.
+  const safeColors = node.colors
+    .filter((color) =>
+      /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color),
+    )
+    .slice(0, 10)
+  const colors =
+    safeColors.length > 0 ? safeColors : ['#241d9a', '#f75092']
+  const gradient = ctx.createLinearGradient(0, 0, width, height)
+  colors.forEach((color, index) => {
+    gradient.addColorStop(
+      colors.length === 1 ? 0 : index / (colors.length - 1),
+      color,
+    )
+  })
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, width, height)
 }
 
 function canvasLinearGradient(

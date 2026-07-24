@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as Y from 'yjs'
 import {
+  PAPER_SHADER_TYPES,
   applyScenePatch,
   buildSceneBytes,
   readSceneSummary,
@@ -584,6 +585,155 @@ test('buildSceneBytes preserves image fit none', () => {
   assert.equal(nodes.image.fit, 'none')
 })
 
+test('buildSceneBytes preserves explicit Mesh Gradient shader fields', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'gradient']
+  scene.nodes = {
+    ...scene.nodes,
+    gradient: {
+      id: 'gradient',
+      kind: 'shader',
+      parent: 'root',
+      size: { width: 800, height: 450 },
+      shaderType: 'mesh-gradient',
+      colors: ['#001122', '#aabbcc', '#ff00aa'],
+      speed: 1.2,
+      scale: 1.5,
+      distortion: 0.35,
+      swirl: 0.4,
+      grain: 0.22,
+    },
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes.gradient.size, { width: 800, height: 450 })
+  assert.equal(nodes.gradient.shaderType, 'mesh-gradient')
+  assert.deepEqual(nodes.gradient.colors, ['#001122', '#aabbcc', '#ff00aa'])
+  assert.equal(nodes.gradient.speed, 1.2)
+  assert.equal(nodes.gradient.scale, 1.5)
+  assert.equal(nodes.gradient.distortion, 0.35)
+  assert.equal(nodes.gradient.swirl, 0.4)
+  assert.equal(nodes.gradient.grain, 0.22)
+  assert.equal(validateScene(buildSceneBytes(scene)).ok, true)
+})
+
+test('buildSceneBytes supports all 29 Paper shader ids and generic params', () => {
+  assert.equal(PAPER_SHADER_TYPES.length, 29)
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root || !scene.nodes) throw new Error('missing sample root')
+  const requiredSourceTypes = new Set([
+    'fluted-glass',
+    'image-dithering',
+    'halftone-dots',
+    'halftone-cmyk',
+    'heatmap',
+  ])
+
+  for (const shaderType of PAPER_SHADER_TYPES) {
+    const id = `shader-${shaderType}`
+    root.children = [...(root.children ?? []), id]
+    scene.nodes[id] = {
+      id,
+      kind: 'shader',
+      parent: 'root',
+      shaderType,
+      params: { intensity: 0.4, nested: { enabled: true } },
+      ...(requiredSourceTypes.has(shaderType)
+        ? { sourceImage: 'data:image/png;base64,AA==' }
+        : {}),
+    }
+  }
+
+  const bytes = buildSceneBytes(scene)
+  const result = validateScene(bytes)
+  const data = inspectScene(bytes)
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(result.errors, [])
+  for (const shaderType of PAPER_SHADER_TYPES) {
+    const node = nodes[`shader-${shaderType}`]
+    assert.equal(node.shaderType, shaderType)
+    assert.deepEqual(node.params, {
+      intensity: 0.4,
+      nested: { enabled: true },
+    })
+    assert.equal(typeof node.name, 'string')
+  }
+})
+
+test('buildSceneBytes preserves shader source layer and image fields', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root || !scene.nodes) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'source', 'glass']
+  scene.nodes.source = {
+    id: 'source',
+    kind: 'image',
+    parent: 'root',
+    src: '/tmp/source.png',
+  }
+  scene.nodes.glass = {
+    id: 'glass',
+    kind: 'shader',
+    parent: 'root',
+    shaderType: 'fluted-glass',
+    sourceNodeId: 'source',
+    sourceImage: '/tmp/fallback.png',
+  }
+
+  const bytes = buildSceneBytes(scene)
+  const nodes = inspectScene(bytes).nodes as PlainSceneMap
+
+  assert.equal(nodes.glass.sourceNodeId, 'source')
+  assert.equal(nodes.glass.sourceImage, '/tmp/fallback.png')
+  assert.equal(validateScene(bytes).ok, true)
+})
+
+test('authoring rejects retired primitive3d nodes at runtime', () => {
+  const retiredNode = {
+    id: 'legacy-mesh',
+    kind: 'primitive3d',
+    parent: 'root',
+  }
+  const scene = sampleScene()
+  if (!scene.nodes) throw new Error('missing sample nodes')
+  scene.nodes[retiredNode.id] = retiredNode as never
+
+  assert.throws(
+    () => buildSceneBytes(scene),
+    /node legacy-mesh has unsupported kind: primitive3d/,
+  )
+
+  const bytes = buildSceneBytes(sampleScene())
+  assert.throws(
+    () =>
+      applyScenePatch(bytes, [
+        {
+          op: 'createNode',
+          node: retiredNode,
+        } as never,
+      ]),
+    /node legacy-mesh has unsupported kind: primitive3d/,
+  )
+  assert.throws(
+    () =>
+      applyScenePatch(bytes, [
+        {
+          op: 'setNodeProperty',
+          nodeId: 'title',
+          key: 'kind',
+          value: 'primitive3d',
+        },
+      ]),
+    /node title has unsupported kind: primitive3d/,
+  )
+})
+
 test('buildSceneBytes writes text defaults expected by the desktop app', () => {
   const scene = sampleScene()
   scene.nodes = {
@@ -877,6 +1027,76 @@ test('applyScenePatch fills image defaults for created nodes', () => {
   assert.deepEqual(nodes.thumbnail.size, { width: 100, height: 100 })
   assert.equal(nodes.thumbnail.src, '')
   assert.equal(nodes.thumbnail.fit, 'cover')
+})
+
+test('applyScenePatch fills shader defaults and accepts shader property edits', () => {
+  const bytes = buildSceneBytes(sampleScene())
+  const patched = applyScenePatch(bytes, [
+    {
+      op: 'createNode',
+      node: {
+        id: 'gradient',
+        kind: 'shader',
+        parent: 'root',
+      },
+    },
+    {
+      op: 'setNodeProperty',
+      nodeId: 'gradient',
+      key: 'grain',
+      value: 0.2,
+    },
+  ])
+  const data = inspectScene(patched)
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes.gradient, {
+    id: 'gradient',
+    kind: 'shader',
+    name: 'Mesh Gradient',
+    parent: 'root',
+    children: [],
+    transform: {
+      x: 0,
+      y: 0,
+      z: 0,
+      rotation: 0,
+      rotationX: 0,
+      rotationY: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      anchorZ: 0,
+      space: 'local',
+      renderMode: 'flat',
+    },
+    appearance: {
+      opacity: 1,
+      fill: null,
+      stroke: null,
+      cornerRadius: 0,
+      blendMode: 'normal',
+      effects: [],
+    },
+    visible: true,
+    locked: false,
+    position: 'flow',
+    isMask: false,
+    componentSourceId: null,
+    workspaceOnly: false,
+    size: { width: 640, height: 360 },
+    shaderType: 'mesh-gradient',
+    colors: ['#e0eaff', '#241d9a', '#f75092', '#9f50d3'],
+    params: {},
+    speed: 0.6,
+    scale: 1,
+    distortion: 0.8,
+    swirl: 0.1,
+    grain: 0.2,
+  })
+  assert.deepEqual(nodes.root.children, ['title', 'gradient'])
+  assert.equal(validateScene(patched).ok, true)
 })
 
 test('applyScenePatch fills layout defaults for created frame nodes', () => {
@@ -1267,6 +1487,128 @@ test('validateScene rejects unsupported node kinds', () => {
 
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, ['node title has unsupported kind: shape'])
+})
+
+test('validateScene rejects malformed Mesh Gradient shader fields', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'gradient']
+  scene.nodes = {
+    ...scene.nodes,
+    gradient: {
+      id: 'gradient',
+      kind: 'shader',
+      parent: 'root',
+    },
+  }
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(scene))
+  const sceneMap = doc.getMap<unknown>('scene')
+  const nodes = sceneMap.get('nodes') as Y.Map<Y.Map<unknown>>
+  const shader = nodes.get('gradient')
+  if (!shader) throw new Error('missing shader node')
+  shader.set('shaderType', 'noise')
+  shader.set('colors', ['#ffffff', 'bogus', 42])
+  shader.set('speed', 'fast')
+  shader.set('scale', 8)
+  shader.set('distortion', -0.1)
+  shader.set('swirl', 2)
+  shader.set('grain', 1.5)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'shader node gradient has unsupported shaderType: noise',
+    'shader node gradient colors must contain 1-10 hex colors (#RGB, #RRGGBB, or #RRGGBBAA)',
+    'shader node gradient speed must be a finite number',
+    'shader node gradient scale must be between 0.1 and 4',
+    'shader node gradient distortion must be between 0 and 1',
+    'shader node gradient swirl must be between 0 and 1',
+    'shader node gradient grain must be between 0 and 1',
+  ])
+})
+
+test('validateScene requires sources for the five image-only shaders', () => {
+  const requiredSourceTypes = [
+    'fluted-glass',
+    'image-dithering',
+    'halftone-dots',
+    'halftone-cmyk',
+    'heatmap',
+  ] as const
+
+  for (const shaderType of requiredSourceTypes) {
+    const scene = sampleScene()
+    const root = scene.nodes?.root
+    if (!root || !scene.nodes) throw new Error('missing sample root')
+    root.children = [...(root.children ?? []), 'shader']
+    scene.nodes.shader = {
+      id: 'shader',
+      kind: 'shader',
+      parent: 'root',
+      shaderType,
+    }
+
+    const result = validateScene(buildSceneBytes(scene))
+
+    assert.ok(
+      result.errors.includes(
+        `shader node shader ${shaderType} requires sourceNodeId or sourceImage`,
+      ),
+    )
+  }
+})
+
+test('validateScene rejects missing shader source layers and unsafe params', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root || !scene.nodes) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'shader']
+  scene.nodes.shader = {
+    id: 'shader',
+    kind: 'shader',
+    parent: 'root',
+    shaderType: 'water',
+    sourceNodeId: 'missing',
+  }
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(scene))
+  const sceneMap = doc.getMap<unknown>('scene')
+  const nodes = sceneMap.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('shader')?.set('params', {
+    amount: Number.POSITIVE_INFINITY,
+  })
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.deepEqual(result.errors, [
+    'shader node shader params must be a bounded JSON object with finite numbers',
+    'shader node shader sourceNodeId points to missing node: missing',
+  ])
+})
+
+test('validateScene rejects image sources on generated shaders', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root || !scene.nodes) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'shader']
+  scene.nodes.shader = {
+    id: 'shader',
+    kind: 'shader',
+    parent: 'root',
+    shaderType: 'voronoi',
+    sourceImage: '/tmp/source.png',
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.ok(
+    result.errors.includes(
+      'shader node shader voronoi does not accept an image source',
+    ),
+  )
 })
 
 test('validateScene rejects node entries that are not objects', () => {
@@ -1932,6 +2274,11 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     bloomStrength: 0.8,
     bloomRadius: 0.35,
     bloomThreshold: 0.75,
+    vhsEnabled: false,
+    vhsIntensity: 0.65,
+    vhsNoise: 0.35,
+    vhsScanlines: 0.5,
+    vhsColorBleed: 3,
     showFocusPlane: false,
   })
 })
@@ -2570,6 +2917,11 @@ test('buildSceneBytes writes camera lens and depth defaults', () => {
   assert.equal(camera.bloomStrength, 0.8)
   assert.equal(camera.bloomRadius, 0.35)
   assert.equal(camera.bloomThreshold, 0.75)
+  assert.equal(camera.vhsEnabled, false)
+  assert.equal(camera.vhsIntensity, 0.65)
+  assert.equal(camera.vhsNoise, 0.35)
+  assert.equal(camera.vhsScanlines, 0.5)
+  assert.equal(camera.vhsColorBleed, 3)
   assert.equal(camera.showFocusPlane, false)
 })
 
@@ -2599,6 +2951,11 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   camera.bloomStrength = 1.4
   camera.bloomRadius = 0.6
   camera.bloomThreshold = 0.45
+  camera.vhsEnabled = true
+  camera.vhsIntensity = 0.85
+  camera.vhsNoise = 0.65
+  camera.vhsScanlines = 0.75
+  camera.vhsColorBleed = 8
 
   const data = inspectScene(buildSceneBytes(scene))
   const nodes = data.nodes as PlainSceneMap
@@ -2626,6 +2983,11 @@ test('buildSceneBytes preserves explicit camera lens and depth fields', () => {
   assert.equal(cameraNode.bloomStrength, 1.4)
   assert.equal(cameraNode.bloomRadius, 0.6)
   assert.equal(cameraNode.bloomThreshold, 0.45)
+  assert.equal(cameraNode.vhsEnabled, true)
+  assert.equal(cameraNode.vhsIntensity, 0.85)
+  assert.equal(cameraNode.vhsNoise, 0.65)
+  assert.equal(cameraNode.vhsScanlines, 0.75)
+  assert.equal(cameraNode.vhsColorBleed, 8)
 })
 
 test('buildSceneBytes derives camera point of interest x/y from transform', () => {

@@ -17,6 +17,7 @@ import type {
   Scene,
   Section,
   SceneMeta,
+  ShaderNode,
   Size,
   TextNode,
   Track,
@@ -31,8 +32,17 @@ import {
   DEFAULT_CAMERA_SCROLL_SENSITIVITY,
   normalizeCameraScrollSensitivity,
 } from '@/scene/types'
+import {
+  getPaperShaderDefinition,
+  normalizePaperShaderColors,
+  normalizePaperShaderParams,
+  normalizePaperShaderSourceImage,
+  normalizePaperShaderSourceNodeId,
+  normalizePaperShaderType,
+} from '@/scene/paperShaders'
 import { normalizeTextAnimation } from '@/anim/textAnimations'
 import { emptyVectorDocument } from '@/scene/vector/model'
+import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -229,6 +239,17 @@ export interface NodeBaseMutable {
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
   importWarning: string
+  // shader-kind fields — common and generic Paper shader authoring parameters.
+  shaderType: ShaderNode['shaderType']
+  colors: string[]
+  params: ShaderNode['params']
+  sourceNodeId: NodeId | undefined
+  sourceImage: string | undefined
+  speed: number
+  scale: number
+  distortion: number
+  swirl: number
+  grain: number
   // vector-kind fields
   viewBox: VectorViewBox
   vector: VectorDocument
@@ -287,6 +308,11 @@ export interface NodeBaseMutable {
   bloomStrength: number
   bloomRadius: number
   bloomThreshold: number
+  vhsEnabled: boolean
+  vhsIntensity: number
+  vhsNoise: number
+  vhsScanlines: number
+  vhsColorBleed: number
   showFocusPlane: boolean
   /** Stack of layout guides — only meaningful on FrameNode. */
   layoutGuides: import('@/scene/types').LayoutGuide[]
@@ -369,7 +395,7 @@ const VECTOR_DEFAULT_APPEARANCE: Appearance = {
 function defaultAppearanceForKind(kind: NodeKind): Appearance {
   if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
   if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
-  if (kind === 'vector') return VECTOR_DEFAULT_APPEARANCE
+  if (kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
   return DEFAULT_APPEARANCE
 }
 
@@ -380,7 +406,11 @@ function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
     blendMode: normalizeBlendMode(appearance.blendMode),
     effects: appearance.effects ?? [],
   }
-  if (kind === 'video' || kind === 'audio' || kind === 'vector') {
+  if (
+    kind === 'video' ||
+    kind === 'audio' ||
+    kind === 'vector'
+  ) {
     return {
       ...normalized,
       fill: null,
@@ -473,6 +503,7 @@ function normalizeLayout(raw: unknown): Layout {
 }
 
 const DEFAULT_SIZE: Size = { width: 100, height: 100 }
+const DEFAULT_SHADER_SIZE: Size = { width: 640, height: 360 }
 
 const DEFAULT_VARIANT_TRANSITION: import('@/scene/types').VariantTransition = {
   duration: 0.3,
@@ -486,6 +517,7 @@ const DEFAULT_VARIANT_TRANSITION: import('@/scene/types').VariantTransition = {
 // ---------------------------------------------------------------------------
 
 export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
+  removeLegacy3DObjects(doc)
   const scene = doc.getMap<unknown>('scene')
 
   // Lazy-init the sub-maps on first access so a freshly loaded doc from
@@ -603,6 +635,81 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
               }
             : {}),
         } as Node
+      case 'shader':
+        {
+          const shaderType = normalizePaperShaderType(y.get('shaderType'))
+          const definition = getPaperShaderDefinition(shaderType)
+          const rawParams = isPlainRecord(y.get('params'))
+            ? y.get('params') as Record<string, unknown>
+            : undefined
+          const distortion = clampFiniteNumber(
+            y.get('distortion'),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.8 : 0,
+          )
+          const swirl = clampFiniteNumber(
+            y.get('swirl'),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.1 : 0,
+          )
+          const grain = clampFiniteNumber(
+            y.get('grain'),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.08 : 0,
+          )
+          const params = normalizePaperShaderParams(
+            rawParams,
+            definition.defaults.params,
+          )
+          // Mesh Gradient shipped before the generic params bag. Migrate each
+          // missing field independently so partially-upgraded scenes preserve
+          // their authored legacy values.
+          if (shaderType === 'mesh-gradient') {
+            params.distortion = hasOwn(rawParams, 'distortion')
+              ? clampFiniteNumber(rawParams?.distortion, 0, 1, distortion)
+              : distortion
+            params.swirl = hasOwn(rawParams, 'swirl')
+              ? clampFiniteNumber(rawParams?.swirl, 0, 1, swirl)
+              : swirl
+            params.grainOverlay = hasOwn(rawParams, 'grainOverlay')
+              ? clampFiniteNumber(rawParams?.grainOverlay, 0, 1, grain)
+              : grain
+          }
+          const sourceNodeId = normalizePaperShaderSourceNodeId(
+            y.get('sourceNodeId'),
+          )
+          const sourceImage = normalizePaperShaderSourceImage(
+            y.get('sourceImage'),
+          )
+          return {
+            ...base,
+            kind,
+            size: (y.get('size') as Size) ?? DEFAULT_SHADER_SIZE,
+            shaderType,
+            colors: normalizePaperShaderColors(y.get('colors'), shaderType),
+            params,
+            ...(sourceNodeId ? { sourceNodeId } : {}),
+            ...(sourceImage ? { sourceImage } : {}),
+            speed: clampFiniteNumber(
+              y.get('speed'),
+              0,
+              2,
+              definition.defaults.speed,
+            ),
+            scale: clampFiniteNumber(
+              y.get('scale'),
+              0.1,
+              4,
+              definition.defaults.scale,
+            ),
+            distortion,
+            swirl,
+            grain,
+          } as ShaderNode
+        }
       case 'vector':
         return {
           ...base,
@@ -817,6 +924,16 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (y.get('bloomRadius') as number | undefined) ?? 0.35,
           bloomThreshold:
             (y.get('bloomThreshold') as number | undefined) ?? 0.75,
+          vhsEnabled:
+            (y.get('vhsEnabled') as boolean | undefined) ?? false,
+          vhsIntensity:
+            (y.get('vhsIntensity') as number | undefined) ?? 0.65,
+          vhsNoise:
+            (y.get('vhsNoise') as number | undefined) ?? 0.35,
+          vhsScanlines:
+            (y.get('vhsScanlines') as number | undefined) ?? 0.5,
+          vhsColorBleed:
+            (y.get('vhsColorBleed') as number | undefined) ?? 3,
           showFocusPlane: (y.get('showFocusPlane') as boolean | undefined) ?? false,
         } as CameraNode
       }
@@ -922,12 +1039,24 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       const id = genId()
       doc.transact(() => {
         const y = new Y.Map<unknown>()
+        const requestedShaderType =
+          kind === 'shader'
+            ? normalizePaperShaderType(
+                (props as Partial<ShaderNode> | undefined)?.shaderType,
+              )
+            : null
+        const generatedName = requestedShaderType
+          ? getPaperShaderDefinition(requestedShaderType).label
+          : defaultName(kind)
         y.set('id', id)
         y.set('kind', kind)
-        y.set('name', props?.name ?? defaultName(kind))
+        y.set('name', props?.name ?? generatedName)
         y.set('parent', parent)
         y.set('children', new Y.Array<NodeId>())
-        y.set('transform', (props as Partial<FrameNode>)?.transform ?? DEFAULT_TRANSFORM)
+        y.set('transform', {
+          ...DEFAULT_TRANSFORM,
+          ...((props as Partial<FrameNode>)?.transform ?? {}),
+        })
         // Text and media paint through their own content, not through a
         // colored wrapper box. Any caller-supplied appearance wins.
         const defaultAppearance = defaultAppearanceForKind(kind)
@@ -970,6 +1099,67 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         }
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
+        }
+        if (kind === 'shader') {
+          const sp = props as Partial<ShaderNode> | undefined
+          const shaderType = requestedShaderType ?? 'mesh-gradient'
+          const definition = getPaperShaderDefinition(shaderType)
+          const params = normalizePaperShaderParams(
+            sp?.params,
+            definition.defaults.params,
+          )
+          const distortion = clampFiniteNumber(
+            sp?.distortion ??
+              (shaderType === 'mesh-gradient' ? params.distortion : undefined),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.8 : 0,
+          )
+          const swirl = clampFiniteNumber(
+            sp?.swirl ??
+              (shaderType === 'mesh-gradient' ? params.swirl : undefined),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.1 : 0,
+          )
+          const grain = clampFiniteNumber(
+            sp?.grain ??
+              (shaderType === 'mesh-gradient'
+                ? params.grainOverlay
+                : undefined),
+            0,
+            1,
+            shaderType === 'mesh-gradient' ? 0.08 : 0,
+          )
+          if (shaderType === 'mesh-gradient') {
+            params.distortion = distortion
+            params.swirl = swirl
+            params.grainOverlay = grain
+          }
+          y.set('size', sp?.size ?? DEFAULT_SHADER_SIZE)
+          y.set('shaderType', shaderType)
+          y.set(
+            'colors',
+            normalizePaperShaderColors(sp?.colors, shaderType),
+          )
+          y.set('params', params)
+          const sourceNodeId = normalizePaperShaderSourceNodeId(
+            sp?.sourceNodeId,
+          )
+          const sourceImage = normalizePaperShaderSourceImage(sp?.sourceImage)
+          if (sourceNodeId) y.set('sourceNodeId', sourceNodeId)
+          if (sourceImage) y.set('sourceImage', sourceImage)
+          y.set(
+            'speed',
+            clampFiniteNumber(sp?.speed, 0, 2, definition.defaults.speed),
+          )
+          y.set(
+            'scale',
+            clampFiniteNumber(sp?.scale, 0.1, 4, definition.defaults.scale),
+          )
+          y.set('distortion', distortion)
+          y.set('swirl', swirl)
+          y.set('grain', grain)
         }
         if (kind === 'vector') {
           const vp = props as Partial<VectorNode> | undefined
@@ -1134,6 +1324,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('bloomStrength', cp?.bloomStrength ?? 0.8)
           y.set('bloomRadius', cp?.bloomRadius ?? 0.35)
           y.set('bloomThreshold', cp?.bloomThreshold ?? 0.75)
+          y.set('vhsEnabled', cp?.vhsEnabled ?? false)
+          y.set('vhsIntensity', cp?.vhsIntensity ?? 0.65)
+          y.set('vhsNoise', cp?.vhsNoise ?? 0.35)
+          y.set('vhsScanlines', cp?.vhsScanlines ?? 0.5)
+          y.set('vhsColorBleed', cp?.vhsColorBleed ?? 3)
           y.set('showFocusPlane', cp?.showFocusPlane ?? false)
         }
 
@@ -1187,6 +1382,44 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (y.get('kind') === 'shader') {
+          const shaderType = normalizePaperShaderType(y.get('shaderType'))
+          if (
+            shaderType === 'mesh-gradient' &&
+            (key === 'distortion' || key === 'swirl' || key === 'grain')
+          ) {
+            const definition = getPaperShaderDefinition(shaderType)
+            const params = normalizePaperShaderParams(
+              y.get('params'),
+              definition.defaults.params,
+            )
+            const normalized = clampFiniteNumber(value, 0, 1, 0)
+            params[key === 'grain' ? 'grainOverlay' : key] = normalized
+            y.set('params', params)
+            y.set(key, normalized)
+            return
+          }
+          if (key === 'params') {
+            const definition = getPaperShaderDefinition(shaderType)
+            const params = normalizePaperShaderParams(
+              value,
+              definition.defaults.params,
+            )
+            y.set('params', params)
+            if (shaderType === 'mesh-gradient') {
+              y.set(
+                'distortion',
+                clampFiniteNumber(params.distortion, 0, 1, 0.8),
+              )
+              y.set('swirl', clampFiniteNumber(params.swirl, 0, 1, 0.1))
+              y.set(
+                'grain',
+                clampFiniteNumber(params.grainOverlay, 0, 1, 0.08),
+              )
+            }
+            return
+          }
+        }
         y.set(key, value)
       })
     },
@@ -1254,9 +1487,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         if (!s || typeof s.id !== 'string') return
         const raw = s as Section & { duration?: number }
         const start = Number.isFinite(raw.start) ? raw.start : 0
+        const legacyDuration =
+          typeof raw.duration === 'number' && Number.isFinite(raw.duration)
+            ? raw.duration
+            : 0
         const end = Number.isFinite(raw.end)
           ? raw.end
-          : start + (Number.isFinite(raw.duration) ? raw.duration : 0)
+          : start + legacyDuration
         out.push({
           ...raw,
           start,
@@ -1493,6 +1730,30 @@ function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasOwn(
+  value: Record<string, unknown> | undefined,
+  key: string,
+): boolean {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key)
+}
+
+function clampFiniteNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  return Math.max(min, Math.min(max, finiteNumber(value, fallback)))
+}
+
 function clamp01(value: unknown): number {
   return Math.max(0, Math.min(1, finiteNumber(value, 0)))
 }
@@ -1505,6 +1766,7 @@ function defaultName(kind: NodeKind): string {
     case 'vector': return 'Vector'
     case 'text': return 'Text'
     case 'image': return 'Image'
+    case 'shader': return 'Mesh Gradient'
     case 'video': return 'Video'
     case 'audio': return 'Audio'
     case 'component': return 'Component'

@@ -289,6 +289,8 @@ export function Timeline() {
   const setPlayhead = useUI((s) => s.setPlayhead)
   const playing = useUI((s) => s.playing)
   const setPlaying = useUI((s) => s.setPlaying)
+  const recording = useUI((s) => s.recording)
+  const setRecording = useUI((s) => s.setRecording)
   const selection = useUI((s) => s.selection)
   const setSelection = useUI((s) => s.setSelection)
   const setInspectorMode = useUI((s) => s.setInspectorMode)
@@ -2660,6 +2662,33 @@ export function Timeline() {
             <TransportIcon kind="end" />
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setRecording(!recording)}
+          aria-pressed={recording}
+          aria-label="Toggle Auto Key"
+          title={
+            recording
+              ? 'Auto Key is on — camera gestures and property edits create keyframes'
+              : 'Turn on Auto Key to record camera gestures and property edits as keyframes'
+          }
+          className={[
+            'flex h-7 shrink-0 items-center gap-1.5 rounded border px-2 text-[10px] font-semibold tracking-[0.06em] uppercase transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+            recording
+              ? 'border-red-500/60 bg-red-500/15 text-red-500 hover:bg-red-500/20'
+              : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+          ].join(' ')}
+        >
+          <span
+            aria-hidden
+            className={[
+              'h-1.5 w-1.5 rounded-full',
+              recording ? 'bg-red-500' : 'bg-text-dim',
+            ].join(' ')}
+          />
+          Auto Key
+        </button>
 
         {/* Playhead readout sits adjacent to the transport — current
             time/frame is part of "where is playback right now," not a

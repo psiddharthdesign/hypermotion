@@ -28,6 +28,7 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
+  PAPER_SHADER_TYPES,
   PROPERTY_IDS,
   buildSceneBytes,
   readSceneSummary,
@@ -93,7 +94,7 @@ export const createSceneTool: Tool = {
     "tracks with keyframes), passes it here, and gets a .hype file the desktop app " +
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
     "SceneJson shape (top level): { meta?, root?, activeCameraId?, nodes, tracks?, sections? }\n" +
-    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'video'|'audio'|'component'|'instance'|'camera', " +
+    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, ...kind-specific }\n" +
     "Design scenes with auto-layout by default from the first frame onward. Prefer layout.mode: 'flex' for rows/columns " +
     "and layout.mode: 'grid' for grids; use fixed transforms or layout.mode: 'none' only when the user explicitly asks " +
@@ -107,12 +108,22 @@ export const createSceneTool: Tool = {
     "Components can define variants, defaultSelection, variantOverrides, timelines, and interactions. " +
     "Instances point at componentId and carry selection, overrides, and instance-local interaction additions. " +
     "Component timelines are local tracks triggered by interactions, e.g. onClick -> playTimeline, and are scoped per instance.\n" +
+    `Shader nodes support all 29 Paper Shaders. shaderType is one of: ${PAPER_SHADER_TYPES.join(', ')}. ` +
+    "Use colors for a shader's color array, speed in 0..2, scale in 0.1..4, and params for shader-specific JSON-serializable Paper props. " +
+    "Image-consuming shaders accept sourceNodeId (another scene layer) or sourceImage (a data URL, URL, or absolute path). " +
+    "Fluted Glass, Image Dithering, Halftone Dots, Halftone CMYK, and Heatmap require a source; Paper Texture, Water, Liquid Metal, and Gem Smoke accept one optionally. " +
+    "Mesh Gradient remains backward-compatible with top-level distortion, swirl, and grain (Paper's grainOverlay), each in 0..1. " +
+    "Its omitted values default to size 640x360, colors ['#e0eaff','#241d9a','#f75092','#9f50d3'], speed 0.6, scale 1, distortion 0.8, swirl 0.1, and grain 0.08. " +
+    "Shader parameters are static node fields; " +
+    "size, transform, and appearance properties remain animatable through ordinary tracks.\n" +
     "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut?, easingPreset?: { presetId, strength } }], defaultEasing?, textAnimation? } — omitted keyframes default to [].\n" +
     "Text animation tracks can include textAnimation with mode, applyTo ('layer'|'letters'|'words'|'lines'), order, delay, smoothing ('none'|'soft'|'smooth' blends neighbouring profile samples), optional staggerCurve ({ version: 1, points: [{ id, x, y, inX, inY, outX, outY }] } defining a monotonic initial-to-final trail profile sampled by every segment as it travels across text), duration, startTime, acceleration, easingPresetId, easingStrength, direction, travelDistance, optional motionVector ({ x, y, z } per segment in line-height multiples; +X right, +Y down, +Z toward the viewer; null or omitted uses direction/travelDistance), optional motionPath ({ version: 1, points: [{ id, t, x, y, z, inX, inY, inZ, outX, outY, outZ }] } defining an editable cubic spatial route in line-height units; t=0 is the settled origin, t=1 is the authored start, +X right, +Y down, +Z toward the viewer; motionPath takes precedence over motionVector), and blurRadius.\n" +
     "Camera nodes can include focalLength, scrollSensitivity (0.1-2, default 1), fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
     "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture (legacy strength), " +
     "fStop (default 2.8; lower values create more blur), bladeCount (3-16), bladeRotation, bokehRatio (0.25-4), " +
-    "dofPreviewQuality ('draft'|'balanced'|'high'), iso, blurLevel, blurQuality (24-48 effective final export samples; default/minimum 24), and showFocusPlane. " +
+    "dofPreviewQuality ('draft'|'balanced'|'high'), iso, blurLevel, blurQuality (24-48 effective final export samples; default/minimum 24), " +
+    "chromaticAberrationEnabled/Amount/Angle, bloomEnabled/Strength/Radius/Threshold, " +
+    "vhsEnabled, vhsIntensity, vhsNoise, vhsScanlines, vhsColorBleed, and showFocusPlane. " +
     "Hyper Motion currently supports only one camera node per scene; " +
     "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
     "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +

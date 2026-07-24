@@ -64,6 +64,10 @@ export interface AnimatedValue {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vhsIntensity?: number
+  vhsNoise?: number
+  vhsScanlines?: number
+  vhsColorBleed?: number
 }
 
 const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<

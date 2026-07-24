@@ -45,12 +45,47 @@ export interface SceneMetaJson {
 export type TextAlignJson = 'start' | 'center' | 'end'
 export type NodePositionJson = 'flow' | 'absolute'
 
+export const PAPER_SHADER_TYPES = [
+  'mesh-gradient',
+  'smoke-ring',
+  'neuro-noise',
+  'dot-orbit',
+  'dot-grid',
+  'simplex-noise',
+  'metaballs',
+  'waves',
+  'perlin-noise',
+  'voronoi',
+  'warp',
+  'god-rays',
+  'spiral',
+  'swirl',
+  'dithering',
+  'grain-gradient',
+  'pulsing-border',
+  'color-panels',
+  'static-mesh-gradient',
+  'static-radial-gradient',
+  'paper-texture',
+  'fluted-glass',
+  'water',
+  'image-dithering',
+  'halftone-dots',
+  'halftone-cmyk',
+  'heatmap',
+  'liquid-metal',
+  'gem-smoke',
+] as const
+
+export type PaperShaderTypeJson = (typeof PAPER_SHADER_TYPES)[number]
+
 export type NodeKindJson =
   | 'frame'
   | 'rect'
   | 'ellipse'
   | 'text'
   | 'image'
+  | 'shader'
   | 'video'
   | 'audio'
   | 'component'
@@ -63,6 +98,7 @@ export const NODE_KINDS = [
   'ellipse',
   'text',
   'image',
+  'shader',
   'video',
   'audio',
   'component',
@@ -226,6 +262,16 @@ export interface NodeJson {
   src?: string
   fit?: MediaFitJson
   importWarning?: string
+  shaderType?: PaperShaderTypeJson
+  colors?: string[]
+  params?: JsonObject
+  sourceNodeId?: string
+  sourceImage?: string
+  speed?: number
+  scale?: number
+  distortion?: number
+  swirl?: number
+  grain?: number
   duration?: number
   volume?: number
   playbackRate?: number
@@ -301,6 +347,11 @@ export interface NodeJson {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vhsEnabled?: boolean
+  vhsIntensity?: number
+  vhsNoise?: number
+  vhsScanlines?: number
+  vhsColorBleed?: number
   showFocusPlane?: boolean
 }
 
@@ -428,6 +479,10 @@ export const PROPERTY_IDS = [
   'camera.bloomStrength',
   'camera.bloomRadius',
   'camera.bloomThreshold',
+  'camera.vhsIntensity',
+  'camera.vhsNoise',
+  'camera.vhsScanlines',
+  'camera.vhsColorBleed',
   'appearance.opacity',
   'appearance.cornerRadius',
   'appearance.cornerRadii',
@@ -761,6 +816,234 @@ const DEFAULT_LAYOUT: SceneLayout = {
 }
 
 const DEFAULT_SIZE: SceneSize = { width: 100, height: 100 }
+const DEFAULT_SHADER_SIZE: SceneSize = { width: 640, height: 360 }
+const PAPER_SHADER_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+const PAPER_SHADER_TYPE_SET: ReadonlySet<string> = new Set(PAPER_SHADER_TYPES)
+
+interface PaperShaderDefinitionJson {
+  label: string
+  requiresImage: boolean
+  acceptsImage: boolean
+  maxColors: number
+  colors: readonly string[]
+  speed: number
+  scale: number
+}
+
+const PAPER_SHADER_DEFINITIONS: Record<
+  PaperShaderTypeJson,
+  PaperShaderDefinitionJson
+> = {
+  'mesh-gradient': {
+    label: 'Mesh Gradient',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#e0eaff', '#241d9a', '#f75092', '#9f50d3'],
+    speed: 0.6,
+    scale: 1,
+  },
+  'smoke-ring': {
+    label: 'Smoke Ring',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#ffffff'],
+    speed: 0.5,
+    scale: 0.8,
+  },
+  'neuro-noise': shaderDefaults('Neuro Noise', 1),
+  'dot-orbit': {
+    label: 'Dot Orbit',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#ffc96b', '#ff6200', '#ff2f00', '#421100', '#1a0000'],
+    speed: 1.5,
+    scale: 1,
+  },
+  'dot-grid': shaderDefaults('Dot Grid', 0),
+  'simplex-noise': {
+    label: 'Simplex Noise',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#4449cf', '#ffd1e0', '#f94446', '#ffd36b', '#ffffff'],
+    speed: 0.5,
+    scale: 0.6,
+  },
+  metaballs: {
+    label: 'Metaballs',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 8,
+    colors: ['#6e33cc', '#ff5500', '#ffc105', '#ffc800', '#f585ff'],
+    speed: 1,
+    scale: 1,
+  },
+  waves: shaderDefaults('Waves', 0, 0.6),
+  'perlin-noise': shaderDefaults('Perlin Noise', 0.5),
+  voronoi: {
+    label: 'Voronoi',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 5,
+    colors: ['#ff8247', '#ffe53d'],
+    speed: 0.5,
+    scale: 0.5,
+  },
+  warp: {
+    label: 'Warp',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#121212', '#9470ff', '#121212', '#8838ff'],
+    speed: 1,
+    scale: 1,
+  },
+  'god-rays': {
+    label: 'God Rays',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 5,
+    colors: ['#a600ff6e', '#6200fff0', '#ffffff', '#33fff5'],
+    speed: 0.75,
+    scale: 1,
+  },
+  spiral: shaderDefaults('Spiral', 1),
+  swirl: {
+    label: 'Swirl',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#ffd1d1', '#ff8a8a', '#660000'],
+    speed: 0.32,
+    scale: 1,
+  },
+  dithering: shaderDefaults('Dithering', 1, 0.6),
+  'grain-gradient': {
+    label: 'Grain Gradient',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 7,
+    colors: ['#7300ff', '#eba8ff', '#00bfff', '#2a00ff'],
+    speed: 1,
+    scale: 1,
+  },
+  'pulsing-border': {
+    label: 'Pulsing Border',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 5,
+    colors: ['#0dc1fd', '#d915ef', '#ff3f2ecc'],
+    speed: 1,
+    scale: 0.6,
+  },
+  'color-panels': {
+    label: 'Color Panels',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 7,
+    colors: [
+      '#ff9d00',
+      '#fd4f30',
+      '#809bff',
+      '#6d2eff',
+      '#333aff',
+      '#f15cff',
+      '#ffd557',
+    ],
+    speed: 0.5,
+    scale: 0.8,
+  },
+  'static-mesh-gradient': {
+    label: 'Static Mesh Gradient',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#ffad0a', '#6200ff', '#e2a3ff', '#ff99fd'],
+    speed: 0,
+    scale: 1,
+  },
+  'static-radial-gradient': {
+    label: 'Static Radial Gradient',
+    requiresImage: false,
+    acceptsImage: false,
+    maxColors: 10,
+    colors: ['#00bbff', '#00ffe1', '#ffffff'],
+    speed: 0,
+    scale: 1,
+  },
+  'paper-texture': shaderDefaults('Paper Texture', 0, 0.6, true),
+  'fluted-glass': shaderDefaults('Fluted Glass', 0, 1, true, true),
+  water: shaderDefaults('Water', 1, 0.8, true),
+  'image-dithering': shaderDefaults(
+    'Image Dithering',
+    0,
+    1,
+    true,
+    true,
+  ),
+  'halftone-dots': shaderDefaults('Halftone Dots', 0, 1, true, true),
+  'halftone-cmyk': shaderDefaults('Halftone CMYK', 0, 1, true, true),
+  heatmap: {
+    label: 'Heatmap',
+    requiresImage: true,
+    acceptsImage: true,
+    maxColors: 10,
+    colors: [
+      '#11206a',
+      '#1f3ba2',
+      '#2f63e7',
+      '#6bd7ff',
+      '#ffe679',
+      '#ff991e',
+      '#ff4c00',
+    ],
+    speed: 1,
+    scale: 0.75,
+  },
+  'liquid-metal': shaderDefaults('Liquid Metal', 1, 0.6, true),
+  'gem-smoke': {
+    label: 'Gem Smoke',
+    requiresImage: false,
+    acceptsImage: true,
+    maxColors: 6,
+    colors: ['#333333', '#e7e6df'],
+    speed: 1,
+    scale: 0.6,
+  },
+}
+
+function shaderDefaults(
+  label: string,
+  speed: number,
+  scale = 1,
+  acceptsImage = false,
+  requiresImage = false,
+): PaperShaderDefinitionJson {
+  return {
+    label,
+    requiresImage,
+    acceptsImage,
+    maxColors: 10,
+    colors: [],
+    speed,
+    scale,
+  }
+}
+
+function isPaperShaderType(value: unknown): value is PaperShaderTypeJson {
+  return typeof value === 'string' && PAPER_SHADER_TYPE_SET.has(value)
+}
+
+function paperShaderDefinition(
+  value: unknown,
+): PaperShaderDefinitionJson {
+  return PAPER_SHADER_DEFINITIONS[
+    isPaperShaderType(value) ? value : 'mesh-gradient'
+  ]
+}
 
 const DEFAULT_META: SceneMeta = {
   id: 'scene',
@@ -796,10 +1079,14 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('nodes', nodes)
 
   for (const node of Object.values(json.nodes ?? {})) {
+    assertNodeKindCanBeAuthored(node.id, node.kind)
     const y = new Y.Map<unknown>()
     y.set('id', node.id)
     y.set('kind', node.kind)
-    y.set('name', node.name ?? defaultName(node.kind))
+    y.set(
+      'name',
+      node.name ?? defaultName(node.kind, node.shaderType),
+    )
     y.set('parent', node.parent ?? null)
     // Children: store as Y.Array so reorder ops work in the editor.
     const childArr = new Y.Array<string>()
@@ -807,7 +1094,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('children', childArr)
     y.set(
       'transform',
-      mergeWithDefaults(DEFAULT_TRANSFORM, node.transform),
+      mergeWithDefaults(
+        DEFAULT_TRANSFORM,
+        node.transform,
+      ),
     )
     y.set(
       'appearance',
@@ -859,6 +1149,26 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('src', node.src ?? '')
       y.set('fit', node.fit ?? 'cover')
       if (node.importWarning !== undefined) y.set('importWarning', node.importWarning)
+    }
+    if (node.kind === 'shader') {
+      const shaderType = node.shaderType ?? 'mesh-gradient'
+      const definition = paperShaderDefinition(shaderType)
+      y.set('size', mergeWithDefaults(DEFAULT_SHADER_SIZE, node.size))
+      y.set('shaderType', shaderType)
+      y.set('colors', node.colors ?? [...definition.colors])
+      y.set('params', node.params ?? {})
+      if (node.sourceNodeId !== undefined) {
+        y.set('sourceNodeId', node.sourceNodeId)
+      }
+      if (node.sourceImage !== undefined) y.set('sourceImage', node.sourceImage)
+      y.set('speed', node.speed ?? definition.speed)
+      y.set('scale', node.scale ?? definition.scale)
+      y.set(
+        'distortion',
+        node.distortion ?? (shaderType === 'mesh-gradient' ? 0.8 : 0),
+      )
+      y.set('swirl', node.swirl ?? (shaderType === 'mesh-gradient' ? 0.1 : 0))
+      y.set('grain', node.grain ?? (shaderType === 'mesh-gradient' ? 0.08 : 0))
     }
     if (node.kind === 'instance') {
       y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
@@ -958,6 +1268,11 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('bloomStrength', node.bloomStrength ?? 0.8)
       y.set('bloomRadius', node.bloomRadius ?? 0.35)
       y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
+      y.set('vhsEnabled', node.vhsEnabled ?? false)
+      y.set('vhsIntensity', node.vhsIntensity ?? 0.65)
+      y.set('vhsNoise', node.vhsNoise ?? 0.35)
+      y.set('vhsScanlines', node.vhsScanlines ?? 0.5)
+      y.set('vhsColorBleed', node.vhsColorBleed ?? 3)
       y.set('showFocusPlane', node.showFocusPlane ?? false)
     }
 
@@ -1093,6 +1408,106 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     if (node.kind === 'camera' && parent) {
       errors.push(`camera node ${id} must be scene-level with parent: null`)
     }
+    if (node.kind === 'shader') {
+      const shaderType = node.shaderType
+      const supportedShaderType = isPaperShaderType(shaderType)
+      if (!supportedShaderType) {
+        errors.push(
+          `shader node ${id} has unsupported shaderType: ${String(node.shaderType)}`,
+        )
+      }
+      const definition = paperShaderDefinition(shaderType)
+      const minimumColors = definition.colors.length > 0 ? 1 : 0
+      if (
+        !Array.isArray(node.colors) ||
+        node.colors.length < minimumColors ||
+        node.colors.length > definition.maxColors ||
+        node.colors.some(
+          (color) =>
+            typeof color !== 'string' ||
+            !PAPER_SHADER_HEX_COLOR.test(color),
+        )
+      ) {
+        const range =
+          minimumColors === 0
+            ? `0-${definition.maxColors}`
+            : `1-${definition.maxColors}`
+        errors.push(
+          `shader node ${id} colors must contain ${range} hex colors (#RGB, #RRGGBB, or #RRGGBBAA)`,
+        )
+      }
+      if (
+        node.params !== undefined &&
+        (!isPlainObject(node.params) || !isValidShaderParams(node.params))
+      ) {
+        errors.push(
+          `shader node ${id} params must be a bounded JSON object with finite numbers`,
+        )
+      }
+      const sourceNodeId =
+        typeof node.sourceNodeId === 'string' ? node.sourceNodeId.trim() : ''
+      const sourceImage =
+        typeof node.sourceImage === 'string' ? node.sourceImage.trim() : ''
+      if (
+        node.sourceNodeId !== undefined &&
+        (typeof node.sourceNodeId !== 'string' ||
+          sourceNodeId.length === 0 ||
+          sourceNodeId.length > 512)
+      ) {
+        errors.push(
+          `shader node ${id} sourceNodeId must be a non-empty string up to 512 characters`,
+        )
+      } else if (sourceNodeId === id) {
+        errors.push(`shader node ${id} cannot use itself as sourceNodeId`)
+      } else if (sourceNodeId && !nodes[sourceNodeId]) {
+        errors.push(
+          `shader node ${id} sourceNodeId points to missing node: ${sourceNodeId}`,
+        )
+      }
+      if (
+        node.sourceImage !== undefined &&
+        (typeof node.sourceImage !== 'string' || sourceImage.length === 0)
+      ) {
+        errors.push(
+          `shader node ${id} sourceImage must be a non-empty string`,
+        )
+      }
+      if (
+        supportedShaderType &&
+        !definition.acceptsImage &&
+        (sourceNodeId || sourceImage)
+      ) {
+        errors.push(
+          `shader node ${id} ${shaderType} does not accept an image source`,
+        )
+      }
+      if (
+        supportedShaderType &&
+        definition.requiresImage &&
+        !sourceNodeId &&
+        !sourceImage
+      ) {
+        errors.push(
+          `shader node ${id} ${shaderType} requires sourceNodeId or sourceImage`,
+        )
+      }
+      for (const [field, min, max] of [
+        ['speed', 0, 2],
+        ['scale', 0.1, 4],
+        ['distortion', 0, 1],
+        ['swirl', 0, 1],
+        ['grain', 0, 1],
+      ] as const) {
+        const value = node[field]
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          errors.push(`shader node ${id} ${field} must be a finite number`)
+        } else if (value < min || value > max) {
+          errors.push(
+            `shader node ${id} ${field} must be between ${min} and ${max}`,
+          )
+        }
+      }
+    }
     if (parent && !nodes[parent]) errors.push(`node ${id} has missing parent: ${parent}`)
     else if (parent) {
       const parentChildren = asRecord(nodes[parent]).children
@@ -1211,8 +1626,19 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   return { ok: errors.length === 0, errors, warnings }
 }
 
-function isNodeKind(value: string): value is NodeKindJson {
-  return NODE_KIND_SET.has(value as NodeKindJson)
+function isNodeKind(value: unknown): value is NodeKindJson {
+  return (
+    typeof value === 'string' &&
+    NODE_KIND_SET.has(value as NodeKindJson)
+  )
+}
+
+function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown): void {
+  if (kind === 'primitive3d') {
+    throw new Error(
+      `node ${String(nodeId)} has unsupported kind: ${String(kind)}`,
+    )
+  }
 }
 
 function isNodePosition(value: string): value is NodePositionJson {
@@ -1230,6 +1656,31 @@ function isJsonValue(value: unknown): value is JsonValue {
   if (Array.isArray(value)) return value.every(isJsonValue)
   if (!isPlainObject(value)) return false
   return Object.values(value).every(isJsonValue)
+}
+
+function isValidShaderParams(value: unknown, depth = 0): boolean {
+  if (value === null || typeof value === 'boolean') return true
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Math.abs(value) <= 1_000_000
+  }
+  if (typeof value === 'string') return value.length <= 32_768
+  if (depth >= 6) return false
+  if (Array.isArray(value)) {
+    return (
+      value.length <= 128 &&
+      value.every((item) => isValidShaderParams(item, depth + 1))
+    )
+  }
+  if (!isPlainObject(value)) return false
+  const entries = Object.entries(value)
+  if (entries.length > 128) return false
+  return entries.every(
+    ([key, item]) =>
+      key !== '__proto__' &&
+      key !== 'constructor' &&
+      key !== 'prototype' &&
+      isValidShaderParams(item, depth + 1),
+  )
 }
 
 export function applyScenePatch(bytes: Uint8Array, patch: ScenePatch | PatchOperation[]): Uint8Array {
@@ -1282,6 +1733,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
     case 'setNode': {
       const node = getNodeMap(scene, op.nodeId)
       for (const [k, v] of Object.entries(op.patch)) {
+        if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v)
         if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
@@ -1289,6 +1741,9 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
     }
     case 'setNodeProperty': {
       const node = getNodeMap(scene, op.nodeId)
+      if (op.key === 'kind') {
+        assertNodeKindCanBeAuthored(op.nodeId, op.value)
+      }
       if (op.key === 'children' && Array.isArray(op.value)) node.set(op.key, arrayToY(op.value))
       else node.set(op.key, op.value)
       return
@@ -1338,6 +1793,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
 }
 
 function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unknown> {
+  assertNodeKindCanBeAuthored(node.id, node.kind)
   const y = new Y.Map<unknown>()
   const handledKeys = new Set([
     'id',
@@ -1356,10 +1812,19 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   ])
   y.set('id', node.id)
   y.set('kind', node.kind)
-  y.set('name', node.name ?? defaultName(node.kind))
+  y.set(
+    'name',
+    node.name ?? defaultName(node.kind, node.shaderType),
+  )
   y.set('parent', node.parent ?? null)
   y.set('children', arrayToY(node.children ?? []))
-  y.set('transform', mergeWithDefaults(DEFAULT_TRANSFORM, node.transform as Partial<typeof DEFAULT_TRANSFORM>))
+  y.set(
+    'transform',
+    mergeWithDefaults(
+      DEFAULT_TRANSFORM,
+      node.transform as Partial<typeof DEFAULT_TRANSFORM>,
+    ),
+  )
   y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
@@ -1403,6 +1868,39 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('src', node.src ?? '')
     y.set('fit', node.fit ?? 'cover')
     if (node.importWarning !== undefined) y.set('importWarning', node.importWarning)
+  }
+  if (node.kind === 'shader') {
+    for (const key of [
+      'size',
+      'shaderType',
+      'colors',
+      'params',
+      'sourceNodeId',
+      'sourceImage',
+      'speed',
+      'scale',
+      'distortion',
+      'swirl',
+      'grain',
+    ]) {
+      handledKeys.add(key)
+    }
+    const shaderType = node.shaderType ?? 'mesh-gradient'
+    const definition = paperShaderDefinition(shaderType)
+    y.set('size', mergeWithDefaults(DEFAULT_SHADER_SIZE, node.size))
+    y.set('shaderType', shaderType)
+    y.set('colors', node.colors ?? [...definition.colors])
+    y.set('params', node.params ?? {})
+    if (node.sourceNodeId !== undefined) y.set('sourceNodeId', node.sourceNodeId)
+    if (node.sourceImage !== undefined) y.set('sourceImage', node.sourceImage)
+    y.set('speed', node.speed ?? definition.speed)
+    y.set('scale', node.scale ?? definition.scale)
+    y.set(
+      'distortion',
+      node.distortion ?? (shaderType === 'mesh-gradient' ? 0.8 : 0),
+    )
+    y.set('swirl', node.swirl ?? (shaderType === 'mesh-gradient' ? 0.1 : 0))
+    y.set('grain', node.grain ?? (shaderType === 'mesh-gradient' ? 0.08 : 0))
   }
   if (node.kind === 'frame' || node.kind === 'component') {
     for (const key of [
@@ -1500,6 +1998,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'bloomStrength',
       'bloomRadius',
       'bloomThreshold',
+      'vhsEnabled',
+      'vhsIntensity',
+      'vhsNoise',
+      'vhsScanlines',
+      'vhsColorBleed',
       'showFocusPlane',
     ]) {
       handledKeys.add(key)
@@ -1547,6 +2050,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('bloomStrength', node.bloomStrength ?? 0.8)
     y.set('bloomRadius', node.bloomRadius ?? 0.35)
     y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
+    y.set('vhsEnabled', node.vhsEnabled ?? false)
+    y.set('vhsIntensity', node.vhsIntensity ?? 0.65)
+    y.set('vhsNoise', node.vhsNoise ?? 0.35)
+    y.set('vhsScanlines', node.vhsScanlines ?? 0.5)
+    y.set('vhsColorBleed', node.vhsColorBleed ?? 3)
     y.set('showFocusPlane', node.showFocusPlane ?? false)
   }
   for (const [k, v] of Object.entries(node)) {
@@ -1796,13 +2304,17 @@ function keyframeLength(value: unknown): number {
   return 0
 }
 
-function defaultName(kind: NodeKindJson): string {
+function defaultName(
+  kind: NodeKindJson,
+  shaderType?: PaperShaderTypeJson,
+): string {
   switch (kind) {
     case 'frame': return 'Frame'
     case 'rect': return 'Rectangle'
     case 'ellipse': return 'Ellipse'
     case 'text': return 'Text'
     case 'image': return 'Image'
+    case 'shader': return paperShaderDefinition(shaderType).label
     case 'video': return 'Video'
     case 'audio': return 'Audio'
     case 'component': return 'Component'
@@ -1812,7 +2324,12 @@ function defaultName(kind: NodeKindJson): string {
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
-  if (kind === 'text' || kind === 'video' || kind === 'audio') {
+  if (
+    kind === 'text' ||
+    kind === 'video' ||
+    kind === 'audio' ||
+    kind === 'shader'
+  ) {
     return { ...DEFAULT_APPEARANCE, fill: null, stroke: null }
   }
   return { ...DEFAULT_APPEARANCE }
