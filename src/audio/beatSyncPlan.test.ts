@@ -74,6 +74,92 @@ describe('planKeyframeBeatSync', () => {
     expect(result.targetTimes).toEqual([10, 10.5, 11])
   })
 
+  it('anchors manually applied Bar 1 to the audio start on the timeline', () => {
+    const result = planKeyframeBeatSync(options(
+      [10.02],
+      {
+        grid: {
+          ...grid,
+          firstBeatTime: 2,
+        },
+        audio: {
+          startTime: 10,
+          trimStart: 2,
+          trimEnd: 6,
+          duration: 8,
+          playbackRate: 2,
+        },
+        sceneEndTime: 12,
+        selectedBars: { startBar: 1, endBar: 1 },
+      },
+    ))
+
+    expect(result.ok).toBe(true)
+    expect(result.preview.requestedSceneRange).toEqual({
+      start: 10,
+      end: 11,
+    })
+    expect(result.markers[0]?.time).toBe(10)
+    expect(result.targetTimes).toEqual([10])
+  })
+
+  it('keeps an explicit lead-in outside the Bar 1 range', () => {
+    const result = planKeyframeBeatSync(options(
+      [0.02],
+      {
+        grid: {
+          ...grid,
+          firstBeatTime: 0.25,
+        },
+        selectedBars: { startBar: 1, endBar: 1 },
+      },
+    ))
+
+    expect(result.ok).toBe(true)
+    expect(result.preview.requestedSceneRange).toEqual({
+      start: 0.25,
+      end: 2.25,
+    })
+    expect(result.preview.effectiveSceneRange).toEqual({
+      start: 0.25,
+      end: 2.25,
+    })
+    expect(result.markers[0]?.time).toBe(0.25)
+    expect(result.targetTimes).toEqual([0.25])
+  })
+
+  it('maps swung eighth-note targets through clip playback rate', () => {
+    const result = planKeyframeBeatSync(options(
+      [10.14, 10.38],
+      {
+        grid: {
+          ...grid,
+          swingPercent: 66.6667,
+          subdivisions: [
+            {
+              id: 'bar-2-swung-eighths',
+              startBar: 2,
+              endBar: 2,
+              division: 8,
+            },
+          ],
+        },
+        audio: {
+          startTime: 10,
+          trimStart: 2,
+          trimEnd: 6,
+          duration: 8,
+          playbackRate: 2,
+        },
+        selectedBars: { startBar: 2, endBar: 2 },
+      },
+    ))
+
+    expect(result.ok).toBe(true)
+    expect(result.targetTimes[0]).toBeCloseTo(10 + 1 / 6, 5)
+    expect(result.targetTimes[1]).toBeCloseTo(10 + 5 / 12, 5)
+  })
+
   it('uses an isolated range ahead of a work area and clips markers to it', () => {
     const result = planKeyframeBeatSync(options(
       [5.27, 5.71],

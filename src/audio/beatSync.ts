@@ -27,6 +27,12 @@ export interface BeatTransient {
 export interface TempoCandidate {
   bpm: number
   /**
+   * How this suggestion relates to the strongest directly observed pulse.
+   * Ratio alternatives are surfaced even when accent periodicity hides them
+   * from the ordinary local-peak list.
+   */
+  relationship?: 'direct' | '3:2' | '2:3'
+  /**
    * Beat phase inferred specifically for this tempo, in source-relative
    * seconds. Older persisted analyses may not have this field.
    */
@@ -48,7 +54,7 @@ export interface BeatAnalysis {
   /** Whether the estimate is safe to apply without asking the user to review. */
   status?: BeatAnalysisStatus
   /** Lets persisted analyses be invalidated when the detector changes. */
-  algorithmVersion?: 2
+  algorithmVersion?: 2 | 3
   /** First recurring beat phase in source-relative seconds. */
   firstBeatTime: number
   transients: BeatTransient[]
@@ -75,6 +81,8 @@ export interface MusicalGrid {
   beatsPerBar: number
   /** Denominator of the beat unit, normally 4 for quarter-note BPM. */
   beatUnit: NoteDivision
+  /** 50 is straight; 66.7 approximates triplet swing. */
+  swingPercent?: number
 }
 
 export interface BarSubdivision {
@@ -89,6 +97,14 @@ export interface BarSubdivision {
 export interface AudioBeatGrid extends MusicalGrid {
   version: 1
   subdivisions: BarSubdivision[]
+}
+
+export function normalizeSwingPercent(value: unknown): number {
+  return clamp(
+    typeof value === 'number' && Number.isFinite(value) ? value : 50,
+    50,
+    75,
+  )
 }
 
 export function divisionForBar(
@@ -173,6 +189,95 @@ const DEFAULT_MIN_BPM = 60
 const DEFAULT_MAX_BPM = 200
 const EPSILON = 1e-9
 
+export interface MusicalBarSegment {
+  /**
+   * The measured bar represented by this segment. A lead-in is labelled with
+   * the upcoming Bar 1 for display only; it stays outside selectable musical
+   * ranges and never stretches the first measured bar.
+   */
+  bar: number
+  startTime: number
+  endTime: number
+  isLeadIn: boolean
+}
+
+/**
+ * Split a source-time range into the musical bars it intersects.
+ *
+ * The analyzed beat phase can sit after the clip in-point. That interval is a
+ * separate lead-in associated with Bar 1; Bar 1 itself still begins on the
+ * chosen anchor and therefore remains the same width as every later bar. When a
+ * clip is trimmed into the middle of a later bar, the first returned segment
+ * keeps that containing bar's number.
+ */
+export function musicalBarSegmentsForRange(
+  grid: MusicalGrid,
+  rangeStart: number,
+  rangeEnd: number,
+): MusicalBarSegment[] {
+  if (
+    !Number.isFinite(rangeStart) ||
+    !Number.isFinite(rangeEnd) ||
+    rangeEnd <= rangeStart + EPSILON
+  ) {
+    return []
+  }
+
+  const bpm = finitePositive(grid.bpm, 120)
+  const beatsPerBar = Math.max(
+    1,
+    Math.round(finitePositive(grid.beatsPerBar, 4)),
+  )
+  const secondsPerBar = 60 / bpm * beatsPerBar
+  const firstBeatTime = Number.isFinite(grid.firstBeatTime)
+    ? grid.firstBeatTime
+    : 0
+  const segments: MusicalBarSegment[] = []
+  let cursor = rangeStart
+
+  if (cursor < firstBeatTime - EPSILON) {
+    const leadInEnd = Math.min(rangeEnd, firstBeatTime)
+    segments.push({
+      bar: 1,
+      startTime: cursor,
+      endTime: leadInEnd,
+      isLeadIn: true,
+    })
+    cursor = leadInEnd
+  }
+
+  if (cursor >= rangeEnd - EPSILON) return segments
+
+  let bar =
+    cursor < firstBeatTime
+      ? 1
+      : Math.max(
+          1,
+          Math.floor(
+            (cursor - firstBeatTime) / secondsPerBar + EPSILON,
+          ) + 1,
+        )
+
+  while (cursor < rangeEnd - EPSILON) {
+    const nextBarStart = firstBeatTime + bar * secondsPerBar
+    const endTime = Math.min(rangeEnd, nextBarStart)
+    if (endTime <= cursor + EPSILON) {
+      bar++
+      continue
+    }
+    segments.push({
+      bar,
+      startTime: cursor,
+      endTime,
+      isLeadIn: false,
+    })
+    cursor = endTime
+    bar++
+  }
+
+  return segments
+}
+
 export function analyzeBeatPcm(
   audio: PcmAudioData,
   options: BeatAnalysisOptions = {},
@@ -198,7 +303,7 @@ export function analyzeBeatPcm(
   const transients = pickTransients(novelty, noveltyRate)
   const bassTransients = pickTransients(bassNovelty, noveltyRate)
   const signalLevel = rootMeanSquare(mono)
-  const candidateEvidence = tempoCandidates(
+  const tempoSearch = tempoCandidates(
     novelty,
     bassNovelty,
     transients,
@@ -207,14 +312,19 @@ export function analyzeBeatPcm(
     minBpm,
     maxBpm,
   )
-  const bestEvidence = candidateEvidence[0]
+  const pulseEvidence = tempoSearch.pulseEvidence
+  const bestEvidence = tempoSearch.selectedEvidence
   const hasPulse =
     signalLevel >= 1e-5 &&
     transients.length >= 4 &&
-    (bestEvidence?.periodicity ?? 0) >= 0.11 &&
-    (bestEvidence?.score ?? 0) >= 0.16
+    (pulseEvidence?.periodicity ?? 0) >= 0.11 &&
+    (pulseEvidence?.score ?? 0) >= 0.16
   const confidence = hasPulse
-    ? tempoConfidence(candidateEvidence)
+    ? tempoConfidence(
+        bestEvidence,
+        tempoSearch.suggestions,
+        tempoSearch.compoundPromoted,
+      )
     : 0
   const status: BeatAnalysisStatus = !hasPulse
     ? 'no-pulse'
@@ -227,14 +337,14 @@ export function analyzeBeatPcm(
     periodicity: 0,
   }
   const period = 60 / winner.bpm
-  const firstBeatTime = hasPulse ? inferBeatPhase(transients, period) : 0
+  const firstBeatTime = hasPulse
+    ? inferBeatPhaseAtBpm(transients, winner.bpm)
+    : 0
   const candidates = hasPulse
-    ? candidateEvidence.slice(0, 4).map((candidate) => ({
+    ? tempoSearch.suggestions.slice(0, 4).map((candidate) => ({
         bpm: round(candidate.bpm, 3),
-        firstBeatTime: round(
-          inferBeatPhase(transients, 60 / candidate.bpm),
-          6,
-        ),
+        relationship: candidate.relationship,
+        firstBeatTime: round(inferBeatPhaseAtBpm(transients, candidate.bpm), 6),
         confidence: round(candidateEvidenceConfidence(candidate), 4),
       }))
     : []
@@ -246,17 +356,76 @@ export function analyzeBeatPcm(
     (transient) =>
       distanceToRecurringGrid(transient.time, firstBeatTime, period) <= tolerance,
   )
-
   return {
     bpm: round(winner.bpm, 3),
     confidence: round(confidence, 4),
     status,
-    algorithmVersion: 2,
+    algorithmVersion: 3,
     firstBeatTime: round(firstBeatTime, 6),
     transients,
     beatTransients: hasPulse ? beatTransients : [],
     candidates,
   }
+}
+
+/**
+ * Infer the recurring source-relative phase for a known tempo.
+ *
+ * Candidate-specific phase evidence lets the UI offer an optional detected
+ * start without baking it into a manually applied tempo. A manual grid can
+ * deliberately anchor Bar 1 to the clip start instead.
+ */
+export function inferBeatPhaseAtBpm(
+  transients: readonly BeatTransient[],
+  bpm: number,
+): number {
+  if (!Number.isFinite(bpm) || bpm <= 0) return 0
+  return inferBeatPhase(transients, 60 / bpm)
+}
+
+/**
+ * Advance a recurring beat phase to its first occurrence at or after a source
+ * in-point. Beat analysis stores phase within one beat period, so trimmed
+ * clips need this conversion before offering an analyzed lead-in.
+ */
+export function recurringBeatAtOrAfter(
+  firstBeatTime: number,
+  bpm: number,
+  minimumTime: number,
+): number {
+  const minimum = Number.isFinite(minimumTime) ? minimumTime : 0
+  if (!Number.isFinite(firstBeatTime) || !Number.isFinite(bpm) || bpm <= 0) {
+    return minimum
+  }
+  if (firstBeatTime >= minimum - EPSILON) return firstBeatTime
+  const period = 60 / bpm
+  const occurrences = Math.max(
+    0,
+    Math.ceil((minimum - firstBeatTime) / period - EPSILON),
+  )
+  return round(firstBeatTime + occurrences * period, 9)
+}
+
+/**
+ * Keep an explicitly authored lead-in stable when the clip in-point changes.
+ * A stale anchor before the old in-point is treated as a zero-length lead.
+ */
+export function beatAnchorAfterTrimChange(
+  firstBeatTime: number,
+  currentTrimStart: number,
+  nextTrimStart: number,
+): number {
+  const currentTrim = Number.isFinite(currentTrimStart)
+    ? Math.max(0, currentTrimStart)
+    : 0
+  const nextTrim = Number.isFinite(nextTrimStart)
+    ? Math.max(0, nextTrimStart)
+    : 0
+  const leadIn =
+    Number.isFinite(firstBeatTime)
+      ? Math.max(0, firstBeatTime - currentTrim)
+      : 0
+  return round(nextTrim + leadIn, 9)
 }
 
 /**
@@ -280,6 +449,7 @@ export function createNoteMarkers(
   const beatSeconds = 60 / bpm
   const stepSeconds = beatSeconds / subdivisionsPerBeat
   const stepsPerBar = Math.max(1, Math.round(beatsPerBar * subdivisionsPerBeat))
+  const swingPercent = normalizeSwingPercent(grid.swingPercent)
   const markers: NoteMarker[] = []
 
   for (let bar = startBar; bar <= endBar; bar++) {
@@ -289,7 +459,13 @@ export function createNoteMarkers(
         : Math.round(step / subdivisionsPerBeat)
       markers.push({
         time: round(
-          grid.firstBeatTime + ((bar - 1) * stepsPerBar + step) * stepSeconds,
+          grid.firstBeatTime +
+            ((bar - 1) * stepsPerBar + step) * stepSeconds +
+            (
+              subdivisionsPerBeat >= 2 && step % 2 === 1
+                ? stepSeconds * (2 * swingPercent / 100 - 1)
+                : 0
+            ),
           9,
         ),
         bar,
@@ -329,7 +505,7 @@ export function createNoteMarkers(
  */
 export function alignKeyframesToNoteMarkers(
   keyframeTimes: readonly number[],
-  markers: readonly NoteMarker[],
+  markers: readonly { time: number }[],
   options: KeyframeBeatAlignmentOptions = {},
 ): KeyframeBeatAlignment {
   if (keyframeTimes.length === 0) {
@@ -395,7 +571,7 @@ export function alignKeyframesToNoteMarkers(
  */
 export function spreadKeyframesAcrossNoteMarkers(
   keyframeTimes: readonly number[],
-  markers: readonly NoteMarker[],
+  markers: readonly { time: number }[],
   options: KeyframeBeatSpreadOptions = {},
 ): KeyframeBeatAlignment {
   if (keyframeTimes.length === 0) {
@@ -470,7 +646,7 @@ type ClusteredKeyframeTime = {
   coincidenceKey: string | number | null | undefined
 }
 
-function sortedUniqueNoteSlots(markers: readonly NoteMarker[]): number[] {
+function sortedUniqueNoteSlots(markers: readonly { time: number }[]): number[] {
   return [...new Set(markers.map((marker) => marker.time))]
     .filter(Number.isFinite)
     .sort((a, b) => a - b)
@@ -658,7 +834,7 @@ function tempoCandidates(
   noveltyRate: number,
   minBpm: number,
   maxBpm: number,
-): TempoEvidence[] {
+): TempoSearchResult {
   const scored: TempoEvidence[] = []
   for (let bpm = minBpm; bpm <= maxBpm; bpm += 0.25) {
     const lag = noveltyRate * 60 / bpm
@@ -679,12 +855,13 @@ function tempoCandidates(
       bassPeriodicity * 0.38
     const fit = broadbandFit * 0.58 + bassFit * 0.42
     // The prior only breaks true octave ties. It cannot rescue a tempo without
-    // matching onsets, unlike the old literal ×2, 3:2, and 4:5 corrections.
+    // matching onsets; compound alternatives are evaluated separately below.
     const prior = 0.96 + 0.04 * Math.exp(-Math.pow((bpm - 120) / 58, 2))
     scored.push({
       bpm,
       periodicity,
       score: (periodicity * 0.72 + fit * 0.28) * prior,
+      relationship: 'direct',
     })
   }
 
@@ -705,23 +882,296 @@ function tempoCandidates(
     separated.push(item)
     if (separated.length === 8) break
   }
-  return separated
+
+  const pulseEvidence = separated[0]
+  if (!pulseEvidence) {
+    return {
+      pulseEvidence: undefined,
+      selectedEvidence: undefined,
+      suggestions: [],
+      compoundPromoted: false,
+    }
+  }
+
+  const compounds = [
+    compoundTempoEvidence(
+      scored,
+      transients,
+      pulseEvidence,
+      pulseEvidence.bpm * 1.5,
+      '3:2',
+      minBpm,
+      maxBpm,
+    ),
+    compoundTempoEvidence(
+      scored,
+      transients,
+      pulseEvidence,
+      pulseEvidence.bpm / 1.5,
+      '2:3',
+      minBpm,
+      maxBpm,
+    ),
+  ].filter((candidate): candidate is TempoEvidence => !!candidate)
+
+  const promotable = [...compounds]
+    .filter(
+      (candidate) =>
+        (candidate.exclusiveCoverage ?? 0) >= 0.55 &&
+        (candidate.alignedStrengthShare ?? 0) >= 0.68 &&
+        (candidate.alignedStrengthShare ?? 0) >=
+          (candidate.primaryAlignedStrengthShare ?? 1) &&
+        (candidate.rawScore ?? candidate.score) >= 0.08 &&
+        (candidate.promotionScore ?? candidate.score) >=
+          pulseEvidence.score * 0.96,
+    )
+    .sort(
+      (a, b) =>
+        (b.promotionScore ?? b.score) - (a.promotionScore ?? a.score),
+    )[0]
+  const selectedEvidence = promotable ?? pulseEvidence
+  const compoundPromoted = !!promotable
+
+  // A useful metrical alternative must not disappear behind unrelated local
+  // peaks. Keep the selected tempo first, the strongest observed pulse next
+  // when it differs, then ratio alternatives before filling with direct peaks.
+  const suggestions: TempoEvidence[] = []
+  const append = (candidate: TempoEvidence | undefined) => {
+    if (
+      !candidate ||
+      suggestions.some((item) => Math.abs(item.bpm - candidate.bpm) < 1)
+    ) {
+      return
+    }
+    suggestions.push(candidate)
+  }
+  append(selectedEvidence)
+  if (selectedEvidence !== pulseEvidence) append(pulseEvidence)
+  for (const candidate of compounds.sort(
+    (a, b) =>
+      (b.exclusiveCoverage ?? 0) - (a.exclusiveCoverage ?? 0) ||
+      b.score - a.score,
+  )) {
+    append(candidate)
+  }
+  for (const candidate of separated) append(candidate)
+
+  return {
+    pulseEvidence,
+    selectedEvidence,
+    suggestions,
+    compoundPromoted,
+  }
 }
 
 interface TempoEvidence {
   bpm: number
   score: number
   periodicity: number
+  relationship: NonNullable<TempoCandidate['relationship']>
+  rawScore?: number
+  exclusiveCoverage?: number
+  alignedStrengthShare?: number
+  primaryAlignedStrengthShare?: number
+  promotionScore?: number
+}
+
+interface TempoSearchResult {
+  pulseEvidence: TempoEvidence | undefined
+  selectedEvidence: TempoEvidence | undefined
+  suggestions: TempoEvidence[]
+  compoundPromoted: boolean
+}
+
+function compoundTempoEvidence(
+  scored: readonly TempoEvidence[],
+  transients: readonly BeatTransient[],
+  pulseEvidence: TempoEvidence,
+  targetBpm: number,
+  relationship: '3:2' | '2:3',
+  minBpm: number,
+  maxBpm: number,
+): TempoEvidence | null {
+  if (
+    !Number.isFinite(targetBpm) ||
+    targetBpm < minBpm ||
+    targetBpm > maxBpm ||
+    Math.abs(targetBpm - pulseEvidence.bpm) < 3
+  ) {
+    return null
+  }
+
+  // The direct score can have a broad trough at the musical quarter-note
+  // tempo when a dotted-quarter accent dominates. Search a narrow ratio-local
+  // window and let persistent, exclusive beat coverage refine the exact BPM.
+  const radius = Math.max(1.5, targetBpm * 0.018)
+  const nearby = scored.filter(
+    (candidate) => Math.abs(candidate.bpm - targetBpm) <= radius,
+  )
+  if (nearby.length === 0) return null
+  const primaryAlignedStrengthShare = gridAlignedStrengthShare(
+    transients,
+    pulseEvidence.bpm,
+  )
+  const candidates = nearby.map((candidate) => {
+    const exclusiveCoverage = exclusiveGridCoverage(
+      transients,
+      candidate.bpm,
+      pulseEvidence.bpm,
+    )
+    const alignedStrengthShare = gridAlignedStrengthShare(
+      transients,
+      candidate.bpm,
+    )
+    const rawScore = candidate.score
+    return {
+      ...candidate,
+      relationship,
+      rawScore,
+      exclusiveCoverage,
+      alignedStrengthShare,
+      primaryAlignedStrengthShare,
+      // Coverage is deliberately much stronger than accent autocorrelation:
+      // it represents recurring beats that the dominant pulse cannot explain.
+      promotionScore: rawScore + exclusiveCoverage * 0.5,
+      // Candidate confidence remains conservative; the larger promotion bonus
+      // is only used for choosing the musical interpretation.
+      score: rawScore + exclusiveCoverage * 0.2,
+    }
+  })
+  return candidates.sort(
+    (a, b) =>
+      (b.promotionScore ?? b.score) - (a.promotionScore ?? a.score) ||
+      Math.abs(a.bpm - targetBpm) - Math.abs(b.bpm - targetBpm),
+  )[0] ?? null
+}
+
+/**
+ * Fraction of detected transient strength explained by a tempo grid.
+ *
+ * Persistent eighths or triplets can fill every "exclusive" ratio slot while
+ * still belonging to a slower/faster direct pulse. A genuine compound tempo
+ * interpretation must explain most of the track's onset strength, not merely
+ * find a recurring low-level subdivision.
+ */
+function gridAlignedStrengthShare(
+  transients: readonly BeatTransient[],
+  bpm: number,
+): number {
+  if (
+    transients.length === 0 ||
+    !Number.isFinite(bpm) ||
+    bpm <= 0
+  ) {
+    return 0
+  }
+  const period = 60 / bpm
+  const phase = inferBeatPhase(transients, period)
+  const tolerance = Math.min(0.08, period * 0.14)
+  let alignedStrength = 0
+  let totalStrength = 0
+  for (const transient of transients) {
+    const strength =
+      Number.isFinite(transient.strength) && transient.strength > 0
+        ? transient.strength
+        : 0
+    totalStrength += strength
+    if (
+      distanceToRecurringGrid(transient.time, phase, period) <= tolerance
+    ) {
+      alignedStrength += strength
+    }
+  }
+  return alignedStrength / Math.max(EPSILON, totalStrength)
+}
+
+/**
+ * Measure target-grid beats that cannot be explained by the dominant pulse.
+ *
+ * A true 135 BPM quarter-note pulse underneath a 90 BPM dotted-quarter accent
+ * repeatedly fills the 135-only positions. A straight 90 BPM track does not.
+ * Taking the median across six-second windows prevents one triplet fill from
+ * reinterpreting an otherwise stable track.
+ */
+function exclusiveGridCoverage(
+  transients: readonly BeatTransient[],
+  targetBpm: number,
+  primaryBpm: number,
+): number {
+  if (
+    transients.length < 4 ||
+    !Number.isFinite(targetBpm) ||
+    !Number.isFinite(primaryBpm) ||
+    targetBpm <= 0 ||
+    primaryBpm <= 0
+  ) {
+    return 0
+  }
+  const targetPeriod = 60 / targetBpm
+  const primaryPeriod = 60 / primaryBpm
+  const targetPhase = inferBeatPhase(transients, targetPeriod)
+  const primaryPhase = inferBeatPhase(transients, primaryPeriod)
+  const firstTime = transients[0]!.time
+  const lastTime = transients.at(-1)!.time
+  if (lastTime - firstTime < targetPeriod * 4) return 0
+
+  const firstBeat = Math.ceil((firstTime - targetPhase) / targetPeriod)
+  const lastBeat = Math.floor((lastTime - targetPhase) / targetPeriod)
+  const hitTolerance = Math.min(0.08, targetPeriod * 0.14)
+  const sharedTolerance = Math.min(0.08, targetPeriod * 0.12)
+  const windowSeconds = 6
+  const windows = new Map<number, { expected: number; matched: number }>()
+  let transientIndex = 0
+
+  for (let beat = firstBeat; beat <= lastBeat; beat++) {
+    const time = targetPhase + beat * targetPeriod
+    if (
+      distanceToRecurringGrid(time, primaryPhase, primaryPeriod) <=
+      sharedTolerance
+    ) {
+      continue
+    }
+    const window = Math.floor((time - firstTime) / windowSeconds)
+    const bucket = windows.get(window) ?? { expected: 0, matched: 0 }
+    bucket.expected++
+    while (
+      transientIndex < transients.length &&
+      transients[transientIndex]!.time < time - hitTolerance
+    ) {
+      transientIndex++
+    }
+    let bestStrength = 0
+    for (
+      let index = transientIndex;
+      index < transients.length &&
+      transients[index]!.time <= time + hitTolerance;
+      index++
+    ) {
+      bestStrength = Math.max(bestStrength, transients[index]!.strength)
+    }
+    if (bestStrength >= 0.08) bucket.matched++
+    windows.set(window, bucket)
+  }
+
+  const coverage = [...windows.values()]
+    .filter((window) => window.expected >= 3)
+    .map((window) => window.matched / window.expected)
+  return coverage.length > 0 ? percentile(coverage, 0.5) : 0
 }
 
 function candidateEvidenceConfidence(candidate: TempoEvidence): number {
   return clamp((candidate.score - 0.08) / 0.62, 0, 1)
 }
 
-function tempoConfidence(candidates: readonly TempoEvidence[]): number {
-  const winner = candidates[0]
+function tempoConfidence(
+  winner: TempoEvidence | undefined,
+  candidates: readonly TempoEvidence[],
+  compoundPromoted: boolean,
+): number {
   if (!winner) return 0
-  const runnerUp = candidates[1]
+  const runnerUp = candidates
+    .filter((candidate) => Math.abs(candidate.bpm - winner.bpm) >= 1)
+    .sort((a, b) => b.score - a.score)[0]
   const evidence = candidateEvidenceConfidence(winner)
   const margin = runnerUp
     ? clamp((winner.score - runnerUp.score) / Math.max(winner.score, EPSILON), 0, 1)
@@ -729,7 +1179,8 @@ function tempoConfidence(candidates: readonly TempoEvidence[]): number {
   // Tempo ambiguity matters at least as much as absolute periodic strength.
   // A loud repeating polyrhythm can have two individually strong candidates;
   // calling that 90% confident is actively misleading.
-  return clamp(evidence * (0.35 + margin * 0.65), 0, 1)
+  const confidence = clamp(evidence * (0.35 + margin * 0.65), 0, 1)
+  return compoundPromoted ? Math.min(0.57, confidence) : confidence
 }
 
 function robustCorrelationAtLag(

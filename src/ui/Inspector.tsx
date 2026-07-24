@@ -117,6 +117,8 @@ import {
 } from '@/ui/actions'
 import {
   analyzeBeatPcm,
+  beatAnchorAfterTrimChange,
+  recurringBeatAtOrAfter,
   type AudioBeatGrid,
   type NoteDivision,
   type TempoCandidate,
@@ -1836,7 +1838,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'audio' && (
         <>
-          <AudioBeatSection key={node.src} node={node} api={api} />
+          <AudioBeatSection key={node.id} node={node} api={api} />
           <MediaSection node={node} api={api} />
         </>
       )}
@@ -5385,9 +5387,22 @@ function MediaSection({
       <FieldRow label="Trim in">
         <NumberField
           value={trimStart}
-          onCommit={(v) =>
-            api.setNodeProperty(node.id, 'trimStart', Math.max(0, Math.min(trimEnd, v)))
-          }
+          onCommit={(v) => {
+            const nextTrimStart = Math.max(0, Math.min(trimEnd, v))
+            api.doc.transact(() => {
+              api.setNodeProperty(node.id, 'trimStart', nextTrimStart)
+              if (node.kind === 'audio' && node.beatGrid) {
+                api.setNodeProperty(node.id, 'beatGrid', {
+                  ...node.beatGrid,
+                  firstBeatTime: beatAnchorAfterTrimChange(
+                    node.beatGrid.firstBeatTime,
+                    trimStart,
+                    nextTrimStart,
+                  ),
+                })
+              }
+            }, 'media-trim-in')
+          }}
           min={0}
           max={duration}
           step={0.05}
@@ -5427,13 +5442,28 @@ function AudioBeatSection({
   node: Extract<Node, { kind: 'audio' }>
   api: SceneAPI
 }) {
-  const [analyzing, setAnalyzing] = useState(false)
-  const [message, setMessage] = useState('')
-  const tapTimesRef = useRef<number[]>([])
   const analysis = node.beatAnalysis
   const grid = node.beatGrid
+  const [analyzing, setAnalyzing] = useState(false)
+  const [message, setMessage] = useState('')
+  const [tempoDraftValue, setTempoDraftValue] = useState(
+    () => grid?.bpm ?? 120,
+  )
+  const [tempoDraftDirty, setTempoDraftDirty] = useState(false)
+  const tapTimesRef = useRef<number[]>([])
+  const tempoDraft = tempoDraftDirty
+    ? tempoDraftValue
+    : grid?.bpm ?? 120
   const status = analysis?.status ??
     (analysis ? (analysis.confidence >= 0.58 ? 'ok' : 'ambiguous') : null)
+  const clipInPoint = Math.max(0, node.trimStart || 0)
+  const stageTempo = useCallback(
+    (bpm: number) => {
+      setTempoDraftValue(bpm)
+      setTempoDraftDirty(!grid || Math.abs(bpm - grid.bpm) >= 0.005)
+    },
+    [grid],
+  )
 
   const writeGrid = useCallback(
     (patch: Partial<AudioBeatGrid>, fallbackBpm = analysis?.bpm ?? 120) => {
@@ -5443,6 +5473,7 @@ function AudioBeatSection({
         firstBeatTime: analysis?.firstBeatTime ?? 0,
         beatsPerBar: 4,
         beatUnit: 4,
+        swingPercent: 50,
         subdivisions: [],
       }
       api.setNodeProperty(node.id, 'beatGrid', { ...current, ...patch })
@@ -5455,20 +5486,34 @@ function AudioBeatSection({
       writeGrid(
         {
           bpm: candidate.bpm,
-          firstBeatTime:
-            candidate.firstBeatTime ??
-            (
-              analysis && Math.abs(candidate.bpm - analysis.bpm) < 0.001
-                ? analysis.firstBeatTime
-                : grid?.firstBeatTime ?? 0
-            ),
+          firstBeatTime: clipInPoint,
         },
         candidate.bpm,
       )
-      setMessage(`Using ${candidate.bpm.toFixed(1)} BPM. You can fine-tune it below.`)
+      setTempoDraftValue(candidate.bpm)
+      setTempoDraftDirty(false)
+      setMessage(
+        `Applied ${candidate.bpm.toFixed(1)} BPM. Bar 1 starts with the audio on the timeline.`,
+      )
     },
-    [analysis, grid?.firstBeatTime, writeGrid],
+    [clipInPoint, writeGrid],
   )
+
+  const applyManualTempo = useCallback(() => {
+    const bpm = Math.max(30, Math.min(360, tempoDraft))
+    writeGrid(
+      {
+        bpm,
+        firstBeatTime: clipInPoint,
+      },
+      bpm,
+    )
+    setTempoDraftValue(bpm)
+    setTempoDraftDirty(false)
+    setMessage(
+      `Applied ${bpm.toFixed(1)} BPM. Bar 1 starts with the audio on the timeline.`,
+    )
+  }, [clipInPoint, tempoDraft, writeGrid])
 
   const analyze = useCallback(async () => {
     setAnalyzing(true)
@@ -5486,27 +5531,15 @@ function AudioBeatSection({
       })
       api.doc.transact(() => {
         api.setNodeProperty(node.id, 'beatAnalysis', result)
-        if (!grid && result.status === 'ok') {
-          api.setNodeProperty(node.id, 'beatGrid', {
-            version: 1,
-            bpm: result.bpm,
-            firstBeatTime: result.firstBeatTime,
-            beatsPerBar: 4,
-            beatUnit: 4,
-            subdivisions: [],
-          })
-        }
       }, 'analyze-audio-beats')
       if (result.status === 'no-pulse') {
         setMessage('No stable pulse found. Set the tempo manually or use Tap.')
       } else if (result.status === 'ambiguous') {
         setMessage('Several tempos fit. Review a candidate before applying it.')
-      } else if (grid) {
-        setMessage(
-          `Detected ${result.bpm.toFixed(1)} BPM. Your current grid was kept.`,
-        )
       } else {
-        setMessage(`Created a ${result.bpm.toFixed(1)} BPM grid.`)
+        setMessage(
+          `Detected ${result.bpm.toFixed(1)} BPM. Apply it if the timing sounds right.`,
+        )
       }
     } catch (error) {
       console.warn('[beat-sync] analysis failed', error)
@@ -5514,7 +5547,7 @@ function AudioBeatSection({
     } finally {
       setAnalyzing(false)
     }
-  }, [api, grid, node.id, node.src])
+  }, [api, node.id, node.src])
 
   const tapTempo = useCallback(() => {
     const now = performance.now()
@@ -5533,25 +5566,55 @@ function AudioBeatSection({
         const sorted = [...intervals].sort((a, b) => a - b)
         const median = sorted[Math.floor(sorted.length / 2)]!
         const bpm = Math.max(30, Math.min(300, 60_000 / median))
-        writeGrid({ bpm }, bpm)
+        stageTempo(bpm)
         setMessage(
-          `${bpm.toFixed(1)} BPM from ${recent.length} taps${recent.length < 4 ? ' — keep tapping' : ''}.`,
+          `${bpm.toFixed(1)} BPM from ${recent.length} taps${recent.length < 4 ? ' — keep tapping' : ' — ready to apply'}.`,
         )
       }
     } else {
       setMessage('Tap at least twice; four taps is better.')
     }
-  }, [writeGrid])
+  }, [stageTempo])
 
   const candidates = (analysis?.candidates ?? [])
     .filter(
       (candidate, index, list) =>
+        (!analysis || Math.abs(candidate.bpm - analysis.bpm) >= 0.5) &&
         list.findIndex((item) => Math.abs(item.bpm - candidate.bpm) < 0.5) ===
         index,
     )
     .slice(0, 4)
+  const anchorNeedsReset =
+    !!grid && grid.firstBeatTime < clipInPoint - 0.0005
   const currentMatchesDetection =
-    !!grid && !!analysis && Math.abs(grid.bpm - analysis.bpm) < 0.25
+    !!grid &&
+    !!analysis &&
+    Math.abs(grid.bpm - analysis.bpm) < 0.25 &&
+    !anchorNeedsReset
+  const manualTempoPending = !grid || tempoDraftDirty || anchorNeedsReset
+  const leadInSeconds = grid
+    ? Math.max(0, grid.firstBeatTime - clipInPoint)
+    : 0
+  const matchingDetectedStart = grid && analysis
+    ? Math.abs(grid.bpm - analysis.bpm) < 0.25
+      ? analysis.firstBeatTime
+      : analysis.candidates.find(
+          (candidate) =>
+            Math.abs(candidate.bpm - grid.bpm) < 0.25 &&
+            candidate.firstBeatTime != null,
+        )?.firstBeatTime
+    : undefined
+  const detectedStartAtClip =
+    matchingDetectedStart != null && grid
+      ? recurringBeatAtOrAfter(
+          matchingDetectedStart,
+          grid.bpm,
+          clipInPoint,
+        )
+      : undefined
+  const detectedLeadInSeconds = detectedStartAtClip != null
+    ? Math.max(0, detectedStartAtClip - clipInPoint)
+    : 0
   const statusLabel =
     status === 'ok'
       ? 'Stable pulse'
@@ -5570,6 +5633,7 @@ function AudioBeatSection({
   return (
     <Section
       title="Beat sync"
+      preserveTimelineSelection
       action={
         <span
           className={[
@@ -5591,8 +5655,8 @@ function AudioBeatSection({
               Detect tempo and beat positions
             </div>
             <div className="mt-0.5 text-[10px] leading-4 text-text-dim">
-              Analysis is an estimate. Markers appear on the seconds ruler;
-              you stay in control of the applied grid.
+              Analysis is an estimate. Markers align to seconds in the musical
+              ruler below; you stay in control of the applied grid.
             </div>
           </div>
         </div>
@@ -5644,7 +5708,7 @@ function AudioBeatSection({
         </div>
       )}
 
-      {candidates.length > 1 && (
+      {candidates.length > 0 && (
         <div>
           <div className="mb-1.5 text-[9px] font-medium tracking-[0.05em] text-text-dim uppercase">
             Other candidates
@@ -5666,6 +5730,10 @@ function AudioBeatSection({
                   ].join(' ')}
                 >
                   {candidate.bpm.toFixed(1)} BPM
+                  {candidate.relationship &&
+                    candidate.relationship !== 'direct'
+                    ? ` · ${candidate.relationship}`
+                    : ''}
                 </button>
               )
             })}
@@ -5673,28 +5741,50 @@ function AudioBeatSection({
         </div>
       )}
 
-      <FieldRow label="Tempo">
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-          <NumberField
-            value={grid?.bpm ?? analysis?.bpm ?? 120}
-            onCommit={(value) =>
-              writeGrid({ bpm: Math.max(30, Math.min(360, value)) }, value)
-            }
-            min={30}
-            max={360}
-            step={0.1}
-            suffix="BPM"
-          />
-          <button
-            type="button"
-            onClick={tapTempo}
-            className="h-7 shrink-0 rounded border border-border bg-panel px-2 text-[9px] font-semibold text-text-muted hover:border-border-strong hover:text-text"
-            title="Tap in time with the music"
-          >
-            Tap
-          </button>
+      <div>
+        <FieldRow label="Tempo">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+            <NumberField
+              value={tempoDraft}
+              onCommit={(value) => {
+                const bpm = Math.max(30, Math.min(360, value))
+                stageTempo(bpm)
+                setMessage(
+                  `${bpm.toFixed(1)} BPM entered. Apply it to update the musical grid.`,
+                )
+              }}
+              min={30}
+              max={360}
+              step={0.1}
+              suffix="BPM"
+              ariaLabel="Manual tempo"
+            />
+            <button
+              type="button"
+              onClick={tapTempo}
+              className="h-7 shrink-0 rounded border border-border bg-panel px-2 text-[9px] font-semibold text-text-muted hover:border-border-strong hover:text-text"
+              title="Tap in time with the music"
+            >
+              Tap
+            </button>
+          </div>
+        </FieldRow>
+        <button
+          type="button"
+          onClick={applyManualTempo}
+          disabled={!manualTempoPending}
+          className="mt-1.5 h-7 w-full rounded border border-accent/50 bg-accent-soft text-[9px] font-semibold text-accent hover:bg-accent/20 disabled:cursor-default disabled:border-border disabled:bg-panel disabled:text-text-dim"
+          title="Apply this BPM and start Bar 1 with the audio on the timeline"
+        >
+          {anchorNeedsReset && !tempoDraftDirty
+            ? 'Re-anchor Bar 1'
+            : 'Apply manual tempo'}
+        </button>
+        <div className="mt-1 text-[8px] leading-3 text-text-dim">
+          Applying a tempo starts Bar 1 with the audio on the timeline. Add a
+          lead-in separately below when you want one.
         </div>
-      </FieldRow>
+      </div>
 
       {grid && (
         <>
@@ -5702,14 +5792,26 @@ function AudioBeatSection({
             <div className="flex min-w-0 flex-1 justify-end gap-1">
               <button
                 type="button"
-                onClick={() => writeGrid({ bpm: Math.max(30, grid.bpm / 2) })}
+                onClick={() => {
+                  const bpm = Math.max(30, tempoDraft / 2)
+                  stageTempo(bpm)
+                  setMessage(
+                    `${bpm.toFixed(1)} BPM entered. Apply it to update the musical grid.`,
+                  )
+                }}
                 className="h-7 flex-1 rounded border border-border bg-panel font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text"
               >
                 Half
               </button>
               <button
                 type="button"
-                onClick={() => writeGrid({ bpm: Math.min(360, grid.bpm * 2) })}
+                onClick={() => {
+                  const bpm = Math.min(360, tempoDraft * 2)
+                  stageTempo(bpm)
+                  setMessage(
+                    `${bpm.toFixed(1)} BPM entered. Apply it to update the musical grid.`,
+                  )
+                }}
                 className="h-7 flex-1 rounded border border-border bg-panel font-mono text-[9px] text-text-muted hover:border-border-strong hover:text-text"
               >
                 Double
@@ -5742,17 +5844,99 @@ function AudioBeatSection({
               />
             </div>
           </FieldRow>
-          <FieldRow label="Bar 1 offset">
-            <NumberField
-              value={grid.firstBeatTime}
-              onCommit={(value) =>
-                writeGrid({ firstBeatTime: Math.max(0, value) })
-              }
-              min={0}
-              step={0.001}
-              suffix="s"
-            />
+          <FieldRow label="Swing">
+            <div
+              data-timeline-selection-surface="1"
+              className="flex min-w-0 flex-1 items-center gap-2"
+              title="50% is straight; 66.7% is a triplet feel"
+            >
+              <input
+                aria-label="Beat-grid swing"
+                type="range"
+                min={50}
+                max={75}
+                step={0.5}
+                value={grid.swingPercent ?? 50}
+                onDoubleClick={() => writeGrid({ swingPercent: 50 })}
+                onChange={(event) =>
+                  writeGrid({
+                    swingPercent: Math.max(
+                      50,
+                      Math.min(75, Number(event.currentTarget.value)),
+                    ),
+                  })
+                }
+                className="min-w-0 flex-1 accent-[var(--color-accent)]"
+              />
+              <span className="w-10 shrink-0 text-right font-mono text-[10px] tabular-nums text-text">
+                {(grid.swingPercent ?? 50).toFixed(
+                  (grid.swingPercent ?? 50) % 1 === 0 ? 0 : 1,
+                )}
+                %
+              </span>
+            </div>
           </FieldRow>
+          <div className="-mt-1 text-right text-[8px] text-text-dim">
+            {(grid.swingPercent ?? 50) === 50
+              ? 'Straight · affects off-beat subdivisions'
+              : Math.abs((grid.swingPercent ?? 50) - 66.5) <= 0.5
+                ? 'Triplet feel · affects off-beat subdivisions'
+                : 'Beat-grid swing · affects off-beat subdivisions'}
+          </div>
+          <div>
+            <FieldRow label="Lead-in">
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                <NumberField
+                  value={leadInSeconds}
+                  onCommit={(value) =>
+                    writeGrid({
+                      firstBeatTime:
+                        clipInPoint + Math.max(0, value),
+                    })
+                  }
+                  min={0}
+                  step={0.01}
+                  suffix="s"
+                  ariaLabel="Lead-in duration"
+                />
+                <button
+                  type="button"
+                  disabled={leadInSeconds <= 0.0005 && !anchorNeedsReset}
+                  onClick={() =>
+                    writeGrid({ firstBeatTime: clipInPoint })
+                  }
+                  className="h-7 shrink-0 rounded border border-border bg-panel px-2 text-[9px] font-semibold text-text-muted hover:border-border-strong hover:text-text disabled:cursor-default disabled:opacity-35"
+                  title="Remove the lead-in and start Bar 1 with the audio on the timeline"
+                >
+                  Clear
+                </button>
+              </div>
+            </FieldRow>
+            {anchorNeedsReset && (
+              <div className="mt-1 rounded border border-[oklch(0.82_0.15_80)]/35 bg-[oklch(0.82_0.15_80)]/8 px-2 py-1.5 text-[8px] leading-3 text-text-muted">
+                Bar 1 is before the current Trim in. Apply the tempo again or
+                clear the lead-in to anchor Bar 1 to the audible start.
+              </div>
+            )}
+            {detectedLeadInSeconds > 0.0005 &&
+              Math.abs(detectedLeadInSeconds - leadInSeconds) > 0.0005 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    writeGrid({
+                      firstBeatTime: detectedStartAtClip ?? clipInPoint,
+                    })
+                  }
+                  className="mt-1.5 h-7 w-full rounded border border-border bg-panel text-[9px] font-medium text-text-muted hover:border-border-strong hover:text-text"
+                  title="Use the first beat position suggested by audio analysis"
+                >
+                  Use detected start · {detectedLeadInSeconds.toFixed(3)}s
+                </button>
+              )}
+            <div className="mt-1 text-right text-[8px] leading-3 text-text-dim">
+              0s removes the lead-in; enter a duration to add one.
+            </div>
+          </div>
         </>
       )}
 
@@ -7100,6 +7284,7 @@ function Section({
   title,
   children,
   action,
+  preserveTimelineSelection = false,
 }: {
   title: string
   children: ReactNode
@@ -7110,6 +7295,7 @@ function Section({
    * Pass null / omit when the section is read-only.
    */
   action?: ReactNode
+  preserveTimelineSelection?: boolean
 }) {
   // Spacing tuned to the rad-spacing 40% rule:
   //   - inside a row (icon, label, value): tight (4-6px) — owned by
@@ -7130,7 +7316,14 @@ function Section({
           <span className="flex items-center text-text-muted">{action}</span>
         ) : null}
       </div>
-      <div className="space-y-2">{children}</div>
+      <div
+        data-timeline-selection-surface={
+          preserveTimelineSelection ? '1' : undefined
+        }
+        className="space-y-2"
+      >
+        {children}
+      </div>
     </div>
   )
 }

@@ -4,11 +4,67 @@ import { describe, expect, it } from 'vitest'
 import {
   alignKeyframesToNoteMarkers,
   analyzeBeatPcm,
+  beatAnchorAfterTrimChange,
   createNoteMarkers,
   createNoteMarkersForBars,
   divisionForBar,
+  inferBeatPhaseAtBpm,
+  musicalBarSegmentsForRange,
+  recurringBeatAtOrAfter,
   spreadKeyframesAcrossNoteMarkers,
 } from './beatSync'
+
+function addSyntheticClick(
+  samples: Float32Array,
+  sampleRate: number,
+  time: number,
+  amplitude: number,
+): void {
+  const start = Math.round(time * sampleRate)
+  for (let i = 0; i < 72 && start + i < samples.length; i++) {
+    samples[start + i] +=
+      amplitude * Math.exp(-i / 14) * (i % 2 === 0 ? 1 : -1)
+  }
+}
+
+function compoundAccentTrack(
+  bpm: number,
+  duration = 18,
+  startTime = 0.2,
+): { sampleRate: number; samples: Float32Array } {
+  const sampleRate = 8_000
+  const samples = new Float32Array(sampleRate * duration)
+  const beatSeconds = 60 / bpm
+  for (let time = startTime; time < duration; time += beatSeconds) {
+    addSyntheticClick(samples, sampleRate, time, 0.55)
+  }
+  for (let time = startTime; time < duration; time += beatSeconds * 1.5) {
+    addSyntheticClick(samples, sampleRate, time, 1)
+  }
+  return { sampleRate, samples }
+}
+
+function subdividedAccentTrack(
+  bpm: number,
+  subdivisions: number,
+  duration = 18,
+  startTime = 0.2,
+): { sampleRate: number; samples: Float32Array } {
+  const sampleRate = 8_000
+  const samples = new Float32Array(sampleRate * duration)
+  const stepSeconds = 60 / bpm / subdivisions
+  let step = 0
+  for (let time = startTime; time < duration; time += stepSeconds) {
+    addSyntheticClick(
+      samples,
+      sampleRate,
+      time,
+      step % subdivisions === 0 ? 1 : 0.35,
+    )
+    step++
+  }
+  return { sampleRate, samples }
+}
 
 describe('analyzeBeatPcm', () => {
   it('detects a synthetic 120 BPM click track and beat-aligned transients', () => {
@@ -84,30 +140,104 @@ describe('analyzeBeatPcm', () => {
     expect(result.candidates.some((candidate) => candidate.bpm < 80)).toBe(true)
   })
 
-  it('does not overclaim a dotted-quarter versus quarter-note ambiguity', () => {
+  it('promotes a persistent 114 BPM quarter pulse over its 76 BPM dotted accent', () => {
+    const { sampleRate, samples } = compoundAccentTrack(114)
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(114, 0)
+    expect(result.status).toBe('ambiguous')
+    expect(result.candidates[0]).toMatchObject({ relationship: '3:2' })
+    expect(result.candidates.some(
+      (candidate) =>
+        Math.abs(candidate.bpm - 76) < 1 &&
+        candidate.relationship === 'direct',
+    )).toBe(true)
+  })
+
+  it('promotes a persistent 135 BPM quarter pulse over its 90 BPM dotted accent', () => {
+    const startTime = 0.23
+    const { sampleRate, samples } = compoundAccentTrack(135, 18, startTime)
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(135, 0)
+    expect(result.status).toBe('ambiguous')
+    expect(result.candidates[0]).toMatchObject({ relationship: '3:2' })
+    expect(result.candidates[0]!.firstBeatTime).toBeCloseTo(startTime, 1)
+    expect(result.candidates.slice(0, 2).some(
+      (candidate) =>
+        Math.abs(candidate.bpm - 90) < 1 &&
+        candidate.relationship === 'direct',
+    )).toBe(true)
+  })
+
+  it('keeps a straight 90 BPM pulse selected while surfacing 135 BPM as 3:2', () => {
     const sampleRate = 8_000
-    const duration = 12
-    const beatSeconds = 60 / 114
+    const duration = 18
     const samples = new Float32Array(sampleRate * duration)
-    const addClick = (time: number, amplitude: number) => {
-      const start = Math.round(time * sampleRate)
-      for (let i = 0; i < 64; i++) {
-        samples[start + i] +=
-          amplitude * Math.exp(-i / 12) * (i % 2 === 0 ? 1 : -1)
-      }
-    }
-    for (let time = 0.2; time < duration; time += beatSeconds) {
-      addClick(time, 0.6)
-    }
-    for (let time = 0.2; time < duration; time += beatSeconds * 1.5) {
-      addClick(time, 1)
+    for (let time = 0.2; time < duration; time += 60 / 90) {
+      addSyntheticClick(samples, sampleRate, time, 1)
     }
 
     const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
 
-    expect(result.status).toBe('ambiguous')
-    expect(result.candidates.some((candidate) => Math.abs(candidate.bpm - 114) < 1))
-      .toBe(true)
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(90, 0)
+    expect(result.candidates.slice(0, 4).some(
+      (candidate) =>
+        Math.abs(candidate.bpm - 135) < 2 &&
+        candidate.relationship === '3:2',
+    )).toBe(true)
+  })
+
+  it('does not reinterpret a 90 BPM track because of one short triplet fill', () => {
+    const sampleRate = 8_000
+    const duration = 18
+    const samples = new Float32Array(sampleRate * duration)
+    for (let time = 0.2; time < duration; time += 60 / 90) {
+      addSyntheticClick(samples, sampleRate, time, 1)
+    }
+    for (let time = 6.2; time < 7.6; time += 60 / 135) {
+      addSyntheticClick(samples, sampleRate, time, 0.7)
+    }
+
+    const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+    expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(90, 0)
+  })
+
+  it.each([
+    { bpm: 120, subdivisions: 2, label: '120 BPM eighth notes' },
+    { bpm: 114, subdivisions: 2, label: '114 BPM eighth notes' },
+    { bpm: 135, subdivisions: 2, label: '135 BPM eighth notes' },
+    { bpm: 90, subdivisions: 3, label: '90 BPM triplets' },
+  ])(
+    'keeps the direct pulse for persistent $label',
+    ({ bpm, subdivisions }) => {
+      const { sampleRate, samples } = subdividedAccentTrack(
+        bpm,
+        subdivisions,
+      )
+
+      const result = analyzeBeatPcm({ sampleRate, channels: [samples] })
+
+      expect(result.bpm, JSON.stringify(result.candidates)).toBeCloseTo(bpm, 0)
+      expect(result.candidates[0]).toMatchObject({ relationship: 'direct' })
+    },
+  )
+
+  it('infers a fresh phase for a manually supplied compound tempo', () => {
+    const startTime = 0.27
+    const transients = Array.from({ length: 24 }, (_, index) => ({
+      time: startTime + index * 60 / 135,
+      strength: 1,
+    }))
+
+    const phase = inferBeatPhaseAtBpm(transients, 135)
+
+    expect(phase).toBeCloseTo(startTime, 1)
+    expect(inferBeatPhaseAtBpm(transients, 0)).toBe(0)
+    expect(inferBeatPhaseAtBpm([], 135)).toBe(0)
   })
 
   it('keeps the true low pulse available when a five-over-four figure dominates', () => {
@@ -260,6 +390,81 @@ describe('createNoteMarkers', () => {
     expect(markers.map((marker) => marker.time)).toEqual([0, 1, 2])
     expect(markers.map((marker) => marker.beat)).toEqual([1, 3, 1])
   })
+
+  it('keeps 50 percent swing exactly straight', () => {
+    const markers = createNoteMarkers(
+      {
+        bpm: 120,
+        firstBeatTime: 0,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        swingPercent: 50,
+      },
+      { startBar: 1, endBar: 1, division: 8 },
+    )
+
+    expect(markers.map((marker) => marker.time)).toEqual([
+      0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,
+    ])
+  })
+
+  it('moves alternating eighth notes to a triplet feel without moving beats', () => {
+    const markers = createNoteMarkers(
+      {
+        bpm: 120,
+        firstBeatTime: 0,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        swingPercent: 200 / 3,
+      },
+      { startBar: 1, endBar: 1, division: 8 },
+    )
+
+    expect(markers[0]!.time).toBe(0)
+    expect(markers[1]!.time).toBeCloseTo(1 / 3, 7)
+    expect(markers[2]!.time).toBe(0.5)
+    expect(markers[3]!.time).toBeCloseTo(5 / 6, 7)
+    expect(markers.at(-1)!.time).toBe(2)
+  })
+
+  it('swings alternating sixteenths while preserving pair and bar boundaries', () => {
+    const markers = createNoteMarkers(
+      {
+        bpm: 120,
+        firstBeatTime: 0,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        swingPercent: 200 / 3,
+      },
+      { startBar: 1, endBar: 1, division: 16 },
+    )
+
+    expect(markers.slice(0, 5).map((marker) => marker.time)).toEqual([
+      0,
+      expect.closeTo(1 / 6, 7),
+      0.25,
+      expect.closeTo(5 / 12, 7),
+      0.5,
+    ])
+    expect(markers.at(-1)!.time).toBe(2)
+  })
+
+  it('does not move quarter-note grids when swing is enabled', () => {
+    const markers = createNoteMarkers(
+      {
+        bpm: 120,
+        firstBeatTime: 0.1,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        swingPercent: 75,
+      },
+      { startBar: 1, endBar: 1, division: 4 },
+    )
+
+    expect(markers.map((marker) => marker.time)).toEqual([
+      0.1, 0.6, 1.1, 1.6, 2.1,
+    ])
+  })
 })
 
 describe('alignKeyframesToNoteMarkers', () => {
@@ -396,5 +601,93 @@ describe('bar subdivision overrides', () => {
     expect(markers.filter((marker) => marker.bar === 2)).toHaveLength(8)
     expect(markers.filter((marker) => marker.bar === 3)).toHaveLength(16)
     expect(markers.at(-1)).toMatchObject({ bar: 4, isBarStart: true })
+  })
+})
+
+describe('musicalBarSegmentsForRange', () => {
+  const grid = {
+    bpm: 120,
+    firstBeatTime: 0,
+    beatsPerBar: 4,
+    beatUnit: 4 as const,
+  }
+
+  it('keeps a late detected downbeat as a separate lead-in', () => {
+    expect(
+      musicalBarSegmentsForRange(
+        { ...grid, firstBeatTime: 0.25 },
+        0,
+        4.25,
+      ),
+    ).toEqual([
+      { bar: 1, startTime: 0, endTime: 0.25, isLeadIn: true },
+      { bar: 1, startTime: 0.25, endTime: 2.25, isLeadIn: false },
+      { bar: 2, startTime: 2.25, endTime: 4.25, isLeadIn: false },
+    ])
+  })
+
+  it('labels a partial bar correctly when the clip starts mid-bar', () => {
+    expect(musicalBarSegmentsForRange(grid, 2.5, 5)).toEqual([
+      { bar: 2, startTime: 2.5, endTime: 4, isLeadIn: false },
+      { bar: 3, startTime: 4, endTime: 5, isLeadIn: false },
+    ])
+  })
+
+  it('starts Bar 1 at the clip in-point for a manually anchored tempo', () => {
+    const secondsPerBar = 60 / 135 * 4
+    const segments = musicalBarSegmentsForRange(
+      { ...grid, bpm: 135 },
+      0,
+      secondsPerBar * 2,
+    )
+
+    expect(segments).toHaveLength(2)
+    expect(segments[0]).toMatchObject({
+      bar: 1,
+      startTime: 0,
+      isLeadIn: false,
+    })
+    expect(segments[0]!.endTime).toBeCloseTo(secondsPerBar, 9)
+    expect(segments[1]!.startTime).toBeCloseTo(secondsPerBar, 9)
+  })
+
+  it('returns only the neutral lead-in when Bar 1 begins after the clip ends', () => {
+    expect(
+      musicalBarSegmentsForRange(
+        { ...grid, firstBeatTime: 3 },
+        0,
+        2,
+      ),
+    ).toEqual([
+      { bar: 1, startTime: 0, endTime: 2, isLeadIn: true },
+    ])
+  })
+})
+
+describe('recurringBeatAtOrAfter', () => {
+  it('advances an analyzed phase to the first beat after a trimmed in-point', () => {
+    expect(recurringBeatAtOrAfter(0.2, 120, 1.1)).toBeCloseTo(1.2, 9)
+  })
+
+  it('keeps a detected beat that already follows the in-point', () => {
+    expect(recurringBeatAtOrAfter(0.35, 120, 0.2)).toBeCloseTo(0.35, 9)
+  })
+
+  it('does not skip a beat exactly on the in-point', () => {
+    expect(recurringBeatAtOrAfter(0.2, 120, 1.2)).toBeCloseTo(1.2, 9)
+  })
+})
+
+describe('beatAnchorAfterTrimChange', () => {
+  it('keeps a zero-length lead anchored to the audible clip start', () => {
+    expect(beatAnchorAfterTrimChange(1, 1, 0.25)).toBe(0.25)
+  })
+
+  it('preserves an explicitly authored lead duration', () => {
+    expect(beatAnchorAfterTrimChange(1.4, 1, 2)).toBeCloseTo(2.4, 9)
+  })
+
+  it('repairs a stale anchor that was already before the in-point', () => {
+    expect(beatAnchorAfterTrimChange(0.5, 1, 1.5)).toBe(1.5)
   })
 })

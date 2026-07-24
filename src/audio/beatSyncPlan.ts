@@ -241,28 +241,28 @@ export function planKeyframeBeatSync(
         marker.time >= effectiveSceneRange.start - EPSILON &&
         marker.time <= effectiveSceneRange.end + EPSILON,
     )
-
   const clipBarRange = barsForSceneRange(
     options.grid,
     options.audio,
     clipSceneRange,
   )
+  const overflowMarkers = clipBarRange
+    ? sceneNoteMarkersForBars(
+        options.grid,
+        options.audio,
+        markerBarRange.startBar,
+        clipBarRange.endBar,
+      ).filter(
+        (marker) =>
+          marker.time >= effectiveSceneRange.start - EPSILON &&
+          marker.time <= clipSceneRange.end + EPSILON,
+      )
+    : initialMarkers
   const memberTimes = members.map((member) => member.time)
   let markers: NoteMarker[]
   let alignment: KeyframeBeatAlignment
   if (options.placement === 'spread') {
-    markers = clipBarRange
-      ? sceneNoteMarkersForBars(
-          options.grid,
-          options.audio,
-          markerBarRange.startBar,
-          clipBarRange.endBar,
-        ).filter(
-          (marker) =>
-            marker.time >= effectiveSceneRange.start - EPSILON &&
-            marker.time <= clipSceneRange.end + EPSILON,
-        )
-      : initialMarkers
+    markers = overflowMarkers
     alignment = spreadKeyframesAcrossNoteMarkers(
       memberTimes,
       markers,
@@ -278,22 +278,7 @@ export function planKeyframeBeatSync(
       markers,
       alignmentOptions,
     )
-    if (
-      !alignment.ok &&
-      clipBarRange &&
-      clipBarRange.endBar >= markerBarRange.endBar
-    ) {
-      const overflowMarkers = sceneNoteMarkersForBars(
-        options.grid,
-        options.audio,
-        markerBarRange.startBar,
-        clipBarRange.endBar,
-      )
-        .filter(
-          (marker) =>
-            marker.time >= effectiveSceneRange.start - EPSILON &&
-            marker.time <= clipSceneRange.end + EPSILON,
-        )
+    if (!alignment.ok && overflowMarkers.length >= initialMarkers.length) {
       const overflowAlignment = alignKeyframesToNoteMarkers(
         memberTimes,
         overflowMarkers,
@@ -457,6 +442,7 @@ export function proposeKeyframeBeatRespace(
       firstBeatTime: options.grid.firstBeatTime,
       beatsPerBar: options.grid.beatsPerBar,
       beatUnit: options.grid.beatUnit,
+      swingPercent: options.grid.swingPercent ?? 50,
       subdivisions: options.grid.subdivisions,
     },
   })
@@ -545,13 +531,13 @@ function resolveRange(
         requestedSceneRange: null,
       }
     }
-    const sourceStart = barSourceStart(options.grid, bars.startBar)
+    const barStart = barSourceStart(options.grid, bars.startBar)
     const sourceEnd = barSourceStart(options.grid, bars.endBar + 1)
     return {
       ok: true,
       rangeSource: 'bars',
       requestedSceneRange: normalizeRange({
-        start: sourceTimeToSceneTime(options.audio, sourceStart),
+        start: sourceTimeToSceneTime(options.audio, barStart),
         end: sourceTimeToSceneTime(options.audio, sourceEnd),
       })!,
       barRange: bars,

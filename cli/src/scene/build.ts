@@ -235,12 +235,19 @@ export interface NodeJson {
   loop?: boolean
   muted?: boolean
   beatAnalysis?: {
+    algorithmVersion?: 2 | 3
+    status?: 'ok' | 'ambiguous' | 'no-pulse'
     bpm: number
     confidence: number
     firstBeatTime: number
     transients: Array<{ time: number; strength: number }>
     beatTransients: Array<{ time: number; strength: number }>
-    candidates: Array<{ bpm: number; confidence: number }>
+    candidates: Array<{
+      bpm: number
+      confidence: number
+      relationship?: 'direct' | '3:2' | '2:3'
+      firstBeatTime?: number
+    }>
   }
   beatGrid?: {
     version: 1
@@ -248,6 +255,7 @@ export interface NodeJson {
     firstBeatTime: number
     beatsPerBar: number
     beatUnit: 1 | 2 | 4 | 8 | 16 | 32
+    swingPercent?: number
     subdivisions: Array<{
       id?: string
       startBar: number

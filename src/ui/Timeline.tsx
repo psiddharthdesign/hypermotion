@@ -65,6 +65,7 @@ import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
 import {
   createNoteMarkersForBars,
   divisionForBar,
+  musicalBarSegmentsForRange,
   type AudioBeatGrid,
   type NoteDivision,
   type NoteMarker,
@@ -176,6 +177,15 @@ let smoothSeekAnimationId: number | null = null
 const ROW_HEIGHT = 24
 type TimelineMode = 'animated' | 'sound'
 type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
+
+function insufficientBeatTargetsMessage(
+  requiredEvents: number,
+  availableTargets: number,
+): string {
+  return availableTargets < requiredEvents
+    ? `${requiredEvents} separate events need different beat points; only ${availableTargets} are available before the clip ends.`
+    : `${requiredEvents} separate events need different beat points, but one or more matching points are already occupied on the same animation property.`
+}
 
 type ResolvedStaggerTimelineSet = {
   id: string
@@ -1278,6 +1288,47 @@ export function Timeline() {
       ? { audioNodeId: beatAudio.id, ...beatSyncPlan.preview.barRange }
       : null
   }, [beatAudio, beatSyncPlan, selectedBarRange])
+  const beatGridSignature = beatAudio?.beatGrid
+    ? JSON.stringify({
+        bpm: beatAudio.beatGrid.bpm,
+        firstBeatTime: beatAudio.beatGrid.firstBeatTime,
+        beatsPerBar: beatAudio.beatGrid.beatsPerBar,
+        beatUnit: beatAudio.beatGrid.beatUnit,
+        swingPercent: beatAudio.beatGrid.swingPercent ?? 50,
+        subdivisions: beatAudio.beatGrid.subdivisions,
+      })
+    : ''
+  const beatAnalysisSignature = beatAudio?.beatAnalysis
+    ? [
+        beatAudio.beatAnalysis.algorithmVersion ?? 0,
+        beatAudio.beatAnalysis.status ?? '',
+        beatAudio.beatAnalysis.bpm,
+        beatAudio.beatAnalysis.firstBeatTime,
+        beatAudio.beatAnalysis.confidence,
+        beatAudio.beatAnalysis.transients.length,
+      ].join(':')
+    : ''
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setBeatSyncMessage('')
+      setPendingBeatRespace(null)
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [
+    beatAnalysisSignature,
+    beatAudio?.id,
+    selectedBarRange,
+    selectedKfs,
+  ])
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPendingBeatRespace(null)
+      setBeatSyncMessage((current) =>
+        current.startsWith('Bars ') ? current : '',
+      )
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [beatGridSignature])
   useEffect(() => {
     setBeatSnapTimes(beatMarkers.map((marker) => marker.time))
     return () => setBeatSnapTimes([])
@@ -1368,9 +1419,14 @@ export function Timeline() {
     (node: Extract<SceneNode, { kind: 'audio' }>) => {
       if (!node.beatGrid || !beatSyncPlan?.ok) {
         const reason = beatSyncPlan?.reason
+        const requiredEvents = beatSyncPlan?.preview.eventCount ?? 0
+        const availableTargets = beatSyncPlan?.preview.availableSlots ?? 0
         setBeatSyncMessage(
           reason === 'insufficient-grid-slots'
-            ? 'No later beat point is available before the audio or scene ends.'
+            ? insufficientBeatTargetsMessage(
+                requiredEvents,
+                availableTargets,
+              )
             : reason === 'range-outside-clip'
               ? 'That musical range is outside the trimmed audio clip.'
               : reason === 'no-valid-keyframes'
@@ -1385,7 +1441,11 @@ export function Timeline() {
       }
       applyBeatSyncPlan(beatSyncPlan)
     },
-    [applyBeatSyncPlan, beatRespaceProposal, beatSyncPlan],
+    [
+      applyBeatSyncPlan,
+      beatRespaceProposal,
+      beatSyncPlan,
+    ],
   )
 
   const duplicateMediaClip = useCallback(
@@ -2705,7 +2765,10 @@ export function Timeline() {
           syncReady={!!beatSyncPlan?.ok}
           syncUnavailableReason={
             beatSyncPlan?.reason === 'insufficient-grid-slots'
-              ? 'No later beat point is available before the audio or scene ends'
+              ? insufficientBeatTargetsMessage(
+                  beatSyncPlan.preview.eventCount,
+                  beatSyncPlan.preview.availableSlots,
+                )
               : beatSyncPlan?.reason === 'range-outside-clip'
                 ? 'Selected bars are outside the trimmed clip'
                 : beatSyncPlan?.reason === 'no-valid-keyframes'
@@ -2715,6 +2778,9 @@ export function Timeline() {
           message={beatSyncMessage}
           onSetDivision={(division) =>
             setBarDivision(beatAudio, division)
+          }
+          onSetSwing={(swingPercent) =>
+            updateBeatGrid(beatAudio, { swingPercent })
           }
           onOpenSettings={() => {
             setSelection([beatAudio.id])
@@ -2864,7 +2930,13 @@ export function Timeline() {
                 Musical
               </span>
               <span className="ml-2 whitespace-nowrap font-mono text-[8px] tabular-nums text-accent">
-                {beatAudio.beatGrid.bpm.toFixed(1)} BPM
+                {`${beatAudio.beatGrid.bpm.toFixed(1)} BPM${
+                  (beatAudio.beatGrid.swingPercent ?? 50) !== 50
+                    ? ` · ${(
+                        beatAudio.beatGrid.swingPercent ?? 50
+                      ).toFixed(1)}% swing`
+                    : ''
+                }`}
               </span>
               <span className="ml-auto whitespace-nowrap text-[8px] text-text-dim">
                 Shift range
@@ -4726,6 +4798,7 @@ function BeatSyncActionBar({
   syncUnavailableReason,
   message,
   onSetDivision,
+  onSetSwing,
   onOpenSettings,
   onSync,
 }: {
@@ -4743,6 +4816,7 @@ function BeatSyncActionBar({
   syncUnavailableReason: string
   message: string
   onSetDivision: (division: NoteDivision) => void
+  onSetSwing: (swingPercent: number) => void
   onOpenSettings: () => void
   onSync: () => void
 }) {
@@ -4757,6 +4831,7 @@ function BeatSyncActionBar({
       : `Bars ${selectedBarRange.startBar}–${selectedBarRange.endBar}`
     : 'Choose bars'
   const canSync = syncReady && selectedKeyframeCount > 0 && !!selectedBarRange
+  const targetPointCopy = `1/${division} points`
   const respaceHelper =
     respaceChange === 'increase'
       ? 'Already snapped · confirm wider spacing'
@@ -4772,62 +4847,96 @@ function BeatSyncActionBar({
       : respaceHelper ||
         message ||
         (selectedBarRange
-          ? `${eventCount} events · nearest 1/${division} points${overflowEndBar ? ` · continues into B${overflowEndBar}` : ''}`
+          ? `${eventCount} events · nearest ${targetPointCopy}${overflowEndBar ? ` · continues into B${overflowEndBar}` : ''}`
           : 'Choose a bar range'))
 
   return (
     <div
       data-timeline-selection-surface="1"
-      className="flex h-9 shrink-0 items-center gap-3 border-b border-border bg-panel-raised/65 px-3"
+      className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-panel-raised/65 px-3"
     >
-      <button
-        type="button"
-        onClick={onOpenSettings}
-        className="flex min-w-0 shrink items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-panel-raised"
-        title="Open audio beat settings"
-      >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-accent-soft text-accent">
-          <Music2 size={12} strokeWidth={1.9} />
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate text-[10px] font-medium text-text">
-            {node.name}
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex min-w-28 max-w-44 shrink items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-panel-raised"
+          title="Open audio beat settings"
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-accent-soft text-accent">
+            <Music2 size={12} strokeWidth={1.9} />
           </span>
-          <span className="block font-mono text-[8px] text-text-dim">
-            {grid.bpm.toFixed(1)} BPM
+          <span className="min-w-0">
+            <span className="block truncate text-[10px] font-medium text-text">
+              {node.name}
+            </span>
+            <span className="block font-mono text-[8px] text-text-dim">
+              {grid.bpm.toFixed(1)} BPM
+            </span>
           </span>
+        </button>
+
+        <div className="h-5 w-px shrink-0 bg-border" />
+
+        <span className="shrink-0 text-[10px] font-medium text-text-muted">
+          {rangeLabel}
         </span>
-      </button>
+        <div className="flex shrink-0 overflow-hidden rounded border border-border">
+          {([4, 8, 16] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              disabled={!selectedBarRange}
+              onClick={() => onSetDivision(value)}
+              className={[
+                'h-6 min-w-10 border-l border-border px-2 font-mono text-[9px] first:border-l-0',
+                division === value
+                  ? 'bg-accent-soft font-semibold text-accent'
+                  : 'bg-panel text-text-muted hover:text-text',
+                !selectedBarRange
+                  ? 'cursor-not-allowed opacity-45'
+                  : '',
+              ].join(' ')}
+              title={`Set selected bars to 1/${value} notes`}
+            >
+              1/{value}
+            </button>
+          ))}
+        </div>
 
-      <div className="h-5 w-px shrink-0 bg-border" />
+        <div
+          className="flex shrink-0 items-center gap-1.5"
+          title="50% is straight; 66.7% is a triplet feel"
+        >
+          <span className="text-[8px] font-medium tracking-wide text-text-dim uppercase">
+            Swing
+          </span>
+          <input
+            aria-label="Timeline beat-grid swing"
+            type="range"
+            min={50}
+            max={75}
+            step={0.5}
+            value={grid.swingPercent ?? 50}
+            onDoubleClick={() => onSetSwing(50)}
+            onChange={(event) =>
+              onSetSwing(
+                Math.max(50, Math.min(75, Number(event.currentTarget.value))),
+              )
+            }
+            className="w-14 accent-[var(--color-accent)]"
+          />
+          <span className="w-8 font-mono text-[8px] tabular-nums text-text-muted">
+            {(grid.swingPercent ?? 50).toFixed(
+              (grid.swingPercent ?? 50) % 1 === 0 ? 0 : 1,
+            )
+            %
+          </span>
+        </div>
 
-      <span className="shrink-0 text-[10px] font-medium text-text-muted">
-        {rangeLabel}
-      </span>
-      <div className="flex shrink-0 overflow-hidden rounded border border-border">
-        {([4, 8, 16] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            disabled={!selectedBarRange}
-            onClick={() => onSetDivision(value)}
-            className={[
-              'h-6 min-w-10 border-l border-border px-2 font-mono text-[9px] first:border-l-0',
-              division === value
-                ? 'bg-accent-soft font-semibold text-accent'
-                : 'bg-panel text-text-muted hover:text-text',
-              !selectedBarRange ? 'cursor-not-allowed opacity-45' : '',
-            ].join(' ')}
-            title={`Set selected bars to 1/${value} notes`}
-          >
-            1/{value}
-          </button>
-        ))}
+        <span className="min-w-0 flex-1 truncate text-[9px] text-text-dim">
+          {helper}
+        </span>
       </div>
-
-      <span className="min-w-0 flex-1 truncate text-[9px] text-text-dim">
-        {helper}
-      </span>
 
       <button
         type="button"
@@ -4836,7 +4945,7 @@ function BeatSyncActionBar({
         className="flex h-6 shrink-0 items-center gap-1.5 rounded bg-accent px-2.5 text-[9px] font-semibold text-white shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:bg-panel disabled:text-text-dim disabled:shadow-none"
         title={
           canSync
-            ? `Snap ${eventCount} events to their nearest 1/${division} beat points`
+            ? `Snap ${eventCount} events to their nearest ${targetPointCopy}`
             : helper
         }
       >
@@ -4861,31 +4970,72 @@ function AudioBeatGridLane({
   onSelectRange: (startBar: number, endBar: number) => void
 }) {
   const markers = useMemo(() => sceneBeatMarkers(node, duration), [duration, node])
-  const clipEnd = audioSourceTimeToSceneTime(
-    node,
-    Math.max(node.trimStart, node.trimEnd || node.duration),
+  const transients = useMemo(
+    () => sceneTransientMarkers(node, duration),
+    [duration, node],
   )
-  const barStarts = markers.filter(
-    (marker) => marker.isBarStart && marker.time < clipEnd - 0.001,
+  const playbackRate = Math.max(0.01, node.playbackRate || 1)
+  const sourceEnd = Math.max(
+    node.trimStart,
+    node.trimEnd || node.duration,
   )
+  const visibleSceneStart = Math.max(0, node.startTime)
+  const visibleSceneEnd = Math.min(
+    duration,
+    audioSourceTimeToSceneTime(node, sourceEnd),
+  )
+  const visibleSourceStart =
+    node.trimStart +
+    (visibleSceneStart - node.startTime) * playbackRate
+  const visibleSourceEnd =
+    node.trimStart +
+    (visibleSceneEnd - node.startTime) * playbackRate
+  const barSegments = node.beatGrid
+    ? musicalBarSegmentsForRange(
+        node.beatGrid,
+        visibleSourceStart,
+        visibleSourceEnd,
+      ).map((segment) => ({
+        ...segment,
+        startTime: audioSourceTimeToSceneTime(node, segment.startTime),
+        endTime: audioSourceTimeToSceneTime(node, segment.endTime),
+      }))
+    : []
   return (
     <div
       data-timeline-selection-surface="1"
-      aria-label={`Musical ruler for ${node.name} at ${node.beatGrid?.bpm.toFixed(1)} BPM`}
+      aria-label={`Musical ruler with transients and beat markers for ${node.name} at ${node.beatGrid?.bpm.toFixed(1)} BPM`}
       className="relative h-7 overflow-hidden border-b border-border bg-panel-raised/35"
       style={{ width: totalWidth }}
     >
       <div className="absolute inset-0">
-        {barStarts.map((marker, index) => {
-          const next = barStarts[index + 1]
-          const end = next?.time ?? Math.min(duration, marker.time + 2)
+        {barSegments.map((segment) => {
+          if (segment.isLeadIn) {
+            return (
+              <div
+                key={`lead-${segment.startTime}`}
+                aria-label="Lead-in before Bar 1"
+                className="pointer-events-none absolute inset-y-0 overflow-hidden whitespace-nowrap border-r border-dashed border-border-strong bg-panel-raised/70 px-1.5 pt-1 font-mono text-[8px] font-medium tracking-wide text-text-dim"
+                style={{
+                  left: segment.startTime * PX_PER_SECOND,
+                  width: Math.max(
+                    1,
+                    (segment.endTime - segment.startTime) * PX_PER_SECOND,
+                  ),
+                }}
+                title="Lead-in before Bar 1. Edit or clear it in Audio > Beat sync."
+              >
+                LEAD-IN
+              </div>
+            )
+          }
           const selected =
             !!selectedRange &&
-            marker.bar >= selectedRange.startBar &&
-            marker.bar <= selectedRange.endBar
+            segment.bar >= selectedRange.startBar &&
+            segment.bar <= selectedRange.endBar
           return (
             <button
-              key={`bar-${marker.bar}-${marker.time}`}
+              key={`bar-${segment.bar}-${segment.isLeadIn ? 'lead' : 'measure'}-${segment.startTime}`}
               type="button"
               className={[
                 'absolute inset-y-0 px-1.5 pt-1 text-left font-mono text-[8px] font-semibold tabular-nums',
@@ -4894,26 +5044,39 @@ function AudioBeatGridLane({
                   : 'text-text-dim hover:bg-panel-raised/80 hover:text-text',
               ].join(' ')}
               style={{
-                left: marker.time * PX_PER_SECOND,
-                width: Math.max(10, (end - marker.time) * PX_PER_SECOND),
+                left: segment.startTime * PX_PER_SECOND,
+                width: Math.max(
+                  1,
+                  (segment.endTime - segment.startTime) * PX_PER_SECOND,
+                ),
               }}
               onClick={(event) => {
                 if (event.shiftKey && selectedRange) {
                   onSelectRange(
-                    Math.min(selectedRange.startBar, marker.bar),
-                    Math.max(selectedRange.endBar, marker.bar),
+                    Math.min(selectedRange.startBar, segment.bar),
+                    Math.max(selectedRange.endBar, segment.bar),
                   )
                 } else {
-                  onSelectRange(marker.bar, marker.bar)
+                  onSelectRange(segment.bar, segment.bar)
                 }
               }}
               title="Click to select a bar. Shift-click to extend the range."
             >
-              B{marker.bar}
+              B{segment.bar}
             </button>
           )
         })}
         <div className="pointer-events-none absolute inset-0">
+          {transients.map((transient, index) => (
+            <span
+              key={`transient-${transient.time}-${index}`}
+              className="absolute bottom-0 w-px bg-[oklch(0.80_0.10_75)]/55"
+              style={{
+                left: transient.time * PX_PER_SECOND,
+                height: Math.max(2, Math.round(2 + transient.strength * 5)),
+              }}
+            />
+          ))}
           {markers.map((marker) => (
             <span
               key={`musical-tick-${marker.bar}-${marker.beat}-${marker.subdivision}-${marker.time}`}
@@ -5087,9 +5250,6 @@ function MediaClipRow({
         />
         <div className="pointer-events-none relative h-full overflow-hidden rounded-md">
           <WaveformBars node={node} />
-          {node.kind === 'audio' && node.beatAnalysis && (
-            <WaveformTransientMarkers node={node} />
-          )}
           <div className="absolute inset-0 flex items-center gap-1 px-2">
             <span className="shrink-0 text-[11px] drop-shadow-sm">
               {node.muted ? '×' : '♪'}
@@ -5162,33 +5322,6 @@ function WaveformBars({ node }: { node: MediaTimelineNode }) {
           key={i}
           className="min-w-px flex-1 rounded-full bg-current"
           style={{ height: `${Math.max(8, Math.round(p * 100))}%` }}
-        />
-      ))}
-    </div>
-  )
-}
-
-function WaveformTransientMarkers({
-  node,
-}: {
-  node: Extract<SceneNode, { kind: 'audio' }>
-}) {
-  const trimStart = Math.max(0, node.trimStart || 0)
-  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
-  const clipLength = Math.max(0.001, trimEnd - trimStart)
-  const transients = (node.beatAnalysis?.transients ?? []).filter(
-    (transient) => transient.time >= trimStart && transient.time <= trimEnd,
-  )
-  const leftPercent = (sourceTime: number) =>
-    `${((sourceTime - trimStart) / clipLength) * 100}%`
-
-  return (
-    <div className="absolute inset-x-7 inset-y-0" aria-hidden="true">
-      {transients.map((transient, index) => (
-        <span
-          key={`onset-${index}`}
-          className="absolute top-0 h-1.5 w-px bg-[oklch(0.88_0.18_75)]"
-          style={{ left: leftPercent(transient.time) }}
         />
       ))}
     </div>
@@ -5270,6 +5403,30 @@ function sceneBeatMarkers(
       time: audioSourceTimeToSceneTime(node, marker.time),
     }))
     .filter((marker) => marker.time >= 0 && marker.time <= duration)
+}
+
+function sceneTransientMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  duration: number,
+) {
+  const sourceEnd = Math.max(
+    node.trimStart,
+    node.trimEnd || node.duration,
+  )
+  return (node.beatAnalysis?.transients ?? [])
+    .filter(
+      (transient) =>
+        transient.time >= node.trimStart - 0.001 &&
+        transient.time <= sourceEnd + 0.001,
+    )
+    .map((transient) => ({
+      ...transient,
+      time: audioSourceTimeToSceneTime(node, transient.time),
+    }))
+    .filter(
+      (transient) =>
+        transient.time >= 0 && transient.time <= duration,
+    )
 }
 
 /** Visible placeholder for the interval after S is pressed and before the
