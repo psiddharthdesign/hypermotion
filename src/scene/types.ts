@@ -784,6 +784,10 @@ export interface AudioNode extends NodeBase {
   trimStart: number
   trimEnd: number
   loop: boolean
+  /** Detected audio evidence. Editable musical intent lives in beatGrid. */
+  beatAnalysis?: import('@/audio/beatSync').BeatAnalysis
+  /** Tempo, downbeat, meter, and per-bar note subdivisions. */
+  beatGrid?: import('@/audio/beatSync').AudioBeatGrid
 }
 
 /**

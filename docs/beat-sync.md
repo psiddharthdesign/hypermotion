@@ -143,17 +143,28 @@ undoable patch. `set_beat_grid` captures user corrections and subdivisions.
 `sync_keyframes_to_beat` reports old/new times and refuses ambiguous targets.
 The desktop UI should call the same domain functions, not a second algorithm.
 
+## Implemented in this branch
+
+- Versioned beat analysis and musical-grid data persist on audio nodes and
+  survive desktop/CLI `.hype` round trips.
+- The selected clip exposes Analyse, BPM, confidence, meter, downbeat, volume,
+  bar subdivision, and Sync controls in the Audio timeline.
+- Transients, beats, subdivisions, and bar boundaries render over the waveform
+  and in a dedicated interactive musical lane.
+- Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
+  eighth, and sixteenth-note overrides can be applied immediately.
+- Selected keyframes spread over unique note slots in one transaction, and
+  ordinary keyframe dragging now snaps to the active musical grid.
+
 ## Delivery slices
 
-1. **Foundation (this branch)** — pure analysis/grid/alignment engine and
-   synthetic click-track tests.
-2. **Persistence** — add versioned audio analysis and scene music timing to the
-   Yjs document, `.hype` load/save, CLI builder, validation, inspect, and patch.
-3. **Audio UI** — analysis worker, BPM/meter controls, transient and bar ruler.
-4. **Subdivision editing** — bar range selection and note-division popover.
-5. **Animation sync** — selected-keyframe command, grid snapping, undo, and
-   stagger/group handling.
-6. **Agent tools** — MCP analysis, grid editing, and sync commands.
+1. **Complete** — analysis/grid/alignment engine and synthetic click-track
+   tests.
+2. **Complete** — desktop and CLI persistence for analysis and musical intent.
+3. **Complete** — Audio timeline controls, markers, and clip volume.
+4. **Complete** — bar-range subdivision editing.
+5. **Complete** — selected-keyframe sync and beat snapping.
+6. **Next** — first-class MCP analysis, grid editing, and sync commands.
 
 ## Trade-offs and growth path
 

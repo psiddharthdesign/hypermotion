@@ -62,11 +62,49 @@ export interface MusicalGrid {
 }
 
 export interface BarSubdivision {
+  id?: string
   /** Inclusive, one-based bar number. */
   startBar: number
   /** Inclusive, one-based bar number. */
   endBar: number
   division: NoteDivision
+}
+
+export interface AudioBeatGrid extends MusicalGrid {
+  version: 1
+  subdivisions: BarSubdivision[]
+}
+
+export function divisionForBar(
+  grid: Pick<AudioBeatGrid, 'beatUnit' | 'subdivisions'>,
+  bar: number,
+): NoteDivision {
+  let division = grid.beatUnit
+  for (const region of grid.subdivisions) {
+    if (bar >= region.startBar && bar <= region.endBar) {
+      division = region.division
+    }
+  }
+  return division
+}
+
+export function createNoteMarkersForBars(
+  grid: AudioBeatGrid,
+  startBar: number,
+  endBar: number,
+): NoteMarker[] {
+  const markers: NoteMarker[] = []
+  for (let bar = startBar; bar <= endBar; bar++) {
+    const division = divisionForBar(grid, bar)
+    const barMarkers = createNoteMarkers(grid, {
+      startBar: bar,
+      endBar: bar,
+      division,
+    })
+    if (markers.length > 0) barMarkers.shift()
+    markers.push(...barMarkers)
+  }
+  return markers
 }
 
 export interface NoteMarker {

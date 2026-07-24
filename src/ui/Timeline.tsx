@@ -60,6 +60,15 @@ import {
   sectionDragPreviewStore,
 } from '@/ui/sectionDragPreviewStore'
 import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
+import {
+  alignKeyframesToNoteMarkers,
+  analyzeBeatPcm,
+  createNoteMarkersForBars,
+  divisionForBar,
+  type AudioBeatGrid,
+  type NoteDivision,
+  type NoteMarker,
+} from '@/audio/beatSync'
 
 /**
  * Keyframe multi-select keys are the compound `trackId:kfId` string.
@@ -149,6 +158,10 @@ const TRACK_HEADER_WIDTH = 180
 // every render — child components re-render in lockstep with the
 // store, so closures see fresh values.
 let PX_PER_SECOND = 80
+let BEAT_SNAP_TIMES: number[] = []
+function setBeatSnapTimes(times: number[]): void {
+  BEAT_SNAP_TIMES = times
+}
 let smoothSeekAnimationId: number | null = null
 const ROW_HEIGHT = 24
 type TimelineMode = 'animated' | 'sound'
@@ -478,6 +491,13 @@ export function Timeline() {
   // tests; the store sees a serializable array.
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
+  const [analyzingAudioId, setAnalyzingAudioId] = useState<string | null>(null)
+  const [beatSyncMessage, setBeatSyncMessage] = useState('')
+  const [selectedBarRange, setSelectedBarRange] = useState<{
+    audioNodeId: string
+    startBar: number
+    endBar: number
+  } | null>(null)
   const [staggerSettingsSetId, setStaggerSettingsSetId] = useState<
     string | null
   >(null)
@@ -1131,6 +1151,180 @@ export function Timeline() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, version])
 
+  const selectedAudio = useMemo(
+    () =>
+      mediaClips.find(
+        (clip): clip is Extract<SceneNode, { kind: 'audio' }> =>
+          clip.kind === 'audio' && selection.includes(clip.id),
+      ) ?? null,
+    [mediaClips, selection],
+  )
+  const beatAudio =
+    selectedAudio ??
+    mediaClips.find(
+      (clip): clip is Extract<SceneNode, { kind: 'audio' }> =>
+        clip.kind === 'audio' && !!clip.beatGrid,
+    ) ??
+    null
+  const beatMarkers = useMemo(
+    () => beatAudio ? sceneBeatMarkers(beatAudio, duration) : [],
+    [beatAudio, duration],
+  )
+  useEffect(() => {
+    setBeatSnapTimes(beatMarkers.map((marker) => marker.time))
+    return () => setBeatSnapTimes([])
+  }, [beatMarkers])
+
+  const analyzeAudio = useCallback(
+    async (node: Extract<SceneNode, { kind: 'audio' }>) => {
+      setAnalyzingAudioId(node.id)
+      setBeatSyncMessage('Decoding audio…')
+      try {
+        const buffer = await loadAudioBuffer(node.src)
+        setBeatSyncMessage('Detecting tempo and transients…')
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+        const channels = Array.from(
+          { length: buffer.numberOfChannels },
+          (_, channel) => buffer.getChannelData(channel),
+        )
+        const analysis = analyzeBeatPcm({
+          sampleRate: buffer.sampleRate,
+          channels,
+        })
+        const grid: AudioBeatGrid = {
+          version: 1,
+          bpm: analysis.bpm,
+          firstBeatTime: analysis.firstBeatTime,
+          beatsPerBar: 4,
+          beatUnit: 4,
+          subdivisions: node.beatGrid?.subdivisions ?? [],
+        }
+        api.doc.transact(() => {
+          api.setNodeProperty(node.id, 'beatAnalysis', analysis)
+          api.setNodeProperty(node.id, 'beatGrid', grid)
+        }, 'analyze-audio-beats')
+        setSelectedBarRange({ audioNodeId: node.id, startBar: 1, endBar: 1 })
+        setBeatSyncMessage(
+          `${analysis.bpm.toFixed(1)} BPM · ${analysis.beatTransients.length} beat transients`,
+        )
+      } catch (error) {
+        console.warn('[beat-sync] analysis failed', error)
+        setBeatSyncMessage('Analysis failed. Try a WAV, MP3, M4A, or FLAC file.')
+      } finally {
+        setAnalyzingAudioId(null)
+      }
+    },
+    [api],
+  )
+
+  const updateBeatGrid = useCallback(
+    (
+      node: Extract<SceneNode, { kind: 'audio' }>,
+      patch: Partial<AudioBeatGrid>,
+    ) => {
+      const current = node.beatGrid
+      if (!current) return
+      api.setNodeProperty(node.id, 'beatGrid', { ...current, ...patch })
+    },
+    [api],
+  )
+
+  const setBarDivision = useCallback(
+    (
+      node: Extract<SceneNode, { kind: 'audio' }>,
+      division: NoteDivision,
+    ) => {
+      if (!node.beatGrid) return
+      const range =
+        selectedBarRange?.audioNodeId === node.id
+          ? selectedBarRange
+          : { startBar: 1, endBar: 1 }
+      const nextRegion = {
+        id: `bars_${Math.random().toString(36).slice(2, 9)}`,
+        startBar: range.startBar,
+        endBar: range.endBar,
+        division,
+      }
+      updateBeatGrid(node, {
+        subdivisions: [...node.beatGrid.subdivisions, nextRegion],
+      })
+      setBeatSyncMessage(
+        `Bars ${range.startBar}–${range.endBar} set to 1/${division} notes`,
+      )
+    },
+    [selectedBarRange, updateBeatGrid],
+  )
+
+  const syncSelectedKeyframes = useCallback(
+    (node: Extract<SceneNode, { kind: 'audio' }>) => {
+      if (!node.beatGrid) return
+      const range =
+        selectedBarRange?.audioNodeId === node.id
+          ? selectedBarRange
+          : { startBar: 1, endBar: 1 }
+      const sourceMarkers = createNoteMarkersForBars(
+        node.beatGrid,
+        range.startBar,
+        range.endBar,
+      )
+      const markers = sourceMarkers.map((marker) => ({
+        ...marker,
+        time: audioSourceTimeToSceneTime(node, marker.time),
+      }))
+      const syncTracks = tracksByNode.flatMap((group) => group.tracks)
+      const members = syncTracks
+        .flatMap((track) =>
+          track.keyframes
+            .filter((keyframe) => selectedKfs.has(kfKey(track.id, keyframe.id)))
+            .map((keyframe) => ({ track, keyframe })),
+        )
+        .sort(
+          (a, b) =>
+            a.keyframe.time - b.keyframe.time ||
+            a.track.id.localeCompare(b.track.id) ||
+            a.keyframe.id.localeCompare(b.keyframe.id),
+        )
+      const alignment = alignKeyframesToNoteMarkers(
+        members.map((member) => member.keyframe.time),
+        markers,
+      )
+      if (!alignment.ok) {
+        setBeatSyncMessage(
+          alignment.reason === 'insufficient-grid-slots'
+            ? `${members.length} keyframes need more than ${alignment.availableSlots} slots. Choose 1/16.`
+            : 'Select keyframes and a musical bar range first.',
+        )
+        return
+      }
+      const nextTimes = new Map(
+        members.map((member, index) => [
+          kfKey(member.track.id, member.keyframe.id),
+          alignment.times[index]!,
+        ]),
+      )
+      api.doc.transact(() => {
+        for (const track of syncTracks) {
+          if (!track.keyframes.some((keyframe) => nextTimes.has(kfKey(track.id, keyframe.id)))) {
+            continue
+          }
+          api.setTrack({
+            ...track,
+            keyframes: track.keyframes
+              .map((keyframe) => ({
+                ...keyframe,
+                time: nextTimes.get(kfKey(track.id, keyframe.id)) ?? keyframe.time,
+              }))
+              .sort((a, b) => a.time - b.time),
+          })
+        }
+      }, 'sync-keyframes-to-beat')
+      setBeatSyncMessage(
+        `${members.length} keyframes synced across bars ${range.startBar}–${range.endBar}`,
+      )
+    },
+    [api, selectedBarRange, selectedKfs, tracksByNode],
+  )
+
   const duplicateMediaClip = useCallback(
     (node: MediaTimelineNode) => {
       const parent = node.parent ?? api.getRoot()
@@ -1145,7 +1339,12 @@ export function Timeline() {
         trimStart: node.trimStart,
         trimEnd: node.trimEnd,
         loop: node.loop,
-        ...(node.kind === 'video' ? { fit: node.fit } : {}),
+        ...(node.kind === 'video'
+          ? { fit: node.fit }
+          : {
+              beatAnalysis: node.beatAnalysis,
+              beatGrid: node.beatGrid,
+            }),
       } as Partial<SceneNode>)
       setSelection([id])
       setInspectorMode('properties')
@@ -2009,6 +2208,7 @@ export function Timeline() {
         for (const k of t.keyframes) set.add(k.time)
       }
     }
+    for (const time of BEAT_SNAP_TIMES) set.add(time)
     return Array.from(set).sort((a, b) => a - b)
   }
   const snapTime = (time: number, bypass: boolean, snapTimes: number[]) => {
@@ -2488,6 +2688,26 @@ export function Timeline() {
               </div>
             ) : (
               <>
+                {selectedAudio && (
+                  <AudioBeatControls
+                    node={selectedAudio}
+                    api={api}
+                    analyzing={analyzingAudioId === selectedAudio.id}
+                    selectedBarRange={
+                      selectedBarRange?.audioNodeId === selectedAudio.id
+                        ? selectedBarRange
+                        : null
+                    }
+                    selectedKeyframeCount={selectedKfs.size}
+                    message={beatSyncMessage}
+                    onAnalyze={() => void analyzeAudio(selectedAudio)}
+                    onGridChange={(patch) => updateBeatGrid(selectedAudio, patch)}
+                    onSetDivision={(division) =>
+                      setBarDivision(selectedAudio, division)
+                    }
+                    onSync={() => syncSelectedKeyframes(selectedAudio)}
+                  />
+                )}
                 {mediaClips.map((clip) => (
                   <MediaClipLabel
                     key={clip.id}
@@ -2496,6 +2716,14 @@ export function Timeline() {
                     onSelect={() => {
                       setSelection([clip.id])
                       setInspectorMode('properties')
+                      if (clip.kind === 'audio') {
+                        setSelectedBarRange({
+                          audioNodeId: clip.id,
+                          startBar: 1,
+                          endBar: 1,
+                        })
+                        setBeatSyncMessage('')
+                      }
                     }}
                     onContextMenu={(e) => openMediaMenu(e, clip)}
                   />
@@ -2931,6 +3159,17 @@ export function Timeline() {
                 frameRate={frameRate}
                 labelsMode={rulerLabels}
               />
+              {beatAudio?.beatGrid && (
+                <BeatRulerMarkers
+                  node={beatAudio}
+                  markers={beatMarkers}
+                  selectedRange={
+                    selectedBarRange?.audioNodeId === beatAudio.id
+                      ? selectedBarRange
+                      : null
+                  }
+                />
+              )}
               {/* The floating playhead pill that used to live here was
                   removed — the transport already shows the playhead
                   time at the top-left, and the playhead line itself is
@@ -3003,25 +3242,62 @@ export function Timeline() {
               mediaClips.length === 0 ? (
                 <div className="h-20" />
               ) : (
-                mediaClips.map((clip) => (
-                  <MediaClipRow
-                    key={clip.id}
-                    node={clip}
-                    api={api}
-                    duration={duration}
-                    totalWidth={totalWidth}
-                    selected={selection.includes(clip.id)}
-                    onSelect={() => {
-                      setSelection([clip.id])
-                      setInspectorMode('properties')
-                    }}
-                    onScrub={(time) => {
-                      setPlaying(false)
-                      smoothSeekPlayhead(time)
-                    }}
-                    onContextMenu={(e) => openMediaMenu(e, clip)}
-                  />
-                ))
+                <>
+                  {selectedAudio && selectedAudio.beatGrid && (
+                    <AudioBeatGridLane
+                      node={selectedAudio}
+                      duration={duration}
+                      totalWidth={totalWidth}
+                      selectedRange={
+                        selectedBarRange?.audioNodeId === selectedAudio.id
+                          ? selectedBarRange
+                          : null
+                      }
+                      onSelectRange={(startBar, endBar) =>
+                        setSelectedBarRange({
+                          audioNodeId: selectedAudio.id,
+                          startBar,
+                          endBar,
+                        })
+                      }
+                    />
+                  )}
+                  {selectedAudio && !selectedAudio.beatGrid && (
+                    <div
+                      className="flex h-[116px] items-center border-b border-border/50 bg-panel/35 px-4 text-[10px] text-text-dim"
+                      style={{ width: totalWidth }}
+                    >
+                      Analyze the selected audio to create its musical grid.
+                    </div>
+                  )}
+                  {mediaClips.map((clip) => (
+                    <MediaClipRow
+                      key={clip.id}
+                      node={clip}
+                      api={api}
+                      duration={duration}
+                      totalWidth={totalWidth}
+                      selected={selection.includes(clip.id)}
+                      onSelect={() => {
+                        setSelection([clip.id])
+                        setInspectorMode('properties')
+                        if (clip.kind === 'audio') {
+                          setSelectedBarRange({
+                            audioNodeId: clip.id,
+                            startBar: 1,
+                            endBar: 1,
+                          })
+                          setBeatSyncMessage('')
+                        }
+                      }}
+                      onScrub={(time) => {
+                        setPlaying(false)
+                        smoothSeekPlayhead(time)
+                      }}
+                      onContextMenu={(e) => openMediaMenu(e, clip)}
+                    />
+                  ))}
+                </>
               )
             ) : tracksByNode.length === 0 ? (
               <div className="h-20" />
@@ -3983,6 +4259,54 @@ function RulerTicks({
   )
 }
 
+function BeatRulerMarkers({
+  node,
+  markers,
+  selectedRange,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+  markers: NoteMarker[]
+  selectedRange: { startBar: number; endBar: number } | null
+}) {
+  const barStarts = markers.filter((marker) => marker.isBarStart)
+  const selectedStart = selectedRange
+    ? barStarts.find((marker) => marker.bar === selectedRange.startBar)?.time
+    : undefined
+  const selectedEnd = selectedRange
+    ? barStarts.find((marker) => marker.bar === selectedRange.endBar + 1)?.time
+    : undefined
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-[1]"
+      aria-label={`Beat grid for ${node.name}`}
+    >
+      {selectedStart !== undefined && selectedEnd !== undefined && (
+        <div
+          className="absolute inset-y-0 bg-accent-soft/45"
+          style={{
+            left: selectedStart * PX_PER_SECOND,
+            width: Math.max(1, (selectedEnd - selectedStart) * PX_PER_SECOND),
+          }}
+        />
+      )}
+      {markers.map((marker) => (
+        <span
+          key={`ruler-beat-${marker.bar}-${marker.beat}-${marker.subdivision}-${marker.time}`}
+          className={[
+            'absolute bottom-0',
+            marker.isBarStart
+              ? 'h-full w-px bg-accent/65'
+              : marker.subdivision === 1
+                ? 'h-2.5 w-px bg-accent/70'
+                : 'h-1.5 w-px bg-accent/45',
+          ].join(' ')}
+          style={{ left: marker.time * PX_PER_SECOND }}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Track label (left column)
 // ---------------------------------------------------------------------------
@@ -4135,6 +4459,236 @@ function AudioImportButton({ onClick }: { onClick: () => void }) {
     >
       Import audio
     </button>
+  )
+}
+
+function AudioBeatControls({
+  node,
+  api,
+  analyzing,
+  selectedBarRange,
+  selectedKeyframeCount,
+  message,
+  onAnalyze,
+  onGridChange,
+  onSetDivision,
+  onSync,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+  api: SceneAPI
+  analyzing: boolean
+  selectedBarRange: { startBar: number; endBar: number } | null
+  selectedKeyframeCount: number
+  message: string
+  onAnalyze: () => void
+  onGridChange: (patch: Partial<AudioBeatGrid>) => void
+  onSetDivision: (division: NoteDivision) => void
+  onSync: () => void
+}) {
+  const grid = node.beatGrid
+  const range = selectedBarRange ?? { startBar: 1, endBar: 1 }
+  const division = grid ? divisionForBar(grid, range.startBar) : 4
+  const fieldClass =
+    'h-5 min-w-0 rounded border border-border bg-panel px-1 font-mono text-[9px] text-text outline-none focus:border-accent'
+
+  return (
+    <div className="h-[116px] space-y-1 border-b border-border bg-panel-raised/55 px-2 py-1.5">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onAnalyze}
+          disabled={analyzing}
+          className="h-6 flex-1 rounded bg-accent px-2 text-[9px] font-semibold text-white disabled:opacity-50"
+        >
+          {analyzing ? 'Analyzing…' : grid ? 'Analyze again' : 'Analyze beats'}
+        </button>
+        <button
+          type="button"
+          onClick={onSync}
+          disabled={!grid || selectedKeyframeCount === 0}
+          className="h-6 flex-1 rounded border border-accent/60 bg-accent-soft px-1 text-[9px] font-semibold text-accent disabled:border-border disabled:bg-panel disabled:text-text-dim"
+          title="Spread selected keyframes across the selected note grid"
+        >
+          Sync {selectedKeyframeCount || ''} keys
+        </button>
+      </div>
+      <div className="grid grid-cols-[1fr_1fr] gap-1">
+        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
+          BPM
+          <input
+            className={fieldClass}
+            type="number"
+            min="30"
+            max="360"
+            step="0.1"
+            disabled={!grid}
+            value={grid?.bpm ?? ''}
+            onChange={(event) =>
+              onGridChange({ bpm: clamp(Number(event.target.value), 30, 360) })
+            }
+          />
+        </label>
+        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
+          Meter
+          <input
+            className={fieldClass}
+            type="number"
+            min="1"
+            max="16"
+            disabled={!grid}
+            value={grid?.beatsPerBar ?? 4}
+            onChange={(event) =>
+              onGridChange({
+                beatsPerBar: clamp(Math.round(Number(event.target.value)), 1, 16),
+              })
+            }
+          />
+          <select
+            className={fieldClass}
+            disabled={!grid}
+            value={grid?.beatUnit ?? 4}
+            onChange={(event) =>
+              onGridChange({ beatUnit: Number(event.target.value) as NoteDivision })
+            }
+          >
+            {[2, 4, 8, 16].map((value) => (
+              <option key={value} value={value}>/{value}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="grid grid-cols-[1fr_1fr] gap-1">
+        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
+          Downbeat
+          <input
+            className={fieldClass}
+            type="number"
+            step="0.001"
+            disabled={!grid}
+            value={grid?.firstBeatTime ?? ''}
+            onChange={(event) =>
+              onGridChange({ firstBeatTime: Math.max(0, Number(event.target.value)) })
+            }
+          />
+        </label>
+        <label className="flex min-w-0 items-center gap-1 text-[8px] text-text-dim">
+          Vol
+          <input
+            className="min-w-0 flex-1 accent-[var(--color-accent)]"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={node.volume}
+            onChange={(event) =>
+              api.setNodeProperty(node.id, 'volume', Number(event.target.value))
+            }
+          />
+          <span className="w-7 text-right font-mono text-[8px] text-text-muted">
+            {Math.round(node.volume * 100)}%
+          </span>
+        </label>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="shrink-0 text-[8px] text-text-dim">
+          B{range.startBar}{range.endBar !== range.startBar ? `–${range.endBar}` : ''}
+        </span>
+        {([4, 8, 16] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            disabled={!grid}
+            onClick={() => onSetDivision(value)}
+            className={[
+              'h-5 flex-1 rounded border text-[8px] font-semibold',
+              division === value
+                ? 'border-accent bg-accent-soft text-accent'
+                : 'border-border bg-panel text-text-muted',
+            ].join(' ')}
+          >
+            1/{value}
+          </button>
+        ))}
+      </div>
+      <div className="truncate text-[8px] text-text-dim" title={message}>
+        {grid
+          ? `${Math.round((node.beatAnalysis?.confidence ?? 0) * 100)}% confidence`
+          : 'Select this clip and analyze it.'}
+        {message ? ` · ${message}` : ''}
+      </div>
+    </div>
+  )
+}
+
+function AudioBeatGridLane({
+  node,
+  duration,
+  totalWidth,
+  selectedRange,
+  onSelectRange,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+  duration: number
+  totalWidth: number
+  selectedRange: { startBar: number; endBar: number } | null
+  onSelectRange: (startBar: number, endBar: number) => void
+}) {
+  const markers = useMemo(() => sceneBeatMarkers(node, duration), [duration, node])
+  const clipEnd = audioSourceTimeToSceneTime(
+    node,
+    Math.max(node.trimStart, node.trimEnd || node.duration),
+  )
+  const barStarts = markers.filter(
+    (marker) => marker.isBarStart && marker.time < clipEnd - 0.001,
+  )
+  return (
+    <div
+      className="relative h-[116px] overflow-hidden border-b border-border bg-panel/35"
+      style={{ width: totalWidth }}
+    >
+      <div className="absolute inset-x-0 top-0 h-5 border-b border-border/60 bg-panel-raised/70">
+        {barStarts.map((marker, index) => {
+          const next = barStarts[index + 1]
+          const end = next?.time ?? Math.min(duration, marker.time + 2)
+          const selected =
+            !!selectedRange &&
+            marker.bar >= selectedRange.startBar &&
+            marker.bar <= selectedRange.endBar
+          return (
+            <button
+              key={`bar-${marker.bar}-${marker.time}`}
+              type="button"
+              className={[
+                'absolute top-0 h-5 border-l border-accent/45 px-1 text-left font-mono text-[8px]',
+                selected
+                  ? 'bg-accent-soft text-accent'
+                  : 'text-text-dim hover:bg-panel-raised hover:text-text',
+              ].join(' ')}
+              style={{
+                left: marker.time * PX_PER_SECOND,
+                width: Math.max(10, (end - marker.time) * PX_PER_SECOND),
+              }}
+              onClick={(event) => {
+                if (event.shiftKey && selectedRange) {
+                  onSelectRange(
+                    Math.min(selectedRange.startBar, marker.bar),
+                    Math.max(selectedRange.endBar, marker.bar),
+                  )
+                } else {
+                  onSelectRange(marker.bar, marker.bar)
+                }
+              }}
+              title="Click to select a bar. Shift-click to extend the range."
+            >
+              {marker.bar}
+            </button>
+          )
+        })}
+      </div>
+      <div className="pointer-events-none absolute top-7 left-2 rounded bg-panel/75 px-1.5 py-1 text-[8px] text-text-dim">
+        Beat markers live on the seconds ruler · select bars here for 1/8 or 1/16
+      </div>
+    </div>
   )
 }
 
@@ -4291,6 +4845,9 @@ function MediaClipRow({
         />
         <div className="pointer-events-none relative h-full overflow-hidden rounded-md">
           <WaveformBars node={node} />
+          {node.kind === 'audio' && node.beatAnalysis && (
+            <WaveformTransientMarkers node={node} />
+          )}
           <div className="absolute inset-0 flex items-center gap-1 px-2">
             <span className="shrink-0 text-[11px] drop-shadow-sm">
               {node.muted ? '×' : '♪'}
@@ -4306,6 +4863,32 @@ function MediaClipRow({
 }
 
 const waveformCache = new Map<string, AudioBuffer>()
+const waveformPromiseCache = new Map<string, Promise<AudioBuffer>>()
+
+function loadAudioBuffer(src: string): Promise<AudioBuffer> {
+  const cached = waveformCache.get(src)
+  if (cached) return Promise.resolve(cached)
+  const pending = waveformPromiseCache.get(src)
+  if (pending) return pending
+  if (typeof AudioContext === 'undefined') {
+    return Promise.reject(new Error('Web Audio is unavailable'))
+  }
+  const promise = (async () => {
+    const response = await fetch(src)
+    const bytes = await response.arrayBuffer()
+    const ctx = new AudioContext()
+    try {
+      const decoded = await ctx.decodeAudioData(bytes.slice(0))
+      waveformCache.set(src, decoded)
+      return decoded
+    } finally {
+      void ctx.close()
+      waveformPromiseCache.delete(src)
+    }
+  })()
+  waveformPromiseCache.set(src, promise)
+  return promise
+}
 
 function WaveformBars({ node }: { node: MediaTimelineNode }) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -4321,18 +4904,9 @@ function WaveformBars({ node }: { node: MediaTimelineNode }) {
       return
     }
     async function load() {
-      if (typeof AudioContext === 'undefined') return
       try {
-        const response = await fetch(node.src)
-        const bytes = await response.arrayBuffer()
-        const ctx = new AudioContext()
-        try {
-          const decoded = await ctx.decodeAudioData(bytes.slice(0))
-          waveformCache.set(node.src, decoded)
-          if (!cancelled) setBuffer(decoded)
-        } finally {
-          void ctx.close()
-        }
+        const decoded = await loadAudioBuffer(node.src)
+        if (!cancelled) setBuffer(decoded)
       } catch {
         if (!cancelled) setBuffer(null)
       }
@@ -4379,6 +4953,33 @@ function WaveformBars({ node }: { node: MediaTimelineNode }) {
   )
 }
 
+function WaveformTransientMarkers({
+  node,
+}: {
+  node: Extract<SceneNode, { kind: 'audio' }>
+}) {
+  const trimStart = Math.max(0, node.trimStart || 0)
+  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
+  const clipLength = Math.max(0.001, trimEnd - trimStart)
+  const transients = (node.beatAnalysis?.transients ?? []).filter(
+    (transient) => transient.time >= trimStart && transient.time <= trimEnd,
+  )
+  const leftPercent = (sourceTime: number) =>
+    `${((sourceTime - trimStart) / clipLength) * 100}%`
+
+  return (
+    <div className="absolute inset-x-7 inset-y-0" aria-hidden="true">
+      {transients.map((transient, index) => (
+        <span
+          key={`onset-${index}`}
+          className="absolute top-0 h-1.5 w-px bg-[oklch(0.88_0.18_75)]"
+          style={{ left: leftPercent(transient.time) }}
+        />
+      ))}
+    </div>
+  )
+}
+
 function computeWaveformPeaks(
   buffer: AudioBuffer,
   count: number,
@@ -4415,6 +5016,45 @@ function formatMediaDuration(node: MediaTimelineNode): string {
   const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
   const seconds = Math.max(0, trimEnd - trimStart)
   return `${seconds.toFixed(seconds < 10 ? 2 : 1)}S`
+}
+
+function audioSourceTimeToSceneTime(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  sourceTime: number,
+): number {
+  const playbackRate = Math.max(0.01, node.playbackRate || 1)
+  return node.startTime + (sourceTime - node.trimStart) / playbackRate
+}
+
+function sourceBeatMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+): NoteMarker[] {
+  const grid = node.beatGrid
+  if (!grid) return []
+  const secondsPerBar =
+    (60 / Math.max(1, grid.bpm)) * Math.max(1, grid.beatsPerBar)
+  const sourceEnd = Math.max(node.trimStart, node.trimEnd || node.duration)
+  const barCount = Math.max(
+    1,
+    Math.ceil((sourceEnd - grid.firstBeatTime) / secondsPerBar),
+  )
+  return createNoteMarkersForBars(grid, 1, barCount).filter(
+    (marker) =>
+      marker.time >= node.trimStart - 0.001 &&
+      marker.time <= sourceEnd + 0.001,
+  )
+}
+
+function sceneBeatMarkers(
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  duration: number,
+): NoteMarker[] {
+  return sourceBeatMarkers(node)
+    .map((marker) => ({
+      ...marker,
+      time: audioSourceTimeToSceneTime(node, marker.time),
+    }))
+    .filter((marker) => marker.time >= 0 && marker.time <= duration)
 }
 
 /** Visible placeholder for the interval after S is pressed and before the
@@ -7412,7 +8052,7 @@ function snapTime(
       }
     }
   }
-  for (const mt of markerTimes) {
+  for (const mt of [...markerTimes, ...BEAT_SNAP_TIMES]) {
     const d = Math.abs(mt - time)
     if (d < bestDist) {
       bestDist = d

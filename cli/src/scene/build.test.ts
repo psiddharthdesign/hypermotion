@@ -2471,6 +2471,24 @@ test('buildSceneBytes preserves explicit audio timing fields', () => {
       trimEnd: 6.5,
       loop: true,
       muted: true,
+      beatAnalysis: {
+        bpm: 120,
+        confidence: 0.86,
+        firstBeatTime: 0.25,
+        transients: [{ time: 0.25, strength: 1 }],
+        beatTransients: [{ time: 0.25, strength: 1 }],
+        candidates: [{ bpm: 120, confidence: 0.86 }],
+      },
+      beatGrid: {
+        version: 1,
+        bpm: 120,
+        firstBeatTime: 0.25,
+        beatsPerBar: 4,
+        beatUnit: 4,
+        subdivisions: [
+          { id: 'chorus', startBar: 5, endBar: 8, division: 16 },
+        ],
+      },
     },
   }
 
@@ -2485,6 +2503,8 @@ test('buildSceneBytes preserves explicit audio timing fields', () => {
   assert.equal(narration.trimEnd, 6.5)
   assert.equal(narration.loop, true)
   assert.equal(narration.muted, true)
+  assert.deepEqual(narration.beatAnalysis, scene.nodes.narration?.beatAnalysis)
+  assert.deepEqual(narration.beatGrid, scene.nodes.narration?.beatGrid)
 })
 
 test('buildSceneBytes centers camera focus defaults on the canvas', () => {

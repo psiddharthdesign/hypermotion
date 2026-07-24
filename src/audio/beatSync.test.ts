@@ -5,6 +5,8 @@ import {
   alignKeyframesToNoteMarkers,
   analyzeBeatPcm,
   createNoteMarkers,
+  createNoteMarkersForBars,
+  divisionForBar,
 } from './beatSync'
 
 describe('analyzeBeatPcm', () => {
@@ -113,5 +115,33 @@ describe('alignKeyframesToNoteMarkers', () => {
       availableSlots: 9,
       reason: 'insufficient-grid-slots',
     })
+  })
+})
+
+describe('bar subdivision overrides', () => {
+  const grid = {
+    version: 1 as const,
+    bpm: 120,
+    firstBeatTime: 0,
+    beatsPerBar: 4,
+    beatUnit: 4 as const,
+    subdivisions: [
+      { id: 'eighths', startBar: 2, endBar: 3, division: 8 as const },
+      { id: 'sixteenths', startBar: 3, endBar: 3, division: 16 as const },
+    ],
+  }
+
+  it('uses the last matching override for a bar', () => {
+    expect(divisionForBar(grid, 1)).toBe(4)
+    expect(divisionForBar(grid, 2)).toBe(8)
+    expect(divisionForBar(grid, 3)).toBe(16)
+  })
+
+  it('joins differently subdivided bars without duplicate boundaries', () => {
+    const markers = createNoteMarkersForBars(grid, 1, 3)
+    expect(markers.filter((marker) => marker.bar === 1)).toHaveLength(4)
+    expect(markers.filter((marker) => marker.bar === 2)).toHaveLength(8)
+    expect(markers.filter((marker) => marker.bar === 3)).toHaveLength(16)
+    expect(markers.at(-1)).toMatchObject({ bar: 4, isBarStart: true })
   })
 })

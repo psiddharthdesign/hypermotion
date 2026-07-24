@@ -234,6 +234,27 @@ export interface NodeJson {
   trimEnd?: number
   loop?: boolean
   muted?: boolean
+  beatAnalysis?: {
+    bpm: number
+    confidence: number
+    firstBeatTime: number
+    transients: Array<{ time: number; strength: number }>
+    beatTransients: Array<{ time: number; strength: number }>
+    candidates: Array<{ bpm: number; confidence: number }>
+  }
+  beatGrid?: {
+    version: 1
+    bpm: number
+    firstBeatTime: number
+    beatsPerBar: number
+    beatUnit: 1 | 2 | 4 | 8 | 16 | 32
+    subdivisions: Array<{
+      id?: string
+      startBar: number
+      endBar: number
+      division: 1 | 2 | 4 | 8 | 16 | 32
+    }>
+  }
   projection?: '2d' | 'perspective'
   enabled?: boolean
   background?: FillJson | null
@@ -836,6 +857,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('trimEnd', node.trimEnd ?? node.duration ?? 0)
       y.set('loop', node.loop ?? false)
       y.set('muted', node.muted ?? node.kind === 'video')
+      if (node.kind === 'audio') {
+        if (node.beatAnalysis !== undefined) y.set('beatAnalysis', node.beatAnalysis)
+        if (node.beatGrid !== undefined) y.set('beatGrid', node.beatGrid)
+      }
       if (node.kind === 'video') {
         y.set('fit', node.fit ?? 'cover')
       }
