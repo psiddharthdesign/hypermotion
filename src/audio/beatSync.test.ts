@@ -163,6 +163,29 @@ describe('alignKeyframesToNoteMarkers', () => {
       reason: 'insufficient-grid-slots',
     })
   })
+
+  it('maps one event per note without stretching onto the next bar', () => {
+    const result = alignKeyframesToNoteMarkers(
+      Array.from({ length: 8 }, (_, index) => index / 10),
+      markers,
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([
+      0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75,
+    ])
+  })
+
+  it('keeps coincident property keyframes on the same beat', () => {
+    const result = alignKeyframesToNoteMarkers(
+      [0.1, 0.1, 0.9, 0.905, 1.8, 1.8],
+      markers,
+      { coincidentTolerance: 0.01 },
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0, 0, 1, 1, 2, 2])
+  })
 })
 
 describe('bar subdivision overrides', () => {

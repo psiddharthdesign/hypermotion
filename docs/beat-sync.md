@@ -159,7 +159,10 @@ The desktop UI should call the same domain functions, not a second algorithm.
 - Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
   eighth, and sixteenth-note overrides can be applied immediately.
 - Selected keyframes spread over unique note slots in one transaction, and
-  ordinary keyframe dragging now snaps to the active musical grid.
+  ordinary keyframe dragging now snaps to the active musical grid. Concurrent
+  property keyframes stay together as one musical event, and a full set of
+  quarter/eighth/sixteenth events maps one-to-one to the note attacks inside
+  the bar instead of stretching onto the next bar boundary.
 
 ## Delivery slices
 

@@ -123,6 +123,15 @@ export interface KeyframeBeatAlignment {
   reason?: 'no-keyframes' | 'no-grid-slots' | 'insufficient-grid-slots'
 }
 
+export interface KeyframeBeatAlignmentOptions {
+  /**
+   * Keyframes this close together are one musical event and stay concurrent.
+   * The timeline passes half a composition frame; domain callers default to
+   * exact-time grouping.
+   */
+  coincidentTolerance?: number
+}
+
 const DEFAULT_MIN_BPM = 60
 const DEFAULT_MAX_BPM = 200
 const EPSILON = 1e-9
@@ -242,14 +251,15 @@ export function createNoteMarkers(
 export function alignKeyframesToNoteMarkers(
   keyframeTimes: readonly number[],
   markers: readonly NoteMarker[],
+  options: KeyframeBeatAlignmentOptions = {},
 ): KeyframeBeatAlignment {
   if (keyframeTimes.length === 0) {
     return { ok: false, times: [], availableSlots: markers.length, reason: 'no-keyframes' }
   }
-  const slots = [...new Set(markers.map((marker) => marker.time))]
+  const allSlots = [...new Set(markers.map((marker) => marker.time))]
     .filter(Number.isFinite)
     .sort((a, b) => a - b)
-  if (slots.length === 0) {
+  if (allSlots.length === 0) {
     return {
       ok: false,
       times: [...keyframeTimes],
@@ -257,7 +267,36 @@ export function alignKeyframesToNoteMarkers(
       reason: 'no-grid-slots',
     }
   }
-  if (keyframeTimes.length > slots.length) {
+
+  const tolerance = Math.max(
+    0,
+    Number.isFinite(options.coincidentTolerance)
+      ? options.coincidentTolerance!
+      : 1e-6,
+  )
+  const ordered = keyframeTimes
+    .map((time, index) => ({ time, index }))
+    .sort((a, b) => a.time - b.time || a.index - b.index)
+  const clusters: Array<Array<{ time: number; index: number }>> = []
+  for (const item of ordered) {
+    const cluster = clusters.at(-1)
+    const anchor = cluster?.[0]?.time
+    if (cluster && anchor !== undefined && Math.abs(item.time - anchor) <= tolerance) {
+      cluster.push(item)
+    } else {
+      clusters.push([item])
+    }
+  }
+
+  // A bar contains N note attacks plus the next bar's boundary. When there
+  // are exactly N musical events, map them one-to-one to those attacks rather
+  // than stretching the last event onto the following bar and skipping a note.
+  const slots =
+    allSlots.length > 1 && clusters.length === allSlots.length - 1
+      ? allSlots.slice(0, -1)
+      : allSlots
+
+  if (clusters.length > slots.length) {
     return {
       ok: false,
       times: [...keyframeTimes],
@@ -265,19 +304,24 @@ export function alignKeyframesToNoteMarkers(
       reason: 'insufficient-grid-slots',
     }
   }
-  if (keyframeTimes.length === 1) {
-    const source = keyframeTimes[0]!
+  if (clusters.length === 1) {
+    const source = clusters[0]![0]!.time
     const nearest = slots.reduce((best, slot) =>
       Math.abs(slot - source) < Math.abs(best - source) ? slot : best,
     )
-    return { ok: true, times: [nearest], availableSlots: slots.length }
+    return {
+      ok: true,
+      times: keyframeTimes.map(() => nearest),
+      availableSlots: slots.length,
+    }
   }
 
   const lastSlot = slots.length - 1
-  const lastKeyframe = keyframeTimes.length - 1
-  const times = keyframeTimes.map((_, index) => {
-    const slotIndex = Math.round(index * lastSlot / lastKeyframe)
-    return slots[slotIndex]!
+  const lastCluster = clusters.length - 1
+  const times = [...keyframeTimes]
+  clusters.forEach((cluster, clusterIndex) => {
+    const slotIndex = Math.round(clusterIndex * lastSlot / lastCluster)
+    for (const item of cluster) times[item.index] = slots[slotIndex]!
   })
   return { ok: true, times, availableSlots: slots.length }
 }

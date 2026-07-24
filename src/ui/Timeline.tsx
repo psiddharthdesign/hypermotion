@@ -1288,6 +1288,7 @@ export function Timeline() {
       const alignment = alignKeyframesToNoteMarkers(
         members.map((member) => member.keyframe.time),
         markers,
+        { coincidentTolerance: frameStep / 2 },
       )
       if (!alignment.ok) {
         setBeatSyncMessage(
@@ -1323,7 +1324,7 @@ export function Timeline() {
         `${members.length} keyframes synced across bars ${range.startBar}–${range.endBar}`,
       )
     },
-    [api, selectedBarRange, selectedKfs, tracksByNode],
+    [api, frameStep, selectedBarRange, selectedKfs, tracksByNode],
   )
 
   const duplicateMediaClip = useCallback(
