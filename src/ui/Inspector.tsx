@@ -268,7 +268,10 @@ function ModeTabs() {
   const setMode = useUI((s) => s.setInspectorMode)
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
+    <div
+      data-timeline-selection-surface="1"
+      className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2"
+    >
       {(['properties', 'animate'] as const).map((m) => {
         const active = mode === m
         return (
@@ -5763,7 +5766,7 @@ function AudioBeatSection({
       >
         {message ||
           (grid
-            ? 'Select bars and keyframes in the timeline, then choose Distribute to beats.'
+            ? 'Select bars and keyframes in the timeline, then choose Snap to beats.'
             : 'Analyze the clip, enter a known BPM, or tap the tempo to create a grid.')}
       </div>
     </Section>

@@ -7,6 +7,7 @@ import {
   createNoteMarkers,
   createNoteMarkersForBars,
   divisionForBar,
+  spreadKeyframesAcrossNoteMarkers,
 } from './beatSync'
 
 describe('analyzeBeatPcm', () => {
@@ -267,17 +268,17 @@ describe('alignKeyframesToNoteMarkers', () => {
     { startBar: 1, endBar: 1, division: 8 },
   )
 
-  it('spreads keyframes evenly over the available note boundaries', () => {
+  it('snaps events to their nearest available note boundaries', () => {
     const result = alignKeyframesToNoteMarkers([0.1, 0.4, 1.1, 1.8, 1.95], markers)
     expect(result.ok).toBe(true)
-    expect(result.times).toEqual([0, 0.5, 1, 1.5, 2])
+    expect(result.times).toEqual([0, 0.5, 1, 1.75, 2])
   })
 
   it('snaps one keyframe to its nearest note boundary', () => {
     expect(alignKeyframesToNoteMarkers([0.63], markers).times).toEqual([0.75])
   })
 
-  it('asks for a finer grid instead of stacking too many keyframes', () => {
+  it('reports fixed-marker exhaustion instead of stacking keyframes', () => {
     const result = alignKeyframesToNoteMarkers(
       Array.from({ length: 10 }, (_, index) => index / 10),
       markers,
@@ -287,6 +288,13 @@ describe('alignKeyframesToNoteMarkers', () => {
       availableSlots: 9,
       reason: 'insufficient-grid-slots',
     })
+  })
+
+  it('pushes later events forward when their nearest point is occupied', () => {
+    const result = alignKeyframesToNoteMarkers([0.24, 0.26, 0.27], markers)
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0.25, 0.5, 0.75])
   })
 
   it('maps one event per note without stretching onto the next bar', () => {
@@ -309,7 +317,57 @@ describe('alignKeyframesToNoteMarkers', () => {
     )
 
     expect(result.ok).toBe(true)
-    expect(result.times).toEqual([0, 0, 1, 1, 2, 2])
+    expect(result.times).toEqual([0, 0, 1, 1, 1.75, 1.75])
+  })
+
+  it('never overlaps coincident keyframes owned by the same track', () => {
+    const result = alignKeyframesToNoteMarkers(
+      [0.1, 0.1],
+      markers,
+      { coincidenceKeys: ['track', 'track'] },
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0, 0.25])
+  })
+
+  it('keeps the following bar boundary available as a nearest point', () => {
+    const result = alignKeyframesToNoteMarkers(
+      [0.02, 0.52, 1.02, 1.98],
+      markers,
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0, 0.5, 1, 2])
+  })
+})
+
+describe('spreadKeyframesAcrossNoteMarkers', () => {
+  const markers = createNoteMarkers(
+    { bpm: 120, firstBeatTime: 0, beatsPerBar: 4, beatUnit: 4 },
+    { startBar: 1, endBar: 3, division: 4 },
+  )
+
+  it('increases spacing by note-slot ordinal across the preferred range', () => {
+    const result = spreadKeyframesAcrossNoteMarkers(
+      [0, 0.5, 1, 1.5, 2, 2.5, 3],
+      markers,
+      { preferredEndTime: 4 },
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0, 0.5, 1.5, 2, 2.5, 3.5, 4])
+  })
+
+  it('cascades beyond the preferred range instead of overlapping events', () => {
+    const result = spreadKeyframesAcrossNoteMarkers(
+      [0, 0.5, 1.5, 2, 2.5, 3.5, 4],
+      markers,
+      { preferredEndTime: 2 },
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.times).toEqual([0, 0.5, 1, 1.5, 2, 2.5, 3])
   })
 })
 

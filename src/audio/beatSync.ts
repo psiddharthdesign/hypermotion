@@ -146,6 +146,27 @@ export interface KeyframeBeatAlignmentOptions {
    * exact-time grouping.
    */
   coincidentTolerance?: number
+  /**
+   * Optional owner key per input time. Coincident values with the same owner
+   * remain separate events so one animation track never receives overlapping
+   * keyframes.
+   */
+  coincidenceKeys?: readonly (string | number | null | undefined)[]
+  /** Optional per-event reservation check for an otherwise valid grid slot. */
+  isSlotAvailable?: (
+    memberIndices: readonly number[],
+    slotTime: number,
+  ) => boolean
+}
+
+export interface KeyframeBeatSpreadOptions
+  extends KeyframeBeatAlignmentOptions {
+  /**
+   * Last note point in the requested musical range. Extra supplied markers
+   * remain available for collision overflow, but do not widen the intended
+   * spacing unless an occupied point forces the cascade forward.
+   */
+  preferredEndTime?: number
 }
 
 const DEFAULT_MIN_BPM = 60
@@ -298,12 +319,13 @@ export function createNoteMarkers(
 }
 
 /**
- * Spread ordered keyframes over unique note boundaries in a musical region.
+ * Snap ordered keyframe events to their nearest unique note boundaries.
  * Relative values/easing are untouched; only returned times change.
  *
- * When there are more keyframes than note slots, the operation reports a
- * structured failure instead of silently stacking multiple keyframes at one
- * time. The UI can then ask the user for a finer division.
+ * Coincident keyframes remain one event. Distinct events never overlap: when
+ * two events prefer the same point, the later event cascades to the next note
+ * boundary. The caller may append markers from following bars and retry when
+ * the supplied marker range ends.
  */
 export function alignKeyframesToNoteMarkers(
   keyframeTimes: readonly number[],
@@ -313,9 +335,7 @@ export function alignKeyframesToNoteMarkers(
   if (keyframeTimes.length === 0) {
     return { ok: false, times: [], availableSlots: markers.length, reason: 'no-keyframes' }
   }
-  const allSlots = [...new Set(markers.map((marker) => marker.time))]
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b)
+  const allSlots = sortedUniqueNoteSlots(markers)
   if (allSlots.length === 0) {
     return {
       ok: false,
@@ -325,6 +345,141 @@ export function alignKeyframesToNoteMarkers(
     }
   }
 
+  const clusters = clusterKeyframeTimes(keyframeTimes, options)
+
+  if (clusters.length > allSlots.length) {
+    return {
+      ok: false,
+      times: [...keyframeTimes],
+      availableSlots: allSlots.length,
+      reason: 'insufficient-grid-slots',
+    }
+  }
+
+  const times = [...keyframeTimes]
+  let previousSlotIndex = -1
+  for (const cluster of clusters) {
+    const source = cluster[0]!.time
+    const nearestIndex = nearestSortedValueIndex(allSlots, source)
+    let slotIndex = Math.max(nearestIndex, previousSlotIndex + 1)
+    while (
+      slotIndex < allSlots.length &&
+      options.isSlotAvailable &&
+      !options.isSlotAvailable(
+        cluster.map((item) => item.index),
+        allSlots[slotIndex]!,
+      )
+    ) {
+      slotIndex++
+    }
+    if (slotIndex >= allSlots.length) {
+      return {
+        ok: false,
+        times: [...keyframeTimes],
+        availableSlots: allSlots.length,
+        reason: 'insufficient-grid-slots',
+      }
+    }
+    for (const item of cluster) times[item.index] = allSlots[slotIndex]!
+    previousSlotIndex = slotIndex
+  }
+  return { ok: true, times, availableSlots: allSlots.length }
+}
+
+/**
+ * Re-space already aligned musical events across a requested note range.
+ *
+ * Unlike nearest-note snapping, this deliberately changes spacing. Events are
+ * distributed by note-slot ordinal (so mixed subdivisions stay musical), then
+ * collision rules cascade occupied events into later supplied markers.
+ */
+export function spreadKeyframesAcrossNoteMarkers(
+  keyframeTimes: readonly number[],
+  markers: readonly NoteMarker[],
+  options: KeyframeBeatSpreadOptions = {},
+): KeyframeBeatAlignment {
+  if (keyframeTimes.length === 0) {
+    return {
+      ok: false,
+      times: [],
+      availableSlots: markers.length,
+      reason: 'no-keyframes',
+    }
+  }
+  const allSlots = sortedUniqueNoteSlots(markers)
+  if (allSlots.length === 0) {
+    return {
+      ok: false,
+      times: [...keyframeTimes],
+      availableSlots: 0,
+      reason: 'no-grid-slots',
+    }
+  }
+  const clusters = clusterKeyframeTimes(keyframeTimes, options)
+  if (clusters.length > allSlots.length) {
+    return {
+      ok: false,
+      times: [...keyframeTimes],
+      availableSlots: allSlots.length,
+      reason: 'insufficient-grid-slots',
+    }
+  }
+
+  const preferredEndIndex = Number.isFinite(options.preferredEndTime)
+    ? lastSortedValueIndexAtOrBefore(allSlots, options.preferredEndTime!)
+    : allSlots.length - 1
+  const targetEndIndex = Math.max(0, preferredEndIndex)
+  const times = [...keyframeTimes]
+  let previousSlotIndex = -1
+  for (let eventIndex = 0; eventIndex < clusters.length; eventIndex++) {
+    const cluster = clusters[eventIndex]!
+    const idealIndex =
+      clusters.length === 1
+        ? 0
+        : Math.round(
+            eventIndex * targetEndIndex / (clusters.length - 1),
+          )
+    let slotIndex = Math.max(idealIndex, previousSlotIndex + 1)
+    while (
+      slotIndex < allSlots.length &&
+      options.isSlotAvailable &&
+      !options.isSlotAvailable(
+        cluster.map((item) => item.index),
+        allSlots[slotIndex]!,
+      )
+    ) {
+      slotIndex++
+    }
+    if (slotIndex >= allSlots.length) {
+      return {
+        ok: false,
+        times: [...keyframeTimes],
+        availableSlots: allSlots.length,
+        reason: 'insufficient-grid-slots',
+      }
+    }
+    for (const item of cluster) times[item.index] = allSlots[slotIndex]!
+    previousSlotIndex = slotIndex
+  }
+  return { ok: true, times, availableSlots: allSlots.length }
+}
+
+type ClusteredKeyframeTime = {
+  time: number
+  index: number
+  coincidenceKey: string | number | null | undefined
+}
+
+function sortedUniqueNoteSlots(markers: readonly NoteMarker[]): number[] {
+  return [...new Set(markers.map((marker) => marker.time))]
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+}
+
+function clusterKeyframeTimes(
+  keyframeTimes: readonly number[],
+  options: KeyframeBeatAlignmentOptions,
+): ClusteredKeyframeTime[][] {
   const tolerance = Math.max(
     0,
     Number.isFinite(options.coincidentTolerance)
@@ -332,62 +487,66 @@ export function alignKeyframesToNoteMarkers(
       : 1e-6,
   )
   const ordered = keyframeTimes
-    .map((time, index) => ({ time, index }))
+    .map((time, index) => ({
+      time,
+      index,
+      coincidenceKey: options.coincidenceKeys?.[index],
+    }))
     .sort((a, b) => a.time - b.time || a.index - b.index)
-  const clusters: Array<Array<{ time: number; index: number }>> = []
+  const clusters: ClusteredKeyframeTime[][] = []
   for (const item of ordered) {
     const cluster = clusters.at(-1)
     const anchor = cluster?.[0]?.time
-    if (cluster && anchor !== undefined && Math.abs(item.time - anchor) <= tolerance) {
+    const repeatsOwner =
+      item.coincidenceKey !== null &&
+      item.coincidenceKey !== undefined &&
+      cluster?.some(
+        (member) => member.coincidenceKey === item.coincidenceKey,
+      )
+    if (
+      cluster &&
+      anchor !== undefined &&
+      Math.abs(item.time - anchor) <= tolerance &&
+      !repeatsOwner
+    ) {
       cluster.push(item)
     } else {
       clusters.push([item])
     }
   }
+  return clusters
+}
 
-  // A bar contains N note attacks plus the next bar's boundary. When there
-  // are exactly N musical events, map them one-to-one to those attacks rather
-  // than stretching the last event onto the following bar and skipping a note.
-  const endsOnBarBoundary = markers.some(
-    (marker) =>
-      marker.isBarStart &&
-      Math.abs(marker.time - allSlots[allSlots.length - 1]!) <= EPSILON,
-  )
-  const slots =
-    endsOnBarBoundary &&
-    allSlots.length > 1 &&
-    clusters.length === allSlots.length - 1
-      ? allSlots.slice(0, -1)
-      : allSlots
-
-  if (clusters.length > slots.length) {
-    return {
-      ok: false,
-      times: [...keyframeTimes],
-      availableSlots: slots.length,
-      reason: 'insufficient-grid-slots',
-    }
+function nearestSortedValueIndex(
+  values: readonly number[],
+  target: number,
+): number {
+  let low = 0
+  let high = values.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (values[middle]! < target) low = middle + 1
+    else high = middle
   }
-  if (clusters.length === 1) {
-    const source = clusters[0]![0]!.time
-    const nearest = slots.reduce((best, slot) =>
-      Math.abs(slot - source) < Math.abs(best - source) ? slot : best,
-    )
-    return {
-      ok: true,
-      times: keyframeTimes.map(() => nearest),
-      availableSlots: slots.length,
-    }
-  }
+  if (low === 0) return 0
+  if (low >= values.length) return values.length - 1
+  const before = values[low - 1]!
+  const after = values[low]!
+  return target - before <= after - target ? low - 1 : low
+}
 
-  const lastSlot = slots.length - 1
-  const lastCluster = clusters.length - 1
-  const times = [...keyframeTimes]
-  clusters.forEach((cluster, clusterIndex) => {
-    const slotIndex = Math.round(clusterIndex * lastSlot / lastCluster)
-    for (const item of cluster) times[item.index] = slots[slotIndex]!
-  })
-  return { ok: true, times, availableSlots: slots.length }
+function lastSortedValueIndexAtOrBefore(
+  values: readonly number[],
+  target: number,
+): number {
+  let low = 0
+  let high = values.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (values[middle]! <= target + EPSILON) low = middle + 1
+    else high = middle
+  }
+  return low - 1
 }
 
 /**

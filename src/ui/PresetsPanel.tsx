@@ -400,7 +400,7 @@ export function PresetsPanel() {
   ) : null
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-timeline-selection-surface="1">
       {selectedStaggerSetId ? (
         <StaggerGroupPanel
           key={selectedStaggerSetId}

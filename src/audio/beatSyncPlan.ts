@@ -3,7 +3,10 @@
 import {
   alignKeyframesToNoteMarkers,
   createNoteMarkersForBars,
+  spreadKeyframesAcrossNoteMarkers,
   type AudioBeatGrid,
+  type KeyframeBeatAlignment,
+  type KeyframeBeatAlignmentOptions,
   type NoteMarker,
 } from './beatSync'
 
@@ -73,6 +76,8 @@ export interface BeatSyncPlanPreview {
   clipSceneRange: BeatSyncTimeRange | null
   /** Musical bars touched by the effective range. */
   barRange: BeatSyncBarRange | null
+  /** Bars actually occupied after collision cascades into later grid points. */
+  targetBarRange: BeatSyncBarRange | null
   selectedKeyframeCount: number
   validKeyframeCount: number
   eventCount: number
@@ -107,7 +112,23 @@ export interface BeatSyncPlanOptions {
   isolatedRange?: BeatSyncTimeRange | null
   /** Used when neither bars nor an isolated range are active. */
   workAreaRange?: BeatSyncTimeRange | null
+  /** Optional composition boundary. Overflow never writes beyond it. */
+  sceneEndTime?: number
   coincidentTolerance?: number
+  /** Internal placement intent. Ordinary Snap uses nearest. */
+  placement?: 'nearest' | 'spread'
+}
+
+export type BeatSyncRespaceChange = 'increase' | 'decrease' | 'redistribute'
+
+export interface BeatSyncRespaceProposal {
+  change: BeatSyncRespaceChange
+  currentSpan: number
+  targetSpan: number
+  currentSpacing: number
+  targetSpacing: number
+  signature: string
+  plan: BeatSyncPlan
 }
 
 const EPSILON = 1e-7
@@ -126,16 +147,23 @@ export function planKeyframeBeatSync(
     : new Set(options.selectedKeyframeKeys)
   const selectedKeyframeCount = selectedKeys.size
   const members = resolveSelectedMembers(options.tracks, selectedKeys)
+  const alignmentOptions = createAlignmentOptions(
+    options.tracks,
+    selectedKeys,
+    members,
+    options.coincidentTolerance,
+  )
   const basePreview: BeatSyncPlanPreview = {
     rangeSource: null,
     requestedSceneRange: null,
     effectiveSceneRange: null,
     clipSceneRange: null,
     barRange: null,
+    targetBarRange: null,
     selectedKeyframeCount,
     validKeyframeCount: members.length,
-    eventCount: countCoincidentEvents(
-      members.map((member) => member.time),
+    eventCount: countCoincidentMemberEvents(
+      members,
       options.coincidentTolerance,
     ),
     availableSlots: 0,
@@ -151,8 +179,18 @@ export function planKeyframeBeatSync(
     return failure('invalid-grid', basePreview, members)
   }
 
-  const clipSceneRange = sceneClipRange(options.audio)
-  if (!clipSceneRange) {
+  const rawClipSceneRange = sceneClipRange(options.audio)
+  if (!rawClipSceneRange) {
+    return failure('invalid-clip', basePreview, members)
+  }
+  const sceneEnd = Number.isFinite(options.sceneEndTime)
+    ? Math.max(0, options.sceneEndTime!)
+    : rawClipSceneRange.end
+  const clipSceneRange = {
+    start: rawClipSceneRange.start,
+    end: Math.min(rawClipSceneRange.end, sceneEnd),
+  }
+  if (clipSceneRange.end < clipSceneRange.start - EPSILON) {
     return failure('invalid-clip', basePreview, members)
   }
 
@@ -192,29 +230,83 @@ export function planKeyframeBeatSync(
     return failure('no-grid-slots', previewWithoutSlots, members)
   }
 
-  const markers = createNoteMarkersForBars(
+  const initialMarkers = sceneNoteMarkersForBars(
     options.grid,
+    options.audio,
     markerBarRange.startBar,
     markerBarRange.endBar,
   )
-    .map((marker) => ({
-      ...marker,
-      time: sourceTimeToSceneTime(options.audio, marker.time),
-    }))
     .filter(
       (marker) =>
         marker.time >= effectiveSceneRange.start - EPSILON &&
         marker.time <= effectiveSceneRange.end + EPSILON,
     )
 
-  const alignment = alignKeyframesToNoteMarkers(
-    members.map((member) => member.time),
-    markers,
-    { coincidentTolerance: options.coincidentTolerance },
+  const clipBarRange = barsForSceneRange(
+    options.grid,
+    options.audio,
+    clipSceneRange,
   )
+  const memberTimes = members.map((member) => member.time)
+  let markers: NoteMarker[]
+  let alignment: KeyframeBeatAlignment
+  if (options.placement === 'spread') {
+    markers = clipBarRange
+      ? sceneNoteMarkersForBars(
+          options.grid,
+          options.audio,
+          markerBarRange.startBar,
+          clipBarRange.endBar,
+        ).filter(
+          (marker) =>
+            marker.time >= effectiveSceneRange.start - EPSILON &&
+            marker.time <= clipSceneRange.end + EPSILON,
+        )
+      : initialMarkers
+    alignment = spreadKeyframesAcrossNoteMarkers(
+      memberTimes,
+      markers,
+      {
+        ...alignmentOptions,
+        preferredEndTime: effectiveSceneRange.end,
+      },
+    )
+  } else {
+    markers = initialMarkers
+    alignment = alignKeyframesToNoteMarkers(
+      memberTimes,
+      markers,
+      alignmentOptions,
+    )
+    if (
+      !alignment.ok &&
+      clipBarRange &&
+      clipBarRange.endBar >= markerBarRange.endBar
+    ) {
+      const overflowMarkers = sceneNoteMarkersForBars(
+        options.grid,
+        options.audio,
+        markerBarRange.startBar,
+        clipBarRange.endBar,
+      )
+        .filter(
+          (marker) =>
+            marker.time >= effectiveSceneRange.start - EPSILON &&
+            marker.time <= clipSceneRange.end + EPSILON,
+        )
+      const overflowAlignment = alignKeyframesToNoteMarkers(
+        memberTimes,
+        overflowMarkers,
+        alignmentOptions,
+      )
+      markers = overflowMarkers
+      alignment = overflowAlignment
+    }
+  }
   const preview = {
     ...previewWithoutSlots,
     barRange: markerBarRange,
+    targetBarRange: null,
     availableSlots: alignment.availableSlots,
   }
   if (!alignment.ok) {
@@ -232,13 +324,150 @@ export function planKeyframeBeatSync(
     ...member,
     targetTime: alignment.times[index]!,
   }))
+  const lastTargetTime = Math.max(...alignment.times)
+  const overflowed = lastTargetTime > effectiveSceneRange.end + EPSILON
+  const targetBarRange = overflowed
+    ? barsForSceneRange(options.grid, options.audio, {
+        start: effectiveSceneRange.start,
+        end: lastTargetTime + EPSILON * 10,
+      })
+    : markerBarRange
+  const visibleMarkerEnd = Math.max(
+    effectiveSceneRange.end,
+    lastTargetTime,
+  )
+  const usedMarkers = markers.filter(
+    (marker) => marker.time <= visibleMarkerEnd + EPSILON,
+  )
   return {
     ok: true,
-    preview,
+    preview: { ...preview, targetBarRange },
     members,
-    markers,
+    markers: usedMarkers,
     targetTimes: alignment.times,
     targets,
+  }
+}
+
+/**
+ * Build a confirmation-only re-spacing proposal for an already snapped
+ * selection. Ordinary snapping stays nearest-point based; this path is only
+ * offered when every current event is already on the active musical grid and
+ * spreading it across the newly selected bars would materially move it.
+ */
+export function proposeKeyframeBeatRespace(
+  options: BeatSyncPlanOptions,
+): BeatSyncRespaceProposal | null {
+  if (!options.selectedBars) return null
+  const nearestPlan = planKeyframeBeatSync({
+    ...options,
+    placement: 'nearest',
+  })
+  if (
+    !nearestPlan.ok ||
+    nearestPlan.preview.eventCount < 2 ||
+    !nearestPlan.preview.clipSceneRange
+  ) {
+    return null
+  }
+
+  const tolerance = beatSyncTolerance(options.coincidentTolerance)
+  const clipBars = barsForSceneRange(
+    options.grid,
+    options.audio,
+    nearestPlan.preview.clipSceneRange,
+  )
+  if (!clipBars) return null
+  const clipMarkers = sceneNoteMarkersForBars(
+    options.grid,
+    options.audio,
+    clipBars.startBar,
+    clipBars.endBar,
+  ).filter(
+    (marker) =>
+      marker.time >= nearestPlan.preview.clipSceneRange!.start - EPSILON &&
+      marker.time <= nearestPlan.preview.clipSceneRange!.end + EPSILON,
+  )
+  if (
+    !nearestPlan.members.every((member) =>
+      clipMarkers.some(
+        (marker) => Math.abs(marker.time - member.time) <= tolerance,
+      ),
+    )
+  ) {
+    return null
+  }
+
+  const spreadPlan = planKeyframeBeatSync({
+    ...options,
+    placement: 'spread',
+  })
+  if (!spreadPlan.ok) return null
+  const targetByMember = new Map(
+    spreadPlan.targets.map((target) => [
+      beatSyncSelectionKey(target.trackId, target.keyframeId),
+      target.targetTime,
+    ]),
+  )
+  const eventGroups = clusterCoincidentMembers(
+    nearestPlan.members,
+    options.coincidentTolerance,
+  )
+  const currentEventTimes = eventGroups.map((group) => group[0]!.time)
+  const targetEventTimes = eventGroups.map((group) =>
+    targetByMember.get(
+      beatSyncSelectionKey(group[0]!.trackId, group[0]!.keyframeId),
+    ) ?? group[0]!.time,
+  )
+  const changed = nearestPlan.members.some((member) => {
+    const target = targetByMember.get(
+      beatSyncSelectionKey(member.trackId, member.keyframeId),
+    )
+    return target !== undefined && Math.abs(target - member.time) > tolerance
+  })
+  if (!changed) return null
+
+  const currentSpan =
+    currentEventTimes.at(-1)! - currentEventTimes[0]!
+  const targetSpan =
+    targetEventTimes.at(-1)! - targetEventTimes[0]!
+  const intervalCount = Math.max(1, eventGroups.length - 1)
+  const currentSpacing = currentSpan / intervalCount
+  const targetSpacing = targetSpan / intervalCount
+  const change: BeatSyncRespaceChange =
+    targetSpacing > currentSpacing + tolerance
+      ? 'increase'
+      : targetSpacing < currentSpacing - tolerance
+        ? 'decrease'
+        : 'redistribute'
+  const signature = JSON.stringify({
+    bars: options.selectedBars,
+    members: nearestPlan.members.map((member) => [
+      member.trackId,
+      member.keyframeId,
+      member.time,
+    ]),
+    targets: spreadPlan.targets.map((target) => [
+      target.trackId,
+      target.keyframeId,
+      target.targetTime,
+    ]),
+    grid: {
+      bpm: options.grid.bpm,
+      firstBeatTime: options.grid.firstBeatTime,
+      beatsPerBar: options.grid.beatsPerBar,
+      beatUnit: options.grid.beatUnit,
+      subdivisions: options.grid.subdivisions,
+    },
+  })
+  return {
+    change,
+    currentSpan,
+    targetSpan,
+    currentSpacing,
+    targetSpacing,
+    signature,
+    plan: spreadPlan,
   }
 }
 
@@ -422,6 +651,18 @@ function barSourceStart(grid: AudioBeatGrid, bar: number): number {
   return grid.firstBeatTime + (bar - 1) * secondsPerBar
 }
 
+function sceneNoteMarkersForBars(
+  grid: AudioBeatGrid,
+  audio: BeatSyncAudioClip,
+  startBar: number,
+  endBar: number,
+): NoteMarker[] {
+  return createNoteMarkersForBars(grid, startBar, endBar).map((marker) => ({
+    ...marker,
+    time: sourceTimeToSceneTime(audio, marker.time),
+  }))
+}
+
 function intersectRanges(
   a: BeatSyncTimeRange,
   b: BeatSyncTimeRange,
@@ -450,23 +691,72 @@ function validGrid(grid: AudioBeatGrid): boolean {
   )
 }
 
-function countCoincidentEvents(
-  times: readonly number[],
+function countCoincidentMemberEvents(
+  members: readonly BeatSyncMember[],
   toleranceValue: number | undefined,
 ): number {
-  const tolerance =
-    Number.isFinite(toleranceValue) && toleranceValue! >= 0
-      ? toleranceValue!
-      : 1e-6
-  let count = 0
-  let anchor: number | null = null
-  for (const time of [...times].sort((a, b) => a - b)) {
-    if (anchor === null || Math.abs(time - anchor) > tolerance) {
-      count++
-      anchor = time
+  return clusterCoincidentMembers(members, toleranceValue).length
+}
+
+function clusterCoincidentMembers(
+  members: readonly BeatSyncMember[],
+  toleranceValue: number | undefined,
+): BeatSyncMember[][] {
+  const tolerance = beatSyncTolerance(toleranceValue)
+  const groups: BeatSyncMember[][] = []
+  for (const member of [...members].sort((a, b) => a.time - b.time)) {
+    const group = groups.at(-1)
+    const anchor = group?.[0]?.time
+    if (
+      !group ||
+      anchor === undefined ||
+      Math.abs(member.time - anchor) > tolerance ||
+      group.some((candidate) => candidate.trackId === member.trackId)
+    ) {
+      groups.push([member])
+    } else {
+      group.push(member)
     }
   }
-  return count
+  return groups
+}
+
+function beatSyncTolerance(toleranceValue: number | undefined): number {
+  return Number.isFinite(toleranceValue) && toleranceValue! >= 0
+    ? toleranceValue!
+    : 1e-6
+}
+
+function createAlignmentOptions(
+  tracks: readonly BeatSyncTrackLike[],
+  selectedKeys: ReadonlySet<string>,
+  members: readonly BeatSyncMember[],
+  toleranceValue: number | undefined,
+): KeyframeBeatAlignmentOptions {
+  const tolerance = beatSyncTolerance(toleranceValue)
+  const reservedByTrack = new Map<string, number[]>()
+  for (const track of tracks) {
+    const reserved = track.keyframes
+      .filter(
+        (keyframe) =>
+          Number.isFinite(keyframe.time) &&
+          !selectedKeys.has(beatSyncSelectionKey(track.id, keyframe.id)),
+      )
+      .map((keyframe) => keyframe.time)
+    if (reserved.length > 0) reservedByTrack.set(track.id, reserved)
+  }
+  return {
+    coincidentTolerance: toleranceValue,
+    coincidenceKeys: members.map((member) => member.trackId),
+    isSlotAvailable: (memberIndices, slotTime) =>
+      memberIndices.every((memberIndex) => {
+        const member = members[memberIndex]
+        if (!member) return false
+        return !(reservedByTrack.get(member.trackId) ?? []).some(
+          (time) => Math.abs(time - slotTime) <= tolerance,
+        )
+      }),
+  }
 }
 
 function positiveFinite(value: number | undefined, fallback: number): number {

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   beatSyncSelectionKey,
   planKeyframeBeatSync,
+  proposeKeyframeBeatRespace,
   type BeatSyncPlanOptions,
 } from './beatSyncPlan'
 
@@ -186,23 +187,67 @@ describe('planKeyframeBeatSync', () => {
     expect(result.reason).toBe('no-keyframes')
   })
 
-  it('reports when the active note range has too few unique slots', () => {
+  it('keeps the chosen division and cascades overflow into following bars', () => {
     const result = planKeyframeBeatSync(options(
-      [0, 0.1, 0.2, 0.3],
+      [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
       {
-        isolatedRange: { start: 0, end: 0.5 },
+        selectedBars: { startBar: 1, endBar: 1 },
       },
     ))
 
-    expect(result.ok).toBe(false)
-    expect(result.reason).toBe('insufficient-grid-slots')
-    expect(result.preview.availableSlots).toBe(2)
+    expect(result.ok).toBe(true)
+    expect(result.preview).toMatchObject({
+      eventCount: 7,
+      barRange: { startBar: 1, endBar: 1 },
+      targetBarRange: { startBar: 1, endBar: 2 },
+    })
+    expect(result.targetTimes).toEqual([0, 0.5, 1, 1.5, 2, 2.5, 3])
   })
 
-  it('keeps coincident property keyframes together in the plan', () => {
+  it('uses following-bar subdivision overrides while cascading', () => {
     const result = planKeyframeBeatSync(options(
-      [2.1, 2.105, 3.8, 3.8],
+      [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
       {
+        grid: {
+          ...grid,
+          subdivisions: [
+            { id: 'bar-2-eighths', startBar: 2, endBar: 2, division: 8 },
+          ],
+        },
+        selectedBars: { startBar: 1, endBar: 1 },
+      },
+    ))
+
+    expect(result.ok).toBe(true)
+    expect(result.targetTimes).toEqual([0, 0.5, 1, 1.5, 2, 2.25, 2.5])
+  })
+
+  it('keeps coincident cross-property keyframes together in the plan', () => {
+    const result = planKeyframeBeatSync(options(
+      [],
+      {
+        tracks: [
+          {
+            id: 'x',
+            keyframes: [
+              { id: 'x1', time: 2.1 },
+              { id: 'x2', time: 3.8 },
+            ],
+          },
+          {
+            id: 'y',
+            keyframes: [
+              { id: 'y1', time: 2.105 },
+              { id: 'y2', time: 3.8 },
+            ],
+          },
+        ],
+        selectedKeyframeKeys: [
+          beatSyncSelectionKey('x', 'x1'),
+          beatSyncSelectionKey('x', 'x2'),
+          beatSyncSelectionKey('y', 'y1'),
+          beatSyncSelectionKey('y', 'y2'),
+        ],
         workAreaRange: { start: 2, end: 4 },
         coincidentTolerance: 0.01,
       },
@@ -211,6 +256,48 @@ describe('planKeyframeBeatSync', () => {
     expect(result.ok).toBe(true)
     expect(result.preview.eventCount).toBe(2)
     expect(result.targetTimes).toEqual([2, 2, 4, 4])
+  })
+
+  it('reserves unselected keyframes on the same track', () => {
+    const result = planKeyframeBeatSync(options(
+      [],
+      {
+        tracks: [{
+          id: 'track',
+          keyframes: [
+            { id: 'selected', time: 0.1 },
+            { id: 'reserved', time: 0 },
+          ],
+        }],
+        selectedKeyframeKeys: [
+          beatSyncSelectionKey('track', 'selected'),
+        ],
+        selectedBars: { startBar: 1, endBar: 1 },
+      },
+    ))
+
+    expect(result.ok).toBe(true)
+    expect(result.targetTimes).toEqual([0.5])
+  })
+
+  it('fails only when no later point exists before the hard boundary', () => {
+    const result = planKeyframeBeatSync(options(
+      [1.9, 1.91],
+      {
+        audio: {
+          startTime: 0,
+          trimStart: 0,
+          trimEnd: 2,
+          duration: 2,
+        },
+        sceneEndTime: 2,
+        selectedBars: { startBar: 1, endBar: 1 },
+      },
+    ))
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('insufficient-grid-slots')
+    expect(result.preview.availableSlots).toBe(5)
   })
 
   it('fails invalid active ranges instead of falling through precedence', () => {
@@ -225,5 +312,106 @@ describe('planKeyframeBeatSync', () => {
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('invalid-bar-range')
     expect(result.preview.rangeSource).toBe('bars')
+  })
+
+  it('proposes increased spacing when aligned events gain another bar', () => {
+    const proposal = proposeKeyframeBeatRespace(options(
+      [0, 0.5, 1, 1.5, 2, 2.5, 3],
+      { selectedBars: { startBar: 1, endBar: 2 } },
+    ))
+
+    expect(proposal).toMatchObject({
+      change: 'increase',
+      currentSpacing: 0.5,
+      targetSpacing: 4 / 6,
+    })
+    expect(proposal?.plan.targetTimes).toEqual([
+      0, 0.5, 1.5, 2, 2.5, 3.5, 4,
+    ])
+  })
+
+  it('proposes decreased spacing and safely overflows a smaller bar range', () => {
+    const proposal = proposeKeyframeBeatRespace(options(
+      [0, 0.5, 1.5, 2, 2.5, 3.5, 4],
+      { selectedBars: { startBar: 1, endBar: 1 } },
+    ))
+
+    expect(proposal).toMatchObject({
+      change: 'decrease',
+      currentSpacing: 4 / 6,
+      targetSpacing: 0.5,
+    })
+    expect(proposal?.plan.preview.targetBarRange).toEqual({
+      startBar: 1,
+      endBar: 2,
+    })
+    expect(proposal?.plan.targetTimes).toEqual([
+      0, 0.5, 1, 1.5, 2, 2.5, 3,
+    ])
+  })
+
+  it('does not propose re-spacing when the aligned targets are unchanged', () => {
+    const proposal = proposeKeyframeBeatRespace(options(
+      [0, 0.5, 1, 1.5, 2],
+      { selectedBars: { startBar: 1, endBar: 1 } },
+    ))
+
+    expect(proposal).toBeNull()
+  })
+
+  it('does not treat unsnapped or one-event selections as re-spacing', () => {
+    expect(proposeKeyframeBeatRespace(options(
+      [0.1, 0.6, 1.1],
+      { selectedBars: { startBar: 1, endBar: 2 } },
+    ))).toBeNull()
+    expect(proposeKeyframeBeatRespace(options(
+      [1],
+      { selectedBars: { startBar: 1, endBar: 2 } },
+    ))).toBeNull()
+  })
+
+  it('spaces by note-slot ordinal across mixed bar subdivisions', () => {
+    const proposal = proposeKeyframeBeatRespace(options(
+      [0, 0.5, 1, 1.5, 2],
+      {
+        grid: {
+          ...grid,
+          subdivisions: [
+            { id: 'bar-2-eighths', startBar: 2, endBar: 2, division: 8 },
+          ],
+        },
+        selectedBars: { startBar: 1, endBar: 2 },
+      },
+    ))
+
+    expect(proposal?.change).toBe('increase')
+    expect(proposal?.plan.targetTimes).toEqual([0, 1.5, 2.5, 3.25, 4])
+  })
+
+  it('re-spaces later bars through trim, clip start, and playback rate', () => {
+    const proposal = proposeKeyframeBeatRespace(options(
+      [10, 10.5, 11],
+      {
+        audio: {
+          startTime: 10,
+          trimStart: 2,
+          trimEnd: 6,
+          duration: 8,
+          playbackRate: 2,
+        },
+        sceneEndTime: 12,
+        selectedBars: { startBar: 2, endBar: 3 },
+      },
+    ))
+
+    expect(proposal).toMatchObject({
+      change: 'increase',
+      plan: {
+        preview: {
+          barRange: { startBar: 2, endBar: 3 },
+        },
+        targetTimes: [10, 11, 12],
+      },
+    })
   })
 })

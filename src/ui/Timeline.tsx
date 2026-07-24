@@ -48,6 +48,7 @@ import {
 } from '@/state/groupActions'
 import { importAudioFile } from '@/ui/importMedia'
 import {
+  commitKeyframeTimes,
   createKeyframeDragSession,
   keyframeDragPreviewStore,
   type KeyframeDragMember,
@@ -73,8 +74,11 @@ import {
   loadAudioBuffer,
 } from '@/audio/audioBuffer'
 import {
-  beatSyncSelectionKey,
   planKeyframeBeatSync,
+  proposeKeyframeBeatRespace,
+  type BeatSyncPlan,
+  type BeatSyncRespaceChange,
+  type BeatSyncRespaceProposal,
 } from '@/audio/beatSyncPlan'
 
 /**
@@ -500,6 +504,8 @@ export function Timeline() {
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
   const [beatSyncMessage, setBeatSyncMessage] = useState('')
+  const [pendingBeatRespace, setPendingBeatRespace] =
+    useState<BeatSyncRespaceProposal | null>(null)
   const [activeBeatAudioId, setActiveBeatAudioId] = useState<string | null>(null)
   const [selectedBarRange, setSelectedBarRange] = useState<{
     audioNodeId: string
@@ -541,6 +547,20 @@ export function Timeline() {
   const clearKfs = useCallback(() => {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
+  const isNearPlayheadClientX = useCallback(
+    (clientX: number) => {
+      const right = rightRef.current
+      if (!right) return false
+      const ui = useUI.getState()
+      const playhead = ui.playing
+        ? getAnimEngine().getPlayhead()
+        : ui.playhead
+      const playheadClientX =
+        right.getBoundingClientRect().left + playhead * pxPerSecond
+      return Math.abs(clientX - playheadClientX) <= 8
+    },
+    [pxPerSecond],
+  )
   const toggleStaggerSetExpanded = useCallback((setId: string) => {
     setExpandedStaggerSetIds((previous) => {
       const next = new Set(previous)
@@ -625,12 +645,18 @@ export function Timeline() {
       const target = e.target as HTMLElement | null
       if (!target) return
       if (target.closest('[data-timeline-selection-surface]')) return
+      if (
+        rightRef.current?.contains(target) &&
+        isNearPlayheadClientX(e.clientX)
+      ) {
+        return
+      }
       clearKfs()
       useUI.getState().setSelectedTrackIds([])
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [clearKfs])
+  }, [clearKfs, isNearPlayheadClientX])
 
   // Delete handler for the keyframe-set selection. Lives here (not in
   // the global keyboard hook) because the selection itself is local
@@ -1196,9 +1222,9 @@ export function Timeline() {
     () => tracksByNode.flatMap((group) => group.tracks),
     [tracksByNode],
   )
-  const beatSyncPlan = useMemo(() => {
+  const beatSyncPlanOptions = useMemo(() => {
     if (!beatAudio?.beatGrid) return null
-    return planKeyframeBeatSync({
+    return {
       grid: beatAudio.beatGrid,
       audio: beatAudio,
       tracks: beatSyncTracks,
@@ -1212,17 +1238,33 @@ export function Timeline() {
           : null,
       isolatedRange,
       workAreaRange: normalizedWorkArea,
+      sceneEndTime: duration,
       coincidentTolerance: frameStep / 2,
-    })
+    }
   }, [
     beatAudio,
     beatSyncTracks,
+    duration,
     frameStep,
     isolatedRange,
     normalizedWorkArea,
     selectedBarRange,
     selectedKfs,
   ])
+  const beatSyncPlan = useMemo(
+    () =>
+      beatSyncPlanOptions
+        ? planKeyframeBeatSync(beatSyncPlanOptions)
+        : null,
+    [beatSyncPlanOptions],
+  )
+  const beatRespaceProposal = useMemo(
+    () =>
+      beatSyncPlanOptions
+        ? proposeKeyframeBeatRespace(beatSyncPlanOptions)
+        : null,
+    [beatSyncPlanOptions],
+  )
   const beatSyncRange = useMemo(() => {
     if (!beatAudio?.beatGrid) return null
     if (selectedBarRange?.audioNodeId === beatAudio.id) {
@@ -1281,13 +1323,54 @@ export function Timeline() {
     [beatSyncRange, updateBeatGrid],
   )
 
+  const applyBeatSyncPlan = useCallback(
+    (plan: BeatSyncPlan, respaceChange?: BeatSyncRespaceChange) => {
+      if (!plan.ok) return
+      commitKeyframeTimes(
+        api,
+        plan.targets.map((target) => ({
+          trackId: target.trackId,
+          kfId: target.keyframeId,
+          time: target.targetTime,
+        })),
+      )
+      const range = plan.preview.barRange
+      const targetRange = plan.preview.targetBarRange
+      const overflowed =
+        !!range &&
+        !!targetRange &&
+        targetRange.endBar > range.endBar
+      const overflowCopy = overflowed
+        ? ` · continued through bar ${targetRange.endBar}`
+        : ''
+      if (respaceChange) {
+        const action =
+          respaceChange === 'increase'
+            ? 'spacing increased'
+            : respaceChange === 'decrease'
+              ? 'spacing decreased'
+              : 'spacing redistributed'
+        setBeatSyncMessage(
+          `${plan.preview.eventCount} events re-snapped · ${action}${overflowCopy}`,
+        )
+        return
+      }
+      setBeatSyncMessage(
+        range
+          ? `${plan.preview.eventCount} events snapped to the beat grid${overflowCopy}`
+          : `${plan.preview.eventCount} events snapped to their nearest beat points`,
+      )
+    },
+    [api],
+  )
+
   const syncSelectedKeyframes = useCallback(
     (node: Extract<SceneNode, { kind: 'audio' }>) => {
       if (!node.beatGrid || !beatSyncPlan?.ok) {
         const reason = beatSyncPlan?.reason
         setBeatSyncMessage(
           reason === 'insufficient-grid-slots'
-            ? `${beatSyncPlan?.preview.eventCount ?? 0} keyframe events need more than ${beatSyncPlan?.preview.availableSlots ?? 0} beat slots. Choose 1/16 or a longer range.`
+            ? 'No later beat point is available before the audio or scene ends.'
             : reason === 'range-outside-clip'
               ? 'That musical range is outside the trimmed audio clip.'
               : reason === 'no-valid-keyframes'
@@ -1296,36 +1379,13 @@ export function Timeline() {
         )
         return
       }
-      const nextTimes = new Map(
-        beatSyncPlan.targets.map((target) => [
-          beatSyncSelectionKey(target.trackId, target.keyframeId),
-          target.targetTime,
-        ]),
-      )
-      api.doc.transact(() => {
-        for (const track of beatSyncTracks) {
-          if (!track.keyframes.some((keyframe) => nextTimes.has(kfKey(track.id, keyframe.id)))) {
-            continue
-          }
-          api.setTrack({
-            ...track,
-            keyframes: track.keyframes
-              .map((keyframe) => ({
-                ...keyframe,
-                time: nextTimes.get(kfKey(track.id, keyframe.id)) ?? keyframe.time,
-              }))
-              .sort((a, b) => a.time - b.time),
-          })
-        }
-      }, 'sync-keyframes-to-beat')
-      const range = beatSyncPlan.preview.barRange
-      setBeatSyncMessage(
-        range
-          ? `${beatSyncPlan.preview.validKeyframeCount} keyframes distributed across ${range.startBar === range.endBar ? `bar ${range.startBar}` : `bars ${range.startBar}–${range.endBar}`}`
-          : `${beatSyncPlan.preview.validKeyframeCount} keyframes distributed to the beat grid`,
-      )
+      if (beatRespaceProposal) {
+        setPendingBeatRespace(beatRespaceProposal)
+        return
+      }
+      applyBeatSyncPlan(beatSyncPlan)
     },
-    [api, beatSyncPlan, beatSyncTracks],
+    [applyBeatSyncPlan, beatRespaceProposal, beatSyncPlan],
   )
 
   const duplicateMediaClip = useCallback(
@@ -2188,12 +2248,16 @@ export function Timeline() {
         clamp(dragPlayhead + delta, nextStart, nextStart + span),
       )
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onUp = () => cleanup()
+    const onCancel = () => cleanup()
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   /**
@@ -2247,17 +2311,22 @@ export function Timeline() {
       setPlayheadImmediate(
         snapTime(timeFromClientX(ev.clientX), ev.altKey, snapTimes),
       )
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onUp = () => cleanup()
+    const onCancel = () => cleanup()
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   /**
    * Start a marquee (rubber-band) selection on empty timeline space.
-   * Activated by Shift+drag — unmodified drag still scrubs on row click.
+   * Plain drag replaces the keyframe selection; Shift+drag extends it.
+   * A click that never crosses the drag threshold still scrubs the row.
    * While the marquee is live we track pointer movement in scroller-
    * local coordinates and visually draw a rect. On release we enumerate
    * every rendered keyframe diamond (via the DOM) and compare its
@@ -2284,6 +2353,7 @@ export function Timeline() {
     // double-check the data-* attributes for safety.
     const target = e.target as HTMLElement
     if (target.closest('[data-timeline-ruler]')) return
+    if (target.closest('[data-timeline-selection-surface]')) return
     if (
       target.dataset.kfId ||
       target.dataset.segmentBar ||
@@ -2296,6 +2366,16 @@ export function Timeline() {
     if (e.button !== 0) return
     const right = rightRef.current
     if (!right) return
+    // The visible playhead is intentionally pointer-transparent so a
+    // keyframe directly beneath it remains clickable. Treat the 16px
+    // band around the line as its drag handle when empty space receives
+    // the gesture. Without this guard, the row scrub and marquee handlers
+    // both run: the playhead moves, then every keyframe crossed by that
+    // movement becomes selected.
+    if (isNearPlayheadClientX(e.clientX)) {
+      onRulerPointerDown(e)
+      return
+    }
     // Use the right wrapper's bounding rect as the coordinate frame.
     // It already accounts for both horizontal and vertical scroll —
     // when the user scrolls, the rect's left/top shift negative and
@@ -2326,9 +2406,17 @@ export function Timeline() {
       const y1 = ev.clientY - r.top
       setMarquee({ x0, y0, x1, y1 })
     }
-    const onUp = (ev: PointerEvent) => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onCancel = () => {
+      cleanup()
+      setMarquee(null)
+    }
+    const onUp = (ev: PointerEvent) => {
+      cleanup()
       if (!started) {
         // No drag — let the row handler's click-to-scrub run. Nothing
         // to commit here.
@@ -2405,6 +2493,7 @@ export function Timeline() {
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   // Drag the 4px top edge of the timeline to resize it. The handle is
@@ -2603,10 +2692,20 @@ export function Timeline() {
           node={beatAudio}
           selectedBarRange={beatSyncRange}
           selectedKeyframeCount={beatSyncPlan?.preview.validKeyframeCount ?? 0}
+          eventCount={beatSyncPlan?.preview.eventCount ?? 0}
+          respaceChange={beatRespaceProposal?.change ?? null}
+          overflowEndBar={
+            beatSyncPlan?.preview.targetBarRange &&
+            beatSyncPlan.preview.barRange &&
+            beatSyncPlan.preview.targetBarRange.endBar >
+              beatSyncPlan.preview.barRange.endBar
+              ? beatSyncPlan.preview.targetBarRange.endBar
+              : null
+          }
           syncReady={!!beatSyncPlan?.ok}
           syncUnavailableReason={
             beatSyncPlan?.reason === 'insufficient-grid-slots'
-              ? `${beatSyncPlan.preview.eventCount} events need more than ${beatSyncPlan.preview.availableSlots} beat slots`
+              ? 'No later beat point is available before the audio or scene ends'
               : beatSyncPlan?.reason === 'range-outside-clip'
                 ? 'Selected bars are outside the trimmed clip'
                 : beatSyncPlan?.reason === 'no-valid-keyframes'
@@ -3140,7 +3239,7 @@ export function Timeline() {
             instead of stopping at "5s 300f"). */}
         <div
           ref={rightRef}
-          className="relative flex-1"
+          className="relative flex-1 select-none"
           style={{ minWidth: totalWidth }}
           onPointerDown={onMarqueePointerDown}
         >
@@ -3762,7 +3861,7 @@ export function Timeline() {
               </>
             )}
 
-            {/* Marquee rectangle — drawn while a shift-drag is in
+            {/* Marquee rectangle — drawn while a timeline drag is in
                 progress. scroller-local coordinates, same frame as
                 tracksByNode rows, so rect corners line up exactly with
                 the diamonds they're hit-testing against. */}
@@ -3780,6 +3879,29 @@ export function Timeline() {
         </div> {/* /right wrapper */}
         </div> {/* /flex min-w-max */}
       </div> {/* /outer scroller */}
+      {pendingBeatRespace ? (
+        <BeatResnapConfirmDialog
+          proposal={pendingBeatRespace}
+          onClose={() => setPendingBeatRespace(null)}
+          onConfirm={() => {
+            if (
+              !beatRespaceProposal ||
+              beatRespaceProposal.signature !== pendingBeatRespace.signature
+            ) {
+              setPendingBeatRespace(null)
+              setBeatSyncMessage(
+                'The keyframe selection or beat range changed. Review it and snap again.',
+              )
+              return
+            }
+            applyBeatSyncPlan(
+              beatRespaceProposal.plan,
+              beatRespaceProposal.change,
+            )
+            setPendingBeatRespace(null)
+          }}
+        />
+      ) : null}
       {staggerSettingsSet ? (
         <StaggerSettingsModal
           key={staggerSettingsSet.id}
@@ -3827,6 +3949,132 @@ export function Timeline() {
         />
       ) : null}
     </section>
+  )
+}
+
+function BeatResnapConfirmDialog({
+  proposal,
+  onClose,
+  onConfirm,
+}: {
+  proposal: BeatSyncRespaceProposal
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  const range = proposal.plan.preview.barRange
+  const rangeLabel = range
+    ? range.startBar === range.endBar
+      ? `Bar ${range.startBar}`
+      : `Bars ${range.startBar}–${range.endBar}`
+    : 'the selected range'
+  const description =
+    proposal.change === 'increase'
+      ? `These events are already aligned. Re-snapping across ${rangeLabel} will move later keyframes forward and increase their spacing.`
+      : proposal.change === 'decrease'
+        ? `These events are already aligned. Re-snapping across ${rangeLabel} will move the keyframes closer together and decrease their spacing.`
+        : `These events are already aligned. Re-snapping across ${rangeLabel} will redistribute their spacing on the beat grid.`
+  const confirmLabel =
+    proposal.change === 'increase'
+      ? 'Increase spacing'
+      : proposal.change === 'decrease'
+        ? 'Decrease spacing'
+        : 'Redistribute keyframes'
+
+  return (
+    <div
+      data-timeline-selection-surface="1"
+      role="presentation"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-6 backdrop-blur-[2px]"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="beat-resnap-title"
+        className="w-full max-w-[420px] overflow-hidden rounded-xl border border-border-strong bg-panel-raised text-text shadow-2xl"
+      >
+        <header className="border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+              <Wand2 size={14} strokeWidth={2} />
+            </span>
+            <div>
+              <h2
+                id="beat-resnap-title"
+                className="text-[12px] font-semibold"
+              >
+                Keyframes already snapped
+              </h2>
+              <p className="mt-0.5 text-[9px] font-medium tracking-[0.08em] text-text-dim uppercase">
+                Confirm spacing change
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-text-muted">
+            {description}
+          </p>
+        </header>
+
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-4">
+          <div className="rounded-md border border-border bg-panel px-3 py-2.5">
+            <div className="text-[8px] font-semibold tracking-wider text-text-dim uppercase">
+              Current
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-text">
+              {proposal.currentSpacing.toFixed(2)}s
+            </div>
+            <div className="mt-0.5 text-[9px] text-text-dim">
+              average gap
+            </div>
+          </div>
+          <span className="text-[14px] text-text-dim" aria-hidden>
+            →
+          </span>
+          <div className="rounded-md border border-accent/35 bg-accent-soft/50 px-3 py-2.5">
+            <div className="text-[8px] font-semibold tracking-wider text-accent uppercase">
+              Proposed
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-text">
+              {proposal.targetSpacing.toFixed(2)}s
+            </div>
+            <div className="mt-0.5 text-[9px] text-text-dim">
+              average gap
+            </div>
+          </div>
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-border bg-panel px-5 py-3">
+          <button
+            autoFocus
+            type="button"
+            onClick={onClose}
+            className="h-8 rounded-md border border-border px-3 text-[10px] font-medium text-text-muted hover:border-border-strong hover:text-text"
+          >
+            Keep current
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="h-8 rounded-md bg-accent px-3 text-[10px] font-semibold text-white shadow-sm hover:brightness-110"
+          >
+            {confirmLabel}
+          </button>
+        </footer>
+      </div>
+    </div>
   )
 }
 
@@ -4471,6 +4719,9 @@ function BeatSyncActionBar({
   node,
   selectedBarRange,
   selectedKeyframeCount,
+  eventCount,
+  respaceChange,
+  overflowEndBar,
   syncReady,
   syncUnavailableReason,
   message,
@@ -4485,6 +4736,9 @@ function BeatSyncActionBar({
     endBar: number
   } | null
   selectedKeyframeCount: number
+  eventCount: number
+  respaceChange: BeatSyncRespaceChange | null
+  overflowEndBar: number | null
   syncReady: boolean
   syncUnavailableReason: string
   message: string
@@ -4503,13 +4757,22 @@ function BeatSyncActionBar({
       : `Bars ${selectedBarRange.startBar}–${selectedBarRange.endBar}`
     : 'Choose bars'
   const canSync = syncReady && selectedKeyframeCount > 0 && !!selectedBarRange
+  const respaceHelper =
+    respaceChange === 'increase'
+      ? 'Already snapped · confirm wider spacing'
+      : respaceChange === 'decrease'
+        ? 'Already snapped · confirm tighter spacing'
+        : respaceChange === 'redistribute'
+          ? 'Already snapped · confirm redistribution'
+          : ''
   const helper =
     syncUnavailableReason ||
     (selectedKeyframeCount === 0
       ? 'Select keyframes to sync'
-      : message ||
+      : respaceHelper ||
+        message ||
         (selectedBarRange
-          ? `${selectedKeyframeCount} keyframes ready`
+          ? `${eventCount} events · nearest 1/${division} points${overflowEndBar ? ` · continues into B${overflowEndBar}` : ''}`
           : 'Choose a bar range'))
 
   return (
@@ -4573,12 +4836,12 @@ function BeatSyncActionBar({
         className="flex h-6 shrink-0 items-center gap-1.5 rounded bg-accent px-2.5 text-[9px] font-semibold text-white shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:bg-panel disabled:text-text-dim disabled:shadow-none"
         title={
           canSync
-            ? `Distribute ${selectedKeyframeCount} selected keyframes across ${rangeLabel.toLowerCase()}`
+            ? `Snap ${eventCount} events to their nearest 1/${division} beat points`
             : helper
         }
       >
         <Wand2 size={11} strokeWidth={2} />
-        Distribute to beats
+        Snap to beats
       </button>
     </div>
   )

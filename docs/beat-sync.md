@@ -31,7 +31,8 @@ every song, and a user may deliberately animate in a different meter.
 - `src/ui/keyframeDragPreviewStore.ts` already previews batched retiming before
   one undoable commit.
 - `src/audio/beatSync.ts` now provides dependency-free PCM analysis, note-grid
-  generation, and collision-safe keyframe spreading for every surface to share.
+  generation, and collision-safe nearest-point quantization for every surface
+  to share.
 
 ## Proposed data model
 
@@ -119,11 +120,23 @@ With keyframes selected, **Sync to beat** uses this range precedence:
 3. Work area.
 4. Selected keyframes' current span.
 
-The operation enumerates note boundaries in the range and spreads keyframes in
-stable time order across unique slots, including both range boundaries.
-Keyframe values, easing, grouping, and stagger membership do not change. If
-there are more keyframes than slots, the operation does not stack them; it
-offers a finer subdivision.
+The operation enumerates note boundaries from the selected range forward and
+snaps each musical event to its nearest available point. Coincident property
+keyframes remain one intentional event. Distinct events never overlap: when a
+point is occupied, the later event cascades to the next point, continuing into
+following bars when necessary without silently changing the chosen division.
+Keyframe values, easing, grouping, and stagger membership do not change. The
+operation fails only when the audio or composition ends before another valid
+point exists.
+
+Re-snapping an already aligned selection is an explicit spacing operation. If
+the chosen bar range would spread events farther apart or compress them closer
+together, the editor previews the current and proposed average gap in a
+confirmation dialog. Cancel keeps every keyframe in place. Confirm distributes
+events by musical note-slot ordinal, preserves coincident property events, and
+uses the same forward collision rule; a dense result may therefore continue
+past the selected bar rather than overlap keyframes or silently change the
+subdivision.
 
 Dragging keyframes should also snap to note markers. Holding Option/Alt keeps
 the existing snap-bypass behavior.
@@ -164,11 +177,19 @@ The desktop UI should call the same domain functions, not a second algorithm.
   stereo energy without cancelling antiphase channels.
 - Bar clicks select one bar; Shift-click extends to a multi-bar range. Quarter,
   eighth, and sixteenth-note overrides can be applied immediately.
-- Selected keyframes spread over unique note slots in one transaction, and
-  ordinary keyframe dragging now snaps to the active musical grid. Concurrent
-  property keyframes stay together as one musical event, and a full set of
-  quarter/eighth/sixteenth events maps one-to-one to the note attacks inside
-  the bar instead of stretching onto the next bar boundary.
+- Selected keyframe events snap to their nearest unique note slots in one
+  transaction, and ordinary keyframe dragging now snaps to the active musical
+  grid. Concurrent property keyframes stay together as one musical event.
+  Collisions push later events forward, including into following bars, instead
+  of stacking keyframes or forcing a finer subdivision.
+- Already-snapped events prompt before a changed bar range increases, decreases,
+  or redistributes their spacing. The proposal is revalidated before commit and
+  cancellation preserves the active layer, track, and keyframe selection.
+- Switching between Properties and Animate—and then using Animate controls—
+  preserves timeline selections. Dragging the visible playhead from the track
+  area scrubs without creating a marquee, and timeline drags no longer create
+  native browser text highlights over chapter
+  or musical-ruler labels.
 
 ## Delivery slices
 
