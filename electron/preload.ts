@@ -15,10 +15,60 @@
  *  - a clipboard bridge (so paste flows like Figma payload import can
  *    read the OS clipboard reliably — `navigator.clipboard.readText` in
  *    the Electron renderer returns empty under default permissions)
- *  - a generic invoke pinhole for registered IPC channels
+ *  - an invoke pinhole restricted to the channels below
  *  - an event subscription helper for headless export triggers
+ *
+ * Both pinholes are allowlisted: the renderer runs third-party content
+ * (Google Fonts CSS, imported SVG / media, scene files from disk), so a
+ * renderer compromise must not reach every `ipcMain.handle` in the main
+ * process — only the channels the app actually uses.
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+
+const INVOKE_CHANNELS = new Set([
+  'clipboard:readText',
+  'clipboard:writeText',
+  'clipboard:readFiles',
+  'media:normalize-video',
+  'file:show-open-dialog',
+  'file:show-save-dialog',
+  'file:read',
+  'file:write',
+  'scene:load-path',
+  'updates:check',
+  'updates:get-status',
+  'figma-plugin:get-manifest-status',
+  'figma-plugin:reveal-manifest',
+  'preview:open-window',
+  'export:capture-rect',
+  'export:get-zoom-factor',
+  'export:set-zoom-factor',
+  'export:resize-for-capture',
+  'export:restore-window-size',
+  'export:open-render-window',
+  'export:fetch-render-job',
+  'export:cancel-render-window',
+  'export:render-window-progress',
+  'export:render-window-done',
+  'export:render-window-error',
+  'export:headless-request',
+  'export:headless-done',
+  'export:headless-error',
+])
+
+const EVENT_CHANNELS = new Set([
+  'file:new',
+  'file:open',
+  'file:open-path',
+  'file:save',
+  'file:save-as',
+  'scene:load-path',
+  'updates:available',
+  'export:headless-trigger',
+  'export:render-window-progress',
+  'export:render-window-done',
+  'export:render-window-error',
+])
 
 const clipboard = {
   readText: (): Promise<string> =>
@@ -55,18 +105,23 @@ contextBridge.exposeInMainWorld('hypermotion', {
   },
   clipboard,
   media,
-  // Generic IPC pinhole. Renderer code calls
+  // IPC pinhole. Renderer code calls
   // `window.hypermotion.invoke('channel', payload)` and main can register
   // a single ipcMain.handle. Keeps preload from growing one method per
-  // future feature.
-  invoke: (channel: string, ...args: unknown[]) =>
-    ipcRenderer.invoke(channel, ...args),
+  // future feature; new channels must be added to INVOKE_CHANNELS.
+  invoke: (channel: string, ...args: unknown[]) => {
+    if (!INVOKE_CHANNELS.has(channel)) {
+      return Promise.reject(new Error(`Blocked IPC channel: ${channel}`))
+    }
+    return ipcRenderer.invoke(channel, ...args)
+  },
   // Event subscription. Returns an unsubscribe function. Used by export
   // flows to receive headless triggers and render-window progress events.
   on: (
     channel: string,
     listener: (...args: unknown[]) => void,
   ): (() => void) => {
+    if (!EVENT_CHANNELS.has(channel)) return () => {}
     const wrapped = (_event: IpcRendererEvent, ...args: unknown[]) =>
       listener(...args)
     ipcRenderer.on(channel, wrapped)
