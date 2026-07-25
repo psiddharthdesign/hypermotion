@@ -4,6 +4,7 @@ import type { SceneAPI } from '@/scene/doc'
 import { getAnimEngine } from '@/anim'
 import type { Track } from '@/scene'
 import { resolveStaggerKeyframeBundle } from '@/anim/staggerSets'
+import { createTransientPreviewStore } from '@/ui/transientPreviewStore'
 
 export interface KeyframeDragMember {
   trackId: string
@@ -38,17 +39,6 @@ export interface KeyframeDragPreviewStore {
   subscribeAll: (listener: () => void) => () => void
 }
 
-type PendingPreview =
-  | {
-      kind: 'delta'
-      members: readonly KeyframeDragMember[]
-      delta: number
-    }
-  | {
-      kind: 'times'
-      targets: readonly KeyframeDragTarget[]
-    }
-
 const dragKey = (trackId: string, kfId: string) => `${trackId}:${kfId}`
 
 /**
@@ -62,140 +52,36 @@ const dragKey = (trackId: string, kfId: string) => `${trackId}:${kfId}`
  * once per requestAnimationFrame.
  */
 export function createKeyframeDragPreviewStore(): KeyframeDragPreviewStore {
-  let visible = new Map<string, number>()
-  let pending: PendingPreview | null = null
-  let frame: number | null = null
-  let finishFrame: number | null = null
-  let revision = 0
-  const listeners = new Map<string, Set<() => void>>()
-  const allListeners = new Set<() => void>()
-
-  const notify = (keys: Set<string>) => {
-    if (keys.size === 0) return
-    revision++
-    const called = new Set<() => void>()
-    for (const listener of allListeners) {
-      called.add(listener)
-      listener()
-    }
-    for (const key of keys) {
-      for (const listener of listeners.get(key) ?? []) {
-        if (called.has(listener)) continue
-        called.add(listener)
-        listener()
-      }
-    }
-  }
-
-  const clearVisible = () => {
-    if (visible.size === 0) return
-    const changed = new Set(visible.keys())
-    visible = new Map()
-    notify(changed)
-  }
-
-  const publishPending = () => {
-    if (!pending) return
-    const next = new Map<string, number>()
-    if (pending.kind === 'delta') {
-      for (const member of pending.members) {
-        next.set(
-          dragKey(member.trackId, member.kfId),
-          Math.max(0, member.startTime + pending.delta),
-        )
-      }
-    } else {
-      for (const target of pending.targets) {
-        next.set(
-          dragKey(target.trackId, target.kfId),
-          Math.max(0, target.time),
-        )
-      }
-    }
-    pending = null
-
-    const changed = new Set<string>()
-    for (const [key, time] of next) {
-      if (visible.get(key) !== time) changed.add(key)
-    }
-    for (const key of visible.keys()) {
-      if (!next.has(key)) changed.add(key)
-    }
-    visible = next
-    notify(changed)
-  }
-
+  const core = createTransientPreviewStore<string, number>()
   return {
-    preview: (members, delta) => {
-      pending = { kind: 'delta', members, delta }
-      if (finishFrame !== null) {
-        cancelAnimationFrame(finishFrame)
-        finishFrame = null
-      }
-      if (frame !== null) return
-      frame = requestAnimationFrame(() => {
-        frame = null
-        publishPending()
-      })
-    },
-    previewTimes: (targets) => {
-      pending = { kind: 'times', targets }
-      if (finishFrame !== null) {
-        cancelAnimationFrame(finishFrame)
-        finishFrame = null
-      }
-      if (frame !== null) return
-      frame = requestAnimationFrame(() => {
-        frame = null
-        publishPending()
-      })
-    },
-    flush: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      frame = null
-      publishPending()
-    },
-    finish: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      frame = null
-      publishPending()
-      if (finishFrame !== null) cancelAnimationFrame(finishFrame)
-      // The document subscription gets the committed track data first. Holding
-      // this final visual value until the next paint avoids a one-frame jump
-      // back to the stale prop while React reconciles that scene update.
-      finishFrame = requestAnimationFrame(() => {
-        finishFrame = null
-        clearVisible()
-      })
-    },
-    cancel: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      if (finishFrame !== null) cancelAnimationFrame(finishFrame)
-      frame = null
-      finishFrame = null
-      pending = null
-      clearVisible()
-    },
+    preview: (members, delta) =>
+      core.schedule(() => {
+        const next = new Map<string, number>()
+        for (const member of members) {
+          next.set(
+            dragKey(member.trackId, member.kfId),
+            Math.max(0, member.startTime + delta),
+          )
+        }
+        return next
+      }),
+    previewTimes: (targets) =>
+      core.schedule(() => {
+        const next = new Map<string, number>()
+        for (const target of targets) {
+          next.set(dragKey(target.trackId, target.kfId), Math.max(0, target.time))
+        }
+        return next
+      }),
+    flush: core.flush,
+    finish: core.finish,
+    cancel: core.cancel,
     getTime: (trackId, kfId, fallback) =>
-      visible.get(dragKey(trackId, kfId)) ?? fallback,
-    getRevision: () => revision,
-    subscribe: (trackId, kfId, listener) => {
-      const key = dragKey(trackId, kfId)
-      let bucket = listeners.get(key)
-      if (!bucket) {
-        bucket = new Set()
-        listeners.set(key, bucket)
-      }
-      bucket.add(listener)
-      return () => {
-        bucket!.delete(listener)
-        if (bucket!.size === 0) listeners.delete(key)
-      }
-    },
-    subscribeAll: (listener) => {
-      allListeners.add(listener)
-      return () => allListeners.delete(listener)
-    },
+      core.get(dragKey(trackId, kfId)) ?? fallback,
+    getRevision: core.getRevision,
+    subscribe: (trackId, kfId, listener) =>
+      core.subscribe(dragKey(trackId, kfId), listener),
+    subscribeAll: core.subscribeAll,
   }
 }
 

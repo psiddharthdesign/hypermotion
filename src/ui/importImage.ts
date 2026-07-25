@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SceneAPI } from '@/scene/doc'
-import type { NodeId, Transform } from '@/scene'
+import type { NodeId } from '@/scene'
+import { fitMediaIntoArtboard, readFileAsDataUrl } from '@/ui/importShared'
 
 /**
  * Import an image file into the scene as a new ImageNode.
@@ -39,38 +40,11 @@ export async function importImageFile(
   const dataUrl = await readFileAsDataUrl(file)
   const { width: natW, height: natH } = await decodeNaturalSize(dataUrl)
 
-  // Clamp to a sane initial size. The artboard's width/height come from
-  // scene meta; we only check against it when a proper number is
-  // available (the root frame always has numeric sizes, so this is
-  // effectively unconditional in practice).
-  const meta = api.getMeta()
-  const maxW = meta.canvas.width * 0.8
-  const maxH = meta.canvas.height * 0.8
-  let w = natW
-  let h = natH
-  const ratio = Math.min(maxW / w, maxH / h, 1)
-  if (ratio < 1) {
-    w = Math.round(w * ratio)
-    h = Math.round(h * ratio)
-  }
-
-  // Center on dropPos (canvas-space), else on the artboard center.
-  const cx = opts?.dropPos?.x ?? meta.canvas.width / 2
-  const cy = opts?.dropPos?.y ?? meta.canvas.height / 2
-  const transform: Transform = {
-    x: Math.round(cx - w / 2),
-    y: Math.round(cy - h / 2),
-    z: 0,
-    rotation: 0,
-    rotationX: 0,
-    rotationY: 0,
-    scaleX: 1,
-    scaleY: 1,
-  }
+  const { size, transform } = fitMediaIntoArtboard(api, natW, natH, opts?.dropPos)
 
   const id = api.createNode('image', parent, {
     name: file.name.replace(/\.[^.]+$/, '') || 'Image',
-    size: { width: w, height: h },
+    size,
     transform,
     src: dataUrl,
     fit: 'cover',
@@ -114,19 +88,6 @@ export function isImageFile(file: File): boolean {
   // covers everything the browser will natively decode in an <img>.
   if (file.type.startsWith('image/')) return true
   return /\.(png|jpe?g|webp|gif|svg|avif|bmp)$/i.test(file.name)
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const r = reader.result
-      if (typeof r === 'string') resolve(r)
-      else reject(new Error('FileReader returned non-string'))
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
-    reader.readAsDataURL(file)
-  })
 }
 
 function decodeNaturalSize(

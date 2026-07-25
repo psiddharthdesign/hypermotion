@@ -2,6 +2,7 @@
 
 import type { Section } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { createTransientPreviewStore } from '@/ui/transientPreviewStore'
 
 export interface SectionDragPreviewStore {
   preview: (sections: readonly Section[]) => void
@@ -21,101 +22,22 @@ export interface SectionDragPreviewStore {
  * and undo entry for every packet.
  */
 export function createSectionDragPreviewStore(): SectionDragPreviewStore {
-  let visible = new Map<string, Section>()
-  let pending: readonly Section[] | null = null
-  let frame: number | null = null
-  let finishFrame: number | null = null
-  const listeners = new Map<string, Set<() => void>>()
-
-  const notify = (ids: Set<string>) => {
-    const called = new Set<() => void>()
-    for (const id of ids) {
-      for (const listener of listeners.get(id) ?? []) {
-        if (called.has(listener)) continue
-        called.add(listener)
-        listener()
-      }
-    }
-  }
-
-  const publishPending = () => {
-    if (!pending) return
-    const next = new Map(pending.map((section) => [section.id, section]))
-    pending = null
-    const changed = new Set<string>()
-    for (const [id, section] of next) {
-      const previous = visible.get(id)
-      if (
-        !previous ||
-        previous.start !== section.start ||
-        previous.end !== section.end ||
-        previous.name !== section.name ||
-        previous.color !== section.color
-      ) {
-        changed.add(id)
-      }
-    }
-    for (const id of visible.keys()) {
-      if (!next.has(id)) changed.add(id)
-    }
-    visible = next
-    notify(changed)
-  }
-
-  const clearVisible = () => {
-    if (visible.size === 0) return
-    const changed = new Set(visible.keys())
-    visible = new Map()
-    notify(changed)
-  }
-
+  const core = createTransientPreviewStore<string, Section>(
+    (previous, next) =>
+      !previous ||
+      previous.start !== next.start ||
+      previous.end !== next.end ||
+      previous.name !== next.name ||
+      previous.color !== next.color,
+  )
   return {
-    preview: (sections) => {
-      pending = sections
-      if (finishFrame !== null) cancelAnimationFrame(finishFrame)
-      finishFrame = null
-      if (frame !== null) return
-      frame = requestAnimationFrame(() => {
-        frame = null
-        publishPending()
-      })
-    },
-    flush: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      frame = null
-      publishPending()
-    },
-    finish: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      frame = null
-      publishPending()
-      if (finishFrame !== null) cancelAnimationFrame(finishFrame)
-      finishFrame = requestAnimationFrame(() => {
-        finishFrame = null
-        clearVisible()
-      })
-    },
-    cancel: () => {
-      if (frame !== null) cancelAnimationFrame(frame)
-      if (finishFrame !== null) cancelAnimationFrame(finishFrame)
-      frame = null
-      finishFrame = null
-      pending = null
-      clearVisible()
-    },
-    getSection: (sectionId, fallback) => visible.get(sectionId) ?? fallback,
-    subscribe: (sectionId, listener) => {
-      let bucket = listeners.get(sectionId)
-      if (!bucket) {
-        bucket = new Set()
-        listeners.set(sectionId, bucket)
-      }
-      bucket.add(listener)
-      return () => {
-        bucket!.delete(listener)
-        if (bucket!.size === 0) listeners.delete(sectionId)
-      }
-    },
+    preview: (sections) =>
+      core.schedule(() => new Map(sections.map((section) => [section.id, section]))),
+    flush: core.flush,
+    finish: core.finish,
+    cancel: core.cancel,
+    getSection: (sectionId, fallback) => core.get(sectionId) ?? fallback,
+    subscribe: core.subscribe,
   }
 }
 

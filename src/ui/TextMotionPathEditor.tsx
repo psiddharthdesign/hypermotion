@@ -10,6 +10,7 @@ import {
   type TextMotionPathPoint,
 } from '@/anim/textMotionPath'
 import { NumberField } from '@/ui/fields/NumberField'
+import { startGlobalPointerDrag } from '@/ui/pointerDrag'
 import {
   editTextMotionPathPart,
   largestTextMotionPathSegmentMidpoint,
@@ -141,65 +142,34 @@ export function TextMotionPathEditor({
     const startPoint = start.points.find((point) => point.id === pointId)!
     const startPart = textMotionPathPartPosition(startPoint, part)
     let latest = start
-    let moved = false
 
-    const cleanup = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onCancel)
-      window.removeEventListener('blur', onCancel)
-      window.removeEventListener('keydown', onKeyDown, true)
-      dragCancelRef.current = null
-    }
-    const onMove = (pointerEvent: PointerEvent) => {
-      if (pointerEvent.pointerId !== pointerId) return
-      pointerEvent.preventDefault()
-      const target = pointerToWorld(
-        svg,
-        pointerEvent.clientX,
-        pointerEvent.clientY,
-        view,
-      )
-      latest = editTextMotionPathPart(start, pointId, part, {
-        ...target,
-        z: startPart.z,
-      })
-      moved = true
-      setDraft(latest)
-      onPreview?.(latest)
-    }
-    const onUp = (pointerEvent: PointerEvent) => {
-      if (pointerEvent.pointerId !== pointerId) return
-      cleanup()
-      if (moved) {
+    dragCancelRef.current = startGlobalPointerDrag(pointerId, {
+      onMove: (pointerEvent) => {
+        const target = pointerToWorld(
+          svg,
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+          view,
+        )
+        latest = editTextMotionPathPart(start, pointId, part, {
+          ...target,
+          z: startPart.z,
+        })
+        setDraft(latest)
+        onPreview?.(latest)
+      },
+      onCommit: () => {
         commit(latest)
         onPreviewFinish?.()
-      }
-    }
-    const onCancel = (pointerEvent?: PointerEvent | Event) => {
-      if (
-        pointerEvent instanceof PointerEvent &&
-        pointerEvent.pointerId !== pointerId
-      ) {
-        return
-      }
-      cleanup()
-      setDraft(start)
-      onPreviewCancel?.()
-    }
-    const onKeyDown = (keyEvent: KeyboardEvent) => {
-      if (keyEvent.key !== 'Escape') return
-      keyEvent.preventDefault()
-      keyEvent.stopPropagation()
-      keyEvent.stopImmediatePropagation()
-      onCancel()
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onCancel)
-    window.addEventListener('blur', onCancel)
-    window.addEventListener('keydown', onKeyDown, true)
-    dragCancelRef.current = onCancel
+      },
+      onCancel: () => {
+        setDraft(start)
+        onPreviewCancel?.()
+      },
+      onCleanup: () => {
+        dragCancelRef.current = null
+      },
+    })
   }
 
   const nudge = (
