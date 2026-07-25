@@ -47,6 +47,12 @@ import { useDragToMove } from '@/ui/hooks/useDragToMove'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
 import {
+  mergeImportOutcomes,
+  reportImportFailures,
+  reportUnexpectedImportError,
+  type ImportOutcome,
+} from '@/ui/importResult'
+import {
   captureVideoPoster,
   decodeVideoMeta,
   importMediaFiles,
@@ -2880,26 +2886,30 @@ export function Canvas() {
 
       // Drop at the pointer location in canvas coordinates so the asset
       // lands where the user let go, not at the artboard center.
-      const ids: NodeId[] = []
-      if (imageFiles.length > 0) {
-        ids.push(
-          ...(await importImageFiles(imageFiles, api, workspaceOnly ? null : rootId, {
-            dropPos: dropPos ?? undefined,
-            workspaceOnly,
-          })),
+      const empty: ImportOutcome = { ids: [], failures: [] }
+      try {
+        const outcome = mergeImportOutcomes(
+          imageFiles.length > 0
+            ? await importImageFiles(imageFiles, api, workspaceOnly ? null : rootId, {
+                dropPos: dropPos ?? undefined,
+                workspaceOnly,
+              })
+            : empty,
+          mediaFiles.length > 0
+            ? await importMediaFiles(mediaFiles, api, workspaceOnly ? null : rootId, {
+                dropPos: dropPos ?? undefined,
+                workspaceOnly,
+              })
+            : empty,
         )
-      }
-      if (mediaFiles.length > 0) {
-        ids.push(
-          ...(await importMediaFiles(mediaFiles, api, workspaceOnly ? null : rootId, {
-            dropPos: dropPos ?? undefined,
-            workspaceOnly,
-          })),
-        )
-      }
-      if (ids.length > 0) {
-        setSelection(ids)
-        setTool('select')
+        if (outcome.ids.length > 0) {
+          setSelection(outcome.ids)
+          setTool('select')
+        }
+        reportImportFailures(outcome)
+      } catch (err) {
+        console.error('[canvas-drop] import failed:', err)
+        reportUnexpectedImportError(err)
       }
     },
     [api, rootId, clientToCanvas, clientToViewport, isInsideArtboard, setSelection, setTool],
@@ -2910,20 +2920,23 @@ export function Canvas() {
       if (isEditablePasteTarget(e.target)) return
 
       const importFiles = async (files: File[]) => {
-        const ids = await importClipboardFiles(files, api, rootId, {
+        const outcome = await importClipboardFiles(files, api, rootId, {
           workspaceOnly: false,
         })
-        if (ids.length > 0) {
-          setSelection(ids)
+        if (outcome.ids.length > 0) {
+          setSelection(outcome.ids)
           setTool('select')
         }
-        return ids.length > 0
+        reportImportFailures(outcome)
+        return outcome.ids.length > 0
       }
 
       const eventFiles = filesFromClipboardEvent(e)
       if (eventFiles.length > 0) {
         e.preventDefault()
-        void importFiles(eventFiles)
+        void importFiles(eventFiles).catch((err) => {
+          reportUnexpectedImportError(err)
+        })
         return
       }
 
@@ -2936,6 +2949,7 @@ export function Canvas() {
         })
         .catch((err) => {
           console.warn('[clipboard-file-paste] failed:', err)
+          reportUnexpectedImportError(err)
         })
     }
 

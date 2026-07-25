@@ -6,6 +6,7 @@ import { sceneDoc } from '@/scene/internals'
 import { sceneToBytes, loadSceneIntoDoc } from '@/scene/file'
 import { createSampleScene } from '@/scene/sample'
 import { useUI } from '@/state/ui'
+import { useToast } from '@/ui/toastStore'
 
 /**
  * Mount listeners for File menu events from the Electron main process.
@@ -22,6 +23,11 @@ import { useUI } from '@/state/ui'
  * session; reopening the app resets to "no current path" (Save then
  * acts like Save As). The Electron main process owns the persisted
  * recent-projects list.
+ *
+ * Every handler reports failures on the toast. A save that can't reach
+ * disk, or an open that hits a corrupt `.hype`, must never look like
+ * "nothing happened" — the user would keep working against a file
+ * that isn't there.
  */
 
 declare global {
@@ -85,11 +91,13 @@ export function useFileMenu(): void {
     })
 
     const offOpen = bridge.on('file:open', () => {
-      void (async () => {
+      run('Open', async () => {
         const result = (await bridge.invoke('file:show-open-dialog')) as
           | { path: string; bytes: Uint8Array }
+          | { error: string }
           | null
         if (!result) return
+        if ('error' in result) throw new Error(result.error)
         // `loadSceneIntoDoc` materializes the bytes in a side doc and
         // mirrors them into our sceneDoc atomically — avoids the CRDT
         // merge anomalies that the earlier delete-then-applyUpdate path
@@ -100,23 +108,20 @@ export function useFileMenu(): void {
         // saved timestamp so the TopBar reads "Saved just now" instead
         // of "Unsaved" right after a fresh open.
         setFile(result.path, Date.now())
-      })()
+      })
     })
 
     const offOpenPath = bridge.on('file:open-path', (path) => {
-      void (async () => {
-        if (typeof path !== 'string') return
-        const bytes = (await bridge.invoke('file:read', path)) as
-          | Uint8Array
-          | null
-        if (!bytes) return
-        loadSceneIntoDoc(sceneDoc, new Uint8Array(bytes))
+      if (typeof path !== 'string') return
+      run('Open', async () => {
+        const bytes = await readSceneFile(bridge, path)
+        loadSceneIntoDoc(sceneDoc, bytes)
         setFile(path, Date.now())
-      })()
+      })
     })
 
     const offSave = bridge.on('file:save', () => {
-      void (async () => {
+      run('Save', async () => {
         let path = getPath()
         if (!path) {
           // No path yet — fall through to Save As.
@@ -126,29 +131,21 @@ export function useFileMenu(): void {
           if (!chosen) return
           path = chosen
         }
-        const bytes = sceneToBytes(sceneDoc)
-        const ok = (await bridge.invoke('file:write', {
-          path,
-          bytes,
-        })) as boolean
-        if (ok) setFile(path, Date.now())
-      })()
+        await writeSceneFile(bridge, path)
+        setFile(path, Date.now())
+      })
     })
 
     const offSaveAs = bridge.on('file:save-as', () => {
-      void (async () => {
+      run('Save', async () => {
         const chosen = (await bridge.invoke('file:show-save-dialog', {
           defaultPath: getPath() ?? undefined,
           suggestedName: `${api.getMeta()?.name || 'Untitled'}.hype`,
         })) as string | null
         if (!chosen) return
-        const bytes = sceneToBytes(sceneDoc)
-        const ok = (await bridge.invoke('file:write', {
-          path: chosen,
-          bytes,
-        })) as boolean
-        if (ok) setFile(chosen, Date.now())
-      })()
+        await writeSceneFile(bridge, chosen)
+        setFile(chosen, Date.now())
+      })
     })
 
     return () => {
@@ -159,6 +156,46 @@ export function useFileMenu(): void {
       offSaveAs?.()
     }
   }, [api])
+}
+
+type FileBridge = NonNullable<Window['hypermotion']>
+
+/**
+ * Run a File-menu action, reporting any failure on the toast. Without
+ * this the menu handlers were fire-and-forget `void (async () => …)()`
+ * calls, so a rejected IPC or a corrupt `.hype` produced nothing but
+ * an unhandled-rejection warning in a console the user can't see.
+ */
+function run(label: 'Open' | 'Save', action: () => Promise<void>): void {
+  void action().catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    // eslint-disable-next-line no-console
+    console.error(`[file] ${label.toLowerCase()} failed:`, err)
+    useToast.getState().show({
+      tone: 'error',
+      title: label === 'Open' ? "Couldn't open the scene" : "Couldn't save the scene",
+      description: message,
+    })
+  })
+}
+
+async function writeSceneFile(bridge: FileBridge, path: string): Promise<void> {
+  const bytes = sceneToBytes(sceneDoc)
+  const result = (await bridge.invoke('file:write', { path, bytes })) as
+    | { ok: true }
+    | { ok: false; error: string }
+  if (!result.ok) throw new Error(result.error)
+}
+
+async function readSceneFile(
+  bridge: FileBridge,
+  path: string,
+): Promise<Uint8Array> {
+  const result = (await bridge.invoke('file:read', path)) as
+    | { ok: true; bytes: Uint8Array }
+    | { ok: false; error: string }
+  if (!result.ok) throw new Error(result.error)
+  return new Uint8Array(result.bytes)
 }
 
 function downloadSceneFile(name: string): void {

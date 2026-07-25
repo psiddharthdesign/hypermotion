@@ -246,9 +246,12 @@ async function loadGoogleFontOnce(family: string): Promise<void> {
       loadedFamilies.add(family)
       notify()
     }
-  } catch {
+  } catch (err) {
     // Network down, or CSP blocked the stylesheet. Keeping the family out of
-    // loadedFamilies lets a later call retry.
+    // loadedFamilies lets a later call retry. Text falls back to a system
+    // face, which is easy to mistake for a rendering bug — log the reason.
+    // eslint-disable-next-line no-console
+    console.warn(`[fonts] Google font "${family}" failed to load:`, err)
   }
 }
 

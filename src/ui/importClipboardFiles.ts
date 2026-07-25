@@ -4,6 +4,7 @@ import type { SceneAPI } from '@/scene/doc'
 import type { NodeId } from '@/scene'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
 import { importMediaFiles, isMediaFile } from '@/ui/importMedia'
+import { mergeImportOutcomes, type ImportOutcome } from '@/ui/importResult'
 
 export interface ClipboardFilePayload {
   name: string
@@ -16,19 +17,20 @@ export async function importClipboardFiles(
   api: SceneAPI,
   parent: NodeId | null,
   opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
-): Promise<NodeId[]> {
+): Promise<ImportOutcome> {
   const imageFiles = files.filter(isImageFile)
   const mediaFiles = files.filter((file) => !isImageFile(file) && isMediaFile(file))
-  if (imageFiles.length === 0 && mediaFiles.length === 0) return []
+  const empty: ImportOutcome = { ids: [], failures: [] }
+  if (imageFiles.length === 0 && mediaFiles.length === 0) return empty
 
-  const ids: NodeId[] = []
-  if (imageFiles.length > 0) {
-    ids.push(...(await importImageFiles(imageFiles, api, parent, opts)))
-  }
-  if (mediaFiles.length > 0) {
-    ids.push(...(await importMediaFiles(mediaFiles, api, parent, opts)))
-  }
-  return ids
+  return mergeImportOutcomes(
+    imageFiles.length > 0
+      ? await importImageFiles(imageFiles, api, parent, opts)
+      : empty,
+    mediaFiles.length > 0
+      ? await importMediaFiles(mediaFiles, api, parent, opts)
+      : empty,
+  )
 }
 
 export function filesFromClipboardEvent(e: ClipboardEvent): File[] {

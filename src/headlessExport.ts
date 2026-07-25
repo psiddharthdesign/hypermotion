@@ -35,6 +35,7 @@ import {
 import { apiReady } from '@/scene'
 import { sceneDoc } from '@/scene/internals'
 import { loadSceneIntoDoc } from '@/scene/file'
+import { useToast } from '@/ui/toastStore'
 
 // Renderer-side ambient type. Mirrors the bridge surface in
 // `electron/preload.ts` — re-declared locally because preload's
@@ -82,7 +83,19 @@ export async function bootHeadlessExport(): Promise<void> {
 
   bridge.on?.('scene:load-path', (scenePath) => {
     if (typeof scenePath !== 'string') return
-    void loadScenePathIntoEditor(scenePath)
+    void loadScenePathIntoEditor(scenePath).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      // eslint-disable-next-line no-console
+      console.error('[headless] failed to load scene:', message)
+      // The editor is on screen in this path (the CLI asked a running
+      // instance to open a file), so the user has to see why nothing
+      // opened instead of watching the old scene sit there.
+      useToast.getState().show({
+        tone: 'error',
+        title: "Couldn't open the scene",
+        description: message,
+      })
+    })
   })
 
   // Subscribe FIRST so we don't miss a trigger that arrives between
@@ -95,8 +108,14 @@ export async function bootHeadlessExport(): Promise<void> {
   let req: HeadlessRequest | null = null
   try {
     req = (await bridge.invoke('export:headless-request')) as HeadlessRequest | null
-  } catch {
-    return // main process doesn't have the handler — older binary
+  } catch (err) {
+    // Missing handler means an older binary and headless mode simply
+    // isn't available — log rather than swallow, because any other
+    // rejection here would otherwise leave the CLI waiting on a render
+    // that never starts with no clue why.
+    // eslint-disable-next-line no-console
+    console.warn('[headless] export:headless-request unavailable:', err)
+    return
   }
   if (req) {
     await runHeadlessRender(req)
@@ -201,13 +220,15 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
 async function loadScenePathIntoEditor(scenePath: string): Promise<void> {
   const bridge = window.hypermotion
   if (!bridge) return
-  const bytes = (await bridge.invoke('file:read', scenePath)) as
-    | Uint8Array
+  const result = (await bridge.invoke('file:read', scenePath)) as
+    | { ok: true; bytes: Uint8Array }
+    | { ok: false; error: string }
     | null
-  if (!bytes) {
-    throw new Error(`Failed to read scene file: ${scenePath}`)
+  if (!result || !result.ok) {
+    const reason = result ? result.error : 'no response from the main process'
+    throw new Error(`Failed to read scene file ${scenePath}: ${reason}`)
   }
-  loadSceneIntoDoc(sceneDoc, new Uint8Array(bytes))
+  loadSceneIntoDoc(sceneDoc, new Uint8Array(result.bytes))
 }
 
 function waitForFrames(n: number): Promise<void> {
