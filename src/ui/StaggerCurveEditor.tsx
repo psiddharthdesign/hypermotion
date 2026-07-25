@@ -10,6 +10,7 @@ import {
   type TextStaggerCurvePoint,
 } from '@/anim/textStaggerCurve'
 import { NumberField } from '@/ui/fields/NumberField'
+import { startGlobalPointerDrag } from '@/ui/pointerDrag'
 import {
   editCurvePart,
   type StaggerCurvePart,
@@ -119,59 +120,30 @@ export function StaggerCurveEditor({
     const pointerId = event.pointerId
     const start = displayed
     let latest = start
-    let moved = false
 
-    const cleanup = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onCancel)
-      window.removeEventListener('blur', onCancel)
-      window.removeEventListener('keydown', onKeyDown, true)
-      dragCancelRef.current = null
-    }
-    const onMove = (pointerEvent: PointerEvent) => {
-      if (pointerEvent.pointerId !== pointerId) return
-      pointerEvent.preventDefault()
-      const target = pointerToGraph(svg, pointerEvent.clientX, pointerEvent.clientY)
-      latest = editCurvePart(start, pointId, part, target.x, target.y)
-      moved = true
-      setDraft(latest)
-      onPreview?.(latest)
-    }
-    const onUp = (pointerEvent: PointerEvent) => {
-      if (pointerEvent.pointerId !== pointerId) return
-      cleanup()
-      if (moved) {
+    dragCancelRef.current = startGlobalPointerDrag(pointerId, {
+      onMove: (pointerEvent) => {
+        const target = pointerToGraph(
+          svg,
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+        )
+        latest = editCurvePart(start, pointId, part, target.x, target.y)
+        setDraft(latest)
+        onPreview?.(latest)
+      },
+      onCommit: () => {
         commit(latest)
         onPreviewFinish?.()
-      }
-    }
-    const onCancel = (pointerEvent?: PointerEvent | Event) => {
-      if (
-        pointerEvent instanceof PointerEvent &&
-        pointerEvent.pointerId !== pointerId
-      ) {
-        return
-      }
-      cleanup()
-      setDraft(start)
-      onPreviewCancel?.()
-    }
-    const onKeyDown = (keyEvent: KeyboardEvent) => {
-      if (keyEvent.key !== 'Escape') return
-      keyEvent.preventDefault()
-      keyEvent.stopPropagation()
-      keyEvent.stopImmediatePropagation()
-      onCancel()
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onCancel)
-    window.addEventListener('blur', onCancel)
-    // Capture Escape before the app-wide shortcut handler can clear the
-    // scene selection while this editor is cancelling an active drag.
-    window.addEventListener('keydown', onKeyDown, true)
-    dragCancelRef.current = onCancel
+      },
+      onCancel: () => {
+        setDraft(start)
+        onPreviewCancel?.()
+      },
+      onCleanup: () => {
+        dragCancelRef.current = null
+      },
+    })
   }
 
   const nudge = (
