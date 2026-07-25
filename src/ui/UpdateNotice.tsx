@@ -29,8 +29,15 @@ export function UpdateNotice() {
       if (!dismissed) setUpdate(info)
     }
 
-    bridge.invoke('updates:get-status').then(applyUpdate).catch(() => {})
-    bridge.invoke('updates:check').then(applyUpdate).catch(() => {})
+    // An update check that fails is not worth interrupting the user
+    // for, but it must not vanish either — a permanently silent check
+    // is indistinguishable from "you are on the latest version".
+    const logCheckFailure = (err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.warn('[updates] check failed:', err)
+    }
+    bridge.invoke('updates:get-status').then(applyUpdate).catch(logCheckFailure)
+    bridge.invoke('updates:check').then(applyUpdate).catch(logCheckFailure)
     const off = bridge.on('updates:available', applyUpdate)
 
     return () => {

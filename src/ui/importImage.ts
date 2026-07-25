@@ -2,6 +2,11 @@
 
 import type { SceneAPI } from '@/scene/doc'
 import type { NodeId, Transform } from '@/scene'
+import {
+  toImportFailure,
+  type ImportFailure,
+  type ImportOutcome,
+} from '@/ui/importResult'
 
 /**
  * Import an image file into the scene as a new ImageNode.
@@ -27,8 +32,8 @@ import type { NodeId, Transform } from '@/scene'
  * Returns the new node's id so the caller can select it.
  *
  * Rejects on unreadable files (empty / corrupt / unsupported format).
- * The UI catches and logs; we don't surface a toast yet — a user-facing
- * error channel is on the list but not a blocker for import-any-PNG MVP.
+ * `importImageFiles` collects those rejections so the caller can show
+ * them to the user.
  */
 export async function importImageFile(
   file: File,
@@ -85,27 +90,30 @@ export async function importImageFile(
  * sequentially. Non-image files are silently skipped (safer than
  * rejecting the whole drop — users routinely drop a folder that
  * contains both images and an incidental .DS_Store).
+ *
+ * A file that fails to decode doesn't abort the batch; it is reported
+ * back in `failures` so the caller can tell the user which files were
+ * dropped on the floor and why.
  */
 export async function importImageFiles(
   files: FileList | File[],
   api: SceneAPI,
   parent: NodeId | null,
   opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
-): Promise<NodeId[]> {
+): Promise<ImportOutcome> {
   const ids: NodeId[] = []
+  const failures: ImportFailure[] = []
   const list = Array.from(files).filter(isImageFile)
   for (const file of list) {
     try {
       const id = await importImageFile(file, api, parent, opts)
       ids.push(id)
     } catch (err) {
-      // Swallow per-file errors so one bad file doesn't abort the batch.
-      // Surface via console for now — replace with a toast when a real
-      // toast system exists.
       console.warn('[importImageFiles] failed to import', file.name, err)
+      failures.push(toImportFailure(file.name, err))
     }
   }
-  return ids
+  return { ids, failures }
 }
 
 export function isImageFile(file: File): boolean {

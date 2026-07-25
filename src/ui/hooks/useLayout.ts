@@ -41,14 +41,24 @@ export function useLayout(
   // font-load version counter provides exactly that trigger.
   const fontVersion = useFontLoadVersion()
   const [yoga, setYoga] = useState<Yoga | null>(null)
+  const [yogaError, setYogaError] = useState<Error | null>(null)
 
   // Load WASM once. yogaReady is memoized at module scope in @/layout,
   // so even if many components call useLayout, only one fetch happens.
   useEffect(() => {
     let cancelled = false
-    yogaReady.then((y) => {
-      if (!cancelled) setYoga(y)
-    })
+    yogaReady
+      .then((y) => {
+        if (!cancelled) setYoga(y)
+      })
+      .catch((err: unknown) => {
+        // A rejected WASM load leaves `yoga` null forever, which renders
+        // as an editor stuck on its "preparing" state. Re-throw through
+        // the ErrorBoundary instead of leaving the user to guess.
+        if (!cancelled) {
+          setYogaError(err instanceof Error ? err : new Error(String(err)))
+        }
+      })
     return () => {
       cancelled = true
     }
@@ -58,9 +68,12 @@ export function useLayout(
   // (version), when the caller targets a different root, or when the
   // container resizes. Container is spread into primitive deps so a
   // caller that reconstructs the object inline doesn't force a resolve.
-  return useMemo(() => {
+  const solved = useMemo(() => {
     if (!yoga || !rootId) return null
     return solveLayout(yoga, api, rootId, container)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yoga, api, rootId, container.width, container.height, version, fontVersion])
+
+  if (yogaError) throw yogaError
+  return solved
 }

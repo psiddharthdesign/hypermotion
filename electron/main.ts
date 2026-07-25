@@ -1668,7 +1668,23 @@ ipcMain.handle('export:cancel-render-window', (_e, requestId: string) => {
  *
  * Path tracking (which file the current scene is "saved as") lives in
  * the renderer; main is stateless.
+ *
+ * `file:read` / `file:write` answer with a discriminated result rather
+ * than `null` / `false`. fs errors here are the ones users actually
+ * hit (read-only volume, ejected drive, deleted recent project) and
+ * the reason has to travel back to the renderer — main's console is
+ * invisible in a packaged app, so a bare `false` turned a failed save
+ * into a no-op the user only noticed after closing the window.
  */
+type FileWriteResult = { ok: true } | { ok: false; error: string }
+type FileReadResult =
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; error: string }
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 ipcMain.handle(
   'file:show-save-dialog',
   async (
@@ -1688,7 +1704,9 @@ ipcMain.handle(
 
 ipcMain.handle(
   'file:show-open-dialog',
-  async (): Promise<{ path: string; bytes: Uint8Array } | null> => {
+  async (): Promise<
+    { path: string; bytes: Uint8Array } | { error: string } | null
+  > => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Open scene',
@@ -1704,43 +1722,39 @@ ipcMain.handle(
       return { path: filePath, bytes: new Uint8Array(bytes) }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(`[file] read failed: ${err instanceof Error ? err.message : err}`)
-      return null
+      console.error(`[file] read failed: ${errorMessage(err)}`)
+      return { error: errorMessage(err) }
     }
   },
 )
 
 ipcMain.handle(
   'file:write',
-  (_e, payload: { path: string; bytes: Uint8Array }): boolean => {
+  (_e, payload: { path: string; bytes: Uint8Array }): FileWriteResult => {
     try {
       fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
       addRecentProject(payload.path)
-      return true
+      return { ok: true }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(
-        `[file] write failed: ${err instanceof Error ? err.message : err}`,
-      )
-      return false
+      console.error(`[file] write failed: ${errorMessage(err)}`)
+      return { ok: false, error: errorMessage(err) }
     }
   },
 )
 
 ipcMain.handle(
   'file:read',
-  (_e, filePath: string): Uint8Array | null => {
+  (_e, filePath: string): FileReadResult => {
     try {
       const bytes = fs.readFileSync(filePath)
       addRecentProject(filePath)
-      return new Uint8Array(bytes)
+      return { ok: true, bytes: new Uint8Array(bytes) }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(
-        `[file] read failed: ${err instanceof Error ? err.message : err}`,
-      )
+      console.error(`[file] read failed: ${errorMessage(err)}`)
       removeRecentProject(filePath)
-      return null
+      return { ok: false, error: errorMessage(err) }
     }
   },
 )

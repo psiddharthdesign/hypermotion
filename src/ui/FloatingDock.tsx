@@ -20,6 +20,10 @@ import {
 } from '@/scene/paperShaders'
 import { importImageFiles } from '@/ui/importImage'
 import { importMediaFiles } from '@/ui/importMedia'
+import {
+  reportImportFailures,
+  reportUnexpectedImportError,
+} from '@/ui/importResult'
 import { PaperShaderPicker } from '@/ui/PaperShaderPicker'
 
 /**
@@ -71,21 +75,23 @@ export function FloatingDock() {
     if (!files || files.length === 0) return
     const rootId = api.getRoot()
     if (!rootId) return
-    const ids = await importImageFiles(files, api, rootId)
-    if (ids.length > 0) {
-      setSelection(ids)
+    const outcome = await importImageFiles(files, api, rootId)
+    if (outcome.ids.length > 0) {
+      setSelection(outcome.ids)
       setTool('select')
     }
+    reportImportFailures(outcome)
   }
   const onMediaFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const rootId = api.getRoot()
     if (!rootId) return
-    const ids = await importMediaFiles(files, api, rootId)
-    if (ids.length > 0) {
-      setSelection(ids)
+    const outcome = await importMediaFiles(files, api, rootId)
+    if (outcome.ids.length > 0) {
+      setSelection(outcome.ids)
       setTool('select')
     }
+    reportImportFailures(outcome)
   }
   const insertPaperShader = (shaderType: PaperShaderType) => {
     const rootId = api.getRoot()
@@ -223,7 +229,7 @@ export function FloatingDock() {
         multiple
         hidden
         onChange={(e) => {
-          void onImageFiles(e.target.files)
+          void onImageFiles(e.target.files).catch(reportUnexpectedImportError)
           e.target.value = ''
         }}
       />
@@ -242,7 +248,7 @@ export function FloatingDock() {
         multiple
         hidden
         onChange={(e) => {
-          void onMediaFiles(e.target.files)
+          void onMediaFiles(e.target.files).catch(reportUnexpectedImportError)
           e.target.value = ''
         }}
       />

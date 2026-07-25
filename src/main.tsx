@@ -44,5 +44,8 @@ if (isRenderWindow) {
   // see src/headlessExport.ts for the full flow. Called outside the React
   // tree because the export pipeline only needs the SceneAPI singleton and
   // the live DOM, not React context.
-  void bootHeadlessExport()
+  void bootHeadlessExport().catch((err: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[headless] boot failed:', err)
+  })
 }

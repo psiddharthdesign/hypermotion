@@ -2,6 +2,11 @@
 
 import type { SceneAPI } from '@/scene/doc'
 import type { NodeId, Transform } from '@/scene'
+import {
+  toImportFailure,
+  type ImportFailure,
+  type ImportOutcome,
+} from '@/ui/importResult'
 
 /**
  * Import an audio / video file into the scene.
@@ -148,14 +153,18 @@ export async function importAudioFile(
  * Drop-handler helper: accept a FileList and import every audio/video
  * file. Non-media files are silently skipped (matches the image path
  * — users routinely drop folders with incidental files).
+ *
+ * Decode failures are collected per file rather than aborting the
+ * batch, and returned so the caller can surface them.
  */
 export async function importMediaFiles(
   files: FileList | File[],
   api: SceneAPI,
   parent: NodeId | null,
   opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
-): Promise<NodeId[]> {
+): Promise<ImportOutcome> {
   const ids: NodeId[] = []
+  const failures: ImportFailure[] = []
   for (const file of Array.from(files)) {
     try {
       if (isVideoFile(file)) {
@@ -165,9 +174,10 @@ export async function importMediaFiles(
       }
     } catch (err) {
       console.warn('[importMediaFiles] failed to import', file.name, err)
+      failures.push(toImportFailure(file.name, err))
     }
   }
-  return ids
+  return { ids, failures }
 }
 
 export function isVideoFile(file: File): boolean {

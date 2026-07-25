@@ -49,6 +49,7 @@ import type {
   VariantTransition,
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
+import { useToast } from '@/ui/toastStore'
 import {
   captureVideoPoster,
   decodeAudioMeta,
@@ -4806,9 +4807,22 @@ function useLibraryFonts(): CustomFont[] {
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
-      void libraryGetAll().then((all) => {
-        if (!cancelled) setFonts(all)
-      })
+      void libraryGetAll()
+        .then((all) => {
+          if (!cancelled) setFonts(all)
+        })
+        .catch((err: unknown) => {
+          // IndexedDB can be unavailable (private mode, corrupt store).
+          // The dropdown degrades to scene-embedded fonts only, so say
+          // why rather than showing a mysteriously empty list.
+          console.error('[fonts] failed to read the font library:', err)
+          useToast.getState().show({
+            tone: 'error',
+            title: "Couldn't load your font library",
+            description:
+              err instanceof Error ? err.message : String(err),
+          })
+        })
     }
     refresh()
     const off = subscribeLibrary(refresh)
@@ -4896,16 +4910,44 @@ async function addCustomFontsFromPicker(
 }
 
 /**
+ * Reporter for a failed "Replace…" in the Image / Media sections. The
+ * decode happens in a fire-and-forget handler, so without this a
+ * corrupt replacement file left the old asset on screen with no hint
+ * that the swap never happened.
+ */
+function reportReplaceError(name: string, err: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(`[inspector] failed to replace with "${name}":`, err)
+  useToast.getState().show({
+    tone: 'error',
+    title: `Couldn't replace with "${name}"`,
+    description: err instanceof Error ? err.message : String(err),
+  })
+}
+
+/**
+ * Reporter for a font import that failed outside the per-file loop
+ * (the picker itself rejecting, for instance).
+ */
+function reportFontImportError(err: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error('[fonts] import failed:', err)
+  useToast.getState().show({
+    tone: 'error',
+    title: "Couldn't import the font",
+    description: err instanceof Error ? err.message : String(err),
+  })
+}
+
+/**
  * Shared upload path for picker + drag-drop. Probes each file
- * sequentially, surfaces per-file errors AND successes via console
- * (so the user can see what's happening in DevTools while we don't
- * yet have a toast system), and applies the first successful font's
- * family. Throws are caught per-file so one bad font in a multi-file
- * upload doesn't kill the rest.
+ * sequentially, logs per-file progress to the console, and applies the
+ * first successful font's family. Throws are caught per-file so one
+ * bad font in a multi-file upload doesn't kill the rest.
  *
- * Errors that prevent any font from importing also fire a window.alert
- * so the user immediately sees that something went wrong, even without
- * DevTools open. Replace with a proper toast once we have one.
+ * Any file that failed is reported on the toast — including the
+ * partial case where some fonts did import, which used to be dropped
+ * entirely because the alert only fired when nothing succeeded.
  */
 async function addCustomFontFiles(
   files: File[],
@@ -4944,18 +4986,18 @@ async function addCustomFontFiles(
   }
   if (firstFamily) {
     onApply(firstFamily)
-  } else if (errors.length > 0) {
-    // Nothing imported AND we hit errors — surface to user via alert
-    // so they're not staring at a silent failure. (Toasts when we
-    // have them.)
-    const summary = errors
-      .map((e) => `• ${e.name}: ${e.error}`)
-      .join('\n')
-    if (typeof window !== 'undefined' && 'alert' in window) {
-      window.alert(
-        `Couldn't import font${errors.length === 1 ? '' : 's'}:\n\n${summary}\n\nCheck the file format (.woff2 / .woff / .ttf / .otf) and try again.`,
-      )
-    }
+  }
+  if (errors.length > 0) {
+    useToast.getState().show({
+      tone: 'error',
+      title:
+        errors.length === 1
+          ? `Couldn't import "${errors[0]!.name}"`
+          : `Couldn't import ${errors.length} fonts`,
+      description: `${errors
+        .map((e) => `${e.name} — ${e.error}`)
+        .join('\n')}\nSupported formats: .woff2, .woff, .ttf, .otf.`,
+    })
   }
 }
 
@@ -5046,7 +5088,7 @@ function TypographySection({
         // Sentinel — open file picker, don't mutate fontFamily.
         void addCustomFontsFromPicker(api, (family) => {
           api.setNodeProperty(node.id, 'fontFamily', family)
-        })
+        }).catch(reportFontImportError)
         return
       }
       // If the value matches a library font that ISN'T already in the
@@ -5076,7 +5118,7 @@ function TypographySection({
       e.preventDefault()
       void addCustomFontFiles(files, api, (family) => {
         api.setNodeProperty(node.id, 'fontFamily', family)
-      })
+      }).catch(reportFontImportError)
     },
     [api, node.id],
   )
@@ -5290,8 +5332,12 @@ function ImageSection({ node, api }: { node: ImageNode; api: SceneAPI }) {
       const r = reader.result
       if (typeof r === 'string') {
         api.setNodeProperty(node.id, 'src', r)
+        return
       }
+      reportReplaceError(first.name, new Error('FileReader returned non-string'))
     }
+    reader.onerror = () =>
+      reportReplaceError(first.name, reader.error ?? new Error('read failed'))
     reader.readAsDataURL(first)
   }
 
@@ -5451,7 +5497,10 @@ function MediaSection({
             }
             hidden
             onChange={(e) => {
-              void onReplace(e.target.files)
+              const replaced = Array.from(e.target.files ?? [])[0]?.name ?? 'file'
+              void onReplace(e.target.files).catch((err: unknown) =>
+                reportReplaceError(replaced, err),
+              )
               e.target.value = ''
             }}
           />

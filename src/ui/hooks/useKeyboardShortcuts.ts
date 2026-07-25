@@ -29,6 +29,10 @@ import {
 import { toggleStaggerSetEditing } from '@/ui/staggerEditing'
 import { FIGMA_PAYLOAD_FORMAT } from '@/import/figma'
 import { FIGMA_PASTE_TEXT_EVENT } from '@/ui/hooks/useFigmaPaste'
+import {
+  reportImportFailures,
+  reportUnexpectedImportError,
+} from '@/ui/importResult'
 
 /**
  * Global keyboard shortcuts.
@@ -305,11 +309,15 @@ export function useKeyboardShortcuts() {
             return []
           })
           if (externalFiles.length > 0) {
-            const ids = await importClipboardFiles(externalFiles, api, api.getRoot() || null, {
-              workspaceOnly: false,
-            })
-            if (ids.length > 0) {
-              setSelection(ids)
+            const outcome = await importClipboardFiles(
+              externalFiles,
+              api,
+              api.getRoot() || null,
+              { workspaceOnly: false },
+            )
+            reportImportFailures(outcome)
+            if (outcome.ids.length > 0) {
+              setSelection(outcome.ids)
               return
             }
           }
@@ -343,7 +351,10 @@ export function useKeyboardShortcuts() {
             .map((item) => pasteClipboardItem(api, item, targetParent))
             .filter((id): id is NodeId => id !== null)
           if (newIds.length > 0) setSelection(newIds)
-        })()
+        })().catch((err: unknown) => {
+          console.error('[paste] failed:', err)
+          reportUnexpectedImportError(err)
+        })
         return
       }
 
