@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from 'vitest'
+import {
+  evaluateLayerMotionPath,
+  normalizeLayerMotionPath,
+} from '@/anim/layerMotionPath'
 import type { SolvedLayout } from '@/layout'
 import { createSceneAPI } from '@/scene/doc'
 import type { CameraNode } from '@/scene/types'
@@ -13,10 +17,14 @@ import {
 } from '@/render3d/scene3d'
 import {
   canvasQuadToWorkspace,
+  motionPathLocalPointToWorld,
   planeWorldQuad,
+  projectMotionPathPoint,
   projectedResizeHandles,
   projectedQuadBounds,
   projectPlaneQuad,
+  viewportPointToMotionPathDepth,
+  viewportPointToMotionPathLocal,
   viewportPointToPlaneLocal,
 } from '@/render3d/selectionProjection'
 
@@ -78,6 +86,15 @@ function expectPoint(
 ): void {
   expect(actual.x).toBeCloseTo(expected.x, 6)
   expect(actual.y).toBeCloseTo(expected.y, 6)
+}
+
+function expectPoint3(
+  actual: { x: number; y: number; z: number },
+  expected: { x: number; y: number; z: number },
+): void {
+  expect(actual.x).toBeCloseTo(expected.x, 6)
+  expect(actual.y).toBeCloseTo(expected.y, 6)
+  expect(actual.z).toBeCloseTo(expected.z, 6)
 }
 
 describe('camera-projected selection geometry', () => {
@@ -265,6 +282,351 @@ describe('camera-projected selection geometry', () => {
     )
     expect(roundTrip).not.toBeNull()
     expectPoint(roundTrip!, local)
+  })
+
+  it('keeps a neutral motion-path origin stable while the layer travels', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: VIEWPORT.width, height: VIEWPORT.height },
+    })
+    const path = normalizeLayerMotionPath({
+      version: 1,
+      progress: 0.5,
+      parameterization: 'parametric',
+      points: [
+        {
+          id: 'start',
+          t: 0,
+          x: 0,
+          y: 0,
+          z: 0,
+          outX: 30,
+          outY: -20,
+          outZ: 5,
+        },
+        {
+          id: 'end',
+          t: 1,
+          x: 120,
+          y: 60,
+          z: 40,
+          inX: 80,
+          inY: 90,
+          inZ: 35,
+        },
+      ],
+    })!
+    const layerId = api.createNode('rect', rootId, {
+      name: 'Cursor-like layer',
+      size: { width: 48, height: 48 },
+      motionPath: path,
+      transform: {
+        x: 10,
+        y: 20,
+        z: 30,
+        rotation: 35,
+        rotationX: 9,
+        rotationY: -12,
+        scaleX: 1.4,
+        scaleY: 0.8,
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height },
+      [layerId]: { x: 100, y: 80, width: 48, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolved = resolveCamera3D(camera, undefined, VIEWPORT)
+    const offset = evaluateLayerMotionPath(path, path.progress)
+    const plane = buildWorldPlanes(
+      api,
+      layout,
+      {
+        [layerId]: {
+          x: 10 + offset.x,
+          y: 20 + offset.y,
+          z: 30 + offset.z,
+          motionPathProgress: path.progress,
+        },
+      },
+      resolved,
+    ).find((candidate) => candidate.nodeId === layerId)
+    if (!plane) throw new Error('Expected motion-path plane')
+
+    expectPoint3(plane.motionPathOrigin, { x: 134, y: 124, z: 30 })
+    expectPoint3(plane.motionPathBasisX, { x: 1, y: 0, z: 0 })
+    expectPoint3(plane.motionPathBasisY, { x: 0, y: 1, z: 0 })
+    expectPoint3(plane.motionPathBasisZ, { x: 0, y: 0, z: 1 })
+
+    const local = { x: 72, y: -18, z: 0 }
+    expectPoint3(motionPathLocalPointToWorld(local, plane), {
+      x: 206,
+      y: 106,
+      z: 30,
+    })
+    const viewportPoint = projectMotionPathPoint(
+      local,
+      plane,
+      resolved,
+      VIEWPORT,
+    )
+    const roundTrip = viewportPointToMotionPathLocal(
+      viewportPoint,
+      local.z,
+      plane,
+      resolved,
+      VIEWPORT,
+    )
+    expect(roundTrip).not.toBeNull()
+    expectPoint3(roundTrip!, local)
+  })
+
+  it('round-trips motion-path depth at the neutral camera pose and rejects ambiguous rays', () => {
+    const { camera, plane } = selectionFixture()
+    const resolved = resolveCamera3D(camera, undefined, VIEWPORT)
+    const local = { x: 60, y: -30, z: 72 }
+    const viewportPoint = projectMotionPathPoint(
+      local,
+      plane,
+      resolved,
+      VIEWPORT,
+    )
+    const roundTrip = viewportPointToMotionPathDepth(
+      viewportPoint,
+      local.x,
+      local.y,
+      plane,
+      resolved,
+      VIEWPORT,
+    )
+    expect(roundTrip).not.toBeNull()
+    expectPoint3(roundTrip!, local)
+
+    const parallelX =
+      resolved.position.x - plane.motionPathOrigin.x
+    const parallelY =
+      resolved.position.y - plane.motionPathOrigin.y
+    const parallelPoint = projectMotionPathPoint(
+      { x: parallelX, y: parallelY, z: 40 },
+      plane,
+      resolved,
+      VIEWPORT,
+    )
+    const nearParallelPoint = {
+      x: parallelPoint.x + 0.00001,
+      y: parallelPoint.y,
+    }
+    expect(
+      viewportPointToMotionPathDepth(
+        nearParallelPoint,
+        parallelX,
+        parallelY,
+        plane,
+        resolved,
+        VIEWPORT,
+      ),
+    ).toBeNull()
+
+    const behindCameraPoint = {
+      x: VIEWPORT.width - viewportPoint.x,
+      y: VIEWPORT.height - viewportPoint.y,
+    }
+    expect(
+      viewportPointToMotionPathDepth(
+        behindCameraPoint,
+        local.x,
+        local.y,
+        plane,
+        resolved,
+        VIEWPORT,
+      ),
+    ).toBeNull()
+  })
+
+  it('round-trips path plane and depth coordinates through a tilted camera and a non-orthogonal inherited basis', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: VIEWPORT.width, height: VIEWPORT.height },
+    })
+    const grandparentId = api.createNode('frame', rootId, {
+      name: 'Scaled grandparent',
+      size: { width: 520, height: 340 },
+      transform: {
+        x: 18,
+        y: -12,
+        z: 45,
+        rotation: 24,
+        rotationX: 11,
+        rotationY: -8,
+        scaleX: 1.8,
+        scaleY: 0.62,
+      },
+    })
+    const parentId = api.createNode('frame', grandparentId, {
+      name: 'Rotated parent',
+      size: { width: 360, height: 220 },
+      transform: {
+        x: -16,
+        y: 21,
+        z: 38,
+        rotation: -37,
+        rotationX: -6,
+        rotationY: 13,
+        scaleX: 1.15,
+        scaleY: 0.88,
+      },
+    })
+    const path = normalizeLayerMotionPath({
+      version: 1,
+      progress: 0.63,
+      parameterization: 'parametric',
+      points: [
+        {
+          id: 'start',
+          t: 0,
+          x: 0,
+          y: 0,
+          z: 0,
+          outX: 60,
+          outY: -80,
+          outZ: 20,
+        },
+        {
+          id: 'end',
+          t: 1,
+          x: 220,
+          y: 70,
+          z: 55,
+          inX: 150,
+          inY: 130,
+          inZ: 45,
+        },
+      ],
+    })!
+    const layerId = api.createNode('rect', parentId, {
+      name: 'Path layer',
+      size: { width: 48, height: 48 },
+      motionPath: path,
+      transform: {
+        x: 14,
+        y: -9,
+        z: 27,
+        rotation: 53,
+        rotationX: 17,
+        rotationY: -19,
+        scaleX: 1.35,
+        scaleY: 0.74,
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height },
+      [grandparentId]: { x: 70, y: 55, width: 520, height: 340 },
+      [parentId]: { x: 115, y: 96, width: 360, height: 220 },
+      [layerId]: { x: 168, y: 132, width: 48, height: 48 },
+    }
+    const activeCamera = api.getActiveCamera()
+    if (!activeCamera) throw new Error('Expected the default camera')
+    const camera: CameraNode = {
+      ...activeCamera,
+      transform: {
+        ...activeCamera.transform,
+        x: 410,
+        y: 245,
+        z: 190,
+        rotation: -13,
+        rotationX: 23,
+        rotationY: 16,
+      },
+    }
+    const resolved = resolveCamera3D(camera, undefined, VIEWPORT)
+    const basePlane = buildWorldPlanes(
+      api,
+      layout,
+      { [layerId]: { x: 14, y: -9, z: 27 } },
+      resolved,
+      { independentNodes: true },
+    ).find((candidate) => candidate.nodeId === layerId)
+    const offset = evaluateLayerMotionPath(path, path.progress)
+    const movedPlane = buildWorldPlanes(
+      api,
+      layout,
+      {
+        [layerId]: {
+          x: 14 + offset.x,
+          y: -9 + offset.y,
+          z: 27 + offset.z,
+          motionPathProgress: path.progress,
+        },
+      },
+      resolved,
+      { independentNodes: true },
+    ).find((candidate) => candidate.nodeId === layerId)
+    if (!basePlane || !movedPlane) {
+      throw new Error('Expected nested motion-path plane')
+    }
+
+    expectPoint3(movedPlane.motionPathOrigin, basePlane.motionPathOrigin)
+    expect(
+      Math.abs(
+        movedPlane.motionPathBasisX.x * movedPlane.motionPathBasisY.x +
+          movedPlane.motionPathBasisX.y * movedPlane.motionPathBasisY.y +
+          movedPlane.motionPathBasisX.z * movedPlane.motionPathBasisY.z,
+      ),
+    ).toBeGreaterThan(0.05)
+    const basisZLengthSquared =
+      movedPlane.motionPathBasisZ.x * movedPlane.motionPathBasisZ.x +
+      movedPlane.motionPathBasisZ.y * movedPlane.motionPathBasisZ.y +
+      movedPlane.motionPathBasisZ.z * movedPlane.motionPathBasisZ.z
+    const basisZXDot =
+      movedPlane.motionPathBasisZ.x * movedPlane.motionPathBasisX.x +
+      movedPlane.motionPathBasisZ.y * movedPlane.motionPathBasisX.y +
+      movedPlane.motionPathBasisZ.z * movedPlane.motionPathBasisX.z
+    const basisZYDot =
+      movedPlane.motionPathBasisZ.x * movedPlane.motionPathBasisY.x +
+      movedPlane.motionPathBasisZ.y * movedPlane.motionPathBasisY.y +
+      movedPlane.motionPathBasisZ.z * movedPlane.motionPathBasisY.z
+    expect(Math.abs(basisZLengthSquared - 1)).toBeGreaterThan(0.01)
+    expect(Math.max(Math.abs(basisZXDot), Math.abs(basisZYDot))).toBeGreaterThan(
+      0.05,
+    )
+
+    const local = { x: 126, y: -58, z: 24 }
+    const viewportPoint = projectMotionPathPoint(
+      local,
+      movedPlane,
+      resolved,
+      VIEWPORT,
+    )
+    const roundTrip = viewportPointToMotionPathLocal(
+      viewportPoint,
+      local.z,
+      movedPlane,
+      resolved,
+      VIEWPORT,
+    )
+    expect(roundTrip).not.toBeNull()
+    expectPoint3(roundTrip!, local)
+
+    const depthLocal = { x: 92, y: -34, z: 67 }
+    const depthViewportPoint = projectMotionPathPoint(
+      depthLocal,
+      movedPlane,
+      resolved,
+      VIEWPORT,
+    )
+    const depthRoundTrip = viewportPointToMotionPathDepth(
+      depthViewportPoint,
+      depthLocal.x,
+      depthLocal.y,
+      movedPlane,
+      resolved,
+      VIEWPORT,
+    )
+    expect(depthRoundTrip).not.toBeNull()
+    expectPoint3(depthRoundTrip!, depthLocal)
   })
 
   it('builds only the selected ancestor path without changing its world plane', () => {

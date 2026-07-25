@@ -60,6 +60,10 @@ import {
   vectorTrimState,
 } from '@/render/vectorPaint'
 import { getPreservedVectorSource } from '@/render/vectorSource'
+import {
+  alwaysOnTopRootsInPaintOrder,
+  isAlwaysOnTopNode,
+} from '@/render/layerCompositing'
 
 interface VectorRasterEntry {
   canvas: HTMLCanvasElement
@@ -392,6 +396,9 @@ export class PixiExportRenderer {
     const rootId = input.api.getRoot()
     if (rootId) {
       this.renderNode(rootId, this.root, input)
+      for (const overlayRootId of alwaysOnTopRootsInPaintOrder(input.api)) {
+        this.renderNode(overlayRootId, this.root, input, true)
+      }
     }
 
     // Canary text: a known-good Pixi Text at a known position. If
@@ -450,10 +457,12 @@ export class PixiExportRenderer {
     id: NodeId,
     parent: Container,
     input: RenderFrameInput,
+    includeAlwaysOnTop = false,
   ): void {
     const node = input.api.getNode(id)
     if (!node) return
     if (!node.visible) return
+    if (!includeAlwaysOnTop && isAlwaysOnTopNode(node)) return
     this.debugStats.nodesVisited++
 
     // The artboard root paints its own background (handled above) and
@@ -538,7 +547,7 @@ export class PixiExportRenderer {
     for (const childId of node.children) {
       const childNode = input.api.getNode(childId)
       if (!childNode) continue
-      this.renderNode(childId, this.root!, input)
+      this.renderNode(childId, this.root!, input, includeAlwaysOnTop)
       const childContainer = this.nodeMap.get(childId)
       if (!childContainer) continue
       if (pendingMask) {

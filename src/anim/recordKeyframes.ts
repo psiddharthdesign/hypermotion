@@ -58,6 +58,10 @@ const SIZE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   height: 'size.height',
 }
 
+const MOTION_PATH_PROP_IDS: Partial<Record<string, PropertyId>> = {
+  progress: 'motionPath.progress',
+}
+
 const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   focusDistance: 'camera.focusDistance',
   focusX: 'camera.focusX',
@@ -93,7 +97,12 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   vhsColorBleed: 'camera.vhsColorBleed',
 }
 
-export type PatchGroup = 'transform' | 'appearance' | 'size' | 'camera'
+export type PatchGroup =
+  | 'transform'
+  | 'appearance'
+  | 'size'
+  | 'camera'
+  | 'motionPath'
 
 export interface PatchKeyframeValue {
   propertyId: PropertyId
@@ -187,5 +196,7 @@ function propertyMapForGroup(
       ? APPEARANCE_PROP_IDS
       : group === 'size'
         ? SIZE_PROP_IDS
-        : CAMERA_PROP_IDS
+        : group === 'motionPath'
+          ? MOTION_PATH_PROP_IDS
+          : CAMERA_PROP_IDS
 }

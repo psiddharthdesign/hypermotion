@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useSyncExternalStore } from 'react'
-import type { BlendMode, NodeId, SceneAPI } from '@/scene'
+import type {
+  BlendMode,
+  NodeId,
+  SceneAPI,
+  VariantSelection,
+} from '@/scene'
 import { getAnimEngine } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
 
@@ -38,6 +43,9 @@ export interface AnimatedValue {
   blendMode?: BlendMode
   textProgress?: number
   textAnimation?: TextAnimationConfig
+  motionPathProgress?: number
+  /** Discrete component selection evaluated from a semantic variant track. */
+  variant?: VariantSelection
   focusDistance?: number
   focusX?: number
   focusY?: number

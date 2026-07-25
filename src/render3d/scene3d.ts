@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AnimatedValue } from '@/anim'
+import { evaluateLayerMotionPath } from '@/anim/layerMotionPath'
 import type { Rect, SolvedLayout } from '@/layout'
 import type {
   CameraNode,
@@ -26,6 +27,7 @@ import {
   normalizeCameraPostEffects,
   type CameraPostEffectsState,
 } from '@/render3d/postEffects'
+import { isAlwaysOnTopNode } from '@/render/layerCompositing'
 
 export interface ViewportSize {
   width: number
@@ -81,6 +83,22 @@ export interface Plane3D {
   right: Vec3
   down: Vec3
   normal: Vec3
+  /**
+   * World-space pivot for motion-path coordinate (0, 0, 0).
+   *
+   * A layer path is composed into transform.x/y/z before this plane is built.
+   * Keeping the path origin separate from `center` lets editor chrome recover
+   * the authored rail even while the layer is sitting partway along it.
+   */
+  motionPathOrigin: Vec3
+  /**
+   * Parent/inherited bases that map authored motion-path XYZ into world space.
+   * These intentionally exclude this node's own rotation and scale: the
+   * animation engine adds the path to the node's translation channels.
+   */
+  motionPathBasisX: Vec3
+  motionPathBasisY: Vec3
+  motionPathBasisZ: Vec3
   cameraDepth: number
   extractedFromParent?: boolean
   clips?: PlaneClip3D[]
@@ -264,6 +282,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       const childRenderMode = child.transform.renderMode ?? 'flat'
       if (
         segmentTextNodeIds.has(childId) ||
+        isAlwaysOnTopNode(child) ||
         childRenderMode === 'plane' ||
         childRenderMode === 'group3d' ||
         hasExplicit3DDescendant(childId)
@@ -651,6 +670,14 @@ export function buildWorldPlanes(
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
     const opacity = a?.opacity ?? node.appearance.opacity ?? 1
+    // The animation engine marks every composed layer path with its resolved
+    // progress. Without that marker x/y/z are still the un-offset authored
+    // transform (for example in structural tests), so there is nothing to
+    // subtract from the path origin.
+    const motionPathOffset =
+      node.motionPath && a?.motionPathProgress !== undefined
+        ? evaluateLayerMotionPath(node.motionPath, a.motionPathProgress)
+        : { x: 0, y: 0, z: 0 }
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -696,6 +723,7 @@ export function buildWorldPlanes(
       isRequestedNode &&
       !isRoot &&
       (segmentText ||
+        isAlwaysOnTopNode(node) ||
         independentNodes ||
         videoStackSibling ||
         segmentStackSibling ||
@@ -726,6 +754,14 @@ export function buildWorldPlanes(
         y: rect.y + rect.height / 2,
         z: 0,
       })
+      // `nextInherited.origin` is the node's transform anchor after its
+      // current x/y/z translation. Motion paths are added to those translation
+      // channels in the incoming parent basis, so subtracting the sampled
+      // offset in that same basis recovers the stable authored path origin.
+      const motionPathOrigin = sub3(
+        nextInherited.origin,
+        mapLocalVector(inherited, motionPathOffset),
+      )
       planes.push({
         nodeId: id,
         node,
@@ -749,6 +785,10 @@ export function buildWorldPlanes(
         right,
         down,
         normal,
+        motionPathOrigin,
+        motionPathBasisX: { ...inherited.basisX },
+        motionPathBasisY: { ...inherited.basisY },
+        motionPathBasisZ: { ...inherited.basisZ },
         cameraDepth: cameraSpaceDepth(center, camera),
         extractedFromParent:
           segmentText ||
@@ -807,20 +847,26 @@ export function hitTestPlanes(
   camera: ResolvedCamera3D,
   viewport: ViewportSize,
 ): FocusHit3D | null {
-  let best: (FocusHit3D & { t: number }) | null = null
+  let bestOverlay: (FocusHit3D & { t: number }) | null = null
+  let bestScene: (FocusHit3D & { t: number }) | null = null
   for (let i = planes.length - 1; i >= 0; i--) {
     const plane = planes[i]!
     if (!plane.node.visible || plane.node.locked) continue
+    const overlay = isAlwaysOnTopNode(plane.node)
+    // Overlay planes are paint-ordered rather than depth-ordered. The list is
+    // traversed front-to-back, so the first overlay bounds hit is the same
+    // one the user can see and should be able to select.
+    if (overlay && bestOverlay) continue
     const denom = dot3(ray.direction, plane.normal)
     if (Math.abs(denom) < 0.0001) continue
     const t = dot3(sub3(plane.center, ray.origin), plane.normal) / denom
-    if (t <= 0 || (best && t >= best.t)) continue
+    if (t <= 0 || (!overlay && bestScene && t >= bestScene.t)) continue
     const point = add3(ray.origin, mul3(ray.direction, t))
     const rel = sub3(point, plane.center)
     const localX = dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX)) + plane.rect.width / 2
     const localY = dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY)) + plane.rect.height / 2
     if (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height) continue
-    best = {
+    const hit = {
       nodeId: plane.nodeId,
       point,
       viewport: projectWorldPoint(point, camera, viewport),
@@ -829,8 +875,10 @@ export function hitTestPlanes(
       localY,
       t,
     }
+    if (overlay) bestOverlay = hit
+    else bestScene = hit
   }
-  return best
+  return bestOverlay ?? bestScene
 }
 
 export function depthBlurAmount(

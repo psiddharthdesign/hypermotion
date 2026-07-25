@@ -111,6 +111,10 @@ import {
   vectorTrimState,
 } from '@/render/vectorPaint'
 import {
+  isAlwaysOnTopNode,
+  layerRenderOrder,
+} from '@/render/layerCompositing'
+import {
   getPaperShaderSourceCanvas,
   paperShaderSourceEventName,
 } from '@/render/paperShaderSource'
@@ -1046,6 +1050,7 @@ function planeTextureAnimationSignature(
       ((!!node.parent &&
         context.directVideoChildNodeIds.has(node.parent)) ||
         context.segmentTextNodeIds.has(id) ||
+        isAlwaysOnTopNode(node) ||
         node.transform.renderMode === 'plane' ||
         node.transform.renderMode === 'group3d')
     ) {
@@ -1367,7 +1372,7 @@ function syncPlanes(
     }
     applyPlaneTransform(record.mesh, plane)
     applyPlaneTransform(record.outline, plane)
-    record.mesh.renderOrder = plane.paintOrder
+    record.mesh.renderOrder = layerRenderOrder(plane.node, plane.paintOrder)
     record.outline.renderOrder = 100000 + plane.paintOrder
     const blendMode =
       animated[plane.nodeId]?.blendMode ??
@@ -1739,7 +1744,7 @@ function syncTextSegmentPlane({
     }
   }
   applyPlaneTransform(record.outline, plane)
-  record.mesh.renderOrder = plane.paintOrder
+  record.mesh.renderOrder = layerRenderOrder(plane.node, plane.paintOrder)
   record.outline.renderOrder = 100000 + plane.paintOrder
   applyMaterialBlendMode(
     record.mesh.material,
@@ -3617,6 +3622,7 @@ function isExtractable3DNode(
 ): boolean {
   void rootId
   if (textNodeNeedsSegmentPlane(api, id)) return true
+  if (isAlwaysOnTopNode(node)) return true
   const renderMode = node.transform.renderMode ?? 'flat'
   return renderMode === 'plane' || renderMode === 'group3d'
 }

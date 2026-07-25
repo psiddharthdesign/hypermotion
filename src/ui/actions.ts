@@ -15,7 +15,8 @@ import type {
   VariantSelection,
 } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
-import { addKeyframe } from '@/anim'
+import { addKeyframe, findTrack, getAnimEngine } from '@/anim'
+import { isCursorInstance } from '@/scene/builtins/cursorComponent'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 
 const DEFAULT_COMPONENT_STROKE: Stroke = {
@@ -426,6 +427,7 @@ export function instantiateComponent(
     position?: { x: number; y: number }
     absolute?: boolean
     workspaceOnly?: boolean
+    alwaysOnTop?: boolean
   },
 ): NodeId | null {
   const component = api.getNode(componentId)
@@ -439,6 +441,7 @@ export function instantiateComponent(
     size: component.size,
     layout: component.layout,
     appearance: component.appearance,
+    alwaysOnTop: opts?.alwaysOnTop ?? false,
     selection: component.defaultSelection,
     overrides: {},
     interactions: [],
@@ -631,22 +634,48 @@ export function applyInstanceVariantTransition(
   api: SceneAPI,
   instanceId: NodeId,
   selection: VariantSelection,
-  opts: { playhead: number },
+  opts: { playhead: number; keyframe?: boolean },
 ): void {
   const instance = api.getNode(instanceId)
   if (!instance || instance.kind !== 'instance') return
   const component = api.getNode(instance.componentId)
   if (!component || component.kind !== 'component') return
-  const overrides = resolveVariantOverrideForSelection(component, selection)
+  const nextSelection = { ...instance.selection, ...selection }
+
+  // The built-in cursor exposes State as one semantic, stepped timeline
+  // property. Creating child-opacity transitions here produced seven noisy
+  // tracks and made a state change impossible to reason about on the
+  // timeline. Auto Key creates the first semantic track; after that, edits
+  // keep stamping the active track just like the other inspector fields.
+  if (isCursorInstance(api, instance)) {
+    const hasVariantTrack = !!findTrack(api, instance.id, 'variant')
+    api.doc.transact(() => {
+      api.setNodeProperty(instance.id, 'selection', nextSelection)
+      applyVariantSelectionStatic(api, instance.id, nextSelection)
+      if (opts.keyframe || hasVariantTrack) {
+        addKeyframe(
+          api,
+          instance.id,
+          'variant',
+          opts.playhead,
+          nextSelection,
+          'linear',
+        )
+      }
+    })
+    return
+  }
+
+  const overrides = resolveVariantOverrideForSelection(
+    component,
+    nextSelection,
+  )
   const sourceToMaterialized = mapInstanceChildrenBySource(api, instanceId)
   const duration = Math.max(0, component.variantTransition.duration)
   const easing = component.variantTransition.easing
 
   api.doc.transact(() => {
-    api.setNodeProperty(instance.id, 'selection', {
-      ...instance.selection,
-      ...selection,
-    })
+    api.setNodeProperty(instance.id, 'selection', nextSelection)
     for (const [sourceId, patch] of Object.entries(overrides)) {
       const targetId = sourceToMaterialized.get(sourceId)
       if (!targetId) continue
@@ -739,25 +768,87 @@ function animatePatch(
 ): void {
   const node = api.getNode(nodeId)
   if (!node) return
+  const animated =
+    duration <= 0 ? getAnimEngine().getSnapshot()[nodeId] : undefined
+  const addTransition = (
+    propertyId: Parameters<typeof addKeyframe>[2],
+    currentValue: number,
+    targetValue: number,
+  ) => {
+    if (duration > 0) {
+      addKeyframe(
+        api,
+        nodeId,
+        propertyId,
+        playhead,
+        currentValue,
+        easing,
+      )
+      addKeyframe(
+        api,
+        nodeId,
+        propertyId,
+        playhead + duration,
+        targetValue,
+        easing,
+      )
+      return
+    }
+
+    // A zero-duration variant is a stepped state change. Two keys at the
+    // same timestamp collapse into one (the track helper intentionally
+    // de-duplicates near-identical times), which would make the new value
+    // extend backwards through the whole scene. Hold the previous value one
+    // frame before the playhead, then land on the target at the playhead.
+    const frameDuration = 1 / Math.max(1, api.getMeta().frameRate)
+    const holdDuration = Math.max(0.011, frameDuration)
+    if (playhead >= holdDuration) {
+      addKeyframe(
+        api,
+        nodeId,
+        propertyId,
+        playhead - holdDuration,
+        currentValue,
+        'linear',
+      )
+    }
+    addKeyframe(
+      api,
+      nodeId,
+      propertyId,
+      playhead,
+      targetValue,
+      'linear',
+    )
+  }
   if (patch.transform && typeof patch.transform === 'object') {
     const target = patch.transform as Partial<SceneNode['transform']>
     for (const key of ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY'] as const) {
       const value = target[key]
       if (typeof value !== 'number') continue
-      addKeyframe(api, nodeId, `transform.${key}` as never, playhead, node.transform[key], easing)
-      addKeyframe(api, nodeId, `transform.${key}` as never, playhead + duration, value, easing)
+      addTransition(
+        `transform.${key}` as never,
+        animated?.[key] ?? node.transform[key],
+        value,
+      )
     }
     api.setNodeProperty(nodeId, 'transform', { ...node.transform, ...target })
   }
   if (patch.appearance && typeof patch.appearance === 'object') {
     const target = patch.appearance as Partial<SceneNode['appearance']>
     if (typeof target.opacity === 'number') {
-      addKeyframe(api, nodeId, 'appearance.opacity', playhead, node.appearance.opacity, easing)
-      addKeyframe(api, nodeId, 'appearance.opacity', playhead + duration, target.opacity, easing)
+      addTransition(
+        'appearance.opacity',
+        animated?.opacity ?? node.appearance.opacity,
+        target.opacity,
+      )
     }
     if (typeof target.cornerRadius === 'number') {
-      addKeyframe(api, nodeId, 'appearance.cornerRadius', playhead, node.appearance.cornerRadius, easing)
-      addKeyframe(api, nodeId, 'appearance.cornerRadius', playhead + duration, target.cornerRadius, easing)
+      addTransition(
+        'appearance.cornerRadius',
+        animated?.cornerRadius ?? node.appearance.cornerRadius,
+        target.cornerRadius,
+      )
     }
     api.setNodeProperty(nodeId, 'appearance', deepMerge(node.appearance, target))
   }

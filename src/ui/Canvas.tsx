@@ -26,6 +26,7 @@ import type {
   NodeId,
   NodeKind,
   Stroke,
+  VectorNode,
 } from '@/scene'
 import type { Rect, SolvedLayout } from '@/layout'
 import type { SceneAPI } from '@/scene/doc'
@@ -70,6 +71,15 @@ import {
   LivePaperShaderCanvas,
   PaperShaderSourceLayer,
 } from '@/render/PaperShaderLayer'
+import {
+  vectorNodeSvgMarkup,
+  vectorTrimState,
+} from '@/render/vectorPaint'
+import { getPreservedVectorSource } from '@/render/vectorSource'
+import {
+  moveAlwaysOnTopSubtreesLast,
+  partitionAlwaysOnTopSubtrees,
+} from '@/render/layerCompositing'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
 import {
@@ -447,6 +457,86 @@ export function fillBackgroundStyle(fill: Fill | null | undefined): React.CSSPro
     return imageBackgroundStyle(fill) ?? {}
   }
   return { backgroundImage: fillToCss(fill) }
+}
+
+/**
+ * Keep native SVG vectors visible when the WebGL viewport is unavailable.
+ *
+ * Preserved imports use their sanitized source so filters and masks survive.
+ * Fully editable vectors are serialized from the canonical point graph, which
+ * also makes Trim Paths match the WebGL/export renderer.
+ */
+interface VectorDomImageCacheEntry {
+  vector: VectorNode['vector']
+  sourceSvg: string | undefined
+  importFidelity: VectorNode['importFidelity']
+  viewBoxKey: string
+  trimStart: number
+  trimEnd: number
+  trimOffset: number
+  width: number
+  height: number
+  src: string
+}
+
+const vectorDomImageCache = new Map<string, VectorDomImageCacheEntry>()
+const MAX_VECTOR_DOM_IMAGE_CACHE_ENTRIES = 128
+
+function vectorNodeDomImageSource(
+  node: VectorNode,
+  width: number,
+  height: number,
+): string | null {
+  const trim = vectorTrimState(node)
+  const renderWidth = Math.max(0.0001, width)
+  const renderHeight = Math.max(0.0001, height)
+  const sourceSvg = node.source?.originalSvg
+  const viewBoxKey = [
+    node.viewBox.x,
+    node.viewBox.y,
+    node.viewBox.width,
+    node.viewBox.height,
+  ].join(':')
+  const cached = vectorDomImageCache.get(node.id)
+  if (
+    cached?.vector === node.vector &&
+    cached.sourceSvg === sourceSvg &&
+    cached.importFidelity === node.importFidelity &&
+    cached.viewBoxKey === viewBoxKey &&
+    cached.trimStart === trim.start &&
+    cached.trimEnd === trim.end &&
+    cached.trimOffset === trim.offset &&
+    cached.width === renderWidth &&
+    cached.height === renderHeight
+  ) {
+    return cached.src
+  }
+  const preserved = getPreservedVectorSource(node, trim)
+  const src = preserved
+    ? preserved.dataUrl
+    : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        vectorNodeSvgMarkup(node, renderWidth, renderHeight, trim),
+      )}`
+  if (
+    !vectorDomImageCache.has(node.id) &&
+    vectorDomImageCache.size >= MAX_VECTOR_DOM_IMAGE_CACHE_ENTRIES
+  ) {
+    const oldest = vectorDomImageCache.keys().next().value
+    if (typeof oldest === 'string') vectorDomImageCache.delete(oldest)
+  }
+  vectorDomImageCache.set(node.id, {
+    vector: node.vector,
+    sourceSvg,
+    importFidelity: node.importFidelity,
+    viewBoxKey,
+    trimStart: trim.start,
+    trimEnd: trim.end,
+    trimOffset: trim.offset,
+    width: renderWidth,
+    height: renderHeight,
+    src,
+  })
+  return src
 }
 
 const IDENTITY_INHERITED: InheritedAnim = {
@@ -858,7 +948,7 @@ export function Canvas() {
       }
     }
     visit(rootId)
-    return out
+    return moveAlwaysOnTopSubtreesLast(api, out)
   }, [api, rootId, version])
 
   const workspaceOrder = useMemo<NodeId[]>(() => {
@@ -3812,53 +3902,59 @@ export function SceneLayer({
     return map
   }, [api, rootId, solved, sceneVersion])
 
+  const compositingOrder = partitionAlwaysOnTopSubtrees(api, order)
+  const renderNode = (id: NodeId) => {
+    const node = api.getNode(id)
+    const rect = solved[id]
+    if (!node || !rect || hiddenIds.has(id)) return null
+    const inherit = inherited[id] ?? IDENTITY_INHERITED
+    return (
+      <NodeView
+        key={id}
+        node={node}
+        rect={rect}
+        anim={animated[id]}
+        inherit={inherit}
+        isRoot={id === rootId}
+        isSelected={selection.includes(id)}
+        ancestorClip={ancestorClip[id]}
+        maskedBy={maskInfo[id]}
+        onClick={(e) => {
+          e.stopPropagation()
+        }}
+        onContextMenu={(e) => {
+          // Skip context menu on the root — there's nothing useful
+          // to do on the artboard itself.
+          if (id === rootId) return
+          e.preventDefault()
+          e.stopPropagation()
+          onNodeContext(id, e.clientX, e.clientY)
+        }}
+      />
+    )
+  }
+  const renderStroke = (id: NodeId) => {
+    const node = api.getNode(id)
+    const rect = solved[id]
+    if (!node || !rect || hiddenIds.has(id)) return null
+    return (
+      <ClippedFrameStrokeOverlay
+        key={`stroke-${id}`}
+        node={node}
+        rect={rect}
+        anim={animated[id]}
+        inherit={inherited[id] ?? IDENTITY_INHERITED}
+        isRoot={id === rootId}
+      />
+    )
+  }
+
   return (
     <>
-      {order.map((id) => {
-        const node = api.getNode(id)
-        const rect = solved[id]
-        if (!node || !rect || hiddenIds.has(id)) return null
-        const inherit = inherited[id] ?? IDENTITY_INHERITED
-        return (
-          <NodeView
-            key={id}
-            node={node}
-            rect={rect}
-            anim={animated[id]}
-            inherit={inherit}
-            isRoot={id === rootId}
-            isSelected={selection.includes(id)}
-            ancestorClip={ancestorClip[id]}
-            maskedBy={maskInfo[id]}
-            onClick={(e) => {
-              e.stopPropagation()
-            }}
-            onContextMenu={(e) => {
-              // Skip context menu on the root — there's nothing useful
-              // to do on the artboard itself.
-              if (id === rootId) return
-              e.preventDefault()
-              e.stopPropagation()
-              onNodeContext(id, e.clientX, e.clientY)
-            }}
-          />
-        )
-      })}
-      {order.map((id) => {
-        const node = api.getNode(id)
-        const rect = solved[id]
-        if (!node || !rect || hiddenIds.has(id)) return null
-        return (
-          <ClippedFrameStrokeOverlay
-            key={`stroke-${id}`}
-            node={node}
-            rect={rect}
-            anim={animated[id]}
-            inherit={inherited[id] ?? IDENTITY_INHERITED}
-            isRoot={id === rootId}
-          />
-        )
-      })}
+      {compositingOrder.normal.map(renderNode)}
+      {compositingOrder.normal.map(renderStroke)}
+      {compositingOrder.overlay.map(renderNode)}
+      {compositingOrder.overlay.map(renderStroke)}
     </>
   )
 }
@@ -4393,6 +4489,11 @@ function NodeView({
 }) {
   if (node.kind === 'audio') return null
 
+  const vectorImageSrc =
+    node.kind === 'vector'
+      ? vectorNodeDomImageSource(node, rect.width, rect.height)
+      : null
+
   // Node background — serialize whatever Fill shape the model holds
   // (solid / linear / radial) into a CSS background value. Solid fills
   // return a bare color, gradients return a `linear-gradient(...)` or
@@ -4860,6 +4961,20 @@ function NodeView({
             // this, the image's square edges poke through the parent's
             // corner radius at large radii.
             borderRadius: 'inherit',
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
+      {node.kind === 'vector' && vectorImageSrc ? (
+        <img
+          src={vectorImageSrc}
+          alt=""
+          draggable={false}
+          style={{
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            objectFit: 'fill',
             pointerEvents: 'none',
           }}
         />

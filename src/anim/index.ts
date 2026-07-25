@@ -117,6 +117,19 @@ export {
   type TextMotionPathPoint,
 } from './textMotionPath'
 export {
+  DEFAULT_LAYER_MOTION_PATH_PARAMETERIZATION,
+  MAX_LAYER_MOTION_PATH_POINTS,
+  defaultLayerMotionPath,
+  evaluateLayerMotionPath,
+  evaluateLayerMotionPathSample,
+  normalizeLayerMotionPath,
+  type LayerMotionPath,
+  type LayerMotionPathParameterization,
+  type LayerMotionPathPoint,
+  type LayerMotionPathPosition,
+  type LayerMotionPathSample,
+} from './layerMotionPath'
+export {
   resolveTextMotionRailAmount,
   resolveTextSegmentMotion,
 } from './textSegmentMotion'

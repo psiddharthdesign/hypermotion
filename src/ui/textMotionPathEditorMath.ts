@@ -4,6 +4,7 @@ import {
   evaluateTextMotionPath,
   normalizeTextMotionPath,
   type TextMotionPath,
+  type TextMotionPathNormalizer,
   type TextMotionPathPoint,
 } from '@/anim/textMotionPath'
 
@@ -27,6 +28,7 @@ export function editTextMotionPathPart(
   pointId: string,
   part: TextMotionPathPart,
   target: TextMotionPathPosition,
+  normalizePath: TextMotionPathNormalizer = normalizeTextMotionPath,
 ): TextMotionPath {
   const points = path.points.map((point) => ({ ...point }))
   const index = points.findIndex((point) => point.id === pointId)
@@ -57,7 +59,7 @@ export function editTextMotionPathPart(
     point.outZ = target.z
   }
 
-  return normalizeTextMotionPath({ version: 1, points }) ?? path
+  return normalizePath({ ...path, points }) ?? path
 }
 
 export function textMotionPathPartPosition(

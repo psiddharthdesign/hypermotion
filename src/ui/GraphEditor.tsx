@@ -467,6 +467,7 @@ function humanProperty(id: string): string {
     'appearance.cornerRadius': 'Corner',
     'appearance.fill': 'Fill',
     'text.progress': 'Text Animation',
+    'motionPath.progress': 'Path Progress',
   }
   return map[id] ?? id
 }

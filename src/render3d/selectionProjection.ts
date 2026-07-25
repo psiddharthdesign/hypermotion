@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { add3, dot3, mul3, sub3, type Vec3 } from '@/render3d/math'
+import {
+  add3,
+  cross3,
+  dot3,
+  mul3,
+  norm3,
+  sub3,
+  type Vec3,
+} from '@/render3d/math'
 import {
   projectWorldPoint,
   viewportPointToRay,
@@ -48,6 +56,154 @@ export interface WorkspaceProjection {
     panX: number
     panY: number
   }
+}
+
+/** Map one authored motion-path XYZ point through its parent translation basis. */
+export function motionPathLocalPointToWorld(
+  point: Vec3,
+  plane: Plane3D,
+): Vec3 {
+  return add3(
+    plane.motionPathOrigin,
+    add3(
+      add3(
+        mul3(plane.motionPathBasisX, point.x),
+        mul3(plane.motionPathBasisY, point.y),
+      ),
+      mul3(plane.motionPathBasisZ, point.z),
+    ),
+  )
+}
+
+/** Project one authored motion-path XYZ point through the active camera. */
+export function projectMotionPathPoint(
+  point: Vec3,
+  plane: Plane3D,
+  camera: ResolvedCamera3D,
+  viewport: ViewportSize,
+): ProjectedPoint2D {
+  return projectWorldPoint(
+    motionPathLocalPointToWorld(point, plane),
+    camera,
+    viewport,
+  )
+}
+
+/**
+ * Intersect a viewport pointer with one fixed-Z slice of a motion path.
+ *
+ * Path coordinates live in the node's incoming parent basis, which can be
+ * skewed by nested rotations and non-uniform scales. Solving the 2×2 Gram
+ * system recovers local X/Y without assuming those basis vectors are unit or
+ * perpendicular.
+ */
+export function viewportPointToMotionPathLocal(
+  point: ProjectedPoint2D,
+  fixedZ: number,
+  plane: Plane3D,
+  camera: ResolvedCamera3D,
+  viewport: ViewportSize,
+): Vec3 | null {
+  const basisX = plane.motionPathBasisX
+  const basisY = plane.motionPathBasisY
+  const normal = norm3(cross3(basisX, basisY))
+  if (dot3(normal, normal) < 0.5) return null
+
+  const sliceOrigin = motionPathLocalPointToWorld(
+    { x: 0, y: 0, z: fixedZ },
+    plane,
+  )
+  const ray = viewportPointToRay(camera, point.x, point.y, viewport)
+  const denominator = dot3(ray.direction, normal)
+  if (Math.abs(denominator) < 0.0001) return null
+  const distance =
+    dot3(sub3(sliceOrigin, ray.origin), normal) / denominator
+  if (distance <= 0) return null
+
+  const worldPoint = add3(ray.origin, mul3(ray.direction, distance))
+  const relative = sub3(worldPoint, sliceOrigin)
+  const xx = dot3(basisX, basisX)
+  const xy = dot3(basisX, basisY)
+  const yy = dot3(basisY, basisY)
+  const determinant = xx * yy - xy * xy
+  if (
+    Math.abs(determinant) <=
+    1e-12 * Math.max(1, Math.abs(xx * yy))
+  ) {
+    return null
+  }
+  const projectedX = dot3(relative, basisX)
+  const projectedY = dot3(relative, basisY)
+  return {
+    x: (projectedX * yy - projectedY * xy) / determinant,
+    y: (projectedY * xx - projectedX * xy) / determinant,
+    z: fixedZ,
+  }
+}
+
+/**
+ * Resolve local motion-path depth from the closest points between the camera
+ * ray and the path's fixed-X/Y world line.
+ *
+ * The inherited Z basis may be scaled or skewed, so its magnitude remains in
+ * the line solve. Nearly parallel lines are intentionally rejected because
+ * their depth is undefined or too unstable for an editor drag.
+ */
+export function viewportPointToMotionPathDepth(
+  point: ProjectedPoint2D,
+  fixedX: number,
+  fixedY: number,
+  plane: Plane3D,
+  camera: ResolvedCamera3D,
+  viewport: ViewportSize,
+): Vec3 | null {
+  const ray = viewportPointToRay(camera, point.x, point.y, viewport)
+  const depthOrigin = motionPathLocalPointToWorld(
+    { x: fixedX, y: fixedY, z: 0 },
+    plane,
+  )
+  const depthBasis = plane.motionPathBasisZ
+  const rayLengthSquared = dot3(ray.direction, ray.direction)
+  const depthLengthSquared = dot3(depthBasis, depthBasis)
+  if (
+    !Number.isFinite(rayLengthSquared) ||
+    !Number.isFinite(depthLengthSquared) ||
+    rayLengthSquared <= 1e-12 ||
+    depthLengthSquared <= 1e-12
+  ) {
+    return null
+  }
+
+  const rayDepth = dot3(ray.direction, depthBasis)
+  const determinant =
+    rayLengthSquared * depthLengthSquared - rayDepth * rayDepth
+  if (
+    !Number.isFinite(determinant) ||
+    determinant <= 1e-8 * rayLengthSquared * depthLengthSquared
+  ) {
+    return null
+  }
+
+  const originDelta = sub3(ray.origin, depthOrigin)
+  const rayOrigin = dot3(ray.direction, originDelta)
+  const depthOriginProjection = dot3(depthBasis, originDelta)
+  const rayDistance =
+    (rayDepth * depthOriginProjection -
+      depthLengthSquared * rayOrigin) /
+    determinant
+  const z =
+    (rayLengthSquared * depthOriginProjection -
+      rayDepth * rayOrigin) /
+    determinant
+  if (
+    !Number.isFinite(rayDistance) ||
+    !Number.isFinite(z) ||
+    rayDistance <= 0
+  ) {
+    return null
+  }
+
+  return { x: fixedX, y: fixedY, z }
 }
 
 /**

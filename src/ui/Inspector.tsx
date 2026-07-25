@@ -98,6 +98,12 @@ import {
 } from '@/ui/multiRenderMode'
 import type { EasingPresetId } from '@/anim'
 import {
+  defaultLayerMotionPath,
+  MAX_LAYER_MOTION_PATH_POINTS,
+  normalizeLayerMotionPath,
+  type LayerMotionPath,
+} from '@/anim/layerMotionPath'
+import {
   addComponentVariantInteraction,
   applyComponentVariantState,
   applyInstanceVariantTransition,
@@ -125,6 +131,8 @@ import {
   type TempoCandidate,
 } from '@/audio/beatSync'
 import { loadAudioBuffer } from '@/audio/audioBuffer'
+import { TextMotionPathEditor } from '@/ui/TextMotionPathEditor'
+import { isCursorInstance } from '@/scene/builtins/cursorComponent'
 import {
   findKeyframeAt,
   findTrack,
@@ -1391,6 +1399,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveSX = anim?.scaleX ?? node.transform.scaleX
   const liveSY = anim?.scaleY ?? node.transform.scaleY
   const liveOpacity = anim?.opacity ?? node.appearance.opacity
+  const cursorInstance = isCursorInstance(api, node)
+  const supportsMotionPath =
+    node.id !== api.getRoot() &&
+    node.kind !== 'camera' &&
+    node.kind !== 'audio' &&
+    !cursorInstance
+  const motionPath =
+    supportsMotionPath ? normalizeLayerMotionPath(node.motionPath) : null
+  const liveMotionPathProgress =
+    anim?.motionPathProgress ?? motionPath?.progress ?? 0
   const liveFocusDistance =
     node.kind === 'camera'
       ? anim?.focusDistance ?? node.focusDistance ?? 0
@@ -1502,7 +1520,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // We read the store directly (not via hook) so commit handlers don't
   // re-subscribe per render — one-shot reads are fine here.
   const stampForPatch = (
-    group: 'transform' | 'appearance' | 'size' | 'camera',
+    group: 'transform' | 'appearance' | 'size' | 'camera' | 'motionPath',
     patch: Record<string, unknown>,
   ) => {
     const ui = useUI.getState()
@@ -1601,6 +1619,44 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         fitComponentToChildren(api, node.id, { preserveHug: true })
       }
       stampForPatch('size', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const addMotionPath = () => {
+    if (!supportsMotionPath) return
+    api.doc.transact(() => {
+      api.setNodeProperty(
+        node.id,
+        'motionPath',
+        defaultLayerMotionPath(),
+      )
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const patchMotionPath = (patch: Partial<LayerMotionPath>) => {
+    if (!supportsMotionPath) return
+    const currentNode = api.getNode(node.id)
+    if (!currentNode) return
+    const current =
+      normalizeLayerMotionPath(currentNode.motionPath) ??
+      defaultLayerMotionPath()
+    const next = normalizeLayerMotionPath({ ...current, ...patch })
+    if (!next) return
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'motionPath', next)
+      if (patch.progress !== undefined) {
+        stampForPatch('motionPath', { progress: next.progress })
+      }
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const removeMotionPath = () => {
+    if (!supportsMotionPath) return
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'motionPath', null)
+      const progressTrack = findTrack(
+        api,
+        node.id,
+        'motionPath.progress',
+      )
+      if (progressTrack) removeTrack(api, progressTrack.id)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const patchCamera = (
@@ -1874,6 +1930,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             onCommit={(v) => setLockedRecursive(api, node.id, v)}
           />
         </FieldRow>
+        {node.kind === 'instance' && (
+          <FieldRow label="Always on top">
+            <CheckboxField
+              value={node.alwaysOnTop}
+              onCommit={(alwaysOnTop) =>
+                api.setNodeProperty(node.id, 'alwaysOnTop', alwaysOnTop)
+              }
+            />
+          </FieldRow>
+        )}
       </Section>
 
       {node.kind === 'audio' && (
@@ -2065,6 +2131,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           </Section>
 
         </>
+      )}
+
+      {supportsMotionPath && (
+        <MotionPathSection
+          nodeId={node.id}
+          path={motionPath}
+          progress={liveMotionPathProgress}
+          onAdd={addMotionPath}
+          onRemove={removeMotionPath}
+          onPatch={patchMotionPath}
+        />
       )}
 
       {node.kind !== 'camera' && node.kind !== 'audio' && (
@@ -3095,6 +3172,117 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   )
 }
 
+function MotionPathSection({
+  nodeId,
+  path,
+  progress,
+  onAdd,
+  onRemove,
+  onPatch,
+}: {
+  nodeId: NodeId
+  path: LayerMotionPath | null
+  progress: number
+  onAdd: () => void
+  onRemove: () => void
+  onPatch: (patch: Partial<LayerMotionPath>) => void
+}) {
+  if (!path) {
+    return (
+      <Section title="Motion Path">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex h-8 w-full items-center justify-center rounded-md border border-border bg-panel-raised text-[11px] font-medium text-text-muted hover:border-border-strong hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Add motion path
+        </button>
+        <p className="text-[10px] leading-4 text-text-dim">
+          Move this layer along an editable Bézier rail.
+        </p>
+      </Section>
+    )
+  }
+
+  return (
+    <Section
+      title="Motion Path"
+      action={
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove motion path"
+          title="Remove the path and its progress animation"
+          className="rounded px-1.5 py-1 text-[10px] font-medium text-text-dim hover:bg-panel-raised hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Remove
+        </button>
+      }
+    >
+      <FieldRow
+        label="Progress"
+        keyframe={
+          <KeyframeButton
+            nodeId={nodeId}
+            propertyId="motionPath.progress"
+            currentValue={progress}
+          />
+        }
+      >
+        <SliderField
+          value={Math.round(progress * 100)}
+          onCommit={(value) => onPatch({ progress: value / 100 })}
+          min={0}
+          max={100}
+          step={1}
+          suffix="%"
+        />
+      </FieldRow>
+      <FieldRow label="Follow path">
+        <CheckboxField
+          value={path.autoOrient}
+          onCommit={(autoOrient) => onPatch({ autoOrient })}
+        />
+      </FieldRow>
+      <FieldRow label="Rotation offset">
+        <NumberField
+          value={path.rotationOffset}
+          onCommit={(rotationOffset) => onPatch({ rotationOffset })}
+          step={1}
+          suffix="°"
+          ariaLabel="Motion path rotation offset"
+        />
+      </FieldRow>
+      <FieldRow label="Constant speed">
+        <CheckboxField
+          value={path.parameterization === 'arc-length'}
+          onCommit={(constantSpeed) =>
+            onPatch({
+              parameterization: constantSpeed
+                ? 'arc-length'
+                : 'parametric',
+            })
+          }
+        />
+      </FieldRow>
+      <TextMotionPathEditor
+        path={path}
+        normalizePath={normalizeLayerMotionPath}
+        onCommit={(next) => onPatch({ points: next.points })}
+        onReset={() =>
+          onPatch({ points: defaultLayerMotionPath().points })
+        }
+        unitLabel="pixels"
+        startLabel="Start"
+        endLabel="End"
+        nudgeStep={1}
+        maxPoints={MAX_LAYER_MOTION_PATH_POINTS}
+        helperText="Drag points and handles to shape the layer rail in local pixels. The layer's transform remains the fixed start."
+      />
+    </Section>
+  )
+}
+
 function CameraViewportControlsHint() {
   const recording = useUI((state) => state.recording)
   const controls = [
@@ -3767,170 +3955,233 @@ function ComponentVariablesSection({
   api: SceneAPI
 }) {
   const [propertyMenuOpen, setPropertyMenuOpen] = useState(false)
-  const playhead = useUI((s) => s.playhead)
+  const recording = useUI((s) => s.recording)
+  const animationNodeIds = useMemo(
+    () => (node.kind === 'instance' ? [node.id] : []),
+    [node.id, node.kind],
+  )
+  const animatedValues = useAnimatedValues(animationNodeIds)
   const component =
     node.kind === 'component' ? node : api.getNode(node.componentId)
   if (!component || component.kind !== 'component') return null
   const stateAxis = component.variants.find((axis) => axis.name === 'State')
   const values = stateAxis?.values.length ? stateAxis.values : ['Default']
-  const currentState =
+  const animatedState =
     node.kind === 'instance'
-      ? node.selection.State ?? component.defaultSelection.State ?? values[0]!
+      ? animatedValues[node.id]?.variant?.State
+      : undefined
+  const selectedState =
+    node.kind === 'instance'
+      ? animatedState ??
+        node.selection.State ??
+        component.defaultSelection.State ??
+        values[0]!
       : component.defaultSelection.State ?? values[0]!
+  const currentState = values.includes(selectedState) ? selectedState : values[0]!
+  const stateLabel =
+    node.kind === 'instance' ? 'Current state' : 'Default state'
+  const currentSelection =
+    node.kind === 'instance'
+      ? {
+          ...component.defaultSelection,
+          ...node.selection,
+          State: currentState,
+        }
+      : component.defaultSelection
+  const cursorInstance =
+    node.kind === 'instance' && isCursorInstance(api, node)
+  const commitState = (value: string) => {
+    if (node.kind === 'instance') {
+      applyInstanceVariantTransition(
+        api,
+        node.id,
+        { State: value },
+        {
+          playhead: currentAnimationAuthorTime(),
+          keyframe: recording,
+        },
+      )
+      return
+    }
+    api.setNodeProperty(component.id, 'defaultSelection', {
+      ...component.defaultSelection,
+      State: value,
+    } as never)
+  }
+  const showComponentProperties =
+    node.kind === 'component' || component.componentProperties.length > 0
 
   return (
     <Section title={component.name}>
       <div className="space-y-3">
-        <div className="relative">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-[12px] font-semibold text-text-dim">
-              Properties
-            </div>
-            <button
-              type="button"
-              onClick={() => setPropertyMenuOpen((open) => !open)}
-              className="grid h-7 w-7 place-items-center rounded-md text-[18px] leading-none text-text-muted hover:bg-panel-raised hover:text-text"
-              aria-label="Create property"
-            >
-              +
-            </button>
-          </div>
-          {propertyMenuOpen ? (
-            <div className="absolute right-0 top-8 z-20 w-44 rounded-lg bg-neutral-950 p-2 text-white shadow-2xl">
-              <div className="px-2 pb-1.5 text-[11px] text-white/55">
-                Create property
+        <FieldRow
+          label={stateLabel}
+          keyframe={
+            cursorInstance ? (
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="variant"
+                currentValue={currentSelection}
+              />
+            ) : undefined
+          }
+        >
+          <SelectField<string>
+            value={currentState}
+            options={values}
+            width="w-full"
+            ariaLabel={stateLabel}
+            onCommit={commitState}
+          />
+        </FieldRow>
+
+        {showComponentProperties ? (
+          <div className="relative border-t border-border pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[12px] font-semibold text-text-dim">
+                Properties
               </div>
-              {[
-                ['◇', 'Variant'],
-                ['T', 'Text'],
-                ['◉', 'Boolean'],
-                ['◇', 'Instance swap'],
-                ['⊞', 'Slot'],
-              ].map(([icon, label]) => (
+              {node.kind === 'component' ? (
                 <button
-                  key={label}
                   type="button"
-                  onClick={() => setPropertyMenuOpen(false)}
-                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-white/90 hover:bg-white/10"
+                  onClick={() => setPropertyMenuOpen((open) => !open)}
+                  className="grid h-7 w-7 place-items-center rounded-md text-[18px] leading-none text-text-muted hover:bg-panel-raised hover:text-text"
+                  aria-label="Create property"
                 >
-                  <span className="grid h-4 w-4 place-items-center font-mono text-[13px]">
-                    {icon}
-                  </span>
-                  <span>{label}</span>
+                  +
                 </button>
-              ))}
+              ) : null}
             </div>
-          ) : null}
+            {propertyMenuOpen && node.kind === 'component' ? (
+              <div className="absolute right-0 top-8 z-20 w-44 rounded-lg bg-neutral-950 p-2 text-white shadow-2xl">
+                <div className="px-2 pb-1.5 text-[11px] text-white/55">
+                  Create property
+                </div>
+                {[
+                  ['◇', 'Variant'],
+                  ['T', 'Text'],
+                  ['◉', 'Boolean'],
+                  ['◇', 'Instance swap'],
+                  ['⊞', 'Slot'],
+                ].map(([icon, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setPropertyMenuOpen(false)}
+                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-white/90 hover:bg-white/10"
+                  >
+                    <span className="grid h-4 w-4 place-items-center font-mono text-[13px]">
+                      {icon}
+                    </span>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
-          <div className="space-y-1">
-            <ComponentPropertyRow
-              icon="◇"
-              name="State"
-              value={currentState}
-              control={
-                <SelectField<string>
-                  value={currentState}
-                  options={values}
-                  width="w-full"
-                  onCommit={(value) => {
-                    if (node.kind === 'instance') {
-                      applyInstanceVariantTransition(
-                        api,
-                        node.id,
-                        { State: value },
-                        { playhead },
+            <div className="space-y-1">
+              {component.componentProperties.map((property) => {
+                const source = api.getNode(property.nodeId)
+                if (!source) return null
+                const value =
+                  node.kind === 'instance'
+                    ? componentPropertyValue(node, source, property)
+                    : getPathValue(
+                        source as unknown as Record<string, unknown>,
+                        property.path,
                       )
-                    } else {
-                      api.setNodeProperty(component.id, 'defaultSelection', {
-                        ...component.defaultSelection,
-                        State: value,
-                      } as never)
-                    }
-                  }}
-                />
-              }
-            />
-
-            {component.componentProperties.map((property) => {
-              const source = api.getNode(property.nodeId)
-              if (!source) return null
-              const value =
-                node.kind === 'instance'
-                  ? componentPropertyValue(node, source, property)
-                  : getPathValue(
-                      source as unknown as Record<string, unknown>,
-                      property.path,
-                    )
-              const overridden =
-                node.kind === 'instance' &&
-                hasPathValue(node.overrides[property.nodeId] ?? {}, property.path)
-              return (
-                <ComponentPropertyRow
-                  key={property.id}
-                  icon={componentPropertyIcon(property.type)}
-                  name={property.name}
-                  value={formatComponentPropertyValue(value, property)}
-                  control={
-                    <div className="space-y-1.5">
-                      {node.kind === 'component' ? (
-                        <TextField
-                          value={property.name}
-                          onCommit={(name) =>
-                            updateComponentPropertyDefinition(
-                              api,
-                              component.id,
-                              property.id,
-                              { name: name.trim() || property.name },
-                            )
+                const overridden =
+                  node.kind === 'instance' &&
+                  hasPathValue(
+                    node.overrides[property.nodeId] ?? {},
+                    property.path,
+                  )
+                return (
+                  <ComponentPropertyRow
+                    key={property.id}
+                    icon={componentPropertyIcon(property.type)}
+                    name={property.name}
+                    value={formatComponentPropertyValue(value, property)}
+                    control={
+                      <div className="space-y-1.5">
+                        {node.kind === 'component' ? (
+                          <TextField
+                            value={property.name}
+                            onCommit={(name) =>
+                              updateComponentPropertyDefinition(
+                                api,
+                                component.id,
+                                property.id,
+                                { name: name.trim() || property.name },
+                              )
+                            }
+                            allowEmpty={false}
+                          />
+                        ) : null}
+                        <ComponentPropertyControl
+                          property={property}
+                          value={value}
+                          onCommit={(next) =>
+                            node.kind === 'instance'
+                              ? setInstanceComponentProperty(
+                                  api,
+                                  node.id,
+                                  property.id,
+                                  next,
+                                )
+                              : setComponentSourceProperty(
+                                  api,
+                                  component.id,
+                                  property.id,
+                                  next,
+                                )
                           }
-                          allowEmpty={false}
                         />
-                      ) : null}
-                      <ComponentPropertyControl
-                        property={property}
-                        value={value}
-                        onCommit={(next) =>
-                          node.kind === 'instance'
-                            ? setInstanceComponentProperty(api, node.id, property.id, next)
-                            : setComponentSourceProperty(api, component.id, property.id, next)
-                        }
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="truncate text-[10px] text-text-dim">
-                          {source.name} · {variablePathLabel(property.path)}
-                        </div>
-                        <div className="flex shrink-0 gap-1">
-                          {overridden ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                resetInstanceComponentProperty(api, node.id, property.id)
-                              }
-                              className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-text"
-                            >
-                              Reset
-                            </button>
-                          ) : null}
-                          {node.kind === 'component' ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                removeComponentProperty(api, component.id, property.id)
-                              }
-                              className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-danger"
-                            >
-                              Remove
-                            </button>
-                          ) : null}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="truncate text-[10px] text-text-dim">
+                            {source.name} · {variablePathLabel(property.path)}
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            {overridden ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  resetInstanceComponentProperty(
+                                    api,
+                                    node.id,
+                                    property.id,
+                                  )
+                                }
+                                className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-text"
+                              >
+                                Reset
+                              </button>
+                            ) : null}
+                            {node.kind === 'component' ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeComponentProperty(
+                                    api,
+                                    component.id,
+                                    property.id,
+                                  )
+                                }
+                                className="h-6 rounded px-1.5 text-[10px] text-text-muted hover:bg-panel-raised hover:text-danger"
+                              >
+                                Remove
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  }
-                />
-              )
-            })}
+                    }
+                  />
+                )
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </Section>
   )
@@ -4366,8 +4617,8 @@ function VariantsSection({
         </>
       ) : (
         <p className="text-[11px] leading-4 text-text-dim">
-          Select an instance state in Variables. Transition settings below
-          control how that instance animates between component states.
+          Use the Current state dropdown above to change this instance.
+          Transition settings below control how it animates between states.
         </p>
       )}
 

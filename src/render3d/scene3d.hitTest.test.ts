@@ -79,6 +79,85 @@ describe('direct nested-layer hit testing', () => {
   })
 })
 
+describe('always-on-top instance planes', () => {
+  it('wins hit testing even when a later normal plane has the same depth', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const cardId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const cursorId = api.createNode('instance', rootId, {
+      name: 'Cursor instance',
+      componentId: 'cursor',
+      alwaysOnTop: true,
+      size: { width: 48, height: 48 },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [cardId]: { x: 100, y: 100, width: 300, height: 200 },
+      [cursorId]: { x: 180, y: 140, width: 48, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const viewport = { width: 960, height: 540 }
+    const resolvedCamera = resolveCamera3D(camera, undefined, viewport)
+    const planes = buildWorldPlanes(api, layout, {}, resolvedCamera)
+
+    // Root children are walked in reverse layer order. This is the exact
+    // problematic topology: the normal card receives the later paint index.
+    expect(planes.map((plane) => plane.nodeId)).toEqual([
+      cursorId,
+      cardId,
+    ])
+    const hit = hitTestPlanes(
+      planes,
+      viewportPointToRay(resolvedCamera, 204, 164, viewport),
+      resolvedCamera,
+      viewport,
+    )
+    expect(hit?.nodeId).toBe(cursorId)
+  })
+
+  it('extracts a nested overlay instance from its parent plane', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const cardId = api.createNode('frame', rootId, {
+      name: 'Card',
+      size: { width: 300, height: 200 },
+    })
+    const cursorId = api.createNode('instance', cardId, {
+      name: 'Cursor instance',
+      componentId: 'cursor',
+      alwaysOnTop: true,
+      size: { width: 48, height: 48 },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [cardId]: { x: 100, y: 100, width: 300, height: 200 },
+      [cursorId]: { x: 180, y: 140, width: 48, height: 48 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+
+    expect(
+      buildWorldPlanes(api, layout, {}, resolvedCamera).map(
+        (plane) => plane.nodeId,
+      ),
+    ).toEqual([cardId, cursorId])
+  })
+})
+
 describe('stable animated-text plane topology', () => {
   it('extracts stock letter staggers onto the atlas-backed segment path', () => {
     const api = createSceneAPI()

@@ -242,6 +242,20 @@ test('create_scene description defines the editable text spatial path', () => {
   assert.match(description, /motionPath takes precedence over motionVector/)
 })
 
+test('create_scene description defines generic layer motion paths', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /Coordinates are layer-local pixels/)
+  assert.match(description, /progress is 0\.\.1/)
+  assert.match(description, /autoOrient/)
+  assert.match(description, /rotationOffset/)
+  assert.match(description, /parameterization/)
+  assert.match(description, /motionPath\.progress can be keyframed/)
+})
+
 test('create_scene description stays in sync with supported property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {

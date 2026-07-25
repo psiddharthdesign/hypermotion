@@ -4,8 +4,13 @@ import { describe, expect, it } from 'vitest'
 import {
   defaultTextMotionPath,
   evaluateTextMotionPath,
+  removeTextMotionPathPoint,
   splitTextMotionPathAt,
 } from '@/anim/textMotionPath'
+import {
+  defaultLayerMotionPath,
+  normalizeLayerMotionPath,
+} from '@/anim/layerMotionPath'
 import {
   editTextMotionPathPart,
   largestTextMotionPathSegmentMidpoint,
@@ -89,5 +94,59 @@ describe('text motion path editor math', () => {
   it('adds a toolbar point in the widest remaining time interval', () => {
     const path = splitTextMotionPathAt(defaultTextMotionPath(), 0.5, 'middle')
     expect(largestTextMotionPathSegmentMidpoint(path)).toBeCloseTo(0.25)
+  })
+
+  it('uses a caller normalizer for pixel-space layer paths', () => {
+    const path = defaultLayerMotionPath()
+    const end = path.points.at(-1)!
+    const moved = editTextMotionPathPart(
+      path,
+      end.id,
+      'anchor',
+      { x: 420, y: -160, z: 24 },
+      normalizeLayerMotionPath,
+    )
+
+    expect(moved.points.at(-1)).toMatchObject({
+      x: 420,
+      y: -160,
+      z: 24,
+    })
+    expect(normalizeLayerMotionPath(moved)).toMatchObject({
+      progress: path.progress,
+      autoOrient: path.autoOrient,
+      rotationOffset: path.rotationOffset,
+      parameterization: path.parameterization,
+    })
+
+    const split = splitTextMotionPathAt(
+      moved,
+      0.5,
+      'middle',
+      normalizeLayerMotionPath,
+    )
+    expect(split.points[1]!.x).toBeGreaterThan(10)
+    expect(
+      removeTextMotionPathPoint(
+        split,
+        'middle',
+        normalizeLayerMotionPath,
+      ).points,
+    ).toHaveLength(2)
+  })
+
+  it('allows layer paths to use their larger point budget', () => {
+    let path = defaultLayerMotionPath()
+    for (let index = 0; index < 11; index++) {
+      path = splitTextMotionPathAt(
+        path,
+        largestTextMotionPathSegmentMidpoint(path),
+        `layer-point-${index}`,
+        normalizeLayerMotionPath,
+        64,
+      ) as typeof path
+    }
+
+    expect(path.points).toHaveLength(13)
   })
 })

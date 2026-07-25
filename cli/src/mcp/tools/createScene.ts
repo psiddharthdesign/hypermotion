@@ -95,7 +95,7 @@ export const createSceneTool: Tool = {
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
     "SceneJson shape (top level): { meta?, root?, activeCameraId?, nodes, tracks?, sections? }\n" +
     "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
-    "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, ...kind-specific }\n" +
+    "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, motionPath?, ...kind-specific }\n" +
     "Design scenes with auto-layout by default from the first frame onward. Prefer layout.mode: 'flex' for rows/columns " +
     "and layout.mode: 'grid' for grids; use fixed transforms or layout.mode: 'none' only when the user explicitly asks " +
     "for manual positioning or when a specific visual effect cannot be expressed with auto-layout. Inside auto-layout frames, " +
@@ -117,6 +117,7 @@ export const createSceneTool: Tool = {
     "Shader parameters are static node fields; " +
     "size, transform, and appearance properties remain animatable through ordinary tracks.\n" +
     "Tracks: { id, nodeId, propertyId, keyframes?: [{ id, time, value, easingOut?, easingPreset?: { presetId, strength } }], defaultEasing?, textAnimation? } — omitted keyframes default to [].\n" +
+    "Visual layers can include motionPath: { version: 1, points: [{ id, t, x, y, z, inX, inY, inZ, outX, outY, outZ }], progress, autoOrient, rotationOffset, parameterization: 'parametric'|'arc-length' }. Coordinates are layer-local pixels, the first point is the transform origin, progress is 0..1, and motionPath.progress can be keyframed.\n" +
     "Text animation tracks can include textAnimation with mode, applyTo ('layer'|'letters'|'words'|'lines'), order, delay, smoothing ('none'|'soft'|'smooth' blends neighbouring profile samples), optional staggerCurve ({ version: 1, points: [{ id, x, y, inX, inY, outX, outY }] } defining a monotonic initial-to-final trail profile sampled by every segment as it travels across text), duration, startTime, acceleration, easingPresetId, easingStrength, direction, travelDistance, optional motionVector ({ x, y, z } per segment in line-height multiples; +X right, +Y down, +Z toward the viewer; null or omitted uses direction/travelDistance), optional motionPath ({ version: 1, points: [{ id, t, x, y, z, inX, inY, inZ, outX, outY, outZ }] } defining an editable cubic spatial route in line-height units; t=0 is the settled origin, t=1 is the authored start, +X right, +Y down, +Z toward the viewer; motionPath takes precedence over motionVector), and blurRadius.\n" +
     "Camera nodes can include focalLength, scrollSensitivity (0.1-2, default 1), fieldOfView, pointOfInterestX/Y/Z, nearClip, farClip, " +
     "depthOfField, focusMode, focusWorldX/Y/Z, focusTargetNodeId, focusDistance, focusRadius, focusFalloff, aperture (legacy strength), " +

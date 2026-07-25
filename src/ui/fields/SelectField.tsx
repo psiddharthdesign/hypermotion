@@ -26,6 +26,7 @@ export function SelectField<T extends string>({
   groups,
   onCommit,
   width = 'w-24',
+  ariaLabel,
 }: {
   value: T
   options?: readonly FlatOption<T>[]
@@ -36,6 +37,7 @@ export function SelectField<T extends string>({
   groups?: readonly Group<T>[]
   onCommit: (next: T) => void
   width?: string
+  ariaLabel?: string
 }) {
   // Framer-style: solid dark fill, no border, accent ring on focus.
   // Native chevron from the OS still sits at the right edge.
@@ -50,6 +52,7 @@ export function SelectField<T extends string>({
       value={value}
       onChange={(e) => onCommit(e.target.value as T)}
       className={className}
+      aria-label={ariaLabel}
     >
       {options
         ? normalize(options).map((o) => (
