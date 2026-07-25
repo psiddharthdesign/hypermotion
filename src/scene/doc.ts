@@ -41,8 +41,13 @@ import {
   normalizePaperShaderType,
 } from '@/scene/paperShaders'
 import { normalizeTextAnimation } from '@/anim/textAnimations'
+import {
+  normalizeLayerMotionPath,
+  type LayerMotionPath,
+} from '@/anim/layerMotionPath'
 import { emptyVectorDocument } from '@/scene/vector/model'
 import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
+import { migrateCursorComponents } from '@/scene/builtins/migrateCursorComponent'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -215,10 +220,12 @@ export interface NodeBaseMutable {
   appearance: Appearance
   layout: Layout
   size: Size
+  alwaysOnTop: boolean
   visible: boolean
   locked: boolean
   position: import('@/scene/types').Position
   isMask: boolean
+  motionPath: LayerMotionPath | null
   text: string
   fontFamily: string
   fontSize: number
@@ -518,6 +525,7 @@ const DEFAULT_VARIANT_TRANSITION: import('@/scene/types').VariantTransition = {
 
 export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
   removeLegacy3DObjects(doc)
+  migrateCursorComponents(doc)
   const scene = doc.getMap<unknown>('scene')
 
   // Lazy-init the sub-maps on first access so a freshly loaded doc from
@@ -606,6 +614,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       componentSourceId:
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
+      motionPath: normalizeLayerMotionPath(y.get('motionPath')),
     }
     switch (kind) {
       case 'frame':
@@ -835,6 +844,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           size: (y.get('size') as Size) ?? DEFAULT_SIZE,
           layout: normalizeLayout(y.get('layout')),
           componentId: y.get('componentId') as NodeId,
+          alwaysOnTop: (y.get('alwaysOnTop') as boolean | undefined) ?? false,
           selection: (y.get('selection') as Record<string, string>) ?? {},
           overrides: (y.get('overrides') as Record<NodeId, Record<string, unknown>>) ?? {},
           interactions:
@@ -1075,6 +1085,12 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           (props as { componentSourceId?: NodeId | null })?.componentSourceId ?? null,
         )
         y.set('workspaceOnly', (props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
+        y.set(
+          'motionPath',
+          normalizeLayerMotionPath(
+            (props as { motionPath?: LayerMotionPath | null })?.motionPath,
+          ),
+        )
 
         // kind-specific defaults
         if (kind === 'frame' || kind === 'component') {
@@ -1226,6 +1242,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('size', ip?.size ?? DEFAULT_SIZE)
           y.set('layout', ip?.layout ?? DEFAULT_LAYOUT)
           y.set('componentId', ip?.componentId ?? '')
+          y.set('alwaysOnTop', ip?.alwaysOnTop ?? false)
           y.set('selection', ip?.selection ?? {})
           y.set('overrides', ip?.overrides ?? {})
           y.set('interactions', ip?.interactions ?? [])
@@ -1382,6 +1399,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (key === 'motionPath') {
+          y.set('motionPath', normalizeLayerMotionPath(value))
+          return
+        }
         if (y.get('kind') === 'shader') {
           const shaderType = normalizePaperShaderType(y.get('shaderType'))
           if (

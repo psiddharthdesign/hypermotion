@@ -28,6 +28,18 @@ export interface TextMotionPath {
   points: TextMotionPathPoint[]
 }
 
+/**
+ * Shared normalization seam for motion-path editors.
+ *
+ * Text animation paths use line-height units, while ordinary layer paths use
+ * scene pixels and carry additional configuration beside `points`. Keeping the
+ * return type structural lets both models reuse the same point-editing math
+ * without forcing layer paths through text's narrow spatial clamp.
+ */
+export type TextMotionPathNormalizer = (
+  raw: unknown,
+) => TextMotionPath | null
+
 export interface TextMotionPathOffset {
   x: number
   y: number
@@ -264,11 +276,15 @@ export function splitTextMotionPathAt(
   path: TextMotionPath,
   amount: number,
   id: string,
+  normalizePath: TextMotionPathNormalizer = normalizeTextMotionPath,
+  maxPoints: number = MAX_TEXT_MOTION_PATH_POINTS,
 ): TextMotionPath {
-  const normalized = normalizeTextMotionPath(path)
-  if (!normalized) return defaultTextMotionPath()
+  const normalized = normalizePath(path)
+  if (!normalized) {
+    return normalizePath(defaultTextMotionPath()) ?? defaultTextMotionPath()
+  }
   const points = normalized.points
-  if (points.length >= MAX_TEXT_MOTION_PATH_POINTS) return normalized
+  if (points.length >= Math.max(2, Math.floor(maxPoints))) return normalized
 
   const t = clamp(
     Number.isFinite(amount) ? amount : 0,
@@ -318,22 +334,30 @@ export function splitTextMotionPathAt(
     outY: y.outControl,
     outZ: z.outControl,
   })
-  return normalizeTextMotionPath({ version: 1, points: nextPoints })!
+  return (
+    normalizePath({ ...normalized, points: nextPoints }) ??
+    normalized
+  )
 }
 
 /** Remove an editable anchor while protecting the settled and start points. */
 export function removeTextMotionPathPoint(
   path: TextMotionPath,
   pointId: string,
+  normalizePath: TextMotionPathNormalizer = normalizeTextMotionPath,
 ): TextMotionPath {
-  const normalized = normalizeTextMotionPath(path)
-  if (!normalized) return defaultTextMotionPath()
+  const normalized = normalizePath(path)
+  if (!normalized) {
+    return normalizePath(defaultTextMotionPath()) ?? defaultTextMotionPath()
+  }
   const index = normalized.points.findIndex((point) => point.id === pointId)
   if (index <= 0 || index >= normalized.points.length - 1) return normalized
-  return normalizeTextMotionPath({
-    version: 1,
-    points: normalized.points.filter((point) => point.id !== pointId),
-  })!
+  return (
+    normalizePath({
+      ...normalized,
+      points: normalized.points.filter((point) => point.id !== pointId),
+    }) ?? normalized
+  )
 }
 
 interface SplitAxisResult {

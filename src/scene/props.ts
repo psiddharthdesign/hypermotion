@@ -81,6 +81,10 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'transform.anchorZ', group: 'transform', label: 'Anchor Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'motionPath.progress': {
+    id: 'motionPath.progress', group: 'transform', label: 'Path Progress',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
 
   // camera lens group — post-layout, no relayout needed
   'camera.focusDistance': {

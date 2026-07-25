@@ -7,6 +7,7 @@ import {
   Hand,
   ImageIcon,
   MousePointer2,
+  MousePointerClick,
   Sparkles,
   Square,
   Type,
@@ -21,6 +22,9 @@ import {
 import { importImageFiles } from '@/ui/importImage'
 import { importMediaFiles } from '@/ui/importMedia'
 import { PaperShaderPicker } from '@/ui/PaperShaderPicker'
+import { ensureCursorComponent } from '@/scene/builtins/cursorComponent'
+import { CURSOR_COMPONENT_SIZE } from '@/scene/builtins/cursorAssets'
+import { instantiateComponent } from '@/ui/actions'
 
 /**
  * FloatingDock — the tool palette as a floating pill at the bottom of
@@ -117,6 +121,43 @@ export function FloatingDock() {
     setSelection([id])
     setTool('select')
   }
+  const insertCursorComponent = () => {
+    const rootId = api.getRoot()
+    if (!rootId) return
+    const meta = api.getMeta()
+    const componentId = ensureCursorComponent(api)
+    // Keep the initial cursor clear of the camera focus marker, which sits at
+    // the artboard centre in a new scene and can completely cover a small
+    // cursor at reduced editor zoom.
+    const offset = CURSOR_COMPONENT_SIZE * 1.5
+    const x = Math.min(
+      Math.max(0, meta.canvas.width - CURSOR_COMPONENT_SIZE),
+      Math.max(
+        0,
+        (meta.canvas.width - CURSOR_COMPONENT_SIZE) / 2 + offset,
+      ),
+    )
+    const y = Math.min(
+      Math.max(0, meta.canvas.height - CURSOR_COMPONENT_SIZE),
+      Math.max(
+        0,
+        (meta.canvas.height - CURSOR_COMPONENT_SIZE) / 2 + offset,
+      ),
+    )
+    const id = instantiateComponent(api, componentId, rootId, {
+      absolute: true,
+      alwaysOnTop: true,
+      position: { x, y },
+    })
+    if (!id) return
+    api.doc.transact(() => {
+      // Layer rows are top-to-bottom. Keep the cursor at the visual front so
+      // the tree communicates the same result as the compositor.
+      api.moveChild(rootId, id, 0)
+    })
+    setSelection([id])
+    setTool('select')
+  }
   return (
     <div
       // The dock excludes itself from `data-export-hide` because it's
@@ -183,6 +224,14 @@ export function FloatingDock() {
 
       {/* Generator and media group. */}
       <span aria-hidden className="mx-1 h-[22px] w-px bg-border" />
+      <button
+        type="button"
+        title="Insert cursor component"
+        onClick={insertCursorComponent}
+        className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
+      >
+        <MousePointerClick size={18} />
+      </button>
       <button
         type="button"
         title="Add Paper shader…"

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSceneAPI } from '@/scene/doc'
 import type { NodeId, Track } from '@/scene'
 import { getAnimEngine } from '@/anim/engine'
+import { normalizeLayerMotionPath } from '@/anim/layerMotionPath'
 import { textAnimationDefaults } from '@/anim/textAnimations'
 
 function textProgressTrack(
@@ -174,6 +175,147 @@ describe('animation engine track preview', () => {
 
     engine.setTrackPreview(null)
     expect(engine.getSnapshot()[nodeId]?.x).toBe(12.5)
+  })
+})
+
+describe('animation engine layer motion paths', () => {
+  it('resolves static path progress into the node transform and auto-orientation', () => {
+    const api = createSceneAPI()
+    const motionPath = normalizeLayerMotionPath({
+      version: 1,
+      progress: 0.5,
+      autoOrient: true,
+      rotationOffset: 5,
+      parameterization: 'parametric',
+      points: [
+        { id: 'start', t: 0, x: 0, y: 0, z: 0 },
+        { id: 'end', t: 1, x: 100, y: 100, z: 20 },
+      ],
+    })!
+    const nodeId = api.createNode('rect', null, {
+      transform: {
+        x: 100,
+        y: 40,
+        z: 10,
+        rotation: 10,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+      motionPath,
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0)
+
+    const value = engine.getSnapshot()[nodeId]
+    expect(value).toMatchObject({
+      motionPathProgress: 0.5,
+      x: 150,
+      y: 90,
+      z: 20,
+    })
+    expect(value?.rotation).toBeCloseTo(60)
+  })
+
+  it('adds the sampled rail after explicit transform tracks', () => {
+    const api = createSceneAPI()
+    const motionPath = normalizeLayerMotionPath({
+      version: 1,
+      progress: 0,
+      autoOrient: true,
+      rotationOffset: 15,
+      parameterization: 'parametric',
+      points: [
+        { id: 'start', t: 0, x: 0, y: 0, z: 0 },
+        { id: 'end', t: 1, x: 0, y: 100, z: 0 },
+      ],
+    })!
+    const nodeId = api.createNode('image', null, { motionPath })
+    const tracks: Track[] = [
+      {
+        id: 'path-progress',
+        nodeId,
+        propertyId: 'motionPath.progress',
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: 'path-start', time: 0, value: 0 },
+          { id: 'path-end', time: 1, value: 1 },
+        ],
+      },
+      {
+        id: 'base-x',
+        nodeId,
+        propertyId: 'transform.x',
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: 'x-start', time: 0, value: 200 },
+          { id: 'x-end', time: 1, value: 300 },
+        ],
+      },
+      {
+        id: 'base-rotation',
+        nodeId,
+        propertyId: 'transform.rotation',
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: 'rotation-start', time: 0, value: 10 },
+          { id: 'rotation-end', time: 1, value: 30 },
+        ],
+      },
+    ]
+    for (const track of tracks) api.setTrack(track)
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    const value = engine.getSnapshot()[nodeId]
+    expect(value).toMatchObject({
+      motionPathProgress: 0.5,
+      x: 250,
+      rotation: 125,
+    })
+    expect(value?.y).toBeCloseTo(50)
+  })
+
+  it('keeps authored rotation unchanged when auto-orient is disabled', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('rect', null, {
+      transform: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rotation: 24,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+      motionPath: normalizeLayerMotionPath({
+        version: 1,
+        progress: 1,
+        autoOrient: false,
+        rotationOffset: 90,
+        points: [
+          { id: 'start', t: 0, x: 0, y: 0 },
+          { id: 'end', t: 1, x: 80, y: 0 },
+        ],
+      }),
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0)
+
+    expect(engine.getSnapshot()[nodeId]).toMatchObject({
+      x: 80,
+      y: 0,
+      motionPathProgress: 1,
+    })
+    expect(engine.getSnapshot()[nodeId]?.rotation).toBeUndefined()
   })
 })
 

@@ -1216,6 +1216,7 @@ function resolveKeyframePasteTargets(
 function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolean {
   if (propertyId.startsWith('camera.')) return node.kind === 'camera'
   if (propertyId === 'text.progress') return node.kind === 'text'
+  if (propertyId === 'variant') return node.kind === 'instance'
   return true
 }
 

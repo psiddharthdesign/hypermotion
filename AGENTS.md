@@ -397,6 +397,31 @@ Every paintable node carries:
 Backwards-compatible with the desktop app's inspector — the same
 schema renders inside the editor exactly as it does in the saved file.
 
+### Layer motion paths
+
+Any non-root visual layer may follow an editable cubic path in local
+pixel space. The layer's normal transform remains the fixed origin.
+Animate `motionPath.progress` from `0` to `1` to travel along the path.
+Set `autoOrient: true` to follow its tangent, use `rotationOffset` to
+correct the layer's heading, and choose `parameterization:
+'arc-length'` for approximately constant speed.
+
+```json
+{
+  "motionPath": {
+    "version": 1,
+    "points": [
+      { "id": "start", "t": 0, "x": 0, "y": 0, "z": 0, "inX": 0, "inY": 0, "inZ": 0, "outX": 80, "outY": -80, "outZ": 0 },
+      { "id": "end", "t": 1, "x": 240, "y": 0, "z": 0, "inX": 160, "inY": 80, "inZ": 0, "outX": 240, "outY": 0, "outZ": 0 }
+    ],
+    "progress": 0,
+    "autoOrient": true,
+    "rotationOffset": 0,
+    "parameterization": "arc-length"
+  }
+}
+```
+
 ### Animation tracks
 
 A `tracks` map at the top of the scene drives keyframe animation:
@@ -438,7 +463,7 @@ camera.vhsColorBleed,
 appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
-text.progress, layout.gap, layout.padding.top, layout.padding.right,
+text.progress, motionPath.progress, layout.gap, layout.padding.top, layout.padding.right,
 layout.padding.bottom, layout.padding.left, layout.direction,
 size.width, size.height, variant
 ```

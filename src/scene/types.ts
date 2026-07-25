@@ -4,6 +4,7 @@ import type {
   PaperShaderParams,
   PaperShaderType,
 } from '@/scene/paperShaders'
+import type { LayerMotionPath } from '@/anim/layerMotionPath'
 
 export type {
   PaperShaderCategory,
@@ -489,6 +490,12 @@ interface NodeBase {
    * Default false. Toggle via Cmd+Opt+M (matches Figma).
    */
   isMask: boolean
+  /**
+   * Optional layer-local spatial rail. Every node kind may follow one; the
+   * animation engine resolves it into the normal transform snapshot so
+   * renderers do not need kind-specific path logic.
+   */
+  motionPath?: LayerMotionPath | null
 }
 
 export interface FrameNode extends NodeBase {
@@ -1029,6 +1036,14 @@ export interface InstanceNode extends NodeBase {
   size: Size
   layout: Layout
   componentId: ComponentId
+  /**
+   * Composite this instance after normal scene layers.
+   *
+   * Cursor and annotation components use this to remain readable while they
+   * cross tilted 3D planes. It is deliberately independent from transform.z:
+   * depth still controls projection, while this controls visual stacking.
+   */
+  alwaysOnTop: boolean
   selection: VariantSelection
   /** Per-inner-node overrides, keyed by the inner node id inside the component. */
   overrides: Record<NodeId, Record<string, unknown>>
@@ -1186,6 +1201,8 @@ export type PropertyId =
   | 'transform.anchorX'
   | 'transform.anchorY'
   | 'transform.anchorZ'
+  // generic layer motion path — resolves into post-layout transform values
+  | 'motionPath.progress'
   // camera lens group — post-layout, cheap
   | 'camera.focusDistance'
   | 'camera.focusX'

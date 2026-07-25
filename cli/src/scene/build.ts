@@ -219,6 +219,8 @@ export interface NodeJson {
   isMask?: boolean
   componentSourceId?: string | null
   workspaceOnly?: boolean
+  /** Optional pixel-space Bézier rail followed by this layer. */
+  motionPath?: LayerMotionPathJson | null
   transform?: {
     x: number
     y: number
@@ -423,6 +425,20 @@ export interface TextMotionPathJson {
   }>
 }
 
+export interface LayerMotionPathJson extends TextMotionPathJson {
+  /** Static 0..1 amount used when no motionPath.progress track is active. */
+  progress?: number
+  /** Rotate the layer so its local X axis follows the rail tangent. */
+  autoOrient?: boolean
+  /** Degrees added after automatic tangent orientation. */
+  rotationOffset?: number
+  /** Arc-length mode produces approximately constant travel speed. */
+  parameterization?: 'parametric' | 'arc-length'
+}
+
+const MAX_LAYER_MOTION_PATH_POINTS = 64
+const MAX_LAYER_MOTION_PATH_COORDINATE = 1_000_000
+
 export interface AppearanceJson {
   [key: string]: unknown
   opacity?: number
@@ -493,6 +509,7 @@ export const PROPERTY_IDS = [
   'appearance.fill',
   'appearance.blendMode',
   'text.progress',
+  'motionPath.progress',
   'layout.gap',
   'layout.padding.top',
   'layout.padding.right',
@@ -1112,6 +1129,11 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('isMask', node.isMask ?? false)
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
+    // Keep older scene snapshots byte-compatible when no layer rail was
+    // supplied. The desktop reader already treats a missing value as null.
+    if (node.motionPath !== undefined) {
+      y.set('motionPath', node.motionPath)
+    }
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
@@ -1401,6 +1423,7 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     if (node.position !== undefined && (typeof node.position !== 'string' || !isNodePosition(node.position))) {
       errors.push(`node ${id} has unsupported position: ${String(node.position)}`)
     }
+    validateLayerMotionPath(id, node, root, errors)
     const parent = typeof node.parent === 'string' ? node.parent : null
     if (node.parent !== undefined && node.parent !== null && typeof node.parent !== 'string') {
       errors.push(`node ${id} parent must be a string or null`)
@@ -1647,6 +1670,127 @@ function isNodePosition(value: string): value is NodePositionJson {
 
 function isPropertyId(value: string): value is PropertyIdJson {
   return PROPERTY_ID_SET.has(value as PropertyIdJson)
+}
+
+function validateLayerMotionPath(
+  nodeId: string,
+  node: Record<string, unknown>,
+  rootId: string,
+  errors: string[],
+): void {
+  const raw = node.motionPath
+  if (raw === undefined || raw === null) return
+  const label = `node ${nodeId} motionPath`
+  if (nodeId === rootId || node.kind === 'camera' || node.kind === 'audio') {
+    errors.push(`${label} is only supported on non-root visual layers`)
+    return
+  }
+  if (!isPlainObject(raw)) {
+    errors.push(`${label} must be an object or null`)
+    return
+  }
+  if (raw.version !== 1) {
+    errors.push(`${label}.version must be 1`)
+  }
+  if (
+    !Array.isArray(raw.points) ||
+    raw.points.length < 2 ||
+    raw.points.length > MAX_LAYER_MOTION_PATH_POINTS
+  ) {
+    errors.push(
+      `${label}.points must contain 2-${MAX_LAYER_MOTION_PATH_POINTS} points`,
+    )
+    return
+  }
+
+  const ids = new Set<string>()
+  let previousT = -Infinity
+  for (let index = 0; index < raw.points.length; index++) {
+    const point = raw.points[index]
+    const pointLabel = `${label}.points[${index}]`
+    if (!isPlainObject(point)) {
+      errors.push(`${pointLabel} must be an object`)
+      continue
+    }
+    if (typeof point.id !== 'string' || point.id.trim().length === 0) {
+      errors.push(`${pointLabel}.id must be a non-empty string`)
+    } else if (ids.has(point.id)) {
+      errors.push(`${label} has duplicate point id: ${point.id}`)
+    } else {
+      ids.add(point.id)
+    }
+    if (
+      typeof point.t !== 'number' ||
+      !Number.isFinite(point.t) ||
+      point.t < 0 ||
+      point.t > 1
+    ) {
+      errors.push(`${pointLabel}.t must be between 0 and 1`)
+    } else if (point.t <= previousT) {
+      errors.push(`${label} point t values must be strictly increasing`)
+    } else {
+      previousT = point.t
+    }
+    for (const field of [
+      'x',
+      'y',
+      'z',
+      'inX',
+      'inY',
+      'inZ',
+      'outX',
+      'outY',
+      'outZ',
+    ] as const) {
+      const value = point[field]
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        Math.abs(value) > MAX_LAYER_MOTION_PATH_COORDINATE
+      ) {
+        errors.push(
+          `${pointLabel}.${field} must be a finite number between -${MAX_LAYER_MOTION_PATH_COORDINATE} and ${MAX_LAYER_MOTION_PATH_COORDINATE}`,
+        )
+      }
+    }
+  }
+
+  const first = raw.points[0]
+  const last = raw.points.at(-1)
+  if (isPlainObject(first) && first.t !== 0) {
+    errors.push(`${label} first point must use t: 0`)
+  }
+  if (isPlainObject(last) && last.t !== 1) {
+    errors.push(`${label} last point must use t: 1`)
+  }
+  if (
+    raw.progress !== undefined &&
+    (typeof raw.progress !== 'number' ||
+      !Number.isFinite(raw.progress) ||
+      raw.progress < 0 ||
+      raw.progress > 1)
+  ) {
+    errors.push(`${label}.progress must be between 0 and 1`)
+  }
+  if (raw.autoOrient !== undefined && typeof raw.autoOrient !== 'boolean') {
+    errors.push(`${label}.autoOrient must be a boolean`)
+  }
+  if (
+    raw.rotationOffset !== undefined &&
+    (typeof raw.rotationOffset !== 'number' ||
+      !Number.isFinite(raw.rotationOffset))
+  ) {
+    errors.push(`${label}.rotationOffset must be a finite number`)
+  }
+  if (
+    raw.parameterization !== undefined &&
+    raw.parameterization !== 'parametric' &&
+    raw.parameterization !== 'arc-length'
+  ) {
+    errors.push(
+      `${label}.parameterization must be parametric or arc-length`,
+    )
+  }
 }
 
 function isJsonValue(value: unknown): value is JsonValue {

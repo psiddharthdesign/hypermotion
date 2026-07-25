@@ -7996,6 +7996,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
 // ---------------------------------------------------------------------------
 
 function humanProperty(id: string, nodeKind?: string): string {
+  if (nodeKind === 'instance' && id === 'variant') return 'State'
   // Cameras are uniform-scale, so `transform.scaleX` (the only scale
   // track we keep on cameras) should read as just "Scale" — not
   // "Scale X". Same row, different label.

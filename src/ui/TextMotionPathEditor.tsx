@@ -7,6 +7,7 @@ import {
   removeTextMotionPathPoint,
   splitTextMotionPathAt,
   type TextMotionPath,
+  type TextMotionPathNormalizer,
   type TextMotionPathPoint,
 } from '@/anim/textMotionPath'
 import { NumberField } from '@/ui/fields/NumberField'
@@ -42,6 +43,13 @@ export function TextMotionPathEditor({
   onPreview,
   onPreviewFinish,
   onPreviewCancel,
+  normalizePath = normalizeTextMotionPath,
+  unitLabel = 'line-height units',
+  startLabel = 'Settled',
+  endLabel = 'Hidden',
+  helperText = 'Letters travel from Hidden to Settled. Drag points and handles in XY; Z adds depth. Double-click near the path to add a point.',
+  nudgeStep = 0.1,
+  maxPoints = MAX_TEXT_MOTION_PATH_POINTS,
 }: {
   path: TextMotionPath
   onCommit: (next: TextMotionPath) => void
@@ -49,6 +57,20 @@ export function TextMotionPathEditor({
   onPreview?: (next: TextMotionPath) => void
   onPreviewFinish?: () => void
   onPreviewCancel?: () => void
+  /** Use the caller's spatial bounds while preserving text's normalizer by default. */
+  normalizePath?: TextMotionPathNormalizer
+  /** Long-form coordinate unit used by metadata and accessible labels. */
+  unitLabel?: string
+  /** Label for the locked t=0 anchor. */
+  startLabel?: string
+  /** Label for the t=1 anchor. */
+  endLabel?: string
+  /** Context-specific guidance rendered below the coordinate controls. */
+  helperText?: string
+  /** Arrow-key and numeric-field base increment in the caller's unit. */
+  nudgeStep?: number
+  /** Maximum editable anchors; text paths default to their compact limit. */
+  maxPoints?: number
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const dragCancelRef = useRef<(() => void) | null>(null)
@@ -70,7 +92,7 @@ export function TextMotionPathEditor({
   const selectedIndex = displayed.points.findIndex(
     (point) => point.id === selectedPoint.id,
   )
-  const selectedIsSettled = selectedIndex === 0
+  const selectedIsLocked = selectedIndex === 0
   const selectedIsInterior =
     selectedIndex > 0 && selectedIndex < displayed.points.length - 1
   // Deliberately derive the graph viewport from the committed prop. During a
@@ -94,7 +116,7 @@ export function TextMotionPathEditor({
     setDraftState({ sourceKey, path: next })
   }
   const commit = (next: TextMotionPath) => {
-    const normalized = normalizeTextMotionPath(next)
+    const normalized = normalizePath(next)
     if (!normalized) return
     if (motionPathSignature(normalized) === motionPathSignature(path)) return
     setDraft(normalized)
@@ -102,10 +124,16 @@ export function TextMotionPathEditor({
   }
 
   const addPoint = (atAmount?: number) => {
-    if (displayed.points.length >= MAX_TEXT_MOTION_PATH_POINTS) return
+    if (displayed.points.length >= maxPoints) return
     const amount = atAmount ?? largestTextMotionPathSegmentMidpoint(displayed)
     const id = newMotionPathPointId()
-    const next = splitTextMotionPathAt(displayed, amount, id)
+    const next = splitTextMotionPathAt(
+      displayed,
+      amount,
+      id,
+      normalizePath,
+      maxPoints,
+    )
     if (next.points.length === displayed.points.length) return
     setSelectedPointId(id)
     commit(next)
@@ -113,7 +141,11 @@ export function TextMotionPathEditor({
 
   const deleteSelected = () => {
     if (!selectedIsInterior) return
-    const next = removeTextMotionPathPoint(displayed, selectedPoint.id)
+    const next = removeTextMotionPathPoint(
+      displayed,
+      selectedPoint.id,
+      normalizePath,
+    )
     const nextSelection = next.points[Math.max(0, selectedIndex - 1)]?.id ?? ''
     setSelectedPointId(nextSelection)
     commit(next)
@@ -163,7 +195,7 @@ export function TextMotionPathEditor({
       latest = editTextMotionPathPart(start, pointId, part, {
         ...target,
         z: startPart.z,
-      })
+      }, normalizePath)
       moved = true
       setDraft(latest)
       onPreview?.(latest)
@@ -207,7 +239,11 @@ export function TextMotionPathEditor({
     pointId: string,
     part: DragPart,
   ) => {
-    const step = event.shiftKey ? 0.5 : event.altKey ? 0.01 : 0.1
+    const step = event.shiftKey
+      ? nudgeStep * 5
+      : event.altKey
+        ? nudgeStep / 10
+        : nudgeStep
     const delta =
       event.key === 'ArrowLeft'
         ? { x: -step, y: 0 }
@@ -241,7 +277,7 @@ export function TextMotionPathEditor({
         x: current.x + delta.x,
         y: current.y + delta.y,
         z: current.z,
-      }),
+      }, normalizePath),
     )
   }
 
@@ -257,7 +293,7 @@ export function TextMotionPathEditor({
       x: axis === 'x' ? value : point.x,
       y: axis === 'y' ? value : point.y,
       z: axis === 'z' ? value : point.z,
-    })
+    }, normalizePath)
   }
 
   const previewAxis = (axis: Axis, value: number) => {
@@ -282,9 +318,15 @@ export function TextMotionPathEditor({
 
   const svgPath = motionPathSvgPath(displayed, view)
   const selectedNumber = Math.max(1, selectedIndex + 1)
-  const settledPoint = displayed.points[0]!
-  const hiddenPoint = displayed.points.at(-1)!
+  const startPoint = displayed.points[0]!
+  const endPoint = displayed.points.at(-1)!
   const grid = gridLines(view)
+  const unitSuffix =
+    unitLabel === 'pixels'
+      ? 'px'
+      : unitLabel === 'line-height units'
+        ? 'lh'
+        : unitLabel
 
   return (
     <div
@@ -297,14 +339,14 @@ export function TextMotionPathEditor({
             Motion path <span className="text-accent">· XYZ</span>
           </div>
           <div className="mt-0.5 font-mono text-[9px] text-text-dim">
-            {displayed.points.length} points · line-height units
+            {displayed.points.length} points · {unitLabel}
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => addPoint()}
-            disabled={displayed.points.length >= MAX_TEXT_MOTION_PATH_POINTS}
+            disabled={displayed.points.length >= maxPoints}
             className="h-7 rounded bg-panel px-2 text-[10px] text-text-muted hover:text-text disabled:opacity-40"
           >
             + Point
@@ -335,7 +377,7 @@ export function TextMotionPathEditor({
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           className="h-auto w-full select-none rounded border border-border bg-panel"
           role="group"
-          aria-label="Editable text motion path. Double-click near the curve to add a point."
+          aria-label="Editable motion path. Double-click near the curve to add a point."
           onDoubleClick={(event) => {
             if ((event.target as Element).closest('[data-curve-control]')) return
             const svg = svgRef.current
@@ -392,6 +434,7 @@ export function TextMotionPathEditor({
             path={displayed}
             point={selectedPoint}
             view={view}
+            unitLabel={unitLabel}
             onPointerDown={beginDrag}
             onKeyDown={nudge}
           />
@@ -399,7 +442,7 @@ export function TextMotionPathEditor({
           {displayed.points.map((point, index) => {
             const position = project(point, view)
             const selected = point.id === selectedPoint.id
-            const settled = index === 0
+            const locked = index === 0
             return (
               <g key={point.id} data-curve-control="anchor">
                 <circle
@@ -421,24 +464,24 @@ export function TextMotionPathEditor({
                       : 'var(--color-panel-raised)'
                   }
                   stroke="var(--color-accent)"
-                  strokeWidth={settled ? 2 : 1.5}
+                  strokeWidth={locked ? 2 : 1.5}
                   tabIndex={0}
                   role="button"
                   aria-roledescription="spatial motion path point"
-                  aria-label={`${settled ? 'Settled' : index === displayed.points.length - 1 ? 'Hidden start' : `Motion path point ${index + 1}`} at X ${formatCoordinate(point.x)}, Y ${formatCoordinate(point.y)}, Z ${formatCoordinate(point.z)} line heights`}
+                  aria-label={`${locked ? startLabel : index === displayed.points.length - 1 ? endLabel : `Motion path point ${index + 1}`} at X ${formatCoordinate(point.x)}, Y ${formatCoordinate(point.y)}, Z ${formatCoordinate(point.z)} ${unitLabel}`}
                   onFocus={() => setSelectedPointId(point.id)}
                   onPointerDown={(event) =>
                     beginDrag(event, point.id, 'anchor')
                   }
                   onKeyDown={(event) => nudge(event, point.id, 'anchor')}
-                  style={{ cursor: settled ? 'default' : 'move' }}
+                  style={{ cursor: locked ? 'default' : 'move' }}
                 />
               </g>
             )
           })}
 
-          <EndpointLabel point={hiddenPoint} view={view} label="Hidden" />
-          <EndpointLabel point={settledPoint} view={view} label="Settled" />
+          <EndpointLabel point={endPoint} view={view} label={endLabel} />
+          <EndpointLabel point={startPoint} view={view} label={startLabel} />
         </svg>
       </div>
 
@@ -446,7 +489,11 @@ export function TextMotionPathEditor({
         <span>
           Point {selectedNumber}/{displayed.points.length}
         </span>
-        <span>{selectedIsSettled ? 'Fixed final position' : `t ${Math.round(selectedPoint.t * 100)}%`}</span>
+        <span>
+          {selectedIsLocked
+            ? `${startLabel} is fixed`
+            : `t ${Math.round(selectedPoint.t * 100)}%`}
+        </span>
       </div>
       <div className="mt-1 grid grid-cols-3 gap-1.5">
         {(['x', 'y', 'z'] as const).map((axis) => (
@@ -460,21 +507,20 @@ export function TextMotionPathEditor({
               onScrubPreview={(value) => previewAxis(axis, value)}
               onScrubCommit={(value) => commitAxisScrub(axis, value)}
               onScrubCancel={cancelAxisScrub}
-              min={-10}
-              max={10}
-              step={0.1}
-              suffix="lh"
-              disabled={selectedIsSettled}
+              step={nudgeStep}
+              suffix={unitSuffix}
+              disabled={selectedIsLocked}
               ariaLabel={`Selected motion path point ${axis.toUpperCase()}`}
               width="w-full"
             />
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[9px] leading-snug text-text-dim">
-        Letters travel from Hidden to Settled. Drag points and handles in XY;
-        Z adds depth. Double-click near the path to add a point.
-      </p>
+      {helperText ? (
+        <p className="mt-2 text-[9px] leading-snug text-text-dim">
+          {helperText}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -515,12 +561,14 @@ function SelectedHandles({
   path,
   point,
   view,
+  unitLabel,
   onPointerDown,
   onKeyDown,
 }: {
   path: TextMotionPath
   point: TextMotionPathPoint
   view: MotionPathView
+  unitLabel: string
   onPointerDown: (
     event: React.PointerEvent,
     pointId: string,
@@ -582,7 +630,7 @@ function SelectedHandles({
           tabIndex={0}
           role="button"
           aria-roledescription="motion path handle"
-          aria-label={`${handle.part === 'in' ? 'Incoming' : 'Outgoing'} motion path handle at X ${formatCoordinate(handle.position.x)}, Y ${formatCoordinate(handle.position.y)}, Z ${formatCoordinate(handle.position.z)} line heights`}
+          aria-label={`${handle.part === 'in' ? 'Incoming' : 'Outgoing'} motion path handle at X ${formatCoordinate(handle.position.x)}, Y ${formatCoordinate(handle.position.y)}, Z ${formatCoordinate(handle.position.z)} ${unitLabel}`}
           onPointerDown={(event) =>
             onPointerDown(event, point.id, handle.part)
           }

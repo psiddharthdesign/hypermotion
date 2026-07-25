@@ -1,10 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BlendMode, NodeId, PropertyId, Track, TrackId } from '@/scene'
+import type {
+  BlendMode,
+  NodeId,
+  PropertyId,
+  Track,
+  TrackId,
+  Transform,
+  VariantSelection,
+} from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { PROPERTIES } from '@/scene/props'
+import { findCursorComponent } from '@/scene/builtins/cursorComponent'
+import { CURSOR_STATES } from '@/scene/builtins/cursorAssets'
 import { lerpOklchStrings } from './color'
 import { evaluator, type EasingEvaluator } from './easing'
+import {
+  evaluateLayerMotionPathSample,
+  type LayerMotionPath,
+} from './layerMotionPath'
 import type { TextAnimationConfig } from './textAnimations'
 
 /**
@@ -79,6 +93,10 @@ export interface AnimatedValue {
   textProgress?: number
   /** Text effect config attached to the active text.progress track. */
   textAnimation?: TextAnimationConfig
+  /** 0→1 progress for a generic layer motion path. */
+  motionPathProgress?: number
+  /** Discrete component selection evaluated from a semantic variant track. */
+  variant?: VariantSelection
   focusDistance?: number
   focusX?: number
   focusY?: number
@@ -152,6 +170,17 @@ interface CompiledTextTrackGroup {
   tracks: Track[]
 }
 
+interface CompiledLayerMotionPath {
+  nodeId: NodeId
+  path: LayerMotionPath
+  transform: Pick<Transform, 'x' | 'y' | 'z' | 'rotation'>
+}
+
+interface CompiledCursorVariantBinding {
+  instanceId: NodeId
+  stateNodeIds: Map<string, NodeId>
+}
+
 // Module-scope singleton. Multiple components call `getAnimEngine`; the
 // engine is a lightweight coordinator, not something we want per-mount.
 let SINGLETON: AnimEngine | null = null
@@ -186,6 +215,8 @@ function createAnimEngine(): AnimEngine {
   let cachedVersion = -1
   let compiledTracks: Track[] = []
   let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
+  let compiledLayerMotionPaths: CompiledLayerMotionPath[] = []
+  let compiledCursorVariantBindings: CompiledCursorVariantBinding[] = []
   let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
   const tick = (now: number) => {
@@ -255,10 +286,22 @@ function createAnimEngine(): AnimEngine {
       // every keyframe array on every animation frame.
       const nextTracks: Track[] = []
       const textTracksByNode = new Map<NodeId, Track[]>()
+      const cursorComponentId = findCursorComponent(api)
       for (const authoredTrack of api.getAllTracks()) {
         // Preserve the previous engine semantics: tracks targeting deleted
         // nodes are inert and must not reappear in the animated snapshot.
-        if (!api.getNode(authoredTrack.nodeId)) continue
+        const targetNode = api.getNode(authoredTrack.nodeId)
+        if (!targetNode) continue
+        // Built-in cursors use ordinary X/Y/Z keyframes. Legacy cursor path
+        // tracks are intentionally inert now that the cursor rail editor has
+        // been removed.
+        if (
+          authoredTrack.propertyId === 'motionPath.progress' &&
+          targetNode.kind === 'instance' &&
+          targetNode.componentId === cursorComponentId
+        ) {
+          continue
+        }
         const track = compileTrack(authoredTrack)
         if (track.propertyId !== 'text.progress') {
           nextTracks.push(track)
@@ -276,6 +319,32 @@ function createAnimEngine(): AnimEngine {
       for (const [nodeId, tracks] of textTracksByNode) {
         compiledTextTrackGroups.push({ nodeId, tracks })
       }
+      compiledLayerMotionPaths = []
+      for (const nodeId of api.getAllNodeIds()) {
+        const node = api.getNode(nodeId)
+        if (
+          !node?.motionPath ||
+          (node.kind === 'instance' &&
+            node.componentId === cursorComponentId)
+        ) {
+          continue
+        }
+        compiledLayerMotionPaths.push({
+          nodeId,
+          path: node.motionPath,
+          transform: {
+            x: node.transform.x,
+            y: node.transform.y,
+            z: node.transform.z,
+            rotation: node.transform.rotation,
+          },
+        })
+      }
+      compiledCursorVariantBindings = compileCursorVariantBindings(
+        api,
+        nextTracks,
+        cursorComponentId,
+      )
     }
     const out: Record<NodeId, AnimatedValue> = {}
     for (const authoredTrack of compiledTracks) {
@@ -295,6 +364,12 @@ function createAnimEngine(): AnimEngine {
       applyTextProgressTrack(track, playhead, value, evaluatorCache)
       out[group.nodeId] = value
     }
+    for (const binding of compiledLayerMotionPaths) {
+      const value = out[binding.nodeId] ?? { ...EMPTY_VALUE }
+      resolveLayerMotionPath(binding, value)
+      out[binding.nodeId] = value
+    }
+    applyCursorVariantBindings(out, compiledCursorVariantBindings)
     snapshot = out
     notify()
   }
@@ -309,6 +384,8 @@ function createAnimEngine(): AnimEngine {
       cachedVersion = -1
       compiledTracks = []
       compiledTextTrackGroups = []
+      compiledLayerMotionPaths = []
+      compiledCursorVariantBindings = []
       trackPreview = null
       // On any scene mutation (including track edits), refresh the
       // snapshot so the render layer stays coherent with the data.
@@ -494,6 +571,14 @@ function applyTrack(
   }
   const span = b.time - a.time
   const rawU = span <= 0 ? 0 : (t - a.time) / span
+  const descriptor = PROPERTIES[track.propertyId]
+  if (descriptor?.interpolation === 'discrete') {
+    // State-like properties change exactly on the destination keyframe.
+    // Their value must not jump early if a user applies an overshooting
+    // easing curve to the segment.
+    writeProperty(track.propertyId, rawU < 1 ? a.value : b.value, into)
+    return
+  }
   const cacheKey = track.id + ':' + a.id
   let easer = cache.get(cacheKey)
   if (!easer) {
@@ -514,7 +599,6 @@ function applyTrack(
     // free. If the OKLCH parse fails on either endpoint (e.g. a hex
     // that snuck in from an import), fall through to step so the
     // animation still advances — a hard stop at u<1 / end at u=1.
-    const descriptor = PROPERTIES[track.propertyId]
     if (descriptor?.interpolation === 'color') {
       const tween = lerpOklchStrings(av, bv, u)
       writeProperty(track.propertyId, tween ?? (u < 1 ? av : bv), into)
@@ -587,10 +671,9 @@ function applyTextProgressTrack(
  * Write one resolved track value into the per-node AnimatedValue.
  *
  * Post-layout numeric and color properties are applied directly here.
- * Layout and semantic tracks are accepted (see PropertyId in scene/types)
- * but the engine skips them until the FLIP pass arrives. Rather than
- * throw for those values, silently no-op — a stray layout track from
- * a saved doc shouldn't crash the renderer.
+ * Cursor variant selections are retained as semantic values and expanded
+ * into their materialized state children after the ordinary tracks resolve.
+ * Other layout-affecting values remain inert until the generic FLIP pass.
  */
 function writeProperty(
   id: PropertyId,
@@ -605,6 +688,11 @@ function writeProperty(
   }
   if (id === 'appearance.blendMode') {
     if (isBlendMode(value)) into.blendMode = value
+    return
+  }
+  if (id === 'variant') {
+    const selection = variantSelection(value)
+    if (selection) into.variant = selection
     return
   }
   if (typeof value !== 'number') return
@@ -653,6 +741,9 @@ function writeProperty(
       break
     case 'text.progress':
       into.textProgress = value
+      break
+    case 'motionPath.progress':
+      into.motionPathProgress = value
       break
     case 'camera.focusDistance':
       into.focusDistance = value
@@ -750,10 +841,129 @@ function writeProperty(
     case 'camera.vhsColorBleed':
       into.vhsColorBleed = value
       break
-    // Other PropertyIds ignored for MVP (layout + variant go through FLIP).
+    // Other PropertyIds ignored for MVP (layout goes through FLIP).
     default:
       break
   }
+}
+
+function variantSelection(value: unknown): VariantSelection | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  const entries = Object.entries(value)
+  if (
+    entries.length === 0 ||
+    entries.some(([, axisValue]) => typeof axisValue !== 'string')
+  ) {
+    return null
+  }
+  return value as VariantSelection
+}
+
+function compileCursorVariantBindings(
+  api: SceneAPI,
+  tracks: readonly Track[],
+  cursorComponentId: NodeId | null,
+): CompiledCursorVariantBinding[] {
+  if (!cursorComponentId) return []
+  const instanceIds = new Set(
+    tracks
+      .filter((track) => track.propertyId === 'variant')
+      .map((track) => track.nodeId),
+  )
+  const bindings: CompiledCursorVariantBinding[] = []
+  for (const instanceId of instanceIds) {
+    const instance = api.getNode(instanceId)
+    if (
+      !instance ||
+      instance.kind !== 'instance' ||
+      instance.componentId !== cursorComponentId
+    ) {
+      continue
+    }
+    const stateNodeIds = new Map<string, NodeId>()
+    const queue = api.getChildren(instanceId).map((child) => child.id)
+    while (queue.length > 0) {
+      const nodeId = queue.shift()
+      if (!nodeId) continue
+      const node = api.getNode(nodeId)
+      if (!node) continue
+      const state =
+        node.kind === 'vector' ? node.source?.metadata?.state : undefined
+      if (
+        typeof state === 'string' &&
+        (CURSOR_STATES as readonly string[]).includes(state)
+      ) {
+        stateNodeIds.set(state, node.id)
+      }
+      queue.push(...api.getChildren(node.id).map((child) => child.id))
+    }
+    if (stateNodeIds.size === CURSOR_STATES.length) {
+      bindings.push({ instanceId, stateNodeIds })
+    }
+  }
+  return bindings
+}
+
+/**
+ * Cursor states are ordinary materialized vector children. A semantic State
+ * track therefore resolves into one opacity override per child. This pass is
+ * intentionally last: once a cursor owns a State track, that track is the
+ * authoritative visibility channel even if an older scene still contains the
+ * legacy generated child-opacity tracks.
+ */
+function applyCursorVariantBindings(
+  values: Record<NodeId, AnimatedValue>,
+  bindings: readonly CompiledCursorVariantBinding[],
+): void {
+  for (const binding of bindings) {
+    const state = values[binding.instanceId]?.variant?.State
+    if (typeof state !== 'string' || !binding.stateNodeIds.has(state)) continue
+    for (const [candidate, nodeId] of binding.stateNodeIds) {
+      const value = values[nodeId] ?? { ...EMPTY_VALUE }
+      value.opacity = candidate === state ? 1 : 0
+      values[nodeId] = value
+    }
+  }
+}
+
+/**
+ * Compose a generic spatial rail after ordinary property tracks.
+ *
+ * Transform tracks retain their authored REPLACE semantics and become the
+ * path's base pose. The sampled rail is then added as a local pixel offset.
+ * Auto-orient similarly layers the path heading and saved rotation offset on
+ * top of an explicit rotation track (or the node's static rotation).
+ */
+function resolveLayerMotionPath(
+  binding: CompiledLayerMotionPath,
+  into: AnimatedValue,
+): void {
+  const progress = clamp01(
+    into.motionPathProgress ?? binding.path.progress,
+  )
+  const sample = evaluateLayerMotionPathSample(binding.path, progress)
+  into.motionPathProgress = progress
+  into.x = (into.x ?? binding.transform.x) + sample.position.x
+  into.y = (into.y ?? binding.transform.y) + sample.position.y
+  into.z = (into.z ?? binding.transform.z) + sample.position.z
+
+  if (
+    binding.path.autoOrient &&
+    Math.hypot(sample.tangent.x, sample.tangent.y) > 1e-8
+  ) {
+    const pathRotation =
+      (Math.atan2(sample.tangent.y, sample.tangent.x) * 180) / Math.PI
+    into.rotation =
+      (into.rotation ?? binding.transform.rotation) +
+      pathRotation +
+      binding.path.rotationOffset
+  }
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
 }
 
 function isBlendMode(value: unknown): value is BlendMode {

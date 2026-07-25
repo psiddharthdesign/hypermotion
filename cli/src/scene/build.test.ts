@@ -146,6 +146,105 @@ test('buildSceneBytes preserves text animation track config', () => {
   assert.deepEqual(tracks['fade-title']?.textAnimation, track.textAnimation)
 })
 
+test('buildSceneBytes preserves a generic layer motion path', () => {
+  const scene = sampleScene()
+  const title = scene.nodes?.title
+  if (!title) throw new Error('missing sample title')
+  title.motionPath = {
+    version: 1,
+    points: [
+      {
+        id: 'start',
+        t: 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        inX: 0,
+        inY: 0,
+        inZ: 0,
+        outX: 80,
+        outY: -40,
+        outZ: 0,
+      },
+      {
+        id: 'end',
+        t: 1,
+        x: 240,
+        y: 0,
+        z: 20,
+        inX: 160,
+        inY: 40,
+        inZ: 10,
+        outX: 240,
+        outY: 0,
+        outZ: 20,
+      },
+    ],
+    progress: 0.35,
+    autoOrient: true,
+    rotationOffset: -12,
+    parameterization: 'arc-length',
+  }
+
+  const data = inspectScene(buildSceneBytes(scene))
+  const nodes = data.nodes as PlainSceneMap
+
+  assert.deepEqual(nodes.title?.motionPath, title.motionPath)
+  assert.equal(validateScene(buildSceneBytes(scene)).ok, true)
+})
+
+test('validateScene rejects malformed generic layer motion paths', () => {
+  const scene = sampleScene()
+  const title = scene.nodes?.title
+  if (!title) throw new Error('missing sample title')
+  title.motionPath = {
+    version: 2,
+    points: [
+      {
+        id: 'duplicate',
+        t: 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        inX: 0,
+        inY: 0,
+        inZ: 0,
+        outX: 0,
+        outY: 0,
+        outZ: 0,
+      },
+      {
+        id: 'duplicate',
+        t: 0,
+        x: 1_000_001,
+        y: 0,
+        z: 0,
+        inX: 0,
+        inY: 0,
+        inZ: 0,
+        outX: 0,
+        outY: 0,
+        outZ: 0,
+      },
+    ],
+    progress: 2,
+    autoOrient: 'yes',
+    rotationOffset: 'twelve',
+    parameterization: 'uniform',
+  } as never
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.match(result.errors.join('\n'), /motionPath\.version must be 1/)
+  assert.match(result.errors.join('\n'), /duplicate point id/)
+  assert.match(result.errors.join('\n'), /strictly increasing/)
+  assert.match(result.errors.join('\n'), /motionPath\.progress must be between 0 and 1/)
+  assert.match(result.errors.join('\n'), /motionPath\.autoOrient must be a boolean/)
+  assert.match(result.errors.join('\n'), /motionPath\.rotationOffset must be a finite number/)
+  assert.match(result.errors.join('\n'), /motionPath\.parameterization must be parametric or arc-length/)
+})
+
 test('buildSceneBytes accepts soft text animation smoothing', () => {
   const scene = sampleScene()
   const track = scene.tracks?.['fade-title']
