@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import type { PropertyId, Track } from '@/scene'
+import type { PropertyId, TextAnimationConfig, Track } from '@/scene'
 import { createSceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { addKeyframe, findTrack } from './tracks'
@@ -38,7 +38,7 @@ function textTrack(
   nodeId: string,
   start: number,
   end: number,
-): Track {
+): Track & { textAnimation: TextAnimationConfig } {
   const textAnimation = { ...DEFAULT_TEXT_ANIMATION, startTime: start }
   return {
     id,
@@ -1104,7 +1104,8 @@ describe('stacked text animation stagger sets', () => {
       staggerCurve,
     })
     expect(secondReturn.textAnimation?.startTime).toBe(5)
-    expect(api.getNode(first)?.kind === 'text' && api.getNode(first)?.textAnimation).toMatchObject({
+    const firstNode = api.getNode(first)
+    expect(firstNode?.kind === 'text' && firstNode.textAnimation).toMatchObject({
       startTime: 1,
       mode: 'in',
     })
@@ -1159,7 +1160,8 @@ describe('stacked text animation stagger sets', () => {
       order: 'forward',
       startTime: 1.2,
     })
-    expect(api.getNode(first)?.kind === 'text' && api.getNode(first)?.textAnimation).toMatchObject({
+    const firstNode = api.getNode(first)
+    expect(firstNode?.kind === 'text' && firstNode.textAnimation).toMatchObject({
       mode: 'in',
       startTime: 1.2,
     })
