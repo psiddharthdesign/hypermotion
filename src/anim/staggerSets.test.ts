@@ -2,11 +2,14 @@
 
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import type { PropertyId, TextAnimationConfig, Track } from '@/scene'
+import type { PropertyId, Track } from '@/scene'
 import { createSceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { addKeyframe, findTrack } from './tracks'
-import { DEFAULT_TEXT_ANIMATION } from './textAnimations'
+import {
+  DEFAULT_TEXT_ANIMATION,
+  type TextAnimationConfig,
+} from './textAnimations'
 import {
   createStaggerSetReturn,
   deleteStaggerSetKeyframes,
