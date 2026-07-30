@@ -4688,11 +4688,6 @@ function NodeView({
   const anchorY = isRoot ? 0.5 : anim?.anchorY ?? node.transform.anchorY ?? 0.5
   const anchorZ = isRoot ? 0 : anim?.anchorZ ?? node.transform.anchorZ ?? 0
   const transformOrigin = `${Number((anchorX * 100).toFixed(3))}% ${Number((anchorY * 100).toFixed(3))}% ${Number(anchorZ.toFixed(3))}px`
-  const hasProjected3D =
-    Math.abs(rotationX) > 0.001 ||
-    Math.abs(rotationY) > 0.001 ||
-    Math.abs(rotation) > 0.001 ||
-    Math.abs(tz) > 0.001
 
   const clips = node.kind === 'frame' && node.clipsContent
 
