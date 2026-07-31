@@ -6197,50 +6197,6 @@ function drawVideoToCanvas(
 }
 
 /**
- * Audio "chip" — a non-visual node gets a small card on the artboard
- * so the user has something to click, drag, and inspect. Playback is
- * handled once by `AudioPlaybackHost`; this component is visual only.
- */
-function AudioChip({
-  node,
-}: {
-  node: Extract<SceneNode, { kind: 'audio' }>
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        width: '100%',
-        height: '100%',
-        padding: '0 10px',
-        borderRadius: 'inherit',
-        pointerEvents: 'none',
-        fontSize: 11,
-        color: 'var(--color-text-muted)',
-        background: 'var(--color-panel-raised)',
-        overflow: 'hidden',
-      }}
-    >
-      <span aria-hidden style={{ fontSize: 14 }}>
-        {node.muted ? '×' : '♪'}
-      </span>
-      <span
-        style={{
-          flex: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {node.name}
-      </span>
-    </div>
-  )
-}
-
-/**
  * SVG overlay that paints a dashed or dotted stroke around a node box.
  *
  * Rationale: `box-shadow` gives us solid strokes for free (including
