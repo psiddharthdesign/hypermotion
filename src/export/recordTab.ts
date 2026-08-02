@@ -203,7 +203,6 @@ export async function recordTabCapture(
         const cropTarget = await win.CropTarget.fromElement(artboardEl)
         await trackWithCrop.cropTo(cropTarget)
       } catch (cropErr) {
-        // eslint-disable-next-line no-console
         console.warn(
           '[export] Region Capture not applied; recording the full tab. ' +
             'If you picked a different tab in the share picker, this is expected. ' +
