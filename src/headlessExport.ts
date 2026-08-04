@@ -141,7 +141,6 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   }
   inFlight = true
 
-  // eslint-disable-next-line no-console
   console.log('[headless] export requested:', req)
 
   try {
