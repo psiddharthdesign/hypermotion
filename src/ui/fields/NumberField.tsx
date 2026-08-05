@@ -351,7 +351,6 @@ function evaluateExpression(text: string): number | null {
     // already proven the body contains nothing identifier-like. Wrap
     // in `"use strict"` and parens so the parser treats the body as
     // an expression statement.
-    // eslint-disable-next-line no-new-func
     const fn = new Function(`"use strict"; return (${trimmed})`) as () => unknown
     const result = fn()
     return typeof result === 'number' && Number.isFinite(result) ? result : null
