@@ -64,7 +64,6 @@ export async function registerFont(font: CustomFont): Promise<boolean> {
     registered.set(keyFor(font), face)
     return true
   } catch (err) {
-
     console.warn(
       `[fonts] failed to register "${font.family}" (${font.weight} ${font.style}): ${
         err instanceof Error ? err.message : String(err)
