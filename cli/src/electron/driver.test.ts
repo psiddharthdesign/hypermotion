@@ -8,6 +8,10 @@ import test from 'node:test'
 import { driveHeadlessRender } from './driver.js'
 import { withEnvVar } from '../testUtils/env.js'
 
+function removeTempDir(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+}
+
 test('driveHeadlessRender passes saved scene paths and clears stale files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))
   const appPath = path.join(dir, 'fake-app.mjs')
@@ -51,7 +55,7 @@ test('driveHeadlessRender passes saved scene paths and clears stale files', asyn
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -86,7 +90,7 @@ test('driveHeadlessRender surfaces plain-text error sentinels', async () => {
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -115,7 +119,7 @@ test('driveHeadlessRender removes stale files before spawn failures', async () =
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -149,7 +153,7 @@ test('driveHeadlessRender falls back for blank plain-text error sentinels', asyn
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -187,7 +191,7 @@ test('driveHeadlessRender clears stale error sentinels after successful renders'
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -225,7 +229,7 @@ test('driveHeadlessRender waits for complete success sentinels', async () => {
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -263,7 +267,7 @@ test('driveHeadlessRender waits for success sentinels with timestamps', async ()
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -301,7 +305,7 @@ test('driveHeadlessRender ignores malformed success sentinels', async () => {
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -339,7 +343,7 @@ test('driveHeadlessRender ignores success sentinels with fractional metadata', a
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), 'fresh output')
     assert.equal(fs.existsSync(`${outputPath}.done`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -413,7 +417,7 @@ test('driveHeadlessRender enables Electron logging when verbose mode is set', as
 
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), '1')
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -449,7 +453,7 @@ test('driveHeadlessRender disables Electron logging by default', async () => {
 
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), '')
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -485,7 +489,7 @@ test('driveHeadlessRender only enables Electron logging for verbose value 1', as
 
     assert.equal(fs.readFileSync(outputPath, 'utf-8'), '')
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -523,7 +527,7 @@ test('driveHeadlessRender surfaces JSON error sentinel messages', async () => {
     assert.equal(fs.existsSync(outputPath), false)
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -561,7 +565,7 @@ test('driveHeadlessRender trims JSON error sentinel messages', async () => {
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -596,7 +600,7 @@ test('driveHeadlessRender falls back when JSON error sentinels omit messages', a
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -634,7 +638,7 @@ test('driveHeadlessRender waits for complete JSON error sentinels', async () => 
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -669,7 +673,7 @@ test('driveHeadlessRender falls back when JSON error sentinel messages are blank
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -704,6 +708,6 @@ test('driveHeadlessRender falls back when JSON error sentinel messages are not s
     )
     assert.equal(fs.existsSync(`${outputPath}.error`), false)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
