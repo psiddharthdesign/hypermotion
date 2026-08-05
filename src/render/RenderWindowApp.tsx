@@ -112,6 +112,7 @@ interface RenderJob {
   sceneName: string
   durationSec: number
   scope?: 'scene' | 'sequence'
+  compositionSceneId?: string
   selectedSequenceItemId?: string
   frameRate: number
   exportFps: number
@@ -203,7 +204,14 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
       }
       try {
         loadSceneIntoDoc(api.doc, fetched.seedBytes)
-        getProjectAPI(api).ensureInitialized()
+        const seededProject = getProjectAPI(api)
+        seededProject.ensureInitialized()
+        if (fetched.scope === 'scene' && fetched.compositionSceneId) {
+          if (!seededProject.getScene(fetched.compositionSceneId)) {
+            throw new Error('The selected scene is no longer available.')
+          }
+          seededProject.activateScene(fetched.compositionSceneId)
+        }
         if (!cancelled) setJob(fetched)
       } catch (e) {
         reportError(

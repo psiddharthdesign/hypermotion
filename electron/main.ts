@@ -1346,6 +1346,7 @@ interface RenderJob {
     sceneName: string
     durationSec: number
     scope?: 'scene' | 'sequence'
+    compositionSceneId?: string
     selectedSequenceItemId?: string
     frameRate: number
     exportFps: number

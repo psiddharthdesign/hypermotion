@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getAnimEngine } from '@/anim'
+import { getProjectAPI } from '@/project'
 import type { SceneAPI } from '@/scene'
 import { useUI } from '@/state/ui'
 import {
@@ -66,6 +67,11 @@ export interface ExportSceneContext {
    */
   scope?: 'scene' | 'sequence'
   /**
+   * Composition to render for a Scene export. When omitted, the active
+   * composition remains the target for backwards compatibility.
+   */
+  compositionSceneId?: string
+  /**
    * Master occurrence represented by a Scene export. Its source window maps
    * the Scene-local clock onto the project soundtrack. When omitted, export
    * resolves the active composition's first occurrence deterministically.
@@ -121,7 +127,9 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
 
   // WebM has no native encoder dep in this codebase — always tab capture.
   if (id === 'webm') {
-    return recordTabCapture({ ...ctx.format, container: 'webm' as const }, ctx)
+    return runWithSelectedComposition(ctx, () =>
+      recordTabCapture({ ...ctx.format, container: 'webm' as const }, ctx),
+    )
   }
 
   // MP4 and GIF: route through the render-window pipeline when available.
@@ -138,9 +146,11 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
   //   3. Tab capture (web tree — no Electron, no capturePage)
   if (id === 'gif' || id === 'mp4') {
     if (id === 'mp4' && requested === 'tab-capture') {
-      return recordTabCapture(
-        { ...ctx.format, container: 'mp4' as const },
-        ctx,
+      return runWithSelectedComposition(ctx, () =>
+        recordTabCapture(
+          { ...ctx.format, container: 'mp4' as const },
+          ctx,
+        ),
       )
     }
     if (id === 'gif' && requested === 'tab-capture') {
@@ -165,9 +175,11 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
     //   - The render-window IPC isn't available (older Electron build)
     if (!isElectronCaptureSupported()) {
       if (id === 'mp4') {
-        return recordTabCapture(
-          { ...ctx.format, container: 'mp4' as const },
-          ctx,
+        return runWithSelectedComposition(ctx, () =>
+          recordTabCapture(
+            { ...ctx.format, container: 'mp4' as const },
+            ctx,
+          ),
         )
       }
       useExportProgress
@@ -186,26 +198,65 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
       return
     }
 
-    return runCaptureRect(ctx, async (width, height, fps) => {
-      if (id === 'gif') {
-        const enc = createGifEncoder({ width, height, fps })
+    return runWithSelectedComposition(ctx, () =>
+      runCaptureRect(ctx, async (width, height, fps) => {
+        if (id === 'gif') {
+          const enc = createGifEncoder({ width, height, fps })
+          return {
+            addFrame: (canvas) => enc.addFrame(canvas),
+            finish: async () => enc.finish(),
+          }
+        }
+        const enc = await createMp4Encoder({ width, height, fps })
         return {
-          addFrame: (canvas) => enc.addFrame(canvas),
+          addFrame: (canvas, index) => enc.addFrame(canvas, index),
           finish: async () => enc.finish(),
         }
-      }
-      const enc = await createMp4Encoder({ width, height, fps })
-      return {
-        addFrame: (canvas, index) => enc.addFrame(canvas, index),
-        finish: async () => enc.finish(),
-      }
-    })
+      }),
+    )
   }
 
   // Unreachable while ExportFormatId is the closed union mp4|webm|gif.
   useExportProgress
     .getState()
     .setError(`No export pipeline registered for format '${id}'.`)
+}
+
+/**
+ * Visible-tab and legacy capture pipelines paint the editor's active legacy
+ * projection. Switch only for the duration of those fallbacks, then restore
+ * the user's composition. The primary MP4/GIF render-window path activates
+ * the target inside its cloned document and never reaches this helper.
+ */
+async function runWithSelectedComposition(
+  ctx: ExportSceneContext,
+  run: () => Promise<void>,
+): Promise<void> {
+  if (ctx.scope !== 'scene' || !ctx.compositionSceneId) return run()
+
+  const project = getProjectAPI(ctx.api)
+  project.ensureInitialized()
+  const target = project.getScene(ctx.compositionSceneId)
+  if (!target) {
+    useExportProgress
+      .getState()
+      .setError('The selected scene is no longer available.')
+    return
+  }
+
+  const originalSceneId = project.getActiveSceneId()
+  if (originalSceneId === target.id) return run()
+
+  project.activateScene(target.id)
+  await waitForFrames(2)
+  try {
+    await run()
+  } finally {
+    if (originalSceneId && project.getScene(originalSceneId)) {
+      project.activateScene(originalSceneId)
+      await waitForFrames(2)
+    }
+  }
 }
 
 // Re-export so callers can introspect whether the render-window path
