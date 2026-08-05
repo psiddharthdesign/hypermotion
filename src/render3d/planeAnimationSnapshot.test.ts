@@ -72,6 +72,19 @@ describe('world-plane animation selection', () => {
     expect(changed.title?.[property]).toBe(2)
   })
 
+  it('invalidates world-plane bounds when an effect blur changes', () => {
+    const selectWorldPlaneAnimation = createWorldPlaneAnimationSelector()
+    const first = selectWorldPlaneAnimation({
+      frame: { effectBlur: { 'effect-1': 4 } },
+    })
+    const changed = selectWorldPlaneAnimation({
+      frame: { effectBlur: { 'effect-1': 24 } },
+    })
+
+    expect(changed).not.toBe(first)
+    expect(changed.frame?.effectBlur).toEqual({ 'effect-1': 24 })
+  })
+
   it('drops nodes after their world-plane animation ends', () => {
     const selectWorldPlaneAnimation = createWorldPlaneAnimationSelector()
     const animated = selectWorldPlaneAnimation({ title: { x: 80 } })

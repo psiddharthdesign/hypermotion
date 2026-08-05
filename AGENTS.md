@@ -110,6 +110,15 @@ through the CLI. Essential for debugging renders that hang or fail.
 HYPERMOTION_VERBOSE=1 hypermotion render -o test.mp4
 ```
 
+`HYPERMOTION_RENDER_TIMEOUT_MS` — override the render watchdog in
+milliseconds. The default is 30 minutes (`1800000`), which accommodates
+effects-heavy 60 fps and high-resolution exports while still detecting a
+stalled desktop handoff.
+
+```sh
+HYPERMOTION_RENDER_TIMEOUT_MS=3600000 hypermotion render -o long-render.mp4
+```
+
 ---
 
 ## MCP integration — AI coding agents
@@ -134,6 +143,8 @@ Any MCP-compatible agent can register it and call its tools.
 | `get_layer`    | ✅ supported | Return details for one layer in a saved `.hype` scene.                     |
 | `list_tracks`  | ✅ supported | List animation tracks in a saved `.hype` scene.                            |
 | `list_cameras` | ✅ supported | List cameras in a saved `.hype` scene.                                     |
+| `list_scenes`  | ✅ supported | List composition scenes, durations, camera ownership, and sequence usage.  |
+| `get_sequence` | ✅ supported | Inspect ordered sequence items, trims, transitions, and total runtime.      |
 | `open_scene`   | ✅ supported | Open a saved `.hype` scene in the desktop app.                             |
 | `list_keyframeable_properties` | ✅ supported | List property ids that can be animated with tracks/keyframes. |
 
@@ -228,15 +239,29 @@ Still on the roadmap:
 Agents call `create_scene` with `{ output, scene }`. The `scene` is a
 JSON object — same shape the desktop app uses internally, slightly
 simplified for terminal use. Required pieces: at least one frame node
-to be the artboard, optionally one camera, and any children you want
+to be the artboard, optionally one or more cameras, and any children you want
 inside the frame.
 
-Camera constraint: Hyper Motion currently supports only one camera node
-per scene. Keep that camera as a scene-level node with `parent: null`,
-set `activeCameraId` to its id, and do not include the camera id in any
-frame or artboard `children` list. When designing scenes, default that
-camera to `focalLength: 1000` unless the user explicitly requests a
-different camera/lens feel.
+Camera constraint: keep every camera as a scene-level node with
+`parent: null`; do not include camera ids in any frame or artboard
+`children` list. A scene may declare `cameraIds` for explicit ownership,
+`defaultCameraId` for the camera used before its first cut, and
+`cameraCuts` keyed by id as `{ id, cameraId, time }`, where `time` is
+scene-local seconds and each hard cut lasts until the next one. Cuts use
+deterministic `(time, id)` ordering, including ties. Omitting
+the new fields preserves legacy behavior: all camera nodes are owned and
+`activeCameraId` (then the first camera) is the fallback. Default cameras
+to `focalLength: 1000` unless the user explicitly requests a different
+camera/lens feel. An explicit `defaultCameraId: null` means no preference
+and falls back to the first enabled owned camera.
+
+Sequence work-area constraint: a schema-v2 composition may include
+`workArea: { start, end }` in composition-local seconds. Omitting or clearing
+it means the complete composition. Every Master occurrence resolves the
+intersection of this work area and its sequence-item `trimStart` / `duration`;
+occurrence trims may narrow the work area but never reveal source outside it.
+Use `list_scenes` and `get_sequence` to verify the authored work areas and
+resolved frame-aligned source ranges.
 
 Layout constraint: when agents design scenes, use auto-layout by
 default from the first frame onward. Prefer `layout.mode: 'flex'` for
@@ -255,6 +280,13 @@ dimensions, or cases where hug/fill cannot express the intended layout.
 Spacing constraint: for UI design work, use a 4-point or 8-point grid.
 Prefer spacing, padding, gaps, radii, and dimensions in multiples of 4
 or 8 unless there is a specific visual reason to deviate.
+
+Audio ownership constraint: parentless audio nodes are Master-owned
+soundtracks; audio parented under a composition root is a Scene-local
+overlay. A Scene occurrence borrows the Master soundtrack at
+`masterStart + sceneTime - sourceStart`. Set `masterAudioMuted: true`
+on a sequence item to mute only that borrowed bed; Scene overlays and
+projected beat/bar timing guides remain available.
 
 Icon constraint: when a design calls for UI icons, use icons from the
 Lucide or Phosphor icon libraries. Do not approximate icons with plain
@@ -326,7 +358,7 @@ A single-frame artboard with a title:
 | `text`      | `text`, `fontFamily`, `fontSize` (default Inter / 16 / weight 400)                 |
 | `image`     | `src` (data URL or absolute path), `size`, `fit`                                   |
 | `shader`    | `size`, `shaderType`, `colors`, `speed`, `scale`, `params`; optional `sourceNodeId` / `sourceImage`; legacy Mesh Gradient `distortion`, `swirl`, `grain` |
-| `camera`    | `transform` (one scene-level camera only; `parent: null`, referenced by `activeCameraId`) |
+| `camera`    | `transform` (scene-level only; `parent: null`; multiple cameras and timed cuts are supported) |
 | `video` / `audio` | `src`, `duration`, `volume` — for sequences with media; rarely used by agents |
 
 Shader nodes use the pinned Apache-2.0 Paper Shaders runtime. Supported

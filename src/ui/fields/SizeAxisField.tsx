@@ -2,6 +2,7 @@
 
 import type { SizeAxis } from '@/scene'
 import { NumberField } from './NumberField'
+import { SquircleSurface } from './SquircleSurface'
 
 /**
  * Size-on-one-axis editor.
@@ -16,11 +17,10 @@ import { NumberField } from './NumberField'
  *
  *   [ 120 ] [ Fixed | Hug | Fill ]
  *
- * The number field shows the numeric value in Fixed mode; in Hug /
- * Fill mode it shows the word ("Hug" / "Fill") greyed out, so the
- * user can see at a glance which mode is active without reading the
- * segmented buttons. Clicking Fixed after Hug/Fill restores the last
- * typed number.
+ * The number slot shows the authored pixel value in Fixed mode. Hug / Fill
+ * are communicated once by the adjacent selected segment, so the slot uses
+ * a quiet dash instead of repeating the same mode label twice. Clicking
+ * Fixed after Hug/Fill restores the last typed number.
  *
  * Keeping the segmented buttons always visible is intentional: new
  * users coming from Figma expect Hug / Fill as first-class, not a
@@ -29,10 +29,19 @@ import { NumberField } from './NumberField'
 export function SizeAxisField({
   value,
   onCommit,
+  onScrubPreview,
+  onScrubCommit,
+  onScrubCancel,
   mixed = false,
 }: {
   value: SizeAxis
   onCommit: (next: SizeAxis) => void
+  /** Lightweight fixed-size preview used while the numeric handle is scrubbed. */
+  onScrubPreview?: (next: number) => void
+  /** Durable fixed-size commit made once when the scrub ends. */
+  onScrubCommit?: (next: number) => void
+  /** Drop an active fixed-size preview without changing the scene. */
+  onScrubCancel?: () => void
   /**
    * True when the selection disagrees on this axis (e.g. one layer is
    * `hug`, another is `120`). When set, no pill is active and the
@@ -61,22 +70,22 @@ export function SizeAxisField({
   }
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="grid w-full min-w-0 grid-cols-[76px_minmax(0,1fr)] items-center gap-1">
       {mode === 'fixed' ? (
         <NumberField
           value={numeric}
           onCommit={(n) => onCommit(n)}
+          onScrubPreview={onScrubPreview}
+          onScrubCommit={onScrubCommit}
+          onScrubCancel={onScrubCancel}
           min={0}
-          width="w-14"
+          suffix="px"
+          width="min-w-0 w-full"
         />
       ) : (
-        <div
-          className="flex h-6 w-14 items-center justify-center rounded px-1 text-xs italic"
-          style={{
-            background: 'var(--color-panel-raised)',
-            color: 'var(--color-text-dim)',
-            border: '1px solid var(--color-border)',
-          }}
+        <SquircleSurface
+          radius={6}
+          className="hm-control-surface hm-control-compact flex h-7 min-w-0 items-center justify-center px-1 text-[11px] text-text-dim"
           title={
             mode === 'hug'
               ? 'Sized to content'
@@ -85,8 +94,8 @@ export function SizeAxisField({
                 : 'Values differ across the selection'
           }
         >
-          {mode === 'hug' ? 'Hug' : mode === 'fill' ? 'Fill' : 'Mixed'}
-        </div>
+          {mode == null ? 'Mixed' : '—'}
+        </SquircleSurface>
       )}
       <Segmented mode={mode} onChange={setMode} />
     </div>
@@ -110,11 +119,11 @@ function Segmented({
   onChange: (next: Mode) => void
 }) {
   return (
-    <div
-      className="flex h-6 items-stretch overflow-hidden rounded"
-      style={{ border: '1px solid var(--color-border)' }}
+    <SquircleSurface
+      radius={6}
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
     >
-      {SEGMENTS.map((s, i) => {
+      {SEGMENTS.map((s) => {
         const active = s.value === mode
         return (
           <button
@@ -122,22 +131,14 @@ function Segmented({
             type="button"
             onClick={() => onChange(s.value)}
             title={s.title}
-            className="px-1.5 text-[10px] leading-none font-medium transition-colors"
-            style={{
-              background: active
-                ? 'var(--color-accent)'
-                : 'var(--color-panel-raised)',
-              color: active ? 'white' : 'var(--color-text-muted)',
-              borderLeft:
-                i === 0
-                  ? 'none'
-                  : '1px solid var(--color-border)',
-            }}
+            aria-pressed={active}
+            data-active={active}
+            className="hm-inspector-segment"
           >
             {s.label}
           </button>
         )
       })}
-    </div>
+    </SquircleSurface>
   )
 }

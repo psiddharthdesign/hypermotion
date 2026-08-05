@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useSyncExternalStore } from 'react'
 import { useUI } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type { NodeId, SceneAPI } from '@/scene'
 import type { SolvedLayout } from '@/layout'
 import type { AnimatedValue } from '@/ui/hooks/useAnimatedValues'
-import type { InheritedAnim } from '@/ui/Canvas'
+import type { InheritedAnim } from '@/ui/canvasRenderHelpers'
 import { ResizeHandles } from '@/ui/ResizeHandles'
+import { nodeGeometryPreviewStore } from '@/ui/nodeGeometryPreviewStore'
+import { nodeGeometryPreviewRect } from '@/ui/nodeGeometryPreviewRect'
 
 function isEffectivelyVisible(api: SceneAPI, id: NodeId): boolean {
   const visited = new Set<NodeId>()
@@ -48,6 +51,11 @@ export function SelectionOverlay({
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
+  const geometryPreview = useSyncExternalStore(
+    nodeGeometryPreviewStore.subscribe,
+    nodeGeometryPreviewStore.getSnapshot,
+    nodeGeometryPreviewStore.getSnapshot,
+  )
   const rootId = rootIdOverride ?? api.getRoot()
 
   if (selection.length === 0) return null
@@ -69,11 +77,16 @@ export function SelectionOverlay({
   return (
     <>
       {selection.map((id) => {
-        const rect = solved[id]
+        const baseRect = solved[id]
         const node = api.getNode(id)
         // A hidden layer must not leave selection chrome behind. This also
         // covers a visible child whose parent was hidden in the Layers panel.
-        if (!rect || !node || !isEffectivelyVisible(api, id)) return null
+        if (!baseRect || !node || !isEffectivelyVisible(api, id)) return null
+        const rect = nodeGeometryPreviewRect(
+          node,
+          baseRect,
+          geometryPreview[id],
+        )
         const isRoot = id === rootId
         const anim = animated[id]
         const inh = inherited[id]
@@ -104,14 +117,8 @@ export function SelectionOverlay({
         const transform = parts.length > 0 ? parts.join(' ') : undefined
 
         const isSingle = singleSelection === id
-        const isComponentNode =
-          node.kind === 'component' || node.kind === 'instance'
-        const outlineColor = isComponentNode
-          ? 'oklch(0.64 0.24 300)'
-          : 'var(--color-accent)'
-        const outlineSoft = isComponentNode
-          ? 'oklch(0.64 0.24 300 / 0.18)'
-          : 'var(--color-accent-soft)'
+        const outlineColor = 'var(--color-accent)'
+        const outlineSoft = 'var(--color-accent-soft)'
 
         return (
           <div

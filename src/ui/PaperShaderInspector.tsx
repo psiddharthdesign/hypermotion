@@ -289,7 +289,7 @@ export function PaperShaderInspector({
                 <button
                   type="button"
                   onClick={() => chooseSourceNode('')}
-                  className="h-7 rounded-md px-1.5 text-[10px] text-text-dim transition-colors hover:bg-white/[0.05] hover:text-text"
+                  className="h-7 rounded-md px-1.5 text-[10px] text-text-dim transition-colors hover:bg-control hover:text-text"
                 >
                   Clear
                 </button>

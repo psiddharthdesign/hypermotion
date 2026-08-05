@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { HeadlessRenderRequest } from '../electron/driver.js'
+import { DEFAULT_RENDER_FPS } from '../renderOptions.js'
 import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { renderCommand } from './render.js'
@@ -25,6 +26,26 @@ test('render command scene help describes saved scene input', () => {
   const sceneOption = renderCommand().options.find((option) => option.long === '--scene')
 
   assert.match(sceneOption?.description ?? '', /\.hype scene file/)
+})
+
+test('render command defaults to 60 fps', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-fps-default-'))
+  const outputPath = path.join(dir, 'out.mp4')
+  const calls: Array<Readonly<HeadlessRenderRequest>> = []
+
+  try {
+    await renderCommand({
+      locateApp: async () => path.join(dir, 'hyper-motion'),
+      driveRender: async (req) => {
+        calls.push(req)
+      },
+    }).parseAsync(['-o', outputPath], { from: 'user' })
+
+    assert.equal(DEFAULT_RENDER_FPS, 60)
+    assert.equal(calls[0]?.fps, DEFAULT_RENDER_FPS)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('render command forwards saved scene paths to the driver', async () => {

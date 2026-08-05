@@ -16,6 +16,7 @@ import type {
 import type { SceneAPI } from '@/scene/doc'
 import type { AnimatedValue } from '@/anim'
 import { evaluator, type EasingEvaluator } from '@/anim'
+import { effectIdFromBlurPropertyId } from '@/scene/props'
 
 export interface ComponentInstanceResolution {
   instance: InstanceNode
@@ -327,6 +328,11 @@ function writeProperty(
     return
   }
   if (typeof value !== 'number') return
+  const effectId = effectIdFromBlurPropertyId(id)
+  if (effectId) {
+    ;(into.effectBlur ??= {})[effectId] = value
+    return
+  }
   switch (id) {
     case 'transform.x': into.x = value; break
     case 'transform.y': into.y = value; break

@@ -4,6 +4,8 @@ import { sceneToBytes } from '@/scene'
 import { resolveDimensions, resolveFrameSegments } from './formats'
 import type { ExportSceneContext } from './orchestrator'
 import { useExportProgress } from './progressStore'
+import { getProjectAPI } from '@/project'
+import { resolveSceneExportOccurrence } from './audioMix'
 
 /**
  * Editor-side client for the render-window export flow.
@@ -74,6 +76,13 @@ interface ErrorMessage {
   message: string
 }
 
+function makeClientRequestId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `export_${crypto.randomUUID()}`
+  }
+  return `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
 export async function runRenderWindowExport(
   ctx: ExportSceneContext,
 ): Promise<void> {
@@ -89,6 +98,22 @@ export async function runRenderWindowExport(
   const meta = ctx.api.getMeta()
   const sceneCanvas = meta.canvas
   const fps = ctx.exportFps ?? ctx.frameRate
+  const project = getProjectAPI(ctx.api)
+  project.ensureInitialized()
+  const sequenceMap = project.getSequenceTimeMap()
+  const scope =
+    ctx.scope ??
+    (project.getSequenceItems().length > 1 ? 'sequence' : 'scene')
+  const durationSec =
+    scope === 'sequence' ? sequenceMap.duration : ctx.durationSec
+  const selectedSequenceItemId =
+    scope === 'scene'
+      ? resolveSceneExportOccurrence(
+          sequenceMap,
+          ctx.selectedSequenceItemId,
+          project.getActiveSceneId(),
+        )?.item.id
+      : undefined
 
   // Resolve output dimensions up-front so we can size the render
   // window correctly. Passing `format.id` enables the H.264 cap for
@@ -102,7 +127,7 @@ export async function runRenderWindowExport(
 
   // Total frames for the progress bar — derived from the export range.
   const range = ctx.range ?? { kind: 'full' as const }
-  const segments = resolveFrameSegments(range, ctx.durationSec, fps)
+  const segments = resolveFrameSegments(range, durationSec, fps)
   const totalFrames = segments.reduce(
     (acc, s) => acc + (s.lastFrame - s.firstFrame + 1),
     0,
@@ -122,36 +147,11 @@ export async function runRenderWindowExport(
   progress.start(ctx.format, totalFrames, provisionalFileName)
   const startToken = progress.cancelToken
 
-  let requestId: string
-  try {
-    const result = (await bridge.invoke('export:open-render-window', {
-      params: {
-        format: ctx.format.id,
-        quality: ctx.quality.id,
-        sceneName,
-        durationSec: ctx.durationSec,
-        frameRate: ctx.frameRate,
-        exportFps: fps,
-        outputWidth: targetDims.width,
-        outputHeight: targetDims.height,
-        range,
-        filenameTag: ctx.filenameTag,
-      },
-      seedBytes,
-    })) as { requestId: string }
-    requestId = result.requestId
-  } catch (e) {
-    progress.setError(
-      `Failed to open render window: ${e instanceof Error ? e.message : String(e)}`,
-    )
-    return
-  }
-
-  // Smoothing pass for ETA — the render window reports per-frame ms
-  // directly, so we don't need to smooth here. Just forward the
-  // numbers into the progress store as they arrive.
+  const requestId = makeClientRequestId()
+  // Subscribe before asking main to load the worker. A tiny scene can fail or
+  // even finish during BrowserWindow.loadURL; listeners registered afterward
+  // miss that terminal message and leave the editor locked forever.
   let smoothedFrameMs = 0
-
   let resolveDone: () => void = () => {}
   const donePromise = new Promise<void>((resolve) => {
     resolveDone = resolve
@@ -205,6 +205,38 @@ export async function runRenderWindowExport(
     offError?.()
     resolveDone()
   })
+
+  try {
+    const result = (await bridge.invoke('export:open-render-window', {
+      requestId,
+      params: {
+        format: ctx.format.id,
+        quality: ctx.quality.id,
+        sceneName,
+        durationSec,
+        scope,
+        selectedSequenceItemId,
+        frameRate: ctx.frameRate,
+        exportFps: fps,
+        outputWidth: targetDims.width,
+        outputHeight: targetDims.height,
+        range,
+        filenameTag: ctx.filenameTag,
+      },
+      seedBytes,
+    })) as { requestId: string }
+    if (result.requestId !== requestId) {
+      throw new Error('Export worker returned a mismatched request id.')
+    }
+  } catch (e) {
+    offProgress?.()
+    offDone?.()
+    offError?.()
+    progress.setError(
+      `Failed to open render window: ${e instanceof Error ? e.message : String(e)}`,
+    )
+    return
+  }
 
   // Cancellation watcher. Polls the progress store at 4Hz for the
   // cancelToken bump triggered by the user's Cancel button. When seen,

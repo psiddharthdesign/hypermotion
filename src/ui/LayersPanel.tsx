@@ -1,19 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  memo,
+  useMemo,
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
 } from 'react'
+import { getAnimEngine } from '@/anim'
+import { useProjectAPI } from '@/project'
 import { useSceneAPI, useSceneVersion } from '@/scene'
-import type { Node, NodeId, NodeKind } from '@/scene'
+import type { CameraNode, Node, NodeId, NodeKind } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useUI } from '@/state/ui'
 import { buildNodeContextMenu } from '@/ui/contextMenuActions'
 import { instantiateComponent, setLockedRecursive } from '@/ui/actions'
+import {
+  addCamera,
+  deleteCameraSafely,
+  duplicateCamera,
+  listSceneCameras,
+  setSceneDefaultCamera,
+} from '@/ui/cameraActions'
+import {
+  planCameraRowProgramSwitch,
+  resolveCameraRowIndicators,
+} from '@/ui/cameraRowIndicators'
+import { AppIcon, type AppIconName } from '@/ui/AppIcon'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { createProgramCameraPreviewSnapshot } from '@/ui/programCameraPreview'
+import {
+  fitWorkspaceBounds,
+  type WorkspaceBounds,
+} from '@/ui/workspaceFocus'
 
 const ASSET_LIBRARY_ENABLED = false
 
@@ -43,65 +67,95 @@ const ASSET_LIBRARY_ENABLED = false
 export function LayersPanel() {
   useSceneVersion()
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const rootId = api.getRoot()
   const root = rootId ? api.getNode(rootId) : null
   const componentEditId = useUI((s) => s.componentEditId)
   const editMaster = componentEditId ? api.getNode(componentEditId) : null
-  const camera = api.getActiveCamera()
+  const cameras = listSceneCameras(api)
+  const defaultCameraId = api.getDefaultCameraId()
+  const activeScene = project.getActiveScene()
+  const programCameras = useMemo(
+    () =>
+      activeScene
+        ? activeScene.cameraIds
+            .map((cameraId) => api.getNode(cameraId))
+            .filter(
+              (node): node is CameraNode =>
+                node?.kind === 'camera' && node.parent === null,
+            )
+            .map((camera) => ({
+              id: camera.id,
+              enabled: camera.enabled,
+            }))
+        : [],
+    [activeScene, api],
+  )
+  const programCameraSnapshot = useMemo(
+    () =>
+      activeScene
+        ? createProgramCameraPreviewSnapshot({
+            scene: activeScene,
+            frameRate: api.getMeta().frameRate,
+            cameras: programCameras,
+            fallbackCameraId: defaultCameraId,
+            previewScope: 'scene',
+            editorView: { mode: 'program' },
+            readLocalTime: getAnimEngine().getPlayhead,
+          })
+        : () => defaultCameraId,
+    [
+      activeScene,
+      api,
+      defaultCameraId,
+      programCameras,
+    ],
+  )
+  const programCameraId = useSyncExternalStore(
+    getAnimEngine().subscribe,
+    programCameraSnapshot,
+    programCameraSnapshot,
+  )
   const pasteboardNodes = api
     .getAllNodeIds()
     .map((id) => api.getNode(id))
     .filter((node): node is Node => !!node && !!node.workspaceOnly && node.parent === null)
-  const selection = useUI((s) => s.selection)
-  const layersCollapsed = useUI((s) => s.layersCollapsed)
-  const toggleLayerCollapsed = useUI((s) => s.toggleLayerCollapsed)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const width = useUI((s) => s.layersWidth)
   const setWidth = useUI((s) => s.setLayersWidth)
+  const setView = useUI((s) => s.setView)
   const [tab, setTab] = useState<'layers' | 'components'>('layers')
   const [componentsModalOpen, setComponentsModalOpen] = useState(false)
 
-  // When the canvas (or any other surface) commits a new selection,
-  // make sure the Layers panel reveals the row:
-  //   1. Walk up the ancestors and uncollapse each one — without this,
-  //      the row's <div> isn't even in the DOM if a parent group is
-  //      collapsed.
-  //   2. Find the row's element via data-layer-row attribute and
-  //      scroll it into view.
-  // Only fires when the LATEST id in selection changes. Ignores
-  // multi-select churn (the panel already handles displaying multiple
-  // highlighted rows via CSS).
-  const lastSelectedRef = useRef<string | null>(null)
-  useEffect(() => {
-    const id = selection[selection.length - 1] ?? null
-    if (!id) {
-      lastSelectedRef.current = null
-      return
+  const showWorkspaceItems = (nodes: Node[], includeOutputScene: boolean) => {
+    const workspace = document.querySelector<HTMLElement>(
+      '[data-canvas-workspace="1"]',
+    )
+    const viewportRect = workspace?.parentElement?.getBoundingClientRect()
+    const canvas = api.getMeta().canvas ?? { width: 960, height: 540 }
+    if (!viewportRect) return
+
+    const bounds = nodes
+      .map(workspaceBoundsForNode)
+      .filter((item): item is WorkspaceBounds => item !== null)
+    if (includeOutputScene) {
+      bounds.unshift({
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height,
+      })
     }
-    if (lastSelectedRef.current === id) return
-    lastSelectedRef.current = id
-    // Uncollapse every ancestor so the row is rendered.
-    let cur: string | null = id
-    while (cur) {
-      const node = api.getNode(cur)
-      if (!node) break
-      const parent: string | null = node.parent
-      if (parent && layersCollapsed.has(parent)) {
-        toggleLayerCollapsed(parent)
-      }
-      cur = parent
-    }
-    // Defer scroll until React has committed the (potentially
-    // newly-uncollapsed) tree to the DOM.
-    requestAnimationFrame(() => {
-      const el = scrollerRef.current
-      if (!el) return
-      const row = el.querySelector(
-        `[data-layer-row="${cssEscape(id)}"]`,
-      ) as HTMLElement | null
-      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const nextView = fitWorkspaceBounds({
+      bounds,
+      artboardWidth: canvas.width,
+      artboardHeight: canvas.height,
+      viewportWidth: viewportRect.width,
+      viewportHeight: viewportRect.height,
+      maxZoom: includeOutputScene ? 1.25 : 2,
     })
-  }, [selection, api, layersCollapsed, toggleLayerCollapsed])
+    if (nextView) setView(nextView)
+  }
 
   // Resize: pointer drag on the right edge writes the new width.
   // Pointer capture survives leaving the handle so the user can drag
@@ -135,38 +189,47 @@ export function LayersPanel() {
       className="relative flex shrink-0 flex-col border-r border-border bg-panel"
       style={{ width }}
     >
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
-        <SidebarTab
-          active={tab === 'layers'}
-          label="Layers"
-          onClick={() => setTab('layers')}
-        />
-        <SidebarTab
-          active={tab === 'components'}
-          label="Assets"
-          onClick={() => setTab('components')}
-        />
+      <LayerSelectionReveal scrollerRef={scrollerRef} />
+      <div className="flex h-12 shrink-0 items-center border-b border-border px-3">
+        <div className="hm-control-surface hm-inspector-segmented">
+          <SidebarTab
+            active={tab === 'layers'}
+            label="Layers"
+            onClick={() => setTab('layers')}
+          />
+          <SidebarTab
+            active={tab === 'components'}
+            label="Assets"
+            onClick={() => setTab('components')}
+          />
+        </div>
       </div>
       {tab === 'layers' ? (
         <div ref={scrollerRef} className="flex-1 overflow-auto py-2">
           {editMaster && editMaster.kind === 'component' ? (
             <>
-              <div className="px-3 pb-2 text-[10px] font-medium uppercase tracking-wider text-[oklch(0.64_0.24_300)]">
+              <div className="px-3 pb-2 text-[10px] font-medium text-accent">
                 Master component
               </div>
               <Row node={editMaster} depth={0} rootId={editMaster.id} />
             </>
           ) : (
             <>
-          {/* Camera sits above the artboard tree as its own section. It's a
-              scene-level node (parent: null, not a child of root) so it
-              would otherwise not appear in the walk. Surfacing it here
-              makes it selectable and keyframeable via the same flow as
-              any other layer — click to select, then edit in Inspector,
-              or animate via the Animate tab. */}
-          {camera ? <CameraRow node={camera} /> : <AddCameraRow />}
+          {/* Cameras sit above the artboard tree as their own section. They
+              are scene-level nodes (parent: null, not children of root), so
+              the regular tree walk cannot surface them. A row click selects
+              a camera for Inspector; its square authors Program output at the
+              playhead. Advanced editor-only viewing stays in Properties. */}
+          <CamerasSection
+            cameras={cameras}
+            defaultCameraId={defaultCameraId}
+            programCameraId={programCameraId}
+          />
           {root ? (
-            <Row node={root} depth={0} rootId={rootId} />
+            <>
+              <PanelSectionLabel label="Scene layers" />
+              <Row node={root} depth={0} rootId={rootId} />
+            </>
           ) : (
             <p className="px-3 py-4 text-text-dim">
               Empty scene.
@@ -176,8 +239,18 @@ export function LayersPanel() {
           )}
           {pasteboardNodes.length > 0 ? (
             <div className="mt-3 border-t border-border pt-2">
-              <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-text-dim">
-                Pasteboard
+              <div className="flex items-center justify-between gap-2 px-3 pb-1">
+                <div className="text-[11px] font-medium text-text-muted">
+                  Workspace · {pasteboardNodes.length}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => showWorkspaceItems(pasteboardNodes, true)}
+                  className="rounded px-1.5 py-0.5 text-[10px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
+                  title="Fit the output scene and all workspace items on screen"
+                >
+                  Show all
+                </button>
               </div>
               {pasteboardNodes.map((node) => (
                 <Row key={node.id} node={node} depth={0} rootId={rootId} />
@@ -205,6 +278,21 @@ export function LayersPanel() {
   )
 }
 
+function PanelSectionLabel({
+  label,
+  meta,
+}: {
+  label: string
+  meta?: string
+}) {
+  return (
+    <div className="mt-1 flex items-center justify-between gap-2 px-3 pb-1 pt-1 text-[11px] font-medium text-text-muted">
+      <span>{label}</span>
+      {meta ? <span className="font-normal tracking-normal">{meta}</span> : null}
+    </div>
+  )
+}
+
 function SidebarTab({
   active,
   label,
@@ -218,12 +306,8 @@ function SidebarTab({
     <button
       type="button"
       onClick={onClick}
-      className={[
-        'h-6 rounded px-2 text-[11px] font-medium transition-colors',
-        active
-          ? 'bg-panel-raised text-text'
-          : 'text-text-muted hover:bg-panel-raised/70 hover:text-text',
-      ].join(' ')}
+      data-active={active ? 'true' : 'false'}
+      className="hm-inspector-segment"
     >
       {label}
     </button>
@@ -238,13 +322,13 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="text-[11px] font-medium uppercase text-text-muted">
+        <span className="text-[11px] font-medium text-text-muted">
           Asset library
         </span>
         <div className="flex items-center gap-1">
           <span
             role="status"
-            className="rounded border border-border bg-panel-raised px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.04em] text-text-dim"
+            className="rounded border border-border bg-panel-raised px-1.5 py-0.5 text-[9px] font-semibold text-text-dim"
           >
             Coming soon
           </span>
@@ -253,7 +337,7 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
             disabled={!ASSET_LIBRARY_ENABLED}
             onClick={onViewAll}
             title="Coming soon"
-            className="rounded px-1.5 py-1 text-[9px] font-medium uppercase text-text-dim disabled:cursor-not-allowed disabled:opacity-45"
+            className="rounded px-1.5 py-1 text-[9px] font-medium text-text-dim disabled:cursor-not-allowed disabled:opacity-45"
           >
             View all
           </button>
@@ -264,7 +348,7 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
         className="pointer-events-none flex-1 select-none overflow-auto py-2 opacity-35"
       >
         {components.length === 0 ? (
-          <p className="px-3 py-4 text-[11px] uppercase text-text-dim">
+          <p className="px-3 py-4 text-[11px] text-text-dim">
             Components
             <br />
             <span className="text-[10px]">Reusable assets will appear here.</span>
@@ -276,10 +360,10 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
               type="button"
               disabled
               draggable={false}
-              className="group flex w-full cursor-not-allowed items-center gap-2 px-3 py-2 text-left text-[11px] uppercase text-text-muted"
+              className="group flex w-full cursor-not-allowed items-center gap-2 px-3 py-2 text-left text-[11px] text-text-muted"
             >
-              <span className="font-mono text-[11px] text-[oklch(0.7_0.24_300)]">
-                ◆
+              <span className="text-accent">
+                <AppIcon name="nodes" size={12} />
               </span>
               <span className="min-w-0 flex-1 truncate">{component.name}</span>
               <span className="text-[10px] text-text-dim">
@@ -293,10 +377,10 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
         aria-disabled="true"
         className="pointer-events-none select-none border-t border-border px-3 py-3 opacity-35"
       >
-        <div className="text-[10px] font-medium uppercase tracking-wider text-text-dim">
+        <div className="text-[10px] font-medium text-text-dim">
           Imported assets
         </div>
-        <div className="mt-2 rounded-md border border-dashed border-border px-3 py-2 text-[10px] uppercase text-text-dim">
+        <div className="mt-2 rounded-md border border-dashed border-border px-3 py-2 text-[10px] text-text-dim">
           Images and media
         </div>
       </div>
@@ -338,7 +422,7 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45">
-      <div className="flex h-[620px] w-[860px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel shadow-2xl">
+      <div className="hm-dialog-surface flex h-[620px] w-[860px] flex-col">
         <div className="border-b border-border px-5 py-4">
           <h2 className="text-[15px] font-semibold text-text">
             Components
@@ -348,7 +432,7 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search components"
-            className="mt-3 h-9 w-full rounded-md border border-border bg-app-bg px-3 text-[13px] text-text outline-none ring-0 placeholder:text-text-dim focus:border-[oklch(0.64_0.24_300)]"
+            className="hm-control-surface mt-3 h-8 w-full px-3 text-[13px] text-text outline-none placeholder:text-text-dim"
           />
         </div>
         <div className="grid min-h-0 flex-1 grid-cols-[220px_1fr]">
@@ -373,12 +457,12 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
                     ].join(' ')}
                     style={
                       selected
-                        ? { backgroundColor: 'oklch(0.64 0.24 300 / 0.16)' }
+                        ? { backgroundColor: 'var(--color-accent-soft)' }
                         : undefined
                     }
                   >
-                    <span className="font-mono text-[oklch(0.7_0.24_300)]">
-                      ◆
+                    <span className="text-accent">
+                      <AppIcon name="nodes" size={13} />
                     </span>
                     <span className="min-w-0 flex-1 truncate">
                       {component.name}
@@ -392,9 +476,9 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
             {active ? (
               <>
                 <div className="flex flex-1 items-center justify-center rounded-md border border-border bg-app-bg">
-                  <div className="rounded-md border border-[oklch(0.64_0.24_300_/_0.55)] bg-panel px-8 py-6 text-center shadow-lg">
-                    <div className="text-[28px] text-[oklch(0.7_0.24_300)]">
-                      ◆
+                  <div className="rounded-md border border-accent/55 bg-panel px-8 py-6 text-center shadow-lg">
+                    <div className="flex justify-center text-accent">
+                      <AppIcon name="nodes" size={28} />
                     </div>
                     <div className="mt-2 text-[14px] font-semibold text-text">
                       {active.name}
@@ -427,7 +511,7 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="h-9 rounded-md border border-border px-4 text-[13px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
+            className="hm-secondary-action"
           >
             Cancel
           </button>
@@ -435,7 +519,7 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={insert}
             disabled={!active}
-            className="h-9 rounded-md bg-[oklch(0.64_0.24_300)] px-4 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="hm-primary-action disabled:cursor-not-allowed disabled:opacity-40"
           >
             Insert
           </button>
@@ -448,7 +532,7 @@ function ComponentsModal({ onClose }: { onClose: () => void }) {
 function ComponentFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border bg-panel-raised px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-text-dim">
+      <div className="text-[10px] text-text-dim">
         {label}
       </div>
       <div className="mt-1 truncate text-[12px] font-medium text-text">
@@ -479,19 +563,65 @@ function countInstances(api: SceneAPI, componentId: NodeId): number {
   return count
 }
 
+function CamerasSection({
+  cameras,
+  defaultCameraId,
+  programCameraId,
+}: {
+  cameras: CameraNode[]
+  defaultCameraId: NodeId | null
+  programCameraId: NodeId | null
+}) {
+  return (
+    <div className="mb-1 border-b border-border pb-1">
+      <div className="flex h-6 items-center px-3">
+        <span className="text-[11px] font-medium text-text-muted">
+          Cameras
+        </span>
+        <span className="ml-1.5 rounded bg-panel-raised px-1 text-[9px] tabular-nums text-text-dim">
+          {cameras.length}
+        </span>
+      </div>
+      {cameras.map((camera) => (
+        <CameraRow
+          key={camera.id}
+          node={camera}
+          {...resolveCameraRowIndicators(
+            camera.id,
+            defaultCameraId,
+            programCameraId,
+          )}
+          cameraCount={cameras.length}
+        />
+      ))}
+      <AddCameraRow />
+    </div>
+  )
+}
+
 /**
- * Dedicated, trimmed-down row for the scene-level camera.
+ * Dedicated row for one scene-level camera.
  *
- * Intentionally lighter than the general {@link Row}: no children to
- * expand, no drag-to-reparent (the camera isn't part of the tree), no
- * visibility toggle (a camera is always "there" — disabling it is a
- * future feature on CameraNode.enabled). Lock still applies though, so
- * users can freeze the camera while editing content around it.
+ * Clicking the row edits the camera in Inspector. The square is intentionally
+ * simpler: it always means Program output at the current playhead.
  */
-function CameraRow({ node }: { node: Node }) {
+function CameraRow({
+  node,
+  isDefault,
+  isProgramNow,
+  cameraCount,
+}: {
+  node: CameraNode
+  isDefault: boolean
+  isProgramNow: boolean
+  cameraCount: number
+}) {
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const selection = useUI((s) => s.selection)
   const setSelection = useUI((s) => s.setSelection)
+  const setCameraView = useUI((s) => s.setCameraView)
+  const clearSelection = useUI((s) => s.clearSelection)
   const toggleInSelection = useUI((s) => s.toggleInSelection)
   const openContextMenu = useUI((s) => s.openContextMenu)
   const selected = selection.includes(node.id)
@@ -504,12 +634,92 @@ function CameraRow({ node }: { node: Node }) {
     setEditing(false)
   }
 
+  const setAsProgramDefault = () => {
+    if (api.getDefaultCameraId() !== node.id) {
+      setSceneDefaultCamera(api, node.id)
+    }
+  }
+
+  const switchProgramAtPlayhead = () => {
+    const scene = project.getActiveScene()
+    if (!scene) return
+    const ui = useUI.getState()
+    const playhead = ui.playing
+      ? getAnimEngine().getPlayhead()
+      : ui.playhead
+    const cameras = scene.cameraIds
+      .map((cameraId) => api.getNode(cameraId))
+      .filter(
+        (camera): camera is CameraNode =>
+          camera?.kind === 'camera' && camera.parent === null,
+      )
+      .map((camera) => ({
+        id: camera.id,
+        enabled: camera.enabled,
+      }))
+    const plan = planCameraRowProgramSwitch({
+      scene,
+      playhead,
+      frameRate: api.getMeta().frameRate,
+      cameras,
+      targetCameraId: node.id,
+      fallbackCameraId: api.getDefaultCameraId(),
+      createId: createLayersCameraCutId,
+    })
+
+    if (plan?.changed) {
+      api.doc.transact(() => {
+        if (plan.setDefaultCameraId) {
+          project.setDefaultCamera(scene.id, plan.setDefaultCameraId)
+        }
+        for (const cutId of plan.removeCutIds) {
+          project.removeCameraCut(scene.id, cutId)
+        }
+        if (plan.cut) {
+          project.upsertCameraCut(scene.id, plan.cut)
+        }
+      }, UNDOABLE_GESTURE_ORIGIN)
+    }
+
+    // The Layers control always reveals the authored result. Editor-only
+    // camera locks remain available in Properties when explicitly needed.
+    setCameraView(scene.id, { mode: 'program' })
+  }
+
+  const duplicate = () => {
+    const id = duplicateCamera(api, node.id)
+    if (id) setSelection([id])
+  }
+
+  const remove = () => {
+    const sceneId = project.getActiveSceneId()
+    const editorView = sceneId
+      ? useUI.getState().cameraViewByComposition[sceneId]
+      : undefined
+    const wasEditorViewLocked =
+      editorView?.mode === 'camera' &&
+      editorView.cameraId === node.id
+    const wasDefault = api.getDefaultCameraId() === node.id
+    const result = deleteCameraSafely(api, node.id)
+    if (!result.deleted) return
+    if (wasEditorViewLocked && sceneId) {
+      setCameraView(sceneId, { mode: 'program' })
+    }
+    if (selection.includes(node.id)) {
+      if (wasDefault && result.activeCameraId) {
+        setSelection([result.activeCameraId])
+      } else {
+        clearSelection()
+      }
+    }
+  }
+
   return (
     <div
       data-layer-row={node.id}
       onClick={(e) => {
         if (e.shiftKey || e.metaKey || e.ctrlKey) {
-          toggleInSelection(node.id)
+          toggleInSelection(node.id, true)
         } else {
           setSelection([node.id])
         }
@@ -520,16 +730,37 @@ function CameraRow({ node }: { node: Node }) {
       }}
       onContextMenu={(e) => {
         e.preventDefault()
-        const ids = selection.includes(node.id) ? selection : [node.id]
         if (!selection.includes(node.id)) setSelection([node.id])
         openContextMenu({
           x: e.clientX,
           y: e.clientY,
-          items: buildNodeContextMenu(api, ids),
+          items: [
+            {
+              label: isDefault
+                ? 'Scene default camera'
+                : 'Set as scene default',
+              disabled: isDefault,
+              onClick: setAsProgramDefault,
+            },
+            {
+              label: 'Duplicate camera',
+              onClick: duplicate,
+            },
+            { kind: 'separator' },
+            {
+              label:
+                cameraCount <= 1
+                  ? 'Keep at least one camera'
+                  : 'Delete camera',
+              disabled: cameraCount <= 1,
+              danger: true,
+              onClick: remove,
+            },
+          ],
         })
       }}
       className={[
-        'group flex h-6 shrink-0 cursor-default items-center gap-1.5 px-2 font-mono text-[11px]',
+        'group flex h-6 shrink-0 cursor-default items-center gap-1.5 px-3 text-[10px]',
         selected
           ? 'bg-accent-soft text-text'
           : 'text-text-muted hover:bg-app-bg hover:text-text',
@@ -551,6 +782,40 @@ function CameraRow({ node }: { node: Node }) {
       ) : (
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
       )}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          duplicate()
+        }}
+        title="Duplicate camera"
+        aria-label={`Duplicate ${node.name}`}
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-dim opacity-0 transition-colors hover:bg-panel-raised hover:text-text group-hover:opacity-100"
+      >
+        <AppIcon name="copy" size={11} />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          remove()
+        }}
+        disabled={cameraCount <= 1}
+        title={
+          cameraCount <= 1
+            ? 'A scene must keep at least one camera'
+            : 'Delete camera'
+        }
+        aria-label={`Delete ${node.name}`}
+        className={[
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-colors group-hover:opacity-100',
+          cameraCount <= 1
+            ? 'cursor-not-allowed text-text-dim/35'
+            : 'text-text-dim hover:bg-[oklch(0.55_0.2_25)]/15 hover:text-[oklch(0.68_0.2_25)]',
+        ].join(' ')}
+      >
+        <AppIcon name="trash" size={11} />
+      </button>
       <LockToggle
         locked={node.locked}
         onClick={(e) => {
@@ -558,6 +823,38 @@ function CameraRow({ node }: { node: Node }) {
           api.setNodeProperty(node.id, 'locked', !node.locked)
         }}
       />
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          switchProgramAtPlayhead()
+        }}
+        title={
+          node.enabled === false
+            ? `${node.name} is disabled`
+            : isProgramNow
+            ? `${node.name} is on Program at the playhead`
+            : `Switch Program to ${node.name} at the playhead`
+        }
+        disabled={node.enabled === false}
+        aria-pressed={isProgramNow}
+        aria-label={
+          isProgramNow
+            ? `${node.name} is the Program camera at the current playhead`
+            : `Switch Program to ${node.name} at the current playhead`
+        }
+        data-program-camera-control={node.id}
+        className={[
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+          isProgramNow
+            ? 'border-accent bg-accent text-white'
+            : node.enabled === false
+            ? 'cursor-not-allowed border-border text-transparent opacity-35'
+            : 'border-border text-transparent hover:border-accent hover:text-accent',
+        ].join(' ')}
+      >
+        <AppIcon name="check" size={10} />
+      </button>
     </div>
   )
 }
@@ -583,21 +880,15 @@ function LockToggle({
           : 'text-text-dim opacity-0 hover:text-text group-hover:opacity-100',
       ].join(' ')}
     >
-      {locked ? '◈' : '◇'}
+      {locked ? <LockClosedIcon /> : <LockOpenIcon />}
     </button>
   )
 }
 
 /**
- * "Add camera" row, rendered in the Camera slot when the scene has
- * none. createSceneAPI seeds a camera on first run AND createSampleScene
- * creates one on File → New, so this is a recovery path — if a `.hype`
- * load drops the camera, or the agent's `create_scene` JSON omitted it,
- * the user has a one-click way back to a functional scene.
- *
- * On click: creates a Camera at the artboard center, sets it active,
- * and selects it so the Inspector lights up with the camera's Z /
- * Rotate / Projection / Background fields.
+ * Add-camera stays visible even when the scene already has cameras. The new
+ * camera starts from the default camera's static view, becomes default, and is
+ * selected for immediate editing.
  */
 function AddCameraRow() {
   const api = useSceneAPI()
@@ -606,35 +897,67 @@ function AddCameraRow() {
     <button
       type="button"
       onClick={() => {
-        const meta = api.getMeta()
-        const w = meta.canvas?.width ?? 960
-        const h = meta.canvas?.height ?? 540
-        const id = api.createNode('camera', null, {
-          name: 'Camera',
-          transform: {
-            x: w / 2,
-            y: h / 2,
-            z: 0,
-            rotation: 0,
-            rotationX: 0,
-            rotationY: 0,
-            scaleX: 1,
-            scaleY: 1,
-          },
-        })
-        api.setActiveCameraId(id)
+        const id = addCamera(api)
         setSelection([id])
       }}
-      className="group mx-2 mb-1 flex h-7 w-[calc(100%-1rem)] items-center gap-2 rounded border border-dashed border-border px-2 text-[11px] text-text-dim transition-colors hover:border-accent hover:bg-accent-soft/30 hover:text-accent"
-      title="Add a camera so the scene has a viewfinder + animatable Z / Rotate"
+      className="group mx-3 mt-0.5 flex h-6 w-[calc(100%-1.5rem)] items-center gap-1.5 rounded border border-dashed border-border px-2 text-[10px] text-text-dim transition-colors hover:border-accent hover:bg-accent-soft/30 hover:text-accent"
+      title="Add another camera from the current view"
     >
-      <span aria-hidden className="text-[12px]">+</span>
+      <AppIcon name="plus" size={11} />
       <span className="font-medium">Add camera</span>
     </button>
   )
 }
 
-function Row({
+/**
+ * Keep selection-following out of LayersPanel itself. Subscribing the panel to
+ * the full selection array made a click rebuild the complete recursive tree.
+ * This zero-DOM leaf owns the reveal/scroll effect without invalidating rows.
+ */
+function LayerSelectionReveal({
+  scrollerRef,
+}: {
+  scrollerRef: RefObject<HTMLDivElement | null>
+}) {
+  const api = useSceneAPI()
+  const selectedId = useUI((state) => state.selection.at(-1) ?? null)
+  const layersCollapsed = useUI((state) => state.layersCollapsed)
+  const toggleLayerCollapsed = useUI((state) => state.toggleLayerCollapsed)
+  const lastSelectedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!selectedId) {
+      lastSelectedRef.current = null
+      return
+    }
+    if (lastSelectedRef.current === selectedId) return
+    lastSelectedRef.current = selectedId
+
+    let current: string | null = selectedId
+    while (current) {
+      const node = api.getNode(current)
+      if (!node) break
+      const parent: string | null = node.parent
+      if (parent && layersCollapsed.has(parent)) {
+        toggleLayerCollapsed(parent)
+      }
+      current = parent
+    }
+
+    requestAnimationFrame(() => {
+      const scroller = scrollerRef.current
+      if (!scroller) return
+      const row = scroller.querySelector(
+        `[data-layer-row="${cssEscape(selectedId)}"]`,
+      ) as HTMLElement | null
+      row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [api, layersCollapsed, scrollerRef, selectedId, toggleLayerCollapsed])
+
+  return null
+}
+
+const Row = memo(function LayerRow({
   node,
   depth,
   rootId,
@@ -644,16 +967,18 @@ function Row({
   rootId: NodeId
 }) {
   const api = useSceneAPI()
-  const selection = useUI((s) => s.selection)
   const toggleInSelection = useUI((s) => s.toggleInSelection)
   const setSelection = useUI((s) => s.setSelection)
+  const setView = useUI((s) => s.setView)
   const setComponentEditId = useUI((s) => s.setComponentEditId)
   const extendSelectionTo = useUI((s) => s.extendSelectionTo)
   const openContextMenu = useUI((s) => s.openContextMenu)
   const collapsed = useUI((s) => s.layersCollapsed.has(node.id))
-  const layersCollapsed = useUI((s) => s.layersCollapsed)
   const toggleLayerCollapsed = useUI((s) => s.toggleLayerCollapsed)
-  const selected = selection.includes(node.id)
+  // Boolean-per-row subscription: a selection change now updates only the
+  // rows whose selected state actually changed instead of every row in a
+  // large imported Figma tree.
+  const selected = useUI((s) => s.selection.includes(node.id))
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
   const children = api.getChildren(node.id).filter((child) => child.kind !== 'audio')
   const hasChildren = children.length > 0
@@ -759,6 +1084,7 @@ function Row({
           // Keep behavior parallel to the Canvas: right-clicking a row
           // not currently selected snaps selection to it, so the menu
           // actions always match what's highlighted.
+          const selection = useUI.getState().selection
           const targetIds = selection.includes(node.id) ? selection : [node.id]
           if (!selection.includes(node.id)) setSelection([node.id])
           openContextMenu({
@@ -774,7 +1100,10 @@ function Row({
           //   shift+click   → extend selection from anchor to this row
           //                    along the currently-visible layer order
           if (e.shiftKey) {
-            const order = collectVisibleIds(api, layersCollapsed)
+            const order = collectVisibleIds(
+              api,
+              useUI.getState().layersCollapsed,
+            )
             // When the range spans both a parent and its children,
             // drop the children — selecting a parent implies its whole
             // subtree. This matches what users mean when they lasso
@@ -800,7 +1129,7 @@ function Row({
           setEditing(true)
         }}
         className={[
-          'group relative flex w-full items-center gap-1 py-1 pr-2 text-left text-[12px] transition-colors',
+          'group relative flex w-full items-center gap-1 py-1 pr-2 text-left text-[10px] transition-colors',
           selected
             ? isComponentNode
               ? 'text-text'
@@ -817,8 +1146,10 @@ function Row({
         ].join(' ')}
         style={{
           paddingLeft: 8 + depth * 12,
+          contentVisibility: 'auto',
+          containIntrinsicSize: '0 24px',
           ...(selected && isComponentNode
-            ? { backgroundColor: 'oklch(0.64 0.24 300 / 0.16)' }
+            ? { backgroundColor: 'var(--color-accent-soft)' }
             : {}),
         }}
       >
@@ -862,11 +1193,41 @@ function Row({
             }}
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
-            className="flex-1 min-w-0 bg-transparent text-[12px] text-text outline-none ring-1 ring-accent/60 rounded px-1"
+            className="flex-1 min-w-0 bg-transparent text-[10px] text-text outline-none ring-1 ring-accent/60 rounded px-1"
           />
         ) : (
           <span className="flex-1 truncate">{node.name}</span>
         )}
+        {node.workspaceOnly && node.parent === null ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setSelection([node.id])
+              const workspace = document.querySelector<HTMLElement>(
+                '[data-canvas-workspace="1"]',
+              )
+              const viewportRect = workspace?.parentElement?.getBoundingClientRect()
+              const canvas = api.getMeta().canvas ?? { width: 960, height: 540 }
+              const bounds = workspaceBoundsForNode(node)
+              if (!viewportRect || !bounds) return
+              const nextView = fitWorkspaceBounds({
+                bounds: [bounds],
+                artboardWidth: canvas.width,
+                artboardHeight: canvas.height,
+                viewportWidth: viewportRect.width,
+                viewportHeight: viewportRect.height,
+                maxZoom: 2,
+              })
+              if (nextView) setView(nextView)
+            }}
+            className="rounded px-1.5 py-0.5 text-[9px] font-medium text-text-dim opacity-70 hover:bg-panel-raised hover:text-text group-hover:opacity-100"
+            title={`Show ${node.name} on canvas`}
+            aria-label={`Show ${node.name} on canvas`}
+          >
+            Show
+          </button>
+        ) : null}
         <IconToggle
           active={node.visible}
           onClick={(e) => {
@@ -901,6 +1262,32 @@ function Row({
         ))}
     </>
   )
+})
+
+function workspaceBoundsForNode(node: Node): WorkspaceBounds | null {
+  if (node.kind === 'audio' || node.kind === 'camera') return null
+
+  let width = 100
+  let height = 100
+  if ('size' in node) {
+    width = typeof node.size.width === 'number' ? node.size.width : width
+    height = typeof node.size.height === 'number' ? node.size.height : height
+  }
+  if (node.kind === 'text') {
+    if (node.size.width === 'hug') {
+      width = Math.max(24, node.text.length * node.fontSize * 0.58)
+    }
+    if (node.size.height === 'hug') {
+      height = Math.max(1, node.fontSize * node.lineHeight)
+    }
+  }
+
+  return {
+    x: node.transform.x,
+    y: node.transform.y,
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  }
 }
 
 function IconToggle({
@@ -1006,51 +1393,57 @@ function MaskGlyph() {
   )
 }
 
-const GLYPHS: Record<NodeKind, string> = {
-  frame: '▢',
-  rect: '▪',
-  ellipse: '●',
-  vector: '⌁',
-  text: 'T',
-  image: '▧',
-  shader: '✦',
-  component: '◆',
-  instance: '◇',
-  camera: '◉',
-  video: '▶',
-  audio: '♪',
+const KIND_ICONS: Record<NodeKind, AppIconName> = {
+  frame: 'frame',
+  rect: 'square',
+  ellipse: 'circle',
+  vector: 'vector',
+  text: 'text',
+  image: 'image',
+  shader: 'sparkle',
+  component: 'nodes',
+  instance: 'layers',
+  camera: 'camera',
+  video: 'video',
+  audio: 'audio',
 }
 
 /**
  * Frames get a mode-aware glyph so the Layers panel reflects whether
  * a frame is plain, flex, or grid at a glance — without having to open
- * the Inspector to check. Matches Figma's "Auto layout" indicator
- * (four-arrow icon) and a new "Grid" indicator for our grid mode.
- *   ▢ — frame, mode='none'
- *   ⇆ — frame, mode='flex'
- *   ⊞ — frame, mode='grid'
+ * the Inspector to check. Row/column stacks use directional variants
+ * from the same outline family as the other node-kind glyphs.
  */
-function glyphFor(node: Node): string {
+function iconFor(node: Node): AppIconName {
   if (node.kind === 'frame') {
-    if (node.layout.mode === 'flex') return '⇆'
-    if (node.layout.mode === 'grid') return '⊞'
-    return GLYPHS.frame
+    if (node.layout.mode === 'flex') {
+      return node.layout.direction === 'row' ? 'stack-x' : 'stack-y'
+    }
+    if (node.layout.mode === 'grid') return 'grid'
   }
-  return GLYPHS[node.kind]
+  return KIND_ICONS[node.kind]
 }
 
 function KindGlyph({ node }: { node: Node }) {
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
+  const icon = iconFor(node)
   return (
     <span
-      className="flex w-3 shrink-0 items-center justify-center text-center font-mono text-[10px] text-text-dim"
+      className="flex w-3 shrink-0 items-center justify-center text-text-dim"
       style={{
-        color: isComponentNode ? 'oklch(0.7 0.24 300)' : undefined,
+        color: isComponentNode ? 'var(--color-accent)' : undefined,
       }}
     >
-      {glyphFor(node)}
+      <AppIcon name={icon} size={11} />
     </span>
   )
+}
+
+function createLayersCameraCutId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `cut_${crypto.randomUUID()}`
+  }
+  return `cut_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 /**

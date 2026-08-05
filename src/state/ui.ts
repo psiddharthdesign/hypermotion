@@ -25,8 +25,13 @@ import {
  */
 
 export type Tool = 'select' | 'rect' | 'ellipse' | 'text' | 'frame' | 'hand'
-export type PanelKey = 'layers' | 'inspector' | 'timeline'
+export type PanelKey = 'scenes' | 'layers' | 'inspector' | 'timeline'
 export type InspectorMode = 'properties' | 'animate'
+export type TimelineScope = 'scene' | 'sequence'
+export type PreviewScope = 'scene' | 'sequence'
+export type CameraView =
+  | { mode: 'program' }
+  | { mode: 'camera'; cameraId: string }
 /**
  * App color theme.
  *
@@ -186,6 +191,22 @@ interface UIState {
    */
   selectionAnchor: string | null
   panels: Record<PanelKey, boolean>
+  /** Sequence occurrence currently open for local scene editing. */
+  selectedSequenceItemId: string | null
+  /** Composition backing the selected sequence occurrence. */
+  activeCompositionId: string | null
+  /** Whether the timeline edits the active scene or the master sequence. */
+  timelineScope: TimelineScope
+  /** Preview target chosen by the editor chrome. */
+  previewScope: PreviewScope
+  /** Sequence occurrence currently driving master playback (read-only cue). */
+  programSequenceItemId: string | null
+  programCompositionId: string | null
+  /**
+   * Per-composition editor camera view. Program follows authored camera
+   * cuts; camera locks the editor to one camera without changing output.
+   */
+  cameraViewByComposition: Record<string, CameraView>
   playhead: number
   playing: boolean
   inspectorMode: InspectorMode
@@ -236,6 +257,15 @@ interface UIState {
   staggerDelay: number
   /** Id of the property-keyframe set currently being authored. */
   activeStaggerSetId: string | null
+  /**
+   * Layer order captured when a fresh stagger session is armed.
+   *
+   * Authoring commonly continues from one layer's Inspector, which replaces
+   * the live multi-selection. Keep the original selection here until the
+   * first stagger property is persisted so every layer still receives its
+   * own offset.
+   */
+  staggerDraftLayerIds: string[]
   /** Timeline stagger relationship currently selected, whether editing or not. */
   selectedStaggerSetId: string | null
   /**
@@ -494,6 +524,17 @@ interface UIState {
   lastSavedAt: number | null
   /** Update the file metadata after a save / open / save-as. */
   setCurrentFile: (path: string | null, savedAt: number | null) => void
+  setSelectedSequenceItem: (
+    itemId: string | null,
+    compositionId?: string | null,
+  ) => void
+  setTimelineScope: (scope: TimelineScope) => void
+  setPreviewScope: (scope: PreviewScope) => void
+  setProgramSequencePosition: (
+    itemId: string | null,
+    compositionId: string | null,
+  ) => void
+  setCameraView: (compositionId: string, view: CameraView) => void
 }
 
 const MIN_ZOOM = 0.05
@@ -503,7 +544,14 @@ export const useUI = create<UIState>((set) => ({
   tool: 'select',
   selection: [],
   selectionAnchor: null,
-  panels: { layers: true, inspector: true, timeline: true },
+  panels: { scenes: true, layers: true, inspector: true, timeline: true },
+  selectedSequenceItemId: null,
+  activeCompositionId: null,
+  timelineScope: 'scene',
+  previewScope: 'scene',
+  programSequenceItemId: null,
+  programCompositionId: null,
+  cameraViewByComposition: {},
   playhead: 0,
   playing: false,
   inspectorMode: 'properties',
@@ -520,11 +568,15 @@ export const useUI = create<UIState>((set) => ({
     set((s) => {
       if (
         s.selectedTrackIds.length === ids.length &&
-        s.selectedTrackIds.every((id, i) => id === ids[i])
+        s.selectedTrackIds.every((id, i) => id === ids[i]) &&
+        (ids.length === 0 || s.inspectorMode === 'properties')
       ) {
         return s
       }
-      return { selectedTrackIds: ids }
+      return {
+        selectedTrackIds: ids,
+        ...(ids.length > 0 ? { inspectorMode: 'properties' as const } : {}),
+      }
     }),
   toggleTrackInSelection: (id) =>
     set((s) => {
@@ -533,6 +585,7 @@ export const useUI = create<UIState>((set) => ({
         selectedTrackIds: has
           ? s.selectedTrackIds.filter((x) => x !== id)
           : [...s.selectedTrackIds, id],
+        inspectorMode: 'properties',
       }
     }),
   isolatedRange: null,
@@ -549,13 +602,18 @@ export const useUI = create<UIState>((set) => ({
   // glacial at 60fps. Users tweak this per-animation.
   staggerDelay: 0.1,
   activeStaggerSetId: null,
+  staggerDraftLayerIds: [],
   selectedStaggerSetId: null,
   recording: false,
   renameDialogOpen: false,
   editingTextId: null,
   selectedTrackId: null,
   layersWidth: readStoredNumber('hyper-motion.layersWidth', 256),
-  inspectorWidth: readStoredNumber('hyper-motion.inspectorWidth', 288),
+  inspectorWidth: clamp(
+    readStoredNumber('hyper-motion.inspectorWidth', 280),
+    280,
+    600,
+  ),
   timelineSidebarWidth: readStoredNumber(
     'hyper-motion.timelineSidebarWidth',
     180,
@@ -581,17 +639,28 @@ export const useUI = create<UIState>((set) => ({
       selection: ids,
       selectionAnchor: ids[ids.length - 1] ?? null,
       selectedTrackId: null,
+      inspectorMode: 'properties',
     }),
   toggleInSelection: (id, additive) =>
     set((s) => {
       if (!additive)
-        return { selection: [id], selectionAnchor: id, selectedTrackId: null }
+        return {
+          selection: [id],
+          selectionAnchor: id,
+          selectedTrackId: null,
+          inspectorMode: 'properties',
+        }
       const next = s.selection.includes(id)
         ? s.selection.filter((x) => x !== id)
         : [...s.selection, id]
       // Anchor follows the just-touched node so a subsequent Shift+click
       // extends from here, not from some stale plain-click anchor.
-      return { selection: next, selectionAnchor: id, selectedTrackId: null }
+      return {
+        selection: next,
+        selectionAnchor: id,
+        selectedTrackId: null,
+        inspectorMode: 'properties',
+      }
     }),
   extendSelectionTo: (id, orderedIds, filter) =>
     set((s) => {
@@ -599,6 +668,7 @@ export const useUI = create<UIState>((set) => ({
       const finish = (range: string[]) => ({
         selection: filter ? filter(range) : range,
         selectedTrackId: null,
+        inspectorMode: 'properties' as const,
       })
       // No anchor yet — behave like a plain click, but don't move the
       // anchor (mirrors Figma: shift-click with no prior selection just
@@ -620,9 +690,15 @@ export const useUI = create<UIState>((set) => ({
       selection: orderedIds.slice(),
       selectionAnchor: orderedIds[0] ?? null,
       selectedTrackId: null,
+      inspectorMode: 'properties',
     }),
   clearSelection: () =>
-    set({ selection: [], selectionAnchor: null, selectedTrackId: null }),
+    set({
+      selection: [],
+      selectionAnchor: null,
+      selectedTrackId: null,
+      inspectorMode: 'properties',
+    }),
   togglePanel: (key) =>
     set((s) => ({ panels: { ...s.panels, [key]: !s.panels[key] } })),
   setPlayhead: (t) => set({ playhead: t }),
@@ -691,8 +767,11 @@ export const useUI = create<UIState>((set) => ({
       return {
         staggerOn: on,
         // Every off → on transition begins a fresh authoring set. The set
-        // adopts the selected layers when its first property is keyed.
+        // adopts this captured selection when its first property is keyed.
         activeStaggerSetId: on ? makeStaggerSetId() : null,
+        staggerDraftLayerIds: on
+          ? [...new Set(state.selection)]
+          : [],
         // A generic authoring session is not one of the existing local rows.
         // Turning an existing selected row on goes through activateStaggerSet.
         selectedStaggerSetId: on ? null : state.selectedStaggerSetId,
@@ -702,16 +781,25 @@ export const useUI = create<UIState>((set) => ({
     set({
       staggerOn: true,
       activeStaggerSetId: id,
+      staggerDraftLayerIds: [],
       selectedStaggerSetId: id,
       staggerDelay: Math.max(0, delay),
     }),
-  setSelectedStaggerSetId: (id) => set({ selectedStaggerSetId: id }),
+  setSelectedStaggerSetId: (id) =>
+    set({
+      selectedStaggerSetId: id,
+      ...(id ? { inspectorMode: 'properties' } : {}),
+    }),
   setStaggerDelay: (seconds) =>
     set({ staggerDelay: Math.max(0, seconds) }),
   setRecording: (on) => set({ recording: on }),
   setRenameDialogOpen: (open) => set({ renameDialogOpen: open }),
   setEditingTextId: (id) => set({ editingTextId: id }),
-  setSelectedTrackId: (id) => set({ selectedTrackId: id }),
+  setSelectedTrackId: (id) =>
+    set({
+      selectedTrackId: id,
+      ...(id ? { inspectorMode: 'properties' } : {}),
+    }),
   selectedKeyframes: [],
   setSelectedKeyframes: (keys) =>
     set((s) => {
@@ -719,11 +807,15 @@ export const useUI = create<UIState>((set) => ({
       // nothing changed so subscribers don't re-render gratuitously.
       if (
         s.selectedKeyframes.length === keys.length &&
-        s.selectedKeyframes.every((k, i) => k === keys[i])
+        s.selectedKeyframes.every((k, i) => k === keys[i]) &&
+        (keys.length === 0 || s.inspectorMode === 'properties')
       ) {
         return s
       }
-      return { selectedKeyframes: keys }
+      return {
+        selectedKeyframes: keys,
+        ...(keys.length > 0 ? { inspectorMode: 'properties' as const } : {}),
+      }
     }),
   // trackGroups / kfGroups / kfGroupCollapsed moved into the Y.Doc;
   // the Zustand-side fields and actions are gone. See
@@ -742,7 +834,9 @@ export const useUI = create<UIState>((set) => ({
     set({ layersWidth: next })
   },
   setInspectorWidth: (px) => {
-    const next = clamp(px, 220, 600)
+    // The inspector's fixed label / value / action grid needs enough room for
+    // paired values and three-way sizing controls without clipping or reflow.
+    const next = clamp(px, 280, 600)
     writeStoredNumber('hyper-motion.inspectorWidth', next)
     set({ inspectorWidth: next })
   },
@@ -777,6 +871,34 @@ export const useUI = create<UIState>((set) => ({
   lastSavedAt: null,
   setCurrentFile: (path, savedAt) =>
     set({ currentFilePath: path, lastSavedAt: savedAt }),
+  setSelectedSequenceItem: (itemId, compositionId = null) =>
+    set({
+      selectedSequenceItemId: itemId,
+      activeCompositionId: compositionId,
+      selection: [],
+      selectionAnchor: null,
+      selectedTrackId: null,
+      selectedTrackIds: [],
+      selectedKeyframes: [],
+      componentEditId: null,
+      isolatedRange: null,
+      playing: false,
+      inspectorMode: 'properties',
+    }),
+  setTimelineScope: (scope) => set({ timelineScope: scope }),
+  setPreviewScope: (scope) => set({ previewScope: scope }),
+  setProgramSequencePosition: (itemId, compositionId) =>
+    set({
+      programSequenceItemId: itemId,
+      programCompositionId: compositionId,
+    }),
+  setCameraView: (compositionId, view) =>
+    set((state) => ({
+      cameraViewByComposition: {
+        ...state.cameraViewByComposition,
+        [compositionId]: view,
+      },
+    })),
 }))
 
 function clamp(n: number, lo: number, hi: number): number {

@@ -60,6 +60,12 @@ import {
   listLayersTool,
   listTracksTool,
 } from './tools/queryScene.js'
+import {
+  getSequenceTool,
+  handleGetSequence,
+  handleListScenes,
+  listScenesTool,
+} from './tools/querySequence.js'
 import { CLI_VERSION } from '../version.js'
 
 const SERVER_NAME = 'hypermotion'
@@ -83,6 +89,8 @@ export const TOOLS = [
   getLayerTool,
   listTracksTool,
   listCamerasTool,
+  listScenesTool,
+  getSequenceTool,
   openSceneTool,
   renderSceneTool,
   listKeyframeablePropertiesTool,
@@ -124,6 +132,10 @@ export async function startMcpServer(): Promise<void> {
           return await handleListTracks(args ?? {})
         case 'list_cameras':
           return await handleListCameras(args ?? {})
+        case 'list_scenes':
+          return await handleListScenes(args ?? {})
+        case 'get_sequence':
+          return await handleGetSequence(args ?? {})
         case 'open_scene':
           return await handleOpenScene(args ?? {})
         case 'list_keyframeable_properties':

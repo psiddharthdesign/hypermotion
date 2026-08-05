@@ -11,7 +11,7 @@ import {
   staggerSetPropertyIds,
 } from '@/anim/staggerSets'
 import { useUI } from '@/state/ui'
-import { NumberField } from '@/ui/fields'
+import { TimeField } from '@/ui/fields'
 import { activateStaggerSetForEditing } from '@/ui/staggerEditing'
 
 /**
@@ -107,12 +107,11 @@ export function StaggerGroupPanel({ setId }: { setId: string }) {
 
         <div className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2">
           <span className="text-[10px] text-text-muted">Layer delay</span>
-          <NumberField
+          <TimeField
             value={set.delay}
             onCommit={updateDelay}
             min={0}
             step={0.01}
-            suffix="s"
             width="w-full"
           />
         </div>

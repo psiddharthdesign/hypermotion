@@ -11,7 +11,19 @@
 export * from './types'
 export { fillToCss, defaultFill, imageBackgroundStyle } from './fill'
 export { displayedText, resolveTextCase } from './text'
-export { PROPERTIES, LAYOUT_AFFECTING_PROPERTIES } from './props'
+export {
+  DEFAULT_ELLIPSE_ARC,
+  ellipseArcFromRadians,
+  normalizeEllipseArc,
+  normalizeEllipseStartAngle,
+} from './ellipseArc'
+export {
+  PROPERTIES,
+  LAYOUT_AFFECTING_PROPERTIES,
+  effectBlurPropertyId,
+  effectIdFromBlurPropertyId,
+  propertyDescriptor,
+} from './props'
 export type { PropertyDescriptor, PropertyGroup, Interpolation } from './props'
 export { createSceneAPI, snapshotScene } from './doc'
 export type { SceneAPI } from './doc'
@@ -21,6 +33,12 @@ export { createSampleScene } from './sample'
 export { SceneProvider } from './context'
 export { useSceneAPI, useSceneVersion } from './hooks'
 export * from './vector'
+export {
+  MAX_LAYER_BLUR_PX,
+  clampLayerBlurAmount,
+  effectStableId,
+  normalizeLayerEffects,
+} from './effects'
 // `apiReady` is the module-scope singleton — a Promise<SceneAPI> that
 // resolves once IndexedDB has hydrated the doc. Exposed for non-React
 // callers (the headless export driver) that need the API without going

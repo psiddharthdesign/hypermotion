@@ -22,6 +22,7 @@
  */
 
 import { runExport, type ExportSceneContext } from './orchestrator'
+import { runExportSingleFlight } from './singleFlight'
 
 export type {
   ExportFormat,
@@ -49,5 +50,5 @@ export type { ExportSceneContext } from './orchestrator'
  * they want to chain UI off completion.
  */
 export async function exportScene(ctx: ExportSceneContext): Promise<void> {
-  return runExport(ctx)
+  return runExportSingleFlight(() => runExport(ctx))
 }

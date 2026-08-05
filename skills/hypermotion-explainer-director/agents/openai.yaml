@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hyper Motion Explainer Director"
+  short_description: "Direct multi-scene product explainer videos"
+  default_prompt: "Use $hypermotion-explainer-director to turn this brief, product flow, and audio into an editable Hyper Motion explainer and final video."

@@ -29,6 +29,30 @@ export interface CanvasTextAnimationSegment {
 type MeasureText = (text: string) => number
 
 /**
+ * Return glyph origins whose right edge follows the measured width of each
+ * progressively longer run. Canvas does not apply kerning between separate
+ * fillText() calls, so adding isolated glyph advances drifts beyond the width
+ * returned by measureText() and can clip the last glyph in an atlas cell.
+ */
+export function trackedGlyphOffsets(
+  text: string,
+  tracking: number,
+  measure: MeasureText,
+): number[] {
+  const offsets: number[] = []
+  let prefix = ''
+  Array.from(text).forEach((character, index) => {
+    prefix += character
+    offsets.push(
+      measure(prefix) -
+        measure(character) +
+        (Number.isFinite(tracking) ? index * tracking : 0),
+    )
+  })
+  return offsets
+}
+
+/**
  * Greedy line breaking shared by static and animated Canvas2D text.
  * Keeping one implementation is important: animated words/glyphs must inherit
  * the exact same visual lines as the unanimated text instead of doing a second,
@@ -86,6 +110,7 @@ export function layoutCanvasTextAnimationSegments({
   maxWidth,
   lineHeightPx,
   align,
+  tracking = 0,
   measure,
 }: {
   text: string
@@ -95,8 +120,11 @@ export function layoutCanvasTextAnimationSegments({
   maxWidth: number
   lineHeightPx: number
   align: TextAlign
+  /** Letter spacing already included by `measure`, in canvas pixels. */
+  tracking?: number
   measure: MeasureText
 }): CanvasTextAnimationSegment[] {
+  const resolvedTracking = Number.isFinite(tracking) ? tracking : 0
   if (applyTo === 'lines') {
     const segments: CanvasTextAnimationSegment[] = []
     let visualLineIndex = 0
@@ -174,12 +202,20 @@ export function layoutCanvasTextAnimationSegments({
       if (part === '') continue
       const prefixWidth = measure(prefix)
       const trackingIndex = Array.from(prefix).length
-      const width = Math.max(0, measure(prefix + part) - prefixWidth)
+      // measure(prefix) contains only the gaps *inside* the prefix. The gap
+      // between prefix and part belongs before this segment, not inside its
+      // atlas cell. Moving it from width to x keeps tracked segments from
+      // overlapping while preserving their measured right edge.
+      const boundaryTracking = trackingIndex > 0 ? resolvedTracking : 0
+      const width = Math.max(
+        0,
+        measure(prefix + part) - prefixWidth - boundaryTracking,
+      )
       const whitespace = /^\s+$/.test(part)
       const animate = !whitespace && part.length > 0
       segments.push({
         text: part,
-        x: lineX + prefixWidth + justifyOffset,
+        x: lineX + prefixWidth + boundaryTracking + justifyOffset,
         y: y + lineIndex * lineHeightPx,
         width,
         height: lineHeightPx,

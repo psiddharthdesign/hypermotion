@@ -44,9 +44,11 @@ type SuccessSentinel = {
   readonly bytes: number
 }
 
-// Maximum wait for a render to complete. Keep hung desktop handoffs
-// bounded while still allowing high-quality renders to finish.
-const RENDER_TIMEOUT_MS = 5 * 60 * 1000
+// Maximum wait for a render to complete. 4K and effects-heavy 60 fps
+// sequences can legitimately take longer than the old five-minute limit.
+// Keep the wait bounded by default while allowing render farms and slower
+// machines to opt into a larger window without rebuilding the CLI.
+export const DEFAULT_RENDER_TIMEOUT_MS = 30 * 60 * 1000
 // How often we poll for the sentinel file.
 const POLL_INTERVAL_MS = 250
 // Grace period after child exit before deciding the render failed.
@@ -57,6 +59,9 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   const sentinelPath = `${req.outputPath}.done`
   const errorPath = `${req.outputPath}.error`
   const verbose = process.env.HYPERMOTION_VERBOSE === '1'
+  const renderTimeoutMs = resolveRenderTimeoutMs(
+    process.env.HYPERMOTION_RENDER_TIMEOUT_MS,
+  )
 
   // Clean slate — remove any stale output / sentinels from previous runs
   // so we can't false-positive on old data.
@@ -128,7 +133,7 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   // Poll until the success sentinel is fully written. Empty, partial, or
   // malformed sentinel files are ignored and retried.
   const start = Date.now()
-  while (Date.now() - start < RENDER_TIMEOUT_MS) {
+  while (Date.now() - start < renderTimeoutMs) {
     if (errorRef.current) {
       throw new Error(`Failed to spawn desktop app: ${errorRef.current.message}`)
     }
@@ -187,10 +192,23 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
   }
 
   throw new Error(
-    `Render timed out after ${RENDER_TIMEOUT_MS / 1000}s. ` +
+    `Render timed out after ${renderTimeoutMs / 1000}s. ` +
       `Make sure the desktop app is responsive. Set HYPERMOTION_VERBOSE=1 ` +
-      `to see the app's stderr and diagnose where it's stuck.`,
+      `to see the app's stderr and diagnose where it's stuck, or increase ` +
+      `HYPERMOTION_RENDER_TIMEOUT_MS for a known long render.`,
   )
+}
+
+/** Resolve the render watchdog, falling back safely for invalid values. */
+export function resolveRenderTimeoutMs(value: string | undefined): number {
+  if (value === undefined || value.trim() === '') {
+    return DEFAULT_RENDER_TIMEOUT_MS
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 1000
+    ? Math.floor(parsed)
+    : DEFAULT_RENDER_TIMEOUT_MS
 }
 
 function cleanFile(p: string): void {

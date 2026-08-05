@@ -34,6 +34,21 @@ describe('canvas text editing', () => {
     })
   })
 
+  it('uses the interruptible DOM renderer for transient geometry previews', () => {
+    expect(canvasTextEditPresentation(true, null, true)).toEqual({
+      showDomScene: true,
+      hideWebglScene: true,
+      suspendWebglScene: true,
+      applyDomCameraPostEffects: false,
+    })
+    expect(canvasTextEditPresentation(false, null, true)).toEqual({
+      showDomScene: true,
+      hideWebglScene: true,
+      suspendWebglScene: true,
+      applyDomCameraPostEffects: false,
+    })
+  })
+
   it('recognizes a nearby second press without relying on dblclick', () => {
     const first = { time: 100, clientX: 50, clientY: 80 }
     expect(

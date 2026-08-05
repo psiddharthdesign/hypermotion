@@ -58,6 +58,19 @@ export interface ExportSceneContext {
   api: SceneAPI
   sceneName: string
   durationSec: number
+  /**
+   * Export one active composition or the ordered project sequence. When
+   * omitted, the render-window client automatically selects `sequence` for a
+   * project with multiple sequence items and `scene` for legacy/single-scene
+   * documents.
+   */
+  scope?: 'scene' | 'sequence'
+  /**
+   * Master occurrence represented by a Scene export. Its source window maps
+   * the Scene-local clock onto the project soundtrack. When omitted, export
+   * resolves the active composition's first occurrence deterministically.
+   */
+  selectedSequenceItemId?: string
   /** Scene's intrinsic frame rate. */
   frameRate: number
   /** Format the user picked. */

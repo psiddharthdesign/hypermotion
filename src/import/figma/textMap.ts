@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Size, TextNode } from '@/scene'
+import type { TextNode } from '@/scene'
 import { figmaToFill } from './fillMap'
 import { isGoogleFont } from '@/ui/fonts/googleFonts'
+import { figmaToSize } from './layoutMap'
 import type { FigmaCapturedText } from './types'
 
 /**
  * Map a Figma text node to a partial TextNode for createNode().
  *
  * `text/color/fontFamily/fontSize/fontWeight/lineHeight/letterSpacing/
- * textAlign` flow through directly. The imported text box is pinned to
- * Figma's captured pixel dimensions. Figma has already resolved HUG,
- * FILL, mixed runs, and its exact font metrics; asking the browser and
- * Yoga to resolve those modes again can produce a different box while
- * a web font is loading, which then wraps labels that are single-line
- * in Figma. Keeping the captured box makes clipboard import a snapshot
- * of the authored frame instead of a responsive reinterpretation.
+ * textAlign` flow through directly. Text sizing keeps Figma's authored
+ * FIXED/HUG/FILL modes. This matters especially for auto-width labels: pinning
+ * their captured width makes even a small font-metric difference wrap a final
+ * word despite the surrounding container having ample room.
  *
  * The first visible fill on the text node provides the color. Falls
  * back to a readable default if there's no fill — Figma rarely sends
@@ -30,10 +28,7 @@ export function figmaToText(
     fillObj && fillObj.kind === 'solid'
       ? fillObj.color
       : 'oklch(0.86 0.012 280)'
-  const size: Size = {
-    width: node.width,
-    height: node.height,
-  }
+  const size = figmaToSize(node)
   // Hyper Motion stores `lineHeight` as a UNITLESS multiplier of
   // font-size (CSS-style "line-height: 1.4"). Figma sends it as
   // already-resolved pixels in `lineHeightPx`. Divide to get the

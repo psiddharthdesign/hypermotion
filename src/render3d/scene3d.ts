@@ -28,6 +28,11 @@ import {
   type CameraPostEffectsState,
 } from '@/render3d/postEffects'
 import { isAlwaysOnTopNode } from '@/render/layerCompositing'
+import {
+  expandRectForLayerEffects,
+  nodeEffectsWrapSubtree,
+  resolveAnimatedLayerEffects,
+} from '@/render/layerEffects'
 
 export interface ViewportSize {
   width: number
@@ -64,7 +69,16 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 export interface Plane3D {
   nodeId: NodeId
   node: Node
+  /** Authored node bounds used for selection, hit testing, and outlines. */
   rect: Rect
+  /**
+   * Raster/mesh bounds for a flattened subtree. This may exceed `rect` when
+   * descendants overflow a non-clipping wrapper. Keeping it separate avoids
+   * turning temporary clipping into permanent texture loss.
+   */
+  textureRect?: Rect
+  /** World-space center corresponding to `textureRect`. */
+  textureCenter?: Vec3
   /**
    * How the compositor should paint this plane. Spatial text keeps its own
    * plane topology even while a different stacked text effect is active; the
@@ -151,6 +165,13 @@ export interface PlaneBuildContext {
   readonly nodesById: ReadonlyMap<NodeId, Node>
   readonly segmentTextNodeIds: ReadonlySet<NodeId>
   readonly explicit3DDescendantNodeIds: ReadonlySet<NodeId>
+  /**
+   * Descendants that cannot be folded into a Canvas2D compositing boundary.
+   * Segment-text planes are intentionally excluded: the subtree painter can
+   * reproduce those animations, which lets a parent frame's effects apply to
+   * its final pixels instead of only to the frame fill.
+   */
+  readonly effectRasterizationBlockedDescendantNodeIds: ReadonlySet<NodeId>
   readonly videoDescendantNodeIds: ReadonlySet<NodeId>
   readonly directVideoChildNodeIds: ReadonlySet<NodeId>
   readonly directSegmentTextChildNodeIds: ReadonlySet<NodeId>
@@ -313,10 +334,38 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
   }
 
   const explicit3DDescendantNodeIds = new Set<NodeId>()
+  const effectRasterizationBlockedDescendantNodeIds = new Set<NodeId>()
   const videoDescendantNodeIds = new Set<NodeId>()
+  const effectRasterizationBlockedMemo = new Map<NodeId, boolean>()
+  const hasEffectRasterizationBlockedDescendant = (nodeId: NodeId): boolean => {
+    const cached = effectRasterizationBlockedMemo.get(nodeId)
+    if (cached !== undefined) return cached
+    effectRasterizationBlockedMemo.set(nodeId, false)
+    const node = nodesById.get(nodeId)
+    if (!node) return false
+    for (const childId of node.children) {
+      const child = nodesById.get(childId)
+      if (!child) continue
+      const renderMode = child.transform.renderMode ?? 'flat'
+      if (
+        child.kind === 'video' ||
+        isAlwaysOnTopNode(child) ||
+        renderMode === 'plane' ||
+        renderMode === 'group3d' ||
+        hasEffectRasterizationBlockedDescendant(childId)
+      ) {
+        effectRasterizationBlockedMemo.set(nodeId, true)
+        return true
+      }
+    }
+    return false
+  }
   for (const nodeId of nodesById.keys()) {
     if (hasExplicit3DDescendant(nodeId)) {
       explicit3DDescendantNodeIds.add(nodeId)
+    }
+    if (hasEffectRasterizationBlockedDescendant(nodeId)) {
+      effectRasterizationBlockedDescendantNodeIds.add(nodeId)
     }
     if (hasVideoDescendant(nodeId)) {
       videoDescendantNodeIds.add(nodeId)
@@ -328,6 +377,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
     nodesById,
     segmentTextNodeIds,
     explicit3DDescendantNodeIds,
+    effectRasterizationBlockedDescendantNodeIds,
     videoDescendantNodeIds,
     directVideoChildNodeIds,
     directSegmentTextChildNodeIds,
@@ -621,6 +671,9 @@ export function buildWorldPlanes(
   const hasExplicit3DDescendant = (id: NodeId): boolean =>
     context.explicit3DDescendantNodeIds.has(id)
 
+  const hasEffectRasterizationBlockedDescendant = (id: NodeId): boolean =>
+    context.effectRasterizationBlockedDescendantNodeIds.has(id)
+
   const hasVideoDescendant = (id: NodeId): boolean =>
     context.videoDescendantNodeIds.has(id)
 
@@ -629,6 +682,153 @@ export function buildWorldPlanes(
 
   const hasDirectSegmentTextChild = (node: Node | null): boolean =>
     !!node && context.directSegmentTextChildNodeIds.has(node.id)
+
+  interface Matrix2D {
+    a: number
+    b: number
+    c: number
+    d: number
+    e: number
+    f: number
+  }
+
+  const IDENTITY_MATRIX_2D: Matrix2D = {
+    a: 1,
+    b: 0,
+    c: 0,
+    d: 1,
+    e: 0,
+    f: 0,
+  }
+
+  const multiplyMatrix2D = (
+    left: Matrix2D,
+    right: Matrix2D,
+  ): Matrix2D => ({
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+    e: left.a * right.e + left.c * right.f + left.e,
+    f: left.b * right.e + left.d * right.f + left.f,
+  })
+
+  const nodeMatrix2D = (node: Node, rect: Rect): Matrix2D => {
+    const value = animated[node.id]
+    const x = value?.x ?? node.transform.x
+    const y = value?.y ?? node.transform.y
+    const rotation = value?.rotation ?? node.transform.rotation
+    const scaleX = value?.scaleX ?? node.transform.scaleX
+    const scaleY = value?.scaleY ?? node.transform.scaleY
+    const anchorX = value?.anchorX ?? node.transform.anchorX ?? 0.5
+    const anchorY = value?.anchorY ?? node.transform.anchorY ?? 0.5
+    const originX = rect.x + rect.width * anchorX
+    const originY = rect.y + rect.height * anchorY
+    const radians = (rotation * Math.PI) / 180
+    const cosine = Math.cos(radians)
+    const sine = Math.sin(radians)
+    return multiplyMatrix2D(
+      { ...IDENTITY_MATRIX_2D, e: x, f: y },
+      multiplyMatrix2D(
+        { ...IDENTITY_MATRIX_2D, e: originX, f: originY },
+        multiplyMatrix2D(
+          {
+            a: cosine,
+            b: sine,
+            c: -sine,
+            d: cosine,
+            e: 0,
+            f: 0,
+          },
+          multiplyMatrix2D(
+            { a: scaleX, b: 0, c: 0, d: scaleY, e: 0, f: 0 },
+            {
+              ...IDENTITY_MATRIX_2D,
+              e: -originX,
+              f: -originY,
+            },
+          ),
+        ),
+      ),
+    )
+  }
+
+  const transformedPoint = (
+    matrix: Matrix2D,
+    x: number,
+    y: number,
+  ): { x: number; y: number } => ({
+    x: matrix.a * x + matrix.c * y + matrix.e,
+    y: matrix.b * x + matrix.d * y + matrix.f,
+  })
+
+  const expandedSubtreeRect = (
+    nodeId: NodeId,
+    rootRect: Rect,
+    emittedPlaneNodeIds: ReadonlySet<NodeId>,
+  ): Rect => {
+    let minX = rootRect.x
+    let minY = rootRect.y
+    let maxX = rootRect.x + rootRect.width
+    let maxY = rootRect.y + rootRect.height
+    const scan = (id: NodeId, parentMatrix: Matrix2D) => {
+      const child = getNode(id)
+      const childRect = layout[id]
+      if (!child || !childRect || !child.visible || child.kind === 'camera') {
+        return
+      }
+      // A separately emitted plane owns its complete raster subtree. Including
+      // it here would create a second, mostly transparent backing plane and
+      // change the imported scene's paint/depth composition.
+      if (emittedPlaneNodeIds.has(id)) return
+      const matrix = multiplyMatrix2D(parentMatrix, nodeMatrix2D(child, childRect))
+      const visualRect = expandRectForLayerEffects(
+        childRect,
+        resolveAnimatedLayerEffects(
+          child.appearance.effects,
+          animated[child.id]?.effectBlur,
+        ),
+      )
+      const corners = [
+        transformedPoint(matrix, visualRect.x, visualRect.y),
+        transformedPoint(
+          matrix,
+          visualRect.x + visualRect.width,
+          visualRect.y,
+        ),
+        transformedPoint(
+          matrix,
+          visualRect.x + visualRect.width,
+          visualRect.y + visualRect.height,
+        ),
+        transformedPoint(
+          matrix,
+          visualRect.x,
+          visualRect.y + visualRect.height,
+        ),
+      ]
+      for (const corner of corners) {
+        minX = Math.min(minX, corner.x)
+        minY = Math.min(minY, corner.y)
+        maxX = Math.max(maxX, corner.x)
+        maxY = Math.max(maxY, corner.y)
+      }
+      for (const childId of child.children) scan(childId, matrix)
+    }
+    const root = getNode(nodeId)
+    // The plane root's transform is applied by its GPU mesh. Descendant
+    // transforms are baked into the subtree bitmap and therefore must be
+    // included in these raster bounds.
+    for (const childId of root?.children ?? []) {
+      scan(childId, IDENTITY_MATRIX_2D)
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    }
+  }
 
   const clipFromFrame = (rect: Rect, inherited: Inherited3D): PlaneClip3D => {
     const basisXLength = Math.max(0.0001, len3(inherited.basisX))
@@ -647,7 +847,11 @@ export function buildWorldPlanes(
     }
   }
 
-  const visit = (id: NodeId, inherited: Inherited3D, activeClips: PlaneClip3D[] = []): void => {
+  const visit = (
+    id: NodeId,
+    inherited: Inherited3D,
+    activeClips: PlaneClip3D[] = [],
+  ): void => {
     if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
     const rect = layout[id]
@@ -732,6 +936,17 @@ export function buildWorldPlanes(
         renderMode === 'group3d' ||
         parentMode === 'group3d' ||
         (options.promoteRootChildren ?? true) && isRootChild)
+    const effectRasterBoundary =
+      shouldEmitPlane &&
+      !independentNodes &&
+      nodeEffectsWrapSubtree(
+        node,
+        resolveAnimatedLayerEffects(
+          node.appearance.effects,
+          animated[node.id]?.effectBlur,
+        ),
+      ) &&
+      !hasEffectRasterizationBlockedDescendant(id)
 
     if (shouldEmitPlane) {
       const rotX = nextInherited.rotationX
@@ -741,12 +956,15 @@ export function buildWorldPlanes(
       const down = norm3(nextInherited.basisY)
       const normal = norm3(nextInherited.basisZ)
       const contentMode =
-        segmentText ||
-        splitsSegmentStack ||
-        independentNodes ||
-        node.kind === 'video' ||
-        (videoStackSibling && node.kind !== 'frame' && node.kind !== 'component') ||
-        renderMode === 'group3d'
+        !effectRasterBoundary &&
+        (segmentText ||
+          splitsSegmentStack ||
+          independentNodes ||
+          node.kind === 'video' ||
+          (videoStackSibling &&
+            node.kind !== 'frame' &&
+            node.kind !== 'component') ||
+          renderMode === 'group3d')
           ? 'self'
           : 'subtree'
       const center = mapPoint(nextInherited, {
@@ -805,11 +1023,12 @@ export function buildWorldPlanes(
         : activeClips
 
     if (
-      independentNodes ||
-      !shouldEmitPlane ||
-      hasVideoDescendant(id) ||
-      (node.transform.renderMode ?? 'flat') === 'group3d' ||
-      containsExplicit3DDescendant
+      !effectRasterBoundary &&
+      (independentNodes ||
+        !shouldEmitPlane ||
+        hasVideoDescendant(id) ||
+        (node.transform.renderMode ?? 'flat') === 'group3d' ||
+        containsExplicit3DDescendant)
     ) {
       const childIds = splitsSegmentStack
         ? node.children
@@ -821,7 +1040,73 @@ export function buildWorldPlanes(
   }
 
   visit(rootId, IDENTITY_INHERITED)
+  const emittedPlaneNodeIds = new Set(planes.map((plane) => plane.nodeId))
+  for (const plane of planes) {
+    const effects = resolveAnimatedLayerEffects(
+      plane.node.appearance.effects,
+      animated[plane.nodeId]?.effectBlur,
+    )
+    let textureRect =
+      plane.contentMode === 'subtree'
+        ? expandedSubtreeRect(
+            plane.nodeId,
+            plane.rect,
+            emittedPlaneNodeIds,
+          )
+        : plane.rect
+    textureRect =
+      plane.contentMode === 'subtree' &&
+      nodeEffectsWrapSubtree(plane.node, effects)
+        ? expandRectForLayerEffects(
+            textureRect,
+            effects,
+          )
+        : unionRects(
+            textureRect,
+            expandRectForLayerEffects(
+              plane.rect,
+              effects,
+            ),
+          )
+    if (
+      textureRect.x === plane.rect.x &&
+      textureRect.y === plane.rect.y &&
+      textureRect.width === plane.rect.width &&
+      textureRect.height === plane.rect.height
+    ) {
+      continue
+    }
+    const offsetX =
+      textureRect.x +
+      textureRect.width / 2 -
+      (plane.rect.x + plane.rect.width / 2)
+    const offsetY =
+      textureRect.y +
+      textureRect.height / 2 -
+      (plane.rect.y + plane.rect.height / 2)
+    plane.textureRect = textureRect
+    plane.textureCenter = add3(
+      plane.center,
+      add3(
+        mul3(plane.right, offsetX * plane.scaleX),
+        mul3(plane.down, offsetY * plane.scaleY),
+      ),
+    )
+  }
   return planes
+}
+
+function unionRects(a: Rect, b: Rect): Rect {
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  const right = Math.max(a.x + a.width, b.x + b.width)
+  const bottom = Math.max(a.y + a.height, b.y + b.height)
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y),
+  }
 }
 
 function collectTargetPathNodeIds(

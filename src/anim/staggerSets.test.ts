@@ -31,6 +31,7 @@ import {
   retimeStaggerSet,
   stampStaggerSetPatch,
   staggerSetPropertyIds,
+  toggleDraftStaggerSetPropertyFromMember,
   toggleStaggerSetPropertyKeyframes,
   toggleStaggerSetPropertyFromMember,
   type StaggerPropertyTarget,
@@ -167,6 +168,62 @@ describe('stagger property keyframe sets', () => {
     ).toBe('at')
   })
 
+  it('keeps the captured persisted set and offsets when the live selection narrows', () => {
+    const { api, layers, targets, options } = setup()
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets,
+      'transform.x',
+      1,
+      options,
+    )
+
+    // The editor is now only showing B and C. The relation captured by S
+    // still owns A/B/C, and the B/C values remain individual where supplied.
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      [
+        { nodeId: layers[1]!, currentValue: 200 },
+        { nodeId: layers[2]!, currentValue: 300 },
+      ],
+      'transform.x',
+      3,
+      options,
+    )
+
+    expect(times(api, layers[0]!, 'transform.x')).toEqual([1, 3])
+    expect(times(api, layers[1]!, 'transform.x')).toEqual([1.1, 3.1])
+    expect(times(api, layers[2]!, 'transform.x')).toEqual([1.2, 3.2])
+    expect(
+      layers.map(
+        (nodeId) =>
+          findTrack(api, nodeId, 'transform.x')!.keyframes.at(-1)!.value,
+      ),
+    ).toEqual([200, 200, 300])
+    expect(api.getUiState().staggerSets[options.setId]?.layerIds).toEqual(
+      layers,
+    )
+  })
+
+  it('keeps a captured draft set whole when its live selection narrows', () => {
+    const { api, layers, targets, options } = setup()
+
+    toggleStaggerSetPropertyKeyframes(
+      api,
+      targets.slice(0, 2),
+      'transform.y',
+      2,
+      options,
+    )
+
+    expect(times(api, layers[0]!, 'transform.y')).toEqual([2])
+    expect(times(api, layers[1]!, 'transform.y')).toEqual([2.1])
+    expect(times(api, layers[2]!, 'transform.y')).toEqual([2.2])
+    expect(api.getUiState().staggerSets[options.setId]?.layerIds).toEqual(
+      layers,
+    )
+  })
+
   it('accepts more properties and later keyframes after already staggering', () => {
     const { api, layers, targets, options } = setup()
     toggleStaggerSetPropertyKeyframes(
@@ -242,6 +299,27 @@ describe('stagger property keyframe sets', () => {
         ),
       ).toEqual([0, 1])
     }
+  })
+
+  it('seeds a fresh stagger from one selected member without collapsing its offsets', () => {
+    const { api, layers, options } = setup()
+
+    const result = toggleDraftStaggerSetPropertyFromMember(
+      api,
+      options,
+      layers[1]!,
+      'transform.y',
+      2,
+      240,
+    )
+
+    expect(result?.action).toBe('added')
+    expect(times(api, layers[0]!, 'transform.y')).toEqual([1.9])
+    expect(times(api, layers[1]!, 'transform.y')).toEqual([2])
+    expect(times(api, layers[2]!, 'transform.y')).toEqual([2.1])
+    expect(api.getUiState().staggerSets[options.setId]?.layerIds).toEqual(
+      layers,
+    )
   })
 
   it('adopts a complete leader property track across the stagger and undoes atomically', () => {
@@ -1107,8 +1185,8 @@ describe('stacked text animation stagger sets', () => {
       staggerCurve,
     })
     expect(secondReturn.textAnimation?.startTime).toBe(5)
-    const firstNode = api.getNode(first)
-    expect(firstNode?.kind === 'text' && firstNode.textAnimation).toMatchObject({
+    const copiedFirst = api.getNode(first)
+    expect(copiedFirst?.kind === 'text' ? copiedFirst.textAnimation : null).toMatchObject({
       startTime: 1,
       mode: 'in',
     })
@@ -1129,7 +1207,11 @@ describe('stacked text animation stagger sets', () => {
     ]
     for (const track of tracks) {
       api.setTrack(track)
-      api.setNodeProperty(track.nodeId, 'textAnimation', track.textAnimation)
+      api.setNodeProperty(
+        track.nodeId,
+        'textAnimation',
+        track.textAnimation ?? null,
+      )
     }
     registerStaggerSetKeyframes(
       api,
@@ -1163,8 +1245,8 @@ describe('stacked text animation stagger sets', () => {
       order: 'forward',
       startTime: 1.2,
     })
-    const firstNode = api.getNode(first)
-    expect(firstNode?.kind === 'text' && firstNode.textAnimation).toMatchObject({
+    const reversedFirst = api.getNode(first)
+    expect(reversedFirst?.kind === 'text' ? reversedFirst.textAnimation : null).toMatchObject({
       mode: 'in',
       startTime: 1.2,
     })

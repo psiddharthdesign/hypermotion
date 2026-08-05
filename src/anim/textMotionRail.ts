@@ -4,6 +4,7 @@ import {
   normalizeTextMotionPath,
   type TextMotionPath,
 } from './textMotionPath'
+import type { TextAnimationApplyTo } from './textAnimations'
 
 export interface TextMotionRailPoint {
   x: number
@@ -47,6 +48,17 @@ const compiledPathCache = new WeakMap<
   TextMotionPath,
   { lineHeight: number; compiled: CompiledTextMotionPath }
 >()
+
+/**
+ * Shared spatial rails operate on the natural centres of independently
+ * typeset glyphs or words. Lines and whole layers still use the regular
+ * per-segment motion-path offset instead.
+ */
+export function textMotionPathUsesSharedRail(
+  applyTo: TextAnimationApplyTo,
+): boolean {
+  return applyTo === 'letters' || applyTo === 'words'
+}
 
 /**
  * Place one visual line of glyph/word centres on a single composite rail.

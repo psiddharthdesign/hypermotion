@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useUI, type ContextMenuItem } from '@/state/ui'
+import {
+  useUI,
+  type ContextMenuItem,
+  type ContextMenuState,
+} from '@/state/ui'
 
 /**
  * Right-click popover.
@@ -20,14 +24,15 @@ export function ContextMenu() {
   const menu = useUI((s) => s.contextMenu)
   const close = useUI((s) => s.closeContextMenu)
   const menuRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const [pos, setPos] = useState<{
+    menu: ContextMenuState
+    left: number
+    top: number
+  } | null>(null)
 
   // Flip logic runs after layout so we know the rendered menu size.
   useLayoutEffect(() => {
-    if (!menu) {
-      setPos(null)
-      return
-    }
+    if (!menu) return
     const el = menuRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
@@ -38,7 +43,7 @@ export function ContextMenu() {
     let top = menu.y
     if (left + rect.width + pad > vw) left = Math.max(pad, vw - rect.width - pad)
     if (top + rect.height + pad > vh) top = Math.max(pad, vh - rect.height - pad)
-    setPos({ left, top })
+    setPos({ menu, left, top })
   }, [menu])
 
   // Dismissal — attach only while the menu is open.
@@ -67,6 +72,7 @@ export function ContextMenu() {
   }, [menu, close])
 
   if (!menu) return null
+  const currentPos = pos?.menu === menu ? pos : null
 
   const runItem = (item: ContextMenuItem) => {
     if (item.disabled || item.kind === 'separator') return
@@ -82,12 +88,12 @@ export function ContextMenu() {
       // flash in the wrong spot when the menu flips at the edge.
       style={{
         position: 'fixed',
-        left: pos?.left ?? menu.x,
-        top: pos?.top ?? menu.y,
-        visibility: pos ? 'visible' : 'hidden',
+        left: currentPos?.left ?? menu.x,
+        top: currentPos?.top ?? menu.y,
+        visibility: currentPos ? 'visible' : 'hidden',
         zIndex: 1000,
       }}
-      className="min-w-[180px] rounded-md border border-border bg-panel py-1 shadow-2xl"
+      className="hm-menu-surface min-w-[180px] p-1"
       onContextMenu={(e) => e.preventDefault()}
     >
       {menu.items.map((item, i) => {
@@ -103,12 +109,12 @@ export function ContextMenu() {
             disabled={item.disabled}
             onClick={() => runItem(item)}
             className={[
-              'flex w-full items-center justify-between gap-6 px-3 py-1 text-left text-[12px] transition-colors',
+              'flex min-h-7 w-full items-center justify-between gap-6 rounded-[calc(var(--radius-control)_-_2px)] px-2.5 py-1 text-left text-[11px] transition-colors',
               item.disabled
                 ? 'cursor-not-allowed text-text-dim'
                 : item.danger
                   ? 'text-text-muted hover:bg-red-950/40 hover:text-red-300'
-                  : 'text-text hover:bg-accent-soft hover:text-text',
+                  : 'text-text hover:bg-control-hover',
             ].join(' ')}
           >
             <span>{item.label}</span>

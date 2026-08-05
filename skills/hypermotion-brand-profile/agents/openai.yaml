@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hyper Motion Brand Profile"
+  short_description: "Apply reusable brand and motion direction"
+  default_prompt: "Use $hypermotion-brand-profile to capture and apply this brand’s visual, verbal, motion, and logo-outro rules to Hyper Motion videos."

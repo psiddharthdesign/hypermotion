@@ -9,12 +9,12 @@
  * visually coherent (the midpoint of red → green is a real olive, not
  * brown soup). This matches how a human expects colors to blend.
  *
- * Scope: we parse and emit OKLCH strings specifically — every color
- * in the app already flows through that format (see
- * `DEFAULT_APPEARANCE.fill` etc.). RGB / HSL / hex fallbacks land if
- * we ever accept imported palettes, but for keyframed tweens we assume
- * OKLCH on both endpoints. When a parse fails we defer to step
- * semantics (returns null; the caller falls through to step).
+ * Scope: authored colors are normally OKLCH, while imports and legacy
+ * scenes can still contain hexadecimal sRGB values. Both formats are
+ * normalized to OKLCH before interpolation so a mixed pair animates
+ * continuously instead of holding the first color until the final frame.
+ * Unknown formats still defer to step semantics (returns null; the caller
+ * falls through to step).
  */
 
 export interface OklchColor {
@@ -112,18 +112,19 @@ export function lerpOklch(a: OklchColor, b: OklchColor, u: number): OklchColor {
 }
 
 /**
- * Convenience: take two OKLCH strings and an easing-adjusted u in
- * [0, 1], return the interpolated OKLCH string. Returns null if either
- * endpoint fails to parse; the caller should fall through to step
- * interpolation in that case.
+ * Convenience: take two supported CSS color strings and an easing-adjusted
+ * u in [0, 1], return the interpolated OKLCH string. Both OKLCH and the hex
+ * forms accepted by CSS (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) are
+ * supported. Returns null if either endpoint fails to parse; the caller
+ * should fall through to step interpolation in that case.
  */
 export function lerpOklchStrings(
   aStr: string,
   bStr: string,
   u: number,
 ): string | null {
-  const a = parseOklch(aStr)
-  const b = parseOklch(bStr)
+  const a = parseInterpolableColor(aStr)
+  const b = parseInterpolableColor(bStr)
   if (!a || !b) return null
   return formatOklch(lerpOklch(a, b, u))
 }
@@ -140,6 +141,54 @@ function normalizeHue(h: number): number {
   let r = h % 360
   if (r < 0) r += 360
   return r
+}
+
+function parseInterpolableColor(input: string): OklchColor | null {
+  return parseOklch(input) ?? parseHexOklch(input)
+}
+
+/** Convert a hexadecimal sRGB color to the engine's interpolation space. */
+function parseHexOklch(input: string): OklchColor | null {
+  let hex = input.trim().toLowerCase()
+  if (!hex.startsWith('#')) return null
+  hex = hex.slice(1)
+  if (hex.length === 3 || hex.length === 4) {
+    hex = [...hex].map((digit) => digit + digit).join('')
+  }
+  if (
+    (hex.length !== 6 && hex.length !== 8) ||
+    !/^[0-9a-f]+$/.test(hex)
+  ) {
+    return null
+  }
+
+  const channel = (start: number) =>
+    srgbToLinear(Number.parseInt(hex.slice(start, start + 2), 16) / 255)
+  const r = channel(0)
+  const g = channel(2)
+  const b = channel(4)
+  const alpha =
+    hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) / 255 : 1
+
+  // Linear sRGB -> OKLab, using Bjorn Ottosson's reference matrices.
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s
+  const A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s
+  const B = 0.0259040371 * l + 0.782771766 * m - 0.808675766 * s
+  const C = Math.sqrt(A * A + B * B)
+  const H =
+    C <= Number.EPSILON
+      ? Number.NaN
+      : normalizeHue((Math.atan2(B, A) * 180) / Math.PI)
+  return { L, C, H, alpha }
+}
+
+function srgbToLinear(channel: number): number {
+  return channel <= 0.04045
+    ? channel / 12.92
+    : Math.pow((channel + 0.055) / 1.055, 2.4)
 }
 
 function parseNumberOrPercent(s: string, percentBase: number): number | null {

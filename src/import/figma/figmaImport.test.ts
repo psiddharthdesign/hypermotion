@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
+import { createSceneAPI } from '@/scene/doc'
 
 // The production font module also exports React hooks wired to the live scene
 // document. The importer only needs this pure predicate, so isolate it from
@@ -16,11 +17,18 @@ import {
   figmaVectorAffine,
 } from './layoutMap'
 import { figmaToText } from './textMap'
+import { importFigmaPayload } from './walk'
 import type {
   FigmaCapturedFrame,
+  FigmaCapturedEllipse,
   FigmaCapturedRect,
   FigmaCapturedText,
   FigmaSolidFill,
+} from './types'
+import {
+  FIGMA_PAYLOAD_FORMAT,
+  FIGMA_PAYLOAD_VERSION,
+  type FigmaPayload,
 } from './types'
 
 const carbon: FigmaSolidFill = {
@@ -51,6 +59,18 @@ function capturedRect(
     strokeWeight: 0,
     strokeAlign: 'INSIDE',
     strokeDashes: [],
+    ...overrides,
+  }
+}
+
+function capturedEllipse(
+  overrides: Partial<FigmaCapturedEllipse> = {},
+): FigmaCapturedEllipse {
+  return {
+    ...capturedRect(),
+    id: 'ellipse',
+    name: 'Ellipse',
+    type: 'ELLIPSE',
     ...overrides,
   }
 }
@@ -147,6 +167,111 @@ describe('Figma import mapping regressions', () => {
     expect(transform).toMatchObject({ x: 0, y: 0, rotation: 17.5 })
   })
 
+  it('keeps captured child positions when an older group omits layoutMode', () => {
+    const transform = figmaToTransform(
+      capturedRect({ x: 240, y: 128, rotation: 17.5 }),
+      undefined,
+    )
+
+    expect(transform).toMatchObject({ x: 240, y: 128, rotation: 17.5 })
+  })
+
+  it('imports children of a legacy group with missing layoutMode at their captured positions', () => {
+    const legacyGroup = { ...capturedGrid(), type: 'GROUP' } as Partial<FigmaCapturedFrame>
+    delete legacyGroup.layoutMode
+    legacyGroup.children = [capturedRect({ x: 36, y: 52 })]
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VERSION,
+      nodes: [legacyGroup as FigmaCapturedFrame],
+      assets: {},
+    }
+    const api = createSceneAPI()
+
+    const [groupId] = importFigmaPayload(payload, api, api.getRoot())
+    const group = api.getNode(groupId)
+    const [child] = api.getChildren(groupId)
+
+    expect(group && 'layout' in group ? group.layout.mode : null).toBe('none')
+    expect(child.transform).toMatchObject({ x: 36, y: 52 })
+  })
+
+  it('preserves Figma corner smoothing on imported layers', () => {
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VERSION,
+      nodes: [
+        capturedRect({
+          cornerRadius: [16, 16, 16, 16],
+          cornerSmoothing: 0.6,
+        }),
+      ],
+      assets: {},
+    }
+    const api = createSceneAPI()
+
+    const [id] = importFigmaPayload(payload, api, api.getRoot())
+
+    expect(api.getNode(id)?.appearance).toMatchObject({
+      cornerRadius: 16,
+      cornerSmoothing: 0.6,
+    })
+  })
+
+  it('keeps imported ellipses geometric instead of applying squircle corners', () => {
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VERSION,
+      nodes: [
+        capturedEllipse({
+          cornerRadius: [48, 40, 32, 24],
+          cornerSmoothing: 0.75,
+        }),
+      ],
+      assets: {},
+    }
+    const api = createSceneAPI()
+
+    const [id] = importFigmaPayload(payload, api, api.getRoot())
+
+    expect(api.getNode(id)).toMatchObject({
+      kind: 'ellipse',
+      appearance: {
+        cornerRadius: 0,
+        cornerSmoothing: 0,
+      },
+    })
+    expect(api.getNode(id)?.appearance.cornerRadii).toBeUndefined()
+  })
+
+  it('imports Figma pie and donut geometry as an editable ellipse arc', () => {
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VERSION,
+      nodes: [
+        capturedEllipse({
+          arcData: {
+            startingAngle: -Math.PI / 2,
+            endingAngle: -Math.PI / 2 + Math.PI * 2 * 0.804,
+            innerRadius: 0.55,
+          },
+        }),
+      ],
+      assets: {},
+    }
+    const api = createSceneAPI()
+
+    const [id] = importFigmaPayload(payload, api, api.getRoot())
+    const node = api.getNode(id)
+
+    expect(node?.kind).toBe('ellipse')
+    expect(node && node.kind === 'ellipse' ? node.arc : null).toEqual({
+      startAngle: -90,
+      sweep: 0.804,
+      innerRadius: 0.55,
+    })
+  })
+
   it('applies a vector affine exactly once across layer and item transforms', () => {
     const node = capturedRect({
       x: 999,
@@ -213,7 +338,7 @@ describe('Figma import mapping regressions', () => {
     })
   })
 
-  it('keeps a centered Figma badge inside its exact captured text box', () => {
+  it('keeps a centered auto-width Figma badge content-sized', () => {
     const text = figmaToText(
       capturedText({
         characters: 'Recommended',
@@ -234,10 +359,51 @@ describe('Figma import mapping regressions', () => {
 
     expect(text).toMatchObject({
       text: 'Recommended',
-      size: { width: 80, height: 14 },
+      size: { width: 'hug', height: 'hug' },
       textAlign: 'center',
       textAlignVertical: 'top',
       textCase: 'upper',
     })
+  })
+
+  it('prefers modern FILL/HUG text sizing over legacy auto-resize', () => {
+    const text = figmaToText(
+      capturedText({
+        textAutoResize: 'NONE',
+        layoutSizingHorizontal: 'FILL',
+        layoutSizingVertical: 'HUG',
+      }),
+      {},
+    )
+
+    expect(text.size).toEqual({ width: 'fill', height: 'hug' })
+  })
+
+  it('maps legacy auto-height text to fixed width and hug height', () => {
+    const text = figmaToText(
+      capturedText({
+        width: 280,
+        height: 40,
+        textAutoResize: 'HEIGHT',
+        layoutSizingHorizontal: undefined,
+        layoutSizingVertical: undefined,
+      }),
+      {},
+    )
+
+    expect(text.size).toEqual({ width: 280, height: 'hug' })
+  })
+
+  it('maps legacy auto-width text to hug on both axes', () => {
+    const text = figmaToText(
+      capturedText({
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+        layoutSizingHorizontal: undefined,
+        layoutSizingVertical: undefined,
+      }),
+      {},
+    )
+
+    expect(text.size).toEqual({ width: 'hug', height: 'hug' })
   })
 })

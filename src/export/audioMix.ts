@@ -2,6 +2,15 @@
 
 import type { SceneAPI } from '@/scene/doc'
 import type { SceneNode } from '@/scene'
+import {
+  resolveMasterTime,
+  type ResolvedSequenceItem,
+  type SequenceTimeMap,
+} from '@/sequence'
+import {
+  isMasterAudioNode,
+  resolveMasterAudioGain,
+} from '@/audio/masterAudio'
 
 interface FrameSegment {
   firstFrame: number
@@ -25,12 +34,28 @@ interface MediaAudioNode {
   trimStart: number
   trimEnd: number
   loop: boolean
+  /** Null denotes project-level audio that follows master time directly. */
+  ownerSceneId: string | null
 }
 
 export async function mixSceneAudioTrack(opts: {
   api: SceneAPI
   segments: FrameSegment[]
   fps: number
+  /** Explicit export clock. Legacy callers infer sequence from timeMap. */
+  scope?: 'scene' | 'sequence'
+  /** Present when frames are sampled from the master sequence. */
+  sequenceTimeMap?: SequenceTimeMap
+  /**
+   * Occurrence whose Master soundtrack window is borrowed by a Scene export.
+   * Invalid or absent ids fall back deterministically to the active scene's
+   * first occurrence.
+   */
+  selectedSequenceItemId?: string
+  /** Active composition identity used to validate occurrence selection. */
+  activeSceneId?: string
+  /** Active composition root for a scene-only export. */
+  activeRootNodeId?: string
   sampleRate?: number
   numberOfChannels?: number
 }): Promise<PcmAudioTrack | null> {
@@ -38,7 +63,24 @@ export async function mixSceneAudioTrack(opts: {
     return null
   }
 
-  const mediaNodes = collectAudibleMediaNodes(opts.api)
+  const scope =
+    opts.scope ?? (opts.sequenceTimeMap ? 'sequence' : 'scene')
+  const sceneOccurrence =
+    scope === 'scene' && opts.sequenceTimeMap
+      ? resolveSceneExportOccurrence(
+          opts.sequenceTimeMap,
+          opts.selectedSequenceItemId,
+          opts.activeSceneId ??
+            sceneIdForRoot(opts.sequenceTimeMap, opts.activeRootNodeId),
+        )
+      : null
+  const mediaNodes = collectAudibleMediaNodes(
+    opts.api,
+    scope,
+    opts.sequenceTimeMap,
+    opts.activeRootNodeId,
+    sceneOccurrence,
+  )
   if (mediaNodes.length === 0) return null
 
   const sampleRate = opts.sampleRate ?? 48_000
@@ -65,6 +107,9 @@ export async function mixSceneAudioTrack(opts: {
         segments: opts.segments,
         fps: opts.fps,
         sampleRate,
+        sequenceTimeMap: opts.sequenceTimeMap,
+        scope,
+        sceneSequenceItemId: sceneOccurrence?.item.id,
       })
     }
   } finally {
@@ -75,14 +120,48 @@ export async function mixSceneAudioTrack(opts: {
   return { sampleRate, numberOfChannels, samples: output }
 }
 
-function collectAudibleMediaNodes(api: SceneAPI): MediaAudioNode[] {
+function collectAudibleMediaNodes(
+  api: SceneAPI,
+  scope: 'scene' | 'sequence',
+  sequenceTimeMap: SequenceTimeMap | undefined,
+  activeRootNodeId: string | undefined,
+  sceneOccurrence: ResolvedSequenceItem | null,
+): MediaAudioNode[] {
   const nodes: MediaAudioNode[] = []
+  const activeTree =
+    scope === 'scene' ? collectSubtreeIds(api, activeRootNodeId) : null
+  const ownerByNodeId = scope === 'sequence' && sequenceTimeMap
+    ? indexSequenceNodeOwners(api, sequenceTimeMap)
+    : null
   for (const id of api.getAllNodeIds()) {
     const node = api.getNode(id)
     if (!node || (node.kind !== 'audio' && node.kind !== 'video')) continue
     const media = node as Extract<SceneNode, { kind: 'audio' | 'video' }>
     const muted = media.kind === 'video' ? media.muted : media.muted
     if (!media.src || muted || (media.volume ?? 1) <= 0) continue
+    // Parentless audio is the project soundtrack and follows master time.
+    // Visual video nodes (and the uncommon parented audio node) belong to the
+    // composition root that contains them.
+    const projectLevelAudio = isMasterAudioNode(media)
+    // A Scene export can borrow Master audio only when it resolves to one
+    // concrete occurrence. Without that context, omitting the bed is safer
+    // than silently borrowing the wrong repeated use of a composition.
+    if (
+      projectLevelAudio &&
+      (!sequenceTimeMap || (scope === 'scene' && !sceneOccurrence))
+    ) {
+      continue
+    }
+    const ownerSceneId = projectLevelAudio
+      ? null
+      : ownerByNodeId?.get(media.id) ??
+        (activeTree?.has(media.id)
+          ? sceneOccurrence?.scene.id ?? '__active-scene__'
+          : null)
+    if (!projectLevelAudio) {
+      if (scope === 'sequence' && ownerSceneId === null) continue
+      if (scope === 'scene' && !activeTree?.has(media.id)) continue
+    }
     nodes.push({
       id: media.id,
       src: media.src,
@@ -94,6 +173,7 @@ function collectAudibleMediaNodes(api: SceneAPI): MediaAudioNode[] {
       trimStart: media.trimStart ?? 0,
       trimEnd: media.trimEnd || media.duration || 0,
       loop: media.loop ?? false,
+      ownerSceneId,
     })
   }
   return nodes
@@ -119,8 +199,21 @@ function mixNodeIntoOutput(opts: {
   segments: FrameSegment[]
   fps: number
   sampleRate: number
+  sequenceTimeMap?: SequenceTimeMap
+  scope: 'scene' | 'sequence'
+  sceneSequenceItemId?: string
 }) {
-  const { node, buffer, output, segments, fps, sampleRate } = opts
+  const {
+    node,
+    buffer,
+    output,
+    segments,
+    fps,
+    sampleRate,
+    sequenceTimeMap,
+    scope,
+    sceneSequenceItemId,
+  } = opts
   const clipStart = Math.max(0, Math.min(buffer.duration, node.trimStart))
   const clipEnd = Math.max(clipStart, Math.min(buffer.duration, node.trimEnd || node.duration || buffer.duration))
   const clipLen = clipEnd - clipStart
@@ -131,24 +224,187 @@ function mixNodeIntoOutput(opts: {
     const segFrames = seg.lastFrame - seg.firstFrame + 1
     const segStart = seg.firstFrame / fps
     for (let frame = 0; frame < segFrames; frame++) {
-      const sceneT = segStart + frame / fps
-      const local = sceneTimeToMediaLocal(sceneT, node, clipStart, clipLen)
-      if (local === null) continue
+      const masterTime = segStart + frame / fps
       const outSampleStart = Math.round(((outFrameOffset + frame) / fps) * sampleRate)
       const outSampleEnd = Math.round(((outFrameOffset + frame + 1) / fps) * sampleRate)
-      mixSampleSpan({
-        buffer,
-        output,
-        volume: node.volume,
-        playbackRate: node.playbackRate,
-        mediaStartSec: local,
-        outSampleStart,
-        outSampleEnd,
-        sampleRate,
+      const timelineSamples = resolveMediaTimelineSamples({
+        masterTime,
+        ownerSceneId: node.ownerSceneId,
+        sequenceTimeMap,
+        scope,
+        sceneSequenceItemId,
       })
+      for (const timelineSample of timelineSamples) {
+        if (timelineSample.weight <= 0) continue
+        const local = sceneTimeToMediaLocal(
+          timelineSample.time,
+          node,
+          clipStart,
+          clipLen,
+        )
+        if (local === null) continue
+        mixSampleSpan({
+          buffer,
+          output,
+          volume: node.volume * timelineSample.weight,
+          playbackRate: node.playbackRate,
+          mediaStartSec: local,
+          outSampleStart,
+          outSampleEnd,
+          sampleRate,
+        })
+      }
     }
     outFrameOffset += segFrames
   }
+}
+
+export interface MediaTimelineSample {
+  /** Project-master or composition-local time used by media clip timing. */
+  time: number
+  /** Linear transition contribution. */
+  weight: number
+}
+
+/**
+ * Resolve the timeline samples contributing one media node at an export time.
+ *
+ * During a sequence export, project-level audio follows Master time and
+ * scene-owned media follows each matching occurrence's local time and
+ * transition weight. During a Scene export, project-level audio borrows the
+ * selected occurrence's Master window while scene-owned media stays on the
+ * composition-local clock.
+ */
+export function resolveMediaTimelineSamples(input: {
+  masterTime: number
+  ownerSceneId: string | null
+  sequenceTimeMap?: SequenceTimeMap
+  scope?: 'scene' | 'sequence'
+  sceneSequenceItemId?: string
+}): MediaTimelineSample[] {
+  const masterTime = Number.isFinite(input.masterTime)
+    ? input.masterTime
+    : 0
+  const scope =
+    input.scope ?? (input.sequenceTimeMap ? 'sequence' : 'scene')
+  if (input.ownerSceneId === null) {
+    if (!input.sequenceTimeMap) return []
+    if (scope === 'scene') {
+      const occurrence = input.sceneSequenceItemId
+        ? input.sequenceTimeMap.items.find(
+            (candidate) =>
+              candidate.item.id === input.sceneSequenceItemId,
+          ) ?? null
+        : null
+      if (
+        !occurrence ||
+        occurrence.item.masterAudioMuted === true ||
+        masterTime < occurrence.sourceStart ||
+        masterTime >= occurrence.sourceEnd
+      ) {
+        return []
+      }
+      return [{
+        time:
+          occurrence.masterStart +
+          masterTime -
+          occurrence.sourceStart,
+        weight: 1,
+      }]
+    }
+    return [{
+      time: masterTime,
+      weight: resolveMasterAudioGain(input.sequenceTimeMap, masterTime),
+    }]
+  }
+  if (scope === 'scene' || !input.sequenceTimeMap) {
+    return [{ time: masterTime, weight: 1 }]
+  }
+  return resolveMasterTime(input.sequenceTimeMap, masterTime, {
+    clamp: true,
+    quantize: 'none',
+  }).layers
+    .filter((layer) => layer.item.scene.id === input.ownerSceneId)
+    .map((layer) => ({
+      time: layer.localTime,
+      weight: layer.weight,
+    }))
+}
+
+/**
+ * Resolve which occurrence a Scene export borrows from the Master timeline.
+ *
+ * Repeated compositions make scene id alone ambiguous, so a valid explicit
+ * occurrence always wins. If it is missing or stale, the first occurrence of
+ * the active composition is selected; only when no active composition can be
+ * matched do we fall back to the first resolved sequence item.
+ */
+export function resolveSceneExportOccurrence(
+  timeMap: SequenceTimeMap,
+  selectedSequenceItemId?: string,
+  activeSceneId?: string | null,
+): ResolvedSequenceItem | null {
+  if (selectedSequenceItemId) {
+    const selected = timeMap.items.find(
+      (candidate) => candidate.item.id === selectedSequenceItemId,
+    )
+    if (
+      selected &&
+      (!activeSceneId || selected.scene.id === activeSceneId)
+    ) {
+      return selected
+    }
+  }
+  if (activeSceneId) {
+    const activeOccurrence = timeMap.items.find(
+      (candidate) => candidate.scene.id === activeSceneId,
+    )
+    return activeOccurrence ?? null
+  }
+  return timeMap.items[0] ?? null
+}
+
+function sceneIdForRoot(
+  timeMap: SequenceTimeMap,
+  rootNodeId: string | undefined,
+): string | null {
+  if (!rootNodeId) return null
+  return (
+    timeMap.items.find(
+      (candidate) => candidate.scene.rootNodeId === rootNodeId,
+    )?.scene.id ?? null
+  )
+}
+
+function collectSubtreeIds(
+  api: SceneAPI,
+  rootId: string | undefined,
+): Set<string> {
+  const ids = new Set<string>()
+  if (!rootId) return ids
+  const visit = (id: string): void => {
+    if (ids.has(id)) return
+    ids.add(id)
+    for (const child of api.getChildren(id)) visit(child.id)
+  }
+  visit(rootId)
+  return ids
+}
+
+function indexSequenceNodeOwners(
+  api: SceneAPI,
+  timeMap: SequenceTimeMap,
+): Map<string, string> {
+  const owners = new Map<string, string>()
+  const seenScenes = new Set<string>()
+  for (const item of timeMap.items) {
+    if (seenScenes.has(item.scene.id)) continue
+    seenScenes.add(item.scene.id)
+    for (const nodeId of collectSubtreeIds(api, item.scene.rootNodeId)) {
+      if (!owners.has(nodeId)) owners.set(nodeId, item.scene.id)
+    }
+  }
+  return owners
 }
 
 function sceneTimeToMediaLocal(

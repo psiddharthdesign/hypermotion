@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   Download,
   FileJson,
+  FolderOpen,
   Puzzle,
   X,
 } from 'lucide-react'
@@ -28,6 +29,14 @@ const FOCUSABLE_SELECTOR = [
   'textarea:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
+
+interface FigmaPluginStatus {
+  ok: boolean
+  path: string
+  exists: boolean
+  message?: string
+  version?: string
+}
 
 export function FigmaPluginSetupButton() {
   const [open, setOpen] = useState(false)
@@ -58,11 +67,34 @@ export function FigmaPluginSetupButton() {
 
 function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null)
-  const downloadRef = useRef<HTMLButtonElement>(null)
+  const primaryActionRef = useRef<HTMLButtonElement>(null)
+  const isElectron = typeof window.hypermotion?.invoke === 'function'
+  const [manifestStatus, setManifestStatus] = useState<FigmaPluginStatus | null>(
+    null,
+  )
+  const [manifestBusy, setManifestBusy] = useState(isElectron)
 
   useEffect(() => {
-    downloadRef.current?.focus()
+    primaryActionRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    if (!isElectron) return
+    let cancelled = false
+    void window.hypermotion
+      ?.invoke('figma-plugin:get-manifest-status')
+      .then((result) => {
+        if (!cancelled && isFigmaPluginStatus(result)) {
+          setManifestStatus(result)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setManifestBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isElectron])
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
@@ -97,6 +129,19 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
 
   const openReleases = () => {
     window.open(RELEASES_URL, '_blank', 'noopener,noreferrer')
+  }
+
+  const revealManifest = async () => {
+    if (!window.hypermotion) return
+    setManifestBusy(true)
+    try {
+      const result = await window.hypermotion.invoke(
+        'figma-plugin:reveal-manifest',
+      )
+      if (isFigmaPluginStatus(result)) setManifestStatus(result)
+    } finally {
+      setManifestBusy(false)
+    }
   }
 
   return createPortal(
@@ -134,7 +179,7 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
                 id="figma-plugin-setup-description"
                 className="hm-type-support mt-0.5 text-text-muted"
               >
-                Download the plugin, then import its manifest in Figma Desktop.
+                Import this build's refreshed manifest in Figma Desktop.
               </p>
             </div>
           </div>
@@ -152,34 +197,62 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
           <ol className="grid gap-3">
             <SetupStep
               number="1"
-              icon={<Download size={14} />}
-              title="Download the plugin"
+              icon={isElectron ? <FolderOpen size={14} /> : <Download size={14} />}
+              title={isElectron ? 'Reveal this build' : 'Download the plugin'}
               action={
                 <button
-                  ref={downloadRef}
+                  ref={primaryActionRef}
                   type="button"
-                  onClick={openReleases}
-                  className="mt-2 flex h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-3 hm-type-body font-semibold uppercase text-white outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent/40"
+                  onClick={isElectron ? revealManifest : openReleases}
+                  disabled={manifestBusy}
+                  className="hm-primary-action mt-2 h-8 outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 >
-                  <Download size={14} />
-                  Download from releases
+                  {isElectron ? <FolderOpen size={14} /> : <Download size={14} />}
+                  {isElectron
+                    ? manifestBusy
+                      ? 'Preparing plugin…'
+                      : 'Reveal manifest.json'
+                    : 'Download from releases'}
                 </button>
               }
             >
-              Download the <strong>Figma plugin ZIP</strong> from the latest
-              Hyper Motion release, then unzip it.
+              {isElectron ? (
+                <>
+                  Hyper Motion keeps the plugin at one stable path and refreshes
+                  it whenever this app starts.
+                  {manifestStatus?.message ? (
+                    <span className="mt-1 block text-danger">
+                      {manifestStatus.message}
+                    </span>
+                  ) : manifestStatus?.exists ? (
+                    <span className="mt-1 block text-text-dim">
+                      Current build ready{manifestStatus.version ? ` · v${manifestStatus.version}` : ''}.
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  Download the <strong>Figma plugin ZIP</strong> from the latest
+                  Hyper Motion release, then unzip it.
+                </>
+              )}
             </SetupStep>
             <SetupStep
               number="2"
               icon={<FileJson size={14} />}
-              title="Import manifest.json"
+              title={isElectron ? 'Replace the old registration' : 'Import manifest.json'}
             >
+              {isElectron && (
+                <>
+                  If Hyper Motion Import already appears under Development,
+                  remove that old entry first. Then{' '}
+                </>
+              )}
               In Figma Desktop, choose{' '}
               <strong>
                 Plugins → Development → Import new plugin from manifest…
               </strong>
-              , then select <strong>manifest.json</strong> from the unzipped
-              folder.
+              , then select the revealed <strong>manifest.json</strong>.
             </SetupStep>
             <SetupStep
               number="3"
@@ -195,6 +268,16 @@ function FigmaPluginSetupModal({ onClose }: { onClose: () => void }) {
       </div>
     </div>,
     document.body,
+  )
+}
+
+function isFigmaPluginStatus(value: unknown): value is FigmaPluginStatus {
+  if (!value || typeof value !== 'object') return false
+  const status = value as Partial<FigmaPluginStatus>
+  return (
+    typeof status.ok === 'boolean' &&
+    typeof status.path === 'string' &&
+    typeof status.exists === 'boolean'
   )
 }
 

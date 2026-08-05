@@ -2,7 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef } from 'react'
 import { useSceneAPI } from '@/scene'
-import type { NodeId, SizeAxis } from '@/scene'
+import type { NodeId, Size } from '@/scene'
 import type {
   PlaneQuad,
   ProjectedPoint2D,
@@ -14,6 +14,10 @@ import {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
 } from '@/anim'
+import {
+  commitNodeGeometryPreviews,
+  nodeGeometryPreviewStore,
+} from '@/ui/nodeGeometryPreviewStore'
 
 /**
  * Eight-handle resize gizmo overlaid on a selected node.
@@ -80,6 +84,8 @@ export function ResizeHandles({
     w0: number
     h0: number
     startLocal: ProjectedPoint2D | null
+    latestSize: Partial<Size>
+    moved: boolean
   } | null>(null)
 
   const startDrag = useCallback(
@@ -103,6 +109,8 @@ export function ResizeHandles({
         h0: rectHeight,
         startLocal:
           projectionRef.current?.clientToLocal(e.clientX, e.clientY) ?? null,
+        latestSize: {},
+        moved: false,
       }
       const el = e.currentTarget as HTMLElement
       el.setPointerCapture(e.pointerId)
@@ -140,18 +148,17 @@ export function ResizeHandles({
 
         // Only write axes the handle affects. An E-handle drag
         // shouldn't collapse a 'hug' height into a fixed number.
-        const patch: { width?: SizeAxis; height?: SizeAxis } = {}
+        const patch: Partial<Size> = {}
         if (wSign !== 0) patch.width = nextW
         if (hSign !== 0) patch.height = nextH
         if (Object.keys(patch).length === 0) return
 
-        api.setNodeProperty(nodeId, 'size', {
-          ...current.size,
-          ...patch,
-        })
+        d.latestSize = patch
+        d.moved = true
+        nodeGeometryPreviewStore.preview({ [nodeId]: { size: patch } })
       }
 
-      const onUp = (ev: PointerEvent) => {
+      const finishDrag = (ev: PointerEvent, cancelled: boolean) => {
         const d = dragRef.current
         if (!d || ev.pointerId !== d.pointerId) return
         try {
@@ -159,49 +166,57 @@ export function ResizeHandles({
         } catch {
           // pointer may already be released by the browser
         }
-        // Commit on pointerup so the whole resize is one keyframe, not
-        // one per pointermove tick.
+        // Keep raw pointer packets outside Yjs. The visible size is
+        // frame-scheduled by nodeGeometryPreviewStore and pointer-up writes
+        // the final geometry plus any active keyframes in one transaction.
         //   - recording=on  → stamp regardless (creates tracks if needed)
         //   - recording=off → only stamp on tracks the user already
         //                     authored, otherwise the static-value
         //                     update is invisibly stomped by the track
         //                     under REPLACE semantics.
-        const ui = useUI.getState()
-        const current = api.getNode(nodeId)
-        if (current && 'size' in current) {
-          const patch: Record<string, unknown> = {}
-          // Only record axes that could have changed (the drag math
-          // knows via handle orientation, but at this point we're
-          // past that — commit whatever numeric values were written).
-          if (typeof current.size.width === 'number') {
-            patch.width = current.size.width
-          }
-          if (typeof current.size.height === 'number') {
-            patch.height = current.size.height
-          }
-          if (Object.keys(patch).length > 0) {
-            if (ui.recording) {
-              recordKeyframesForPatch(api, nodeId, ui.playhead, 'size', patch)
-            } else {
-              stampToActiveTracksForPatch(
-                api,
-                nodeId,
-                ui.playhead,
-                'size',
-                patch,
-              )
-            }
-          }
+        if (!cancelled && d.moved) {
+          const ui = useUI.getState()
+          commitNodeGeometryPreviews(
+            api,
+            { [nodeId]: { size: d.latestSize } },
+            (committedNodeId, preview) => {
+              const patch = preview.size ?? {}
+              if (Object.keys(patch).length === 0) return
+              if (ui.recording) {
+                recordKeyframesForPatch(
+                  api,
+                  committedNodeId,
+                  ui.playhead,
+                  'size',
+                  patch,
+                )
+              } else {
+                stampToActiveTracksForPatch(
+                  api,
+                  committedNodeId,
+                  ui.playhead,
+                  'size',
+                  patch,
+                )
+              }
+            },
+          )
+          nodeGeometryPreviewStore.finish()
+        } else {
+          nodeGeometryPreviewStore.clear()
         }
         dragRef.current = null
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
-        window.removeEventListener('pointercancel', onUp)
+        window.removeEventListener('pointercancel', onCancel)
       }
+
+      const onUp = (ev: PointerEvent) => finishDrag(ev, false)
+      const onCancel = (ev: PointerEvent) => finishDrag(ev, true)
 
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
-      window.addEventListener('pointercancel', onUp)
+      window.addEventListener('pointercancel', onCancel)
     },
     [api, nodeId, rectWidth, rectHeight],
   )
@@ -256,7 +271,10 @@ export function ResizeHandles({
       {handles.map((h) => (
         <div
           key={h.id}
+          data-canvas-control="resize"
+          data-node-id={nodeId}
           onPointerDown={startDrag(h.id)}
+          onClick={(event) => event.stopPropagation()}
           className="absolute bg-panel"
           style={{
             width: size,

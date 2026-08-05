@@ -65,7 +65,10 @@ type SceneSchemaProperty = {
   readonly description: string
 }
 
-const KEYFRAMEABLE_PROPERTY_DESCRIPTION = PROPERTY_IDS.join(', ')
+const KEYFRAMEABLE_PROPERTY_DESCRIPTION = [
+  ...PROPERTY_IDS,
+  'appearance.effects.<effectId>.blur',
+].join(', ')
 
 const OUTPUT_PATH_PROPERTY: StringSchemaProperty = {
   type: 'string',
@@ -93,9 +96,12 @@ export const createSceneTool: Tool = {
     "composes a SceneJson object (frames with auto-layout, text nodes, animation " +
     "tracks with keyframes), passes it here, and gets a .hype file the desktop app " +
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
-    "SceneJson shape (top level): { meta?, root?, activeCameraId?, nodes, tracks?, sections? }\n" +
+    "SceneJson shape (top level): { meta?, root?, activeCameraId?, compositionScenes?, sequenceItems?, sequenceOrder?, activeCompositionId?, sequenceSchemaVersion?, cameraIds?, defaultCameraId?, cameraCuts?, nodes, tracks?, sections? }\n" +
     "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, motionPath?, ...kind-specific }\n" +
+    "Ellipse nodes can include arc: { startAngle, sweep, innerRadius } for pie and donut charts. " +
+    "startAngle is expressed in degrees (0 points right and positive angles turn clockwise); sweep and innerRadius are ratios in 0..1. " +
+    "Animate this geometry with shape.arcStart, shape.arcSweep, and shape.arcInnerRadius tracks.\n" +
     "Design scenes with auto-layout by default from the first frame onward. Prefer layout.mode: 'flex' for rows/columns " +
     "and layout.mode: 'grid' for grids; use fixed transforms or layout.mode: 'none' only when the user explicitly asks " +
     "for manual positioning or when a specific visual effect cannot be expressed with auto-layout. Inside auto-layout frames, " +
@@ -125,9 +131,26 @@ export const createSceneTool: Tool = {
     "dofPreviewQuality ('draft'|'balanced'|'high'), iso, blurLevel, blurQuality (24-48 effective final export samples; default/minimum 24), " +
     "chromaticAberrationEnabled/Amount/Angle, bloomEnabled/Strength/Radius/Threshold, " +
     "vhsEnabled, vhsIntensity, vhsNoise, vhsScanlines, vhsColorBleed, and showFocusPlane. " +
-    "Hyper Motion currently supports only one camera node per scene; " +
-    "keep it scene-level with parent: null, set activeCameraId to that camera id, do not list it in any frame/artboard children, " +
-    "and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
+    "Hyper Motion supports multiple camera nodes per scene. Keep every camera scene-level with parent: null and outside frame/artboard children. " +
+    "Use cameraIds to declare the cameras owned by this scene (omitting it infers all camera nodes), defaultCameraId as the fallback before the first cut, " +
+    "and cameraCuts keyed by cut id as { id, cameraId, time }, where time is scene-local seconds and the hard cut lasts until the next cut. " +
+    "Cuts are resolved deterministically by (time, id), so same-time cuts are supported. " +
+    "A null defaultCameraId means no preference and falls back to the first enabled owned camera; when omitted in legacy input it derives from activeCameraId first. " +
+    "activeCameraId remains the current/legacy preview camera; when omitted while authoring it defaults to defaultCameraId, the first owned camera, or the first camera node. " +
+    "Use the camera defaults and default focalLength to 1000 unless the user explicitly requests a different camera/lens feel.\n" +
+    "For a multi-scene project, set sequenceSchemaVersion: 2 and author compositionScenes keyed by id as " +
+    "{ id, name, rootNodeId, duration, workArea?: { start, end }, workspaceNodeIds?, cameraIds, defaultCameraId, cameraCuts }, with workArea and cameraCuts local to that composition. " +
+    "Omitting workArea uses the complete composition. Master occurrences are intersected with the work area, so item trimStart/duration can narrow it but never reveal source outside it. " +
+    "Use workspaceNodeIds only for parentless nodes marked workspaceOnly: true whose lifecycle belongs to that composition, such as generated component masters. " +
+    "Unlisted pasteboard assets remain project-level and are preserved when a composition is deleted; duplicated compositions may intentionally share listed workspace assets. " +
+    "All referenced roots, cameras, layers, and animation tracks remain project-global nodes/tracks; a camera must be owned by exactly one composition. " +
+    "Author sequenceItems keyed by id as { id, sceneId, masterAudioMuted?: boolean, trimStart?, duration?, transitionOut?: { kind: 'cut'|'crossfade', duration } }, " +
+    "Set masterAudioMuted: true to silence the project-level Master soundtrack during that occurrence; omission means audible. Across a crossfade, Master-audio gain follows the summed visual weight of unmuted occurrences, so mute boundaries ramp with the transition without doubling enabled audio. " +
+    "A parentless audio node is a Master-owned soundtrack; audio parented under a composition root is a Scene-local overlay. Scene preview and Scene-only export borrow the selected occurrence at masterStart + sceneTime - sourceStart, while Scene overlays remain on the local clock. Projected Master beat/bar guides stay visible for Scene keyframe timing even when that occurrence's Master bed is muted. " +
+    "put those item ids in sequenceOrder, and select activeCompositionId. A composition may occur more than once through separate sequence items. " +
+    "The active composition is also projected into root, activeCameraId, and meta.duration for compatibility; when those legacy fields are omitted, create_scene fills the projection automatically. " +
+    "Top-level cameraIds/defaultCameraId/cameraCuts are the legacy single-composition form; do not use them as composition ownership in a schema-v2 project. " +
+    "Use list_scenes and get_sequence after authoring to inspect composition cameras/cuts, resolved transitions, and frame-aligned master duration.\n" +
     `Property IDs you can keyframe: ${KEYFRAMEABLE_PROPERTY_DESCRIPTION}.\n\n` +
     "Include a 'frame' kind root (parent: null) for the scene to render. A scene-level 'camera' kind node " +
     "(parent: null) is optional unless the design needs camera properties. The artboard size lives in meta.canvas.width / height.",

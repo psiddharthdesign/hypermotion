@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   commitScaleAxisEdit,
+  previewScaleAxisEdit,
   resolveScaleAxisEdit,
   type ScalePair,
 } from './scalePairEdit'
@@ -112,5 +113,48 @@ describe('linked Scale axis edits', () => {
     expect(onCommitX).toHaveBeenCalledWith(2)
     expect(onCommitY).toHaveBeenCalledOnce()
     expect(onCommitY).toHaveBeenCalledWith(4)
+  })
+
+  it('publishes linked scrub previews atomically when a pair writer exists', () => {
+    const onPreviewX = vi.fn()
+    const onPreviewY = vi.fn()
+    const onPreviewPair = vi.fn()
+
+    const result = previewScaleAxisEdit({
+      baseline: { scaleX: 2, scaleY: 1 },
+      current: { scaleX: 2, scaleY: 1 },
+      axis: 'x',
+      next: 3,
+      linked: true,
+      onPreviewX,
+      onPreviewY,
+      onPreviewPair,
+    })
+
+    expect(result).toEqual({ scaleX: 3, scaleY: 1.5 })
+    expect(onPreviewPair).toHaveBeenCalledOnce()
+    expect(onPreviewPair).toHaveBeenCalledWith({ scaleX: 3, scaleY: 1.5 })
+    expect(onPreviewX).not.toHaveBeenCalled()
+    expect(onPreviewY).not.toHaveBeenCalled()
+  })
+
+  it('publishes only changed axes when a pair preview writer is absent', () => {
+    const onPreviewX = vi.fn()
+    const onPreviewY = vi.fn()
+
+    const unlinked = previewScaleAxisEdit({
+      baseline: { scaleX: 1, scaleY: 2 },
+      current: { scaleX: 1, scaleY: 2 },
+      axis: 'x',
+      next: 1.25,
+      linked: false,
+      onPreviewX,
+      onPreviewY,
+    })
+
+    expect(unlinked).toEqual({ scaleX: 1.25, scaleY: 2 })
+    expect(onPreviewX).toHaveBeenCalledOnce()
+    expect(onPreviewX).toHaveBeenCalledWith(1.25)
+    expect(onPreviewY).not.toHaveBeenCalled()
   })
 })

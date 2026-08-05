@@ -10,10 +10,12 @@ import {
 } from 'react'
 import { TopBar } from '@/ui/TopBar'
 import { LayersPanel } from '@/ui/LayersPanel'
+import { SceneNavigator } from '@/ui/SceneNavigator'
 import { Canvas } from '@/ui/Canvas'
 import { ComponentEditor } from '@/ui/ComponentEditor'
 import { Inspector } from '@/ui/Inspector'
 import { Timeline } from '@/ui/Timeline'
+import { MasterTimeline } from '@/ui/MasterTimeline'
 import { ContextMenu } from '@/ui/ContextMenu'
 import { ExportRecordingIndicator } from '@/ui/ExportRecordingIndicator'
 import { RenameDialog } from '@/ui/RenameDialog'
@@ -27,7 +29,6 @@ import { useKeyboardShortcuts } from '@/ui/hooks/useKeyboardShortcuts'
 import { useAnim } from '@/ui/hooks/useAnim'
 import { useFigmaPaste } from '@/ui/hooks/useFigmaPaste'
 import { useFileMenu } from '@/ui/hooks/useFileMenu'
-import { getAnimEngine } from '@/anim'
 import {
   centerCameraOnCanvas,
   migrateCameraScaleToZ,
@@ -40,6 +41,16 @@ import type { NodeId } from '@/scene'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { useCustomFonts } from '@/ui/fonts/useCustomFonts'
 import { useExportProgress } from '@/export/progressStore'
+import { useProjectAPI } from '@/project'
+import {
+  resolvePreviewAudioContributions,
+  type SceneAudioOwnership,
+} from '@/audio/previewAudio'
+import {
+  previewAudioLocalDrift,
+  resolvePreviewAudioClock,
+  shouldSeekPreviewMediaElement,
+} from '@/audio/previewPlaybackClock'
 
 /**
  * App shell for hyper-motion.
@@ -106,9 +117,11 @@ export default function App() {
 }
 
 function Shell() {
+  const showScenes = useUI((s) => s.panels.scenes)
   const showLayers = useUI((s) => s.panels.layers)
   const showInspector = useUI((s) => s.panels.inspector)
   const showTimeline = useUI((s) => s.panels.timeline)
+  const timelineScope = useUI((s) => s.timelineScope)
   const componentEditId = useUI((s) => s.componentEditId)
   const api = useSceneAPI()
   const exportPhase = useExportProgress((s) => s.phase)
@@ -251,10 +264,15 @@ function Shell() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
             {showLayers && <LayersPanel />}
-            {componentEditId ? <ComponentEditor /> : <Canvas />}
+            <div className="relative flex min-w-0 flex-1 flex-col">
+              {showScenes && !componentEditId ? <SceneNavigator /> : null}
+              {componentEditId ? <ComponentEditor /> : <Canvas />}
+            </div>
             {showInspector && <Inspector />}
           </div>
-          {showTimeline && !componentEditId && <Timeline />}
+          {showTimeline &&
+            !componentEditId &&
+            (timelineScope === 'sequence' ? <MasterTimeline /> : <Timeline />)}
         </div>
       </div>
       <AudioPlaybackHost />
@@ -283,16 +301,84 @@ function AnimationHost() {
 
 function AudioPlaybackHost() {
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const version = useSceneVersion()
-  const clips = useMemo(() => {
-    const out: Array<Extract<SceneNode, { kind: 'audio' }>> = []
+  const previewScope = useUI((state) => state.previewScope)
+  const playhead = useUI((state) => state.playhead)
+  const uiSelectedSequenceItemId = useUI(
+    (state) => state.selectedSequenceItemId,
+  )
+  const uiActiveCompositionId = useUI(
+    (state) => state.activeCompositionId,
+  )
+  const inventory = useMemo(() => {
+    const audioById = new Map<
+      string,
+      Extract<SceneNode, { kind: 'audio' }>
+    >()
+    const masterAudioNodeIds: string[] = []
+    const sceneAudio: SceneAudioOwnership[] = []
+    const rootToSceneId = new Map(
+      project.getScenes().map((scene) => [scene.rootNodeId, scene.id]),
+    )
     for (const id of api.getAllNodeIds()) {
       const node = api.getNode(id)
-      if (node?.kind === 'audio') out.push(node)
+      if (node?.kind !== 'audio') continue
+      audioById.set(node.id, node)
+      if (node.parent === null) {
+        masterAudioNodeIds.push(node.id)
+        continue
+      }
+      const sceneId = findOwningAudioSceneId(api, node, rootToSceneId)
+      if (sceneId) sceneAudio.push({ audioNodeId: node.id, sceneId })
     }
-    return out
+    return { audioById, masterAudioNodeIds, sceneAudio }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, version])
+  }, [api, project, version])
+  const timeMap = useMemo(
+    () => project.getSequenceTimeMap(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project, version],
+  )
+  const activeCompositionId =
+    uiActiveCompositionId ?? project.getActiveSceneId()
+  const selectedSequenceItemId =
+    uiSelectedSequenceItemId ??
+    timeMap.items.find((item) => item.scene.id === activeCompositionId)?.item
+      .id ??
+    null
+  useEffect(() => {
+    for (const clip of inventory.audioById.values()) {
+      if (!clip.src) continue
+      // Decode before an occurrence reaches the program playhead. Scene audio
+      // can then enter a crossfade on its first sample instead of waiting for
+      // an on-demand fetch/decode after the cut has already started.
+      void decodePreviewAudio(clip.src).catch(() => {
+        // The mounted contribution will use the media-element fallback.
+      })
+    }
+  }, [inventory.audioById])
+  const contributions = useMemo(
+    () =>
+      resolvePreviewAudioContributions({
+        previewScope,
+        playhead,
+        timeMap,
+        selectedSequenceItemId,
+        activeCompositionId,
+        masterAudioNodeIds: inventory.masterAudioNodeIds,
+        sceneAudio: inventory.sceneAudio,
+      }),
+    [
+      activeCompositionId,
+      inventory.masterAudioNodeIds,
+      inventory.sceneAudio,
+      playhead,
+      previewScope,
+      selectedSequenceItemId,
+      timeMap,
+    ],
+  )
 
   return (
     <div
@@ -305,17 +391,45 @@ function AudioPlaybackHost() {
         pointerEvents: 'none',
       }}
     >
-      {clips.map((clip) => (
-        <AudioPlaybackElement key={clip.id} node={clip} />
-      ))}
+      {contributions.map((contribution) => {
+        const clip = inventory.audioById.get(contribution.audioNodeId)
+        return clip ? (
+          <AudioPlaybackElement
+            key={contribution.key}
+            node={clip}
+            timelineTime={contribution.timelineTime}
+            gainScale={contribution.gain}
+          />
+        ) : null
+      })}
     </div>
   )
 }
 
+function findOwningAudioSceneId(
+  api: ReturnType<typeof useSceneAPI>,
+  node: Extract<SceneNode, { kind: 'audio' }>,
+  rootToSceneId: ReadonlyMap<string, string>,
+): string | null {
+  let current: SceneNode | null = node
+  const visited = new Set<string>()
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id)
+    const sceneId = rootToSceneId.get(current.id)
+    if (sceneId) return sceneId
+    current = current.parent ? api.getNode(current.parent) : null
+  }
+  return null
+}
+
 function AudioPlaybackElement({
   node,
+  timelineTime,
+  gainScale,
 }: {
   node: Extract<SceneNode, { kind: 'audio' }>
+  timelineTime: number
+  gainScale: number
 }) {
   const mediaRef = useRef<HTMLAudioElement | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
@@ -323,11 +437,11 @@ function AudioPlaybackElement({
   const gainRef = useRef<GainNode | null>(null)
   const sourceStartedAtRef = useRef(0)
   const sourceStartedLocalRef = useRef(0)
+  const sourceConfigRef = useRef('')
   const [metadataDuration, setMetadataDuration] = useState(0)
   const [decodeTick, setDecodeTick] = useState(0)
   const [fallbackToMediaElement, setFallbackToMediaElement] = useState(false)
   const playing = useUI((s) => s.playing)
-  const playhead = useUI((s) => s.playhead)
   const rate = Math.max(0.05, Math.min(16, node.playbackRate ?? 1))
   const startTime = Number.isFinite(node.startTime) ? node.startTime : 0
   const trimStart = Number.isFinite(node.trimStart) ? node.trimStart : 0
@@ -340,27 +454,30 @@ function AudioPlaybackElement({
       ? node.trimEnd
       : sourceDuration
   const sourceClipLen = Math.max(0, trimEnd - trimStart)
-  const sceneClipLen = sourceClipLen / rate
-  const local = clampAudioLocal(
-    (playhead - startTime) * rate + trimStart,
+  const outputGain = previewAudioGain(node.volume, gainScale)
+  const playbackClock = resolvePreviewAudioClock({
+    timelineTime,
+    startTime,
     trimStart,
     trimEnd,
-  )
+    playbackRate: rate,
+    loop: node.loop,
+  })
+  const local = playbackClock.localTime
+  const audioActive = playbackClock.active
+  const sourceConfig = `${node.loop ? 1 : 0}:${rate}:${trimStart}:${trimEnd}`
 
   useEffect(() => {
     const gain = gainRef.current
     if (!gain) return
-    gain.gain.value = Math.max(0, Math.min(1, node.volume))
-  }, [node.volume])
+    smoothPreviewGain(gain, outputGain)
+  }, [outputGain])
 
   useEffect(() => {
     let cancelled = false
     stopAudioSource(sourceRef)
     bufferRef.current = null
     gainRef.current = null
-    setMetadataDuration(0)
-    setFallbackToMediaElement(false)
-    setDecodeTick((tick) => tick + 1)
 
     if (!node.src) return
 
@@ -368,6 +485,7 @@ function AudioPlaybackElement({
       .then((buffer) => {
         if (cancelled) return
         bufferRef.current = buffer
+        setFallbackToMediaElement(false)
         setMetadataDuration(buffer.duration)
         setDecodeTick((tick) => tick + 1)
       })
@@ -387,16 +505,22 @@ function AudioPlaybackElement({
   useEffect(() => {
     const el = mediaRef.current
     if (!el) return
-    el.muted = node.muted
-    el.volume = Math.max(0, Math.min(1, node.volume))
+    el.muted = node.muted || outputGain <= 0
+    el.volume = outputGain
     el.playbackRate = rate
-  }, [fallbackToMediaElement, node.muted, node.volume, rate])
+  }, [fallbackToMediaElement, node.muted, outputGain, rate])
 
   useEffect(() => {
     if (fallbackToMediaElement) return
-    const inRange = playhead >= startTime && playhead < startTime + sceneClipLen
     const buffer = bufferRef.current
-    if (!playing || !inRange || node.muted || !buffer || sourceClipLen <= 0) {
+    if (
+      !playing ||
+      !audioActive ||
+      node.muted ||
+      outputGain <= 0 ||
+      !buffer ||
+      sourceClipLen <= 0
+    ) {
       stopAudioSource(sourceRef)
       return
     }
@@ -413,9 +537,20 @@ function AudioPlaybackElement({
       ? sourceStartedLocalRef.current +
         (ctx.currentTime - sourceStartedAtRef.current) * rate
       : Number.NaN
-    if (current && Math.abs(actualLocal - expectedLocal) <= 0.35) {
+    const drift = previewAudioLocalDrift({
+      actualTime: actualLocal,
+      expectedTime: expectedLocal,
+      trimStart,
+      trimEnd,
+      loop: node.loop,
+    })
+    if (
+      current &&
+      sourceConfigRef.current === sourceConfig &&
+      drift <= 0.35
+    ) {
       if (gainRef.current) {
-        gainRef.current.gain.value = Math.max(0, Math.min(1, node.volume))
+        smoothPreviewGain(gainRef.current, outputGain)
       }
       return
     }
@@ -431,7 +566,7 @@ function AudioPlaybackElement({
     source.loop = node.loop
     source.loopStart = trimStart
     source.loopEnd = trimEnd
-    gain.gain.value = Math.max(0, Math.min(1, node.volume))
+    gain.gain.value = outputGain
     source.connect(gain)
     gain.connect(ctx.destination)
 
@@ -451,21 +586,24 @@ function AudioPlaybackElement({
       gainRef.current = gain
       sourceStartedAtRef.current = ctx.currentTime
       sourceStartedLocalRef.current = offset
+      sourceConfigRef.current = sourceConfig
     } catch (err) {
       console.warn('[audio] preview source start failed', err)
     }
   }, [
     decodeTick,
+    fallbackToMediaElement,
+    audioActive,
     local,
     node.loop,
     node.muted,
-    node.volume,
-    playhead,
+    outputGain,
     playing,
     rate,
-    sceneClipLen,
     sourceClipLen,
+    sourceConfig,
     startTime,
+    timelineTime,
     trimEnd,
     trimStart,
   ])
@@ -474,14 +612,23 @@ function AudioPlaybackElement({
     if (!fallbackToMediaElement) return
     const el = mediaRef.current
     if (!el) return
-    const inRange = playhead >= startTime && playhead < startTime + sceneClipLen
     if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
       el.load()
       return
     }
-    if (playing && inRange && !node.muted) {
-      if (el.paused || Math.abs(el.currentTime - local) > 0.35) {
-        seekMediaAudioElement(el, local, 0.2)
+    if (playing && audioActive && !node.muted && outputGain > 0) {
+      if (
+        shouldSeekPreviewMediaElement({
+          currentTime: el.currentTime,
+          expectedTime: local,
+          trimStart,
+          trimEnd,
+          loop: node.loop,
+          paused: el.paused,
+          tolerance: 0.35,
+        })
+      ) {
+        seekMediaAudioElement(el, local, 0.01)
       }
       if (el.paused) {
         el.play().catch((err) => {
@@ -495,12 +642,16 @@ function AudioPlaybackElement({
   }, [
     fallbackToMediaElement,
     decodeTick,
+    audioActive,
     local,
+    node.loop,
     node.muted,
-    playhead,
+    outputGain,
     playing,
-    sceneClipLen,
     startTime,
+    timelineTime,
+    trimEnd,
+    trimStart,
   ])
 
   if (!fallbackToMediaElement || !node.src) return null
@@ -522,17 +673,20 @@ function AudioPlaybackElement({
   )
 }
 
-function clampAudioLocal(
-  t: number,
-  trimStart: number,
-  trimEnd: number,
-): number {
-  if (t < trimStart) return trimStart
-  if (t > trimEnd) return trimEnd
-  return t
+function previewAudioGain(volume: number, gainScale: number): number {
+  const safeVolume = Number.isFinite(volume) ? volume : 1
+  const safeScale = Number.isFinite(gainScale) ? gainScale : 0
+  return Math.max(0, Math.min(1, safeVolume * safeScale))
+}
+
+function smoothPreviewGain(gain: GainNode, value: number): void {
+  const now = gain.context.currentTime
+  gain.gain.cancelScheduledValues(now)
+  gain.gain.setTargetAtTime(value, now, 0.015)
 }
 
 let sharedPreviewAudioContext: AudioContext | null = null
+const previewAudioBufferCache = new Map<string, Promise<AudioBuffer>>()
 
 function getPreviewAudioContext(): AudioContext | null {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
@@ -545,11 +699,24 @@ function getPreviewAudioContext(): AudioContext | null {
 }
 
 async function decodePreviewAudio(src: string): Promise<AudioBuffer> {
+  const cached = previewAudioBufferCache.get(src)
+  if (cached) return cached
   const ctx = getPreviewAudioContext()
   if (!ctx) throw new Error('Web Audio is unavailable')
-  const response = await fetch(src)
-  const bytes = await response.arrayBuffer()
-  return await ctx.decodeAudioData(bytes.slice(0))
+  const pending = fetch(src)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Audio fetch failed (${response.status})`)
+      }
+      const bytes = await response.arrayBuffer()
+      return await ctx.decodeAudioData(bytes.slice(0))
+    })
+    .catch((error) => {
+      previewAudioBufferCache.delete(src)
+      throw error
+    })
+  previewAudioBufferCache.set(src, pending)
+  return await pending
 }
 
 function stopAudioSource(ref: React.MutableRefObject<AudioBufferSourceNode | null>): void {
@@ -586,6 +753,7 @@ function seekMediaAudioElement(
 
 function PreviewShell() {
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const setPlaying = useUI((s) => s.setPlaying)
   const setPlayhead = useUI((s) => s.setPlayhead)
   const setView = useUI((s) => s.setView)
@@ -602,7 +770,7 @@ function PreviewShell() {
     mode: 'start' | 'end'
     time: number
   } | null>(null)
-  useSceneVersion()
+  const sceneVersion = useSceneVersion()
   const meta = api.getMeta()
   const duration = Math.max(0.1, meta.duration)
   const frameStep = 1 / Math.max(1, meta.frameRate)
@@ -611,6 +779,20 @@ function PreviewShell() {
     storedWorkArea ?? { start: 0, end: duration },
     duration,
     minWorkArea,
+  )
+  const activeComposition = project.getActiveScene()
+  const activeCompositionId = activeComposition?.id ?? null
+  const compositionWorkAreaStart = activeComposition?.workArea?.start
+  const compositionWorkAreaEnd = activeComposition?.workArea?.end
+
+  const commitPreviewWorkArea = useCallback(
+    (range: { start: number; end: number } | null) => {
+      setStoredWorkArea(range)
+      if (activeCompositionId) {
+        project.setSceneWorkArea(activeCompositionId, range)
+      }
+    },
+    [activeCompositionId, project, setStoredWorkArea],
   )
 
   const displayName = (() => {
@@ -698,19 +880,41 @@ function PreviewShell() {
   }
 
   useEffect(() => {
-    setStoredWorkArea(normalizePreviewWorkArea(normalizedWorkArea, duration, minWorkArea))
+    const next =
+      compositionWorkAreaStart !== undefined &&
+      compositionWorkAreaEnd !== undefined
+        ? {
+            start: compositionWorkAreaStart,
+            end: compositionWorkAreaEnd,
+          }
+        : null
+    setStoredWorkArea(next)
   }, [
-    duration,
-    minWorkArea,
-    normalizedWorkArea.start,
-    normalizedWorkArea.end,
+    compositionWorkAreaEnd,
+    compositionWorkAreaStart,
+    sceneVersion,
     setStoredWorkArea,
   ])
 
   useEffect(() => {
-    getAnimEngine().setLoopRange(normalizedWorkArea)
-    return () => getAnimEngine().setLoopRange(null)
-  }, [normalizedWorkArea.start, normalizedWorkArea.end])
+    if (!storedWorkArea) return
+    const next = normalizePreviewWorkArea(
+      storedWorkArea,
+      duration,
+      minWorkArea,
+    )
+    if (
+      next.start !== storedWorkArea.start ||
+      next.end !== storedWorkArea.end
+    ) {
+      commitPreviewWorkArea(next)
+    }
+  }, [
+    commitPreviewWorkArea,
+    duration,
+    minWorkArea,
+    storedWorkArea,
+  ])
 
   useEffect(() => {
     if (
@@ -742,7 +946,10 @@ function PreviewShell() {
         0,
         normalizedWorkArea.end - minWorkArea,
       )
-      setStoredWorkArea({ start: nextStart, end: normalizedWorkArea.end })
+      commitPreviewWorkArea({
+        start: nextStart,
+        end: normalizedWorkArea.end,
+      })
       setPlayhead(nextStart)
       setDragTooltip({ mode: 'start', time: nextStart })
       return
@@ -753,7 +960,10 @@ function PreviewShell() {
         normalizedWorkArea.start + minWorkArea,
         duration,
       )
-      setStoredWorkArea({ start: normalizedWorkArea.start, end: nextEnd })
+      commitPreviewWorkArea({
+        start: normalizedWorkArea.start,
+        end: nextEnd,
+      })
       setPlayhead(Math.min(playhead, nextEnd))
       setDragTooltip({ mode: 'end', time: nextEnd })
       return
@@ -761,7 +971,7 @@ function PreviewShell() {
     const delta = t - drag.anchorTime
     const span = drag.startArea.end - drag.startArea.start
     const nextStart = clamp(drag.startArea.start + delta, 0, duration - span)
-    setStoredWorkArea({ start: nextStart, end: nextStart + span })
+    commitPreviewWorkArea({ start: nextStart, end: nextStart + span })
     setPlayhead(clamp(drag.startPlayhead + delta, nextStart, nextStart + span))
     setDragTooltip(null)
   }
@@ -812,21 +1022,21 @@ function PreviewShell() {
   }
 
   return (
-    <div className="flex h-full w-full flex-col bg-black text-text">
+    <div className="flex h-full w-full flex-col bg-zinc-950 text-zinc-50">
       <AnimationHost />
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-white/10 bg-black px-3 text-white">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-3 text-zinc-50">
         <button
           type="button"
           onClick={closePreview}
-          className="flex h-7 items-center rounded-md px-3 text-[12px] text-white/55 hover:bg-white/10 hover:text-white"
+          className="flex h-7 items-center rounded-md px-3 text-[12px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           title="Return to editor"
         >
           {displayName}
         </button>
-        <span className="text-white/25">/</span>
+        <span className="text-zinc-700">/</span>
         <button
           type="button"
-          className="flex h-7 items-center gap-2 rounded-md bg-white/12 px-3 text-[12px] font-medium text-white"
+          className="flex h-7 items-center gap-2 rounded-md bg-zinc-800 px-3 text-[12px] font-medium text-zinc-50"
           title="Preview tab"
         >
           <span>Preview</span>
@@ -835,7 +1045,7 @@ function PreviewShell() {
         <button
           type="button"
           onClick={closePreview}
-          className="flex h-7 items-center rounded-md px-3 text-[12px] text-white/55 hover:bg-white/10 hover:text-white"
+          className="flex h-7 items-center rounded-md px-3 text-[12px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           title="Close preview (Esc)"
         >
           Esc
@@ -845,11 +1055,11 @@ function PreviewShell() {
         <Canvas />
       </div>
       <AudioPlaybackHost />
-      <div className="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black px-4 text-white">
+      <div className="flex h-16 shrink-0 items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-4 text-zinc-50">
         <button
           type="button"
           onClick={restartPreview}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           title="Restart preview"
         >
           <PreviewStartIcon />
@@ -857,17 +1067,17 @@ function PreviewShell() {
         <button
           type="button"
           onClick={togglePlayback}
-          className="flex h-9 w-9 items-center justify-center rounded-md bg-white text-black hover:brightness-90"
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
           title={playing ? 'Pause preview' : 'Play preview'}
         >
           {playing ? <PreviewPauseIcon /> : <PreviewPlayIcon />}
         </button>
-        <span className="w-14 text-right font-mono text-[11px] tabular-nums text-white/70">
+        <span className="w-14 text-right font-mono text-[11px] tabular-nums text-zinc-300">
           {formatPreviewTime(Math.min(playhead, duration))}
         </span>
         <div
           ref={trackRef}
-          className="relative h-9 flex-1 cursor-pointer rounded-md bg-white/18"
+          className="relative h-9 flex-1 cursor-pointer rounded-md bg-zinc-800"
           onPointerDown={(event) => beginPreviewDrag(event, 'scrub')}
           onPointerMove={continuePreviewDrag}
           onPointerUp={endPreviewDrag}
@@ -875,7 +1085,7 @@ function PreviewShell() {
           title="Click to scrub. Drag the yellow work area to loop a range."
         >
           <div
-            className="absolute bottom-0 top-0 border-x border-white/10 bg-white/10"
+            className="absolute bottom-0 top-0 border-x border-zinc-700 bg-zinc-700/55"
             style={{
               left: `${(Math.min(playhead, duration) / duration) * 100}%`,
               width: 1,
@@ -904,7 +1114,7 @@ function PreviewShell() {
           </div>
           {dragTooltip ? (
             <div
-              className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 rounded-full border border-white/30 bg-white px-2.5 py-1 font-mono text-[11px] tabular-nums text-black shadow-lg"
+              className="pointer-events-none absolute -top-9 z-20 -translate-x-1/2 rounded-full border border-zinc-300 bg-zinc-50 px-2.5 py-1 font-mono text-[11px] tabular-nums text-zinc-950 shadow-lg"
               style={{
                 left: `${
                   ((dragTooltip.mode === 'start'
@@ -916,11 +1126,11 @@ function PreviewShell() {
               }}
             >
               {formatPreviewTimePrecise(dragTooltip.time)}
-              <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-white/30 bg-white" />
+              <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-zinc-300 bg-zinc-50" />
             </div>
           ) : null}
         </div>
-        <span className="w-14 font-mono text-[11px] tabular-nums text-white/45">
+        <span className="w-14 font-mono text-[11px] tabular-nums text-zinc-500">
           {formatPreviewTime(duration)}
         </span>
       </div>

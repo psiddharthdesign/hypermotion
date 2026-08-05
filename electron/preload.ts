@@ -21,6 +21,10 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 const clipboard = {
+  readTextSync: (): string =>
+    ipcRenderer.sendSync('clipboard:readTextSync') as string,
+  writeTextSync: (text: string): boolean =>
+    ipcRenderer.sendSync('clipboard:writeTextSync', text) as boolean,
   readText: (): Promise<string> =>
     ipcRenderer.invoke('clipboard:readText') as Promise<string>,
   writeText: (text: string): Promise<void> =>
@@ -87,6 +91,8 @@ declare global {
         node: string
       }
       clipboard: {
+        readTextSync?: () => string
+        writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
         readFiles: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>

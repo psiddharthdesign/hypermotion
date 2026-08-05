@@ -2,6 +2,7 @@
 
 import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { effectBlurPropertyId } from '@/scene/props'
 import { addKeyframe, findTrack } from './tracks'
 
 /**
@@ -50,6 +51,13 @@ const APPEARANCE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   opacity: 'appearance.opacity',
   cornerRadius: 'appearance.cornerRadius',
   fill: 'appearance.fill',
+  blendMode: 'appearance.blendMode',
+}
+
+const SHAPE_PROP_IDS: Partial<Record<string, PropertyId>> = {
+  startAngle: 'shape.arcStart',
+  sweep: 'shape.arcSweep',
+  innerRadius: 'shape.arcInnerRadius',
 }
 
 /** Map from `size` patch keys to their PropertyId. */
@@ -61,6 +69,18 @@ const SIZE_PROP_IDS: Partial<Record<string, PropertyId>> = {
 const MOTION_PATH_PROP_IDS: Partial<Record<string, PropertyId>> = {
   progress: 'motionPath.progress',
 }
+
+const LAYOUT_PROP_IDS: Partial<Record<string, PropertyId>> = {
+  gap: 'layout.gap',
+  direction: 'layout.direction',
+}
+
+const LAYOUT_PADDING_PROP_IDS = {
+  top: 'layout.padding.top',
+  right: 'layout.padding.right',
+  bottom: 'layout.padding.bottom',
+  left: 'layout.padding.left',
+} as const satisfies Record<string, PropertyId>
 
 const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   focusDistance: 'camera.focusDistance',
@@ -100,9 +120,11 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
 export type PatchGroup =
   | 'transform'
   | 'appearance'
+  | 'shape'
   | 'size'
   | 'camera'
   | 'motionPath'
+  | 'layout'
 
 export interface PatchKeyframeValue {
   propertyId: PropertyId
@@ -117,9 +139,41 @@ export function keyframeValuesForPatch(
   const map = propertyMapForGroup(group)
   const values: PatchKeyframeValue[] = []
   for (const key of Object.keys(patch)) {
+    if (group === 'appearance' && key === 'effectBlur') {
+      const effectBlur = patch[key]
+      if (
+        effectBlur &&
+        typeof effectBlur === 'object' &&
+        'effectId' in effectBlur &&
+        'value' in effectBlur &&
+        typeof effectBlur.effectId === 'string' &&
+        typeof effectBlur.value === 'number' &&
+        Number.isFinite(effectBlur.value)
+      ) {
+        values.push({
+          propertyId: effectBlurPropertyId(effectBlur.effectId),
+          value: effectBlur.value,
+        })
+      }
+      continue
+    }
+    if (group === 'layout' && key === 'padding') {
+      const padding = patch[key]
+      if (padding && typeof padding === 'object') {
+        for (const [side, propertyId] of Object.entries(
+          LAYOUT_PADDING_PROP_IDS,
+        )) {
+          const value = (padding as Record<string, unknown>)[side]
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            values.push({ propertyId, value })
+          }
+        }
+      }
+      continue
+    }
     const propertyId = map[key]
     if (!propertyId) continue
-    const value = patch[key]
+    const value = keyframeValueForPatch(propertyId, patch[key])
     if (value === undefined || value === null) continue
     if (
       typeof value !== 'number' &&
@@ -128,9 +182,34 @@ export function keyframeValuesForPatch(
     ) {
       continue
     }
-    values.push({ propertyId, value: value as KeyframeValue })
+    values.push({ propertyId, value })
   }
   return values
+}
+
+/**
+ * Fill edits arrive from the Inspector as a complete Fill object, while the
+ * animation track stores the solid color string that the engine interpolates.
+ * Gradient and image fills remain editable but do not create a color track.
+ */
+function keyframeValueForPatch(
+  propertyId: PropertyId,
+  value: unknown,
+): KeyframeValue | null | undefined {
+  if (propertyId !== 'appearance.fill') {
+    return value as KeyframeValue | null | undefined
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    'kind' in value &&
+    value.kind === 'solid' &&
+    'color' in value &&
+    typeof value.color === 'string'
+  ) {
+    return value.color
+  }
+  return typeof value === 'string' ? value : null
 }
 
 /**
@@ -138,8 +217,8 @@ export function keyframeValuesForPatch(
  * *post-patch* value — callers pass the committed scene value, not the
  * old one, so the stamp reflects what the user just saw.
  *
- * Values are coerced to plain JSON: numbers, strings, and Fill objects
- * are all valid KeyframeValues. Anything else is dropped.
+ * Values are coerced to the property's timeline representation. Fill edits
+ * store their solid color string; unsupported values are dropped.
  */
 export function recordKeyframesForPatch(
   api: SceneAPI,
@@ -194,9 +273,13 @@ function propertyMapForGroup(
     ? TRANSFORM_PROP_IDS
     : group === 'appearance'
       ? APPEARANCE_PROP_IDS
+      : group === 'shape'
+        ? SHAPE_PROP_IDS
       : group === 'size'
         ? SIZE_PROP_IDS
-        : group === 'motionPath'
-          ? MOTION_PATH_PROP_IDS
+      : group === 'motionPath'
+        ? MOTION_PATH_PROP_IDS
+        : group === 'layout'
+          ? LAYOUT_PROP_IDS
           : CAMERA_PROP_IDS
 }

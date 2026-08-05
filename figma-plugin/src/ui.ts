@@ -4,9 +4,10 @@
  * Hyper Motion Import — UI iframe code.
  *
  * The plugin sandbox can't reach `navigator.clipboard`, so all clipboard
- * IO happens here. The sandbox's `code.ts` posts the assembled JSON
- * payload via `figma.ui.postMessage`; we receive it on `window.message`,
- * write it to the clipboard, and update the UI.
+ * IO happens here. The sandbox's `code.ts` prepares the assembled JSON
+ * payload as soon as the selection is available and posts it via
+ * `figma.ui.postMessage`. The Copy button stays disabled until that payload
+ * is ready, so clipboard IO can happen synchronously in the click handler.
  *
  * Clipboard activation — the long-standing bug:
  *
@@ -20,21 +21,25 @@
  *   and the browser rejected the write — surfacing as
  *   "Copy blocked by browser. Click again with the Figma window focused."
  *
- *   The fix is to call `navigator.clipboard.write` IMMEDIATELY in the
- *   click handler with a `Promise<Blob>` that resolves later. Chromium
- *   preserves the activation context for the write() call since it was
- *   initiated during the activation tick — even if the Promise resolves
- *   seconds later. The user activation gate is on the *call*, not on
- *   the data arrival.
+ *   Promise-backed ClipboardItems are still rejected in browser-hosted
+ *   Figma because the plugin iframe may not receive the host page's
+ *   `clipboard-write` permission. The reliable flow is:
  *
- *   For environments where `ClipboardItem` is unavailable (older
- *   Electron / Figma desktop builds), we fall back to the classic
- *   `execCommand('copy')` path with a hidden textarea.
+ *     selection → buildPayload → reply → enable Copy → synchronous copy
  *
- * Two messages flow back to the sandbox:
- *   - `{ kind: 'copy' }`  on Copy button click
- *   - `{ kind: 'close' }` if we ever add a Close affordance
+ *   `document.execCommand('copy')` is attempted first while the click still
+ *   has user activation. The modern Clipboard API is started in the same
+ *   click stack as well, because Figma can report a successful legacy copy
+ *   without placing anything on the OS clipboard.
+ *
+ *   The classic `execCommand('copy')` path uses a hidden textarea and works
+ *   in both Figma Desktop and browser-hosted plugin iframes. The modern API
+ *   remains a fallback for hosts that explicitly grant clipboard access.
+ *
+ * The UI only needs to send `{ kind: 'close' }` if we add a Close affordance.
  */
+
+import { startClipboardWrite } from './clipboardWrite'
 
 const countEl = document.getElementById('count') as HTMLSpanElement
 const copyBtn = document.getElementById('copy') as HTMLButtonElement
@@ -67,112 +72,56 @@ function effectCountFromPayload(text: string): number {
   }
 }
 
-// Outstanding payload request — resolved when the sandbox posts back
-// with `{ kind: 'payload' }`, rejected on `{ kind: 'error' }`. One in
-// flight at a time; subsequent clicks while in-flight are ignored
-// because copyBtn.disabled is set.
-let pendingResolve: ((text: string) => void) | null = null
-let pendingReject: ((err: Error) => void) | null = null
+let preparedPayload: string | null = null
+let preparationStartedAt: number | null = null
+let preparationTimer: number | null = null
+let preparationProgress: {
+  processedNodes: number
+  totalNodes: number
+  currentNode: string
+} | null = null
 
 copyBtn.addEventListener('click', () => {
-  // If a previous request is still pending, drop it before kicking off
-  // a new one. This shouldn't happen because the button disables, but
-  // is defensive against race conditions if the user double-clicks.
-  if (pendingReject) {
-    pendingReject(new Error('Cancelled by new copy request.'))
-    pendingResolve = null
-    pendingReject = null
-  }
+  const text = preparedPayload
+  if (!text) return
 
-  setStatus('Capturing selection…')
   copyBtn.disabled = true
+  setStatus('Copying…')
 
-  // Create a Promise that will resolve when the sandbox posts back the
-  // payload. This MUST be created synchronously in the click handler so
-  // navigator.clipboard.write can reference it inside the same user-
-  // activation tick.
-  const payloadPromise = new Promise<string>((resolve, reject) => {
-    pendingResolve = resolve
-    pendingReject = reject
-  })
+  const clipboard = navigator.clipboard
+  const attempt = startClipboardWrite(
+    text,
+    clipboard?.writeText
+      ? (value) => clipboard.writeText(value)
+      : undefined,
+    copyViaExecCommand,
+  )
 
-  // Kick off the sandbox payload computation.
-  parent.postMessage({ pluginMessage: { kind: 'copy' } }, '*')
-
-  // Path A — modern Promise-based clipboard write. Available in
-  // Chromium 85+ (Figma desktop ships a Chromium webview, so this
-  // should work in every actively-supported version).
-  const tryModernWrite = async (): Promise<boolean> => {
-    if (typeof ClipboardItem === 'undefined') return false
-    try {
-      const blobPromise = payloadPromise.then(
-        (text) => new Blob([text], { type: 'text/plain' }),
-      )
-      // ClipboardItem accepts a Promise<Blob> — the browser holds onto
-      // the original user-activation context until the Promise
-      // resolves and writes the bytes when ready.
-      const item = new ClipboardItem({ 'text/plain': blobPromise })
-      await navigator.clipboard.write([item])
-      return true
-    } catch (err) {
-      console.warn('[hyper-motion] modern clipboard write failed', err)
-      return false
-    }
-  }
-
-  // Path B — fallback for environments without ClipboardItem (older
-  // Electron, restricted permission policies). Waits for the payload,
-  // then synthesizes a textarea + execCommand('copy'). execCommand
-  // doesn't need the modern activation gate — it works as long as we
-  // have a focused, selected text node in the same task. The pending
-  // user activation from the click usually still qualifies.
-  const tryFallbackWrite = async (): Promise<boolean> => {
-    const text = await payloadPromise
-    return copyViaExecCommand(text)
-  }
-
-  // Run modern first; on failure, await the fallback.
-  void (async () => {
-    const ok = await tryModernWrite()
-    if (ok) {
-      const text = await payloadPromise.catch(() => '')
-      const effectCount = effectCountFromPayload(text)
-      setStatus(
-        `Copied. ${effectCount} effect${effectCount === 1 ? '' : 's'} included.`,
-        'success',
-      )
-      copyBtn.disabled = false
-      return
-    }
-    // Either ClipboardItem unavailable OR the modern write rejected.
-    // Try execCommand as a last resort.
-    let fallbackOk = false
-    try {
-      fallbackOk = await tryFallbackWrite()
-    } catch (err) {
-      console.warn('[hyper-motion] fallback clipboard write failed', err)
-    }
-    if (fallbackOk) {
-      const text = await payloadPromise.catch(() => '')
-      const effectCount = effectCountFromPayload(text)
-      setStatus(
-        `Copied. ${effectCount} effect${effectCount === 1 ? '' : 's'} included.`,
-        'success',
-      )
+  void attempt.completion.then((outcome) => {
+    if (outcome.ok) {
+      showCopiedStatus(text)
     } else {
-      setStatus(
-        'Copy blocked by browser. Make sure the plugin window has focus and try again.',
-        'error',
-      )
+      console.warn('[hyper-motion] clipboard write failed', outcome.error)
+      showCopyError()
     }
     copyBtn.disabled = false
-  })()
+  })
 })
 
 window.addEventListener('message', (event: MessageEvent) => {
   const msg = (event.data as { pluginMessage?: PluginMessage }).pluginMessage
   if (!msg) return
   if (msg.kind === 'selection') {
+    stopPreparationTimer()
+    preparationProgress =
+      msg.totalNodes > 0
+        ? {
+            processedNodes: 0,
+            totalNodes: msg.totalNodes,
+            currentNode: '',
+          }
+        : null
+    preparedPayload = null
     const n = msg.count
     countEl.textContent =
       n === 0
@@ -180,26 +129,102 @@ window.addEventListener('message', (event: MessageEvent) => {
         : n === 1
           ? '1 layer'
           : `${n} layers`
-    copyBtn.disabled = n === 0
-    setStatus('')
+    copyBtn.disabled = true
+    if (n === 0) {
+      setStatus('')
+    } else {
+      startPreparationTimer()
+    }
+  }
+  if (msg.kind === 'progress') {
+    preparationProgress = {
+      processedNodes: msg.processedNodes,
+      totalNodes: msg.totalNodes,
+      currentNode: msg.currentNode,
+    }
+    renderPreparationTime()
   }
   if (msg.kind === 'payload') {
-    // Resolve the in-flight clipboard write with the actual JSON.
-    // navigator.clipboard.write's Promise chain takes it from here.
-    const resolve = pendingResolve
-    pendingResolve = null
-    pendingReject = null
-    resolve?.(msg.json)
+    const elapsed = stopPreparationTimer()
+    preparationProgress = null
+    preparedPayload = msg.json
+    copyBtn.disabled = false
+    setStatus(
+      elapsed === null ? 'Ready to copy.' : `Ready in ${formatElapsed(elapsed)}.`,
+    )
   }
   if (msg.kind === 'error') {
-    const reject = pendingReject
-    pendingResolve = null
-    pendingReject = null
-    reject?.(new Error(msg.message))
+    stopPreparationTimer()
+    preparationProgress = null
+    preparedPayload = null
     setStatus(msg.message, 'error')
-    copyBtn.disabled = false
+    copyBtn.disabled = true
   }
 })
+
+function startPreparationTimer(): void {
+  preparationStartedAt = performance.now()
+  renderPreparationTime()
+  preparationTimer = window.setInterval(renderPreparationTime, 250)
+}
+
+function renderPreparationTime(): void {
+  if (preparationStartedAt === null) return
+  const elapsed = performance.now() - preparationStartedAt
+  const progress = preparationProgress
+  const count =
+    progress && progress.totalNodes > 0
+      ? ` · layer ${progress.processedNodes}/${progress.totalNodes}`
+      : ''
+  const current =
+    progress?.currentNode
+      ? ` · ${shortNodeName(progress.currentNode)}`
+      : ''
+  setStatus(
+    `Preparing selection… ${formatElapsed(elapsed)} elapsed${count}${current}`,
+  )
+}
+
+function stopPreparationTimer(): number | null {
+  if (preparationTimer !== null) {
+    window.clearInterval(preparationTimer)
+    preparationTimer = null
+  }
+  if (preparationStartedAt === null) return null
+  const elapsed = performance.now() - preparationStartedAt
+  preparationStartedAt = null
+  return elapsed
+}
+
+function formatElapsed(milliseconds: number): string {
+  const totalSeconds = Math.max(0, milliseconds / 1000)
+  if (totalSeconds < 10) return `${totalSeconds.toFixed(1)}s`
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`
+
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = Math.floor(totalSeconds % 60)
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
+}
+
+function shortNodeName(name: string): string {
+  const normalized = name.trim()
+  return normalized.length <= 24 ? normalized : `${normalized.slice(0, 21)}…`
+}
+
+function showCopiedStatus(text: string): void {
+  const effectCount = effectCountFromPayload(text)
+  setStatus(
+    `Copied. ${effectCount} effect${effectCount === 1 ? '' : 's'} included.`,
+    'success',
+  )
+}
+
+function showCopyError(): void {
+  setStatus(
+    'Figma blocked clipboard access. Reopen the plugin and try again.',
+    'error',
+  )
+}
 
 /**
  * Classic clipboard fallback. Stashes the text in a hidden textarea,
@@ -236,6 +261,12 @@ function copyViaExecCommand(text: string): boolean {
 }
 
 type PluginMessage =
-  | { kind: 'selection'; count: number }
+  | { kind: 'selection'; count: number; totalNodes: number }
+  | {
+      kind: 'progress'
+      processedNodes: number
+      totalNodes: number
+      currentNode: string
+    }
   | { kind: 'payload'; json: string }
   | { kind: 'error'; message: string }

@@ -163,10 +163,10 @@ export function EasingPicker({
     disabled || mixed || presetId === 'none' || presetId === 'custom'
 
   return (
-    <div className="rounded border border-border bg-panel-raised">
+    <div className="overflow-hidden rounded-md bg-app-bg shadow-[var(--shadow-control)]">
       {title ? (
         <div className="border-b border-border px-2.5 py-2">
-          <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
+          <div className="text-[12px] font-semibold text-text">
             {title}
           </div>
           {description ? (

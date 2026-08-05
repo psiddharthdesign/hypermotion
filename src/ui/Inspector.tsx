@@ -14,11 +14,23 @@ import {
   Check,
   RefreshCw,
 } from 'lucide-react'
+import {
+  AnimatePresence,
+  motion,
+  useReducedMotion,
+} from 'motion/react'
+import { AppIcon, type AppIconName } from '@/ui/AppIcon'
+import { useProjectAPI, type ProjectAPI } from '@/project'
 import { useUI } from '@/state/ui'
 import {
   MAX_CAMERA_SCROLL_SENSITIVITY,
   MIN_CAMERA_SCROLL_SENSITIVITY,
+  MAX_LAYER_BLUR_PX,
+  clampLayerBlurAmount,
+  effectBlurPropertyId,
+  effectStableId,
   normalizeCameraScrollSensitivity,
+  normalizeEllipseArc,
   useSceneAPI,
   useSceneVersion,
 } from '@/scene'
@@ -60,11 +72,19 @@ import {
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { transformForAbsolutePosition } from '@/ui/positionMode'
+import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import {
   cameraPreviewStore,
   cameraTransformPreview,
 } from '@/ui/cameraPreviewStore'
+import { nodeGeometryPreviewStore } from '@/ui/nodeGeometryPreviewStore'
+import {
+  nodeLayoutPreviewStore,
+  type NodeLayoutPreview,
+} from '@/ui/nodeLayoutPreviewStore'
+import { nodeTransformPreviewStore } from '@/ui/nodeTransformPreviewStore'
 import {
   resetCameraTransformGroup,
   type CameraTransformResetGroup,
@@ -77,14 +97,23 @@ import {
   FieldRow,
   FillField,
   KeyframeButton,
+  KeyframeSliderRow,
   MultiKeyframeButton,
   NumberField,
   ScalePairField,
   SelectField,
   SizeAxisField,
+  SquircleSurface,
   StrokeWidthField,
   TextField,
+  TimeField,
 } from '@/ui/fields'
+import {
+  formatNumericDisplayValue,
+  formatNumericValue,
+  parseNumericExpression,
+  stabilizeNumericValue,
+} from '@/ui/fields/numericExpression'
 import { PresetsPanel } from '@/ui/PresetsPanel'
 import { PaperShaderInspector } from '@/ui/PaperShaderInspector'
 import { AlignTools } from '@/ui/AlignTools'
@@ -96,7 +125,7 @@ import {
   renderModeEligibleNodes,
   type RenderMode,
 } from '@/ui/multiRenderMode'
-import type { EasingPresetId } from '@/anim'
+import type { AnimatedValue, EasingPresetId } from '@/anim'
 import {
   defaultLayerMotionPath,
   MAX_LAYER_MOTION_PATH_POINTS,
@@ -134,6 +163,7 @@ import { loadAudioBuffer } from '@/audio/audioBuffer'
 import { TextMotionPathEditor } from '@/ui/TextMotionPathEditor'
 import { isCursorInstance } from '@/scene/builtins/cursorComponent'
 import {
+  addKeyframe,
   findKeyframeAt,
   findTrack,
   getAnimEngine,
@@ -142,7 +172,10 @@ import {
   stampToActiveTracksForPatch,
   toggleKeyframe,
 } from '@/anim'
-import { stampStaggerSetPatch } from '@/anim/staggerSets'
+import {
+  staggerLayerOffset,
+  stampStaggerSetPatch,
+} from '@/anim/staggerSets'
 import {
   GOOGLE_FONTS,
   isGoogleFont,
@@ -179,6 +212,27 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
   { value: 'luminosity', label: 'Luminosity' },
 ]
 
+const PADDING_PROPERTY_IDS = {
+  top: 'layout.padding.top',
+  right: 'layout.padding.right',
+  bottom: 'layout.padding.bottom',
+  left: 'layout.padding.left',
+} as const
+
+// Padding and gap are spatial adjustments with a useful everyday scrub range,
+// but they are not data-model capped at 256px. KeyframeSliderRow keeps this
+// display domain separate from the numeric field's validation constraints.
+const SPACING_SLIDER_MIN = 0
+const SPACING_SLIDER_MAX = 256
+
+// Position and rotation stay numerically unbounded, but still need a stable,
+// predictable scrub surface. These soft domains only map pointer travel; the
+// adjacent numeric fields continue to accept values outside the track.
+const POSITION_SLIDER_MIN = -1000
+const POSITION_SLIDER_MAX = 1000
+const ROTATION_SLIDER_MIN = -180
+const ROTATION_SLIDER_MAX = 180
+
 /**
  * Right sidebar: two modes.
  *
@@ -200,6 +254,7 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
 export function Inspector() {
   useSceneVersion()
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const selection = useUI((s) => s.selection)
   const mode = useUI((s) => s.inspectorMode)
   const rootId = api.getRoot()
@@ -217,6 +272,31 @@ export function Inspector() {
           .map((id) => api.getNode(id))
           .filter((n): n is Node => !!n) as Node[])
       : null
+  const activeScene = project.getActiveScene()
+  const context = showScene
+    ? {
+        name: activeScene?.name || api.getMeta().name || 'Untitled',
+        type: 'Scene',
+        icon: 'frame' as AppIconName,
+      }
+    : multiNodes && multiNodes.length > 1
+      ? {
+          name: `${multiNodes.length} layers selected`,
+          type: 'Multiple selection',
+          icon: 'layers' as AppIconName,
+        }
+      : singleNode
+        ? {
+            name: singleNode.name || humanizeNodeKind(singleNode.kind),
+            type: humanizeNodeKind(singleNode.kind),
+            icon: inspectorIconForNode(singleNode),
+          }
+        : {
+            name: 'Nothing selected',
+            type: 'Selection',
+            icon: 'nodes' as AppIconName,
+          }
+  const shouldReduceMotion = useReducedMotion()
 
   // Drag the LEFT edge to resize. Mirrors LayersPanel's right-edge
   // handle. Pointer math is inverted (dragging left grows width).
@@ -246,6 +326,8 @@ export function Inspector() {
 
   return (
     <aside
+      data-inspector-root="1"
+      aria-label="Inspector"
       className="relative flex shrink-0 flex-col border-l border-border bg-panel"
       style={{ width }}
     >
@@ -254,17 +336,57 @@ export function Inspector() {
         title="Drag to resize"
         className="absolute left-0 top-0 z-10 h-full w-1 -translate-x-1/2 cursor-col-resize hover:bg-accent/50"
       />
-      <ModeTabs />
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 text-[12px]">
-        {mode === 'animate' ? (
-          <PresetsPanel />
-        ) : showScene ? (
-          <SceneDetails api={api} />
-        ) : multiNodes && multiNodes.length > 1 ? (
-          <MultiNodeDetails nodes={multiNodes} api={api} />
-        ) : singleNode ? (
-          <NodeDetails node={singleNode} api={api} />
-        ) : null}
+      <div className="shrink-0 border-b border-border bg-panel p-4">
+        <ModeTabs />
+        <InspectorContext {...context} />
+      </div>
+      <div
+        data-inspector-scroll="1"
+        className="flex-1 overflow-y-auto overflow-x-hidden py-4 pl-4 pr-2 text-[12px]"
+      >
+        <div
+          data-timeline-properties-slot
+          data-timeline-selection-surface="1"
+          className={
+            mode === 'properties'
+              ? 'mb-4 space-y-4 empty:hidden'
+              : 'hidden'
+          }
+        />
+        <AnimatePresence initial={false} mode="popLayout">
+          <motion.div
+            key={mode}
+            id={`inspector-${mode}-panel`}
+            role="tabpanel"
+            aria-labelledby={`inspector-${mode}-tab`}
+            className="min-h-full"
+            initial={{ opacity: 0 }}
+            animate={{
+              opacity: 1,
+              transition: {
+                duration: shouldReduceMotion ? 0 : 0.12,
+                ease: [0.23, 1, 0.32, 1],
+              },
+            }}
+            exit={{
+              opacity: 0,
+              transition: {
+                duration: shouldReduceMotion ? 0 : 0.07,
+                ease: [0.23, 1, 0.32, 1],
+              },
+            }}
+          >
+            {mode === 'animate' ? (
+              <PresetsPanel />
+            ) : showScene ? (
+              <SceneDetails api={api} project={project} />
+            ) : multiNodes && multiNodes.length > 1 ? (
+              <MultiNodeDetails nodes={multiNodes} api={api} />
+            ) : singleNode ? (
+              <NodeDetails node={singleNode} api={api} />
+            ) : null}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </aside>
   )
@@ -277,31 +399,182 @@ export function Inspector() {
 function ModeTabs() {
   const mode = useUI((s) => s.inspectorMode)
   const setMode = useUI((s) => s.setInspectorMode)
+  const modes = ['properties', 'animate'] as const
+
+  const moveFocus = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    current: (typeof modes)[number],
+  ) => {
+    const currentIndex = modes.indexOf(current)
+    let nextIndex = currentIndex
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % modes.length
+    else if (event.key === 'ArrowLeft')
+      nextIndex = (currentIndex - 1 + modes.length) % modes.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = modes.length - 1
+    else return
+    event.preventDefault()
+    document.getElementById(`inspector-${modes[nextIndex]}-tab`)?.focus()
+  }
 
   return (
-    <div
+    <SquircleSurface
+      radius={6}
+      role="tablist"
+      aria-label="Inspector mode"
       data-timeline-selection-surface="1"
-      className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2"
+      className="hm-control-surface hm-inspector-segmented"
     >
-      {(['properties', 'animate'] as const).map((m) => {
-        const active = mode === m
-        return (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={[
-              'h-6 rounded px-2 text-[11px] font-medium transition-colors',
-              active
-                ? 'bg-panel-raised text-text'
-                : 'text-text-muted hover:bg-panel-raised/70 hover:text-text',
-            ].join(' ')}
-          >
-            {m === 'properties' ? 'Properties' : 'Animate'}
-          </button>
-        )
-      })}
+        {modes.map((m) => {
+          const active = mode === m
+          return (
+            <button
+              key={m}
+              id={`inspector-${m}-tab`}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`inspector-${m}-panel`}
+              tabIndex={active ? 0 : -1}
+              onClick={() => setMode(m)}
+              onKeyDown={(event) => moveFocus(event, m)}
+              data-active={active}
+              className="hm-inspector-segment focus-visible:outline-none"
+            >
+              {m === 'properties' ? 'Properties' : 'Animate'}
+            </button>
+          )
+        })}
+    </SquircleSurface>
+  )
+}
+
+function InspectorContext({
+  name,
+  type,
+  icon,
+}: {
+  name: string
+  type: string
+  icon: AppIconName
+}) {
+  return (
+    <div className="mt-3 flex min-w-0 items-center gap-2.5 px-1">
+      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-panel-raised text-text-muted shadow-[var(--shadow-control)]">
+        <AppIcon name={icon} size={15} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[12px] font-semibold text-text" title={name}>
+          {name}
+        </div>
+        <div className="truncate text-[11px] text-text-dim" title={type}>
+          {type}
+        </div>
+      </div>
     </div>
+  )
+}
+
+function humanizeNodeKind(kind: Node['kind']): string {
+  return kind
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+function formatInspectorSizeAxis(value: Size['width']): string {
+  if (typeof value === 'number') return `${Number(value.toFixed(2))} px`
+  return value === 'hug' ? 'Hug' : 'Fill'
+}
+
+function inspectorIconForNode(node: Node): AppIconName {
+  switch (node.kind) {
+    case 'camera':
+      return 'camera'
+    case 'text':
+      return 'text'
+    case 'image':
+      return 'image'
+    case 'video':
+      return 'video'
+    case 'audio':
+      return 'audio'
+    case 'ellipse':
+      return 'circle'
+    case 'rect':
+      return 'square'
+    case 'vector':
+      return 'vector'
+    case 'shader':
+      return 'sparkle'
+    case 'frame':
+    case 'component':
+    case 'instance':
+      return 'frame'
+    default:
+      return 'nodes'
+  }
+}
+
+function InspectorDisclosure({
+  storageKey,
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  storageKey: string
+  title: string
+  children: ReactNode
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(() => {
+    if (typeof window === 'undefined') return defaultOpen
+    try {
+      const stored = window.localStorage.getItem(
+        `hyper-motion.inspector.disclosure.${storageKey}`,
+      )
+      return stored == null ? defaultOpen : stored === '1'
+    } catch {
+      return defaultOpen
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        `hyper-motion.inspector.disclosure.${storageKey}`,
+        open ? '1' : '0',
+      )
+    } catch {
+      // Local persistence is a convenience; private contexts can reject it.
+    }
+  }, [open, storageKey])
+
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="group mt-1"
+    >
+      <summary className="flex h-7 cursor-pointer list-none select-none items-center rounded-md px-1 text-[12px] font-medium text-text-muted transition-colors duration-150 ease-[var(--ease-ui-out)] hover:bg-app-bg hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45">
+        <svg
+          viewBox="0 0 12 12"
+          aria-hidden="true"
+          className="mr-1 h-2.5 w-2.5 shrink-0 transition-transform duration-150 ease-[var(--ease-ui-out)] group-open:rotate-90"
+        >
+          <path
+            d="m4.5 2.5 3.5 3.5-3.5 3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span>{title}</span>
+      </summary>
+      <div className="space-y-1.5 pt-1.5">{children}</div>
+    </details>
   )
 }
 
@@ -325,10 +598,92 @@ function ModeTabs() {
  *   - Clipping                               — always on (conceptually).
  *   - Size via "Size" section                — driven by Canvas Width / Height.
  */
-function SceneDetails({ api }: { api: SceneAPI }) {
+function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) {
   const meta = api.getMeta()
+  const activeScene = project.getActiveScene()
+  const selectedSequenceItemId = useUI(
+    (state) => state.selectedSequenceItemId,
+  )
+  const sequenceItems = project.getSequenceItems()
+  const activeSequenceItem =
+    sequenceItems.find((item) => item.id === selectedSequenceItemId) ??
+    sequenceItems.find((item) => item.sceneId === activeScene?.id)
+  const activeTransition = activeSequenceItem?.transitionOut ?? {
+    kind: 'cut' as const,
+    duration: 0,
+  }
   const rootId = api.getRoot()
   const root = rootId ? api.getNode(rootId) : null
+  const playing = useUI((state) => state.playing)
+  const rootAnimationIds = useMemo(
+    () => (!playing && rootId ? [rootId] : []),
+    [playing, rootId],
+  )
+  const rootAnimated = useAnimatedValues(rootAnimationIds)
+  const rootAnim = rootId
+    ? playing
+      ? getAnimEngine().getSnapshot()[rootId]
+      : rootAnimated[rootId]
+    : undefined
+  const liveRootFill =
+    rootAnim?.fill !== undefined
+      ? ({ kind: 'solid', color: rootAnim.fill } as const)
+      : root?.appearance.fill ?? null
+  const liveRootCorner =
+    rootAnim?.cornerRadius ?? root?.appearance.cornerRadius ?? 0
+
+  const commitRootFill = (fill: Appearance['fill']) => {
+    if (!root || root.kind !== 'frame') return
+    const current = api.getNode(root.id)
+    if (!current || current.kind !== 'frame') return
+    const authorTime = currentAnimationAuthorTime()
+    api.doc.transact(() => {
+      api.setNodeProperty(root.id, 'appearance', {
+        ...current.appearance,
+        fill,
+      })
+      if (useUI.getState().recording) {
+        recordKeyframesForPatch(api, root.id, authorTime, 'appearance', {
+          fill,
+        })
+      } else {
+        stampToActiveTracksForPatch(
+          api,
+          root.id,
+          authorTime,
+          'appearance',
+          { fill },
+        )
+      }
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+
+  const commitRootCorner = (cornerRadius: number) => {
+    if (!root || root.kind !== 'frame') return
+    const current = api.getNode(root.id)
+    if (!current || current.kind !== 'frame') return
+    const next = Math.max(0, cornerRadius)
+    const authorTime = currentAnimationAuthorTime()
+    api.doc.transact(() => {
+      api.setNodeProperty(root.id, 'appearance', {
+        ...current.appearance,
+        cornerRadius: next,
+      })
+      if (useUI.getState().recording) {
+        recordKeyframesForPatch(api, root.id, authorTime, 'appearance', {
+          cornerRadius: next,
+        })
+      } else {
+        stampToActiveTracksForPatch(
+          api,
+          root.id,
+          authorTime,
+          'appearance',
+          { cornerRadius: next },
+        )
+      }
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
 
   // Canvas dimensions and the root frame's size are the same thing:
   // "how big is the artboard." Keep them in lockstep so the Yoga solve
@@ -343,13 +698,14 @@ function SceneDetails({ api }: { api: SceneAPI }) {
     }
   }
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Section title="Scene">
         <FieldRow label="Name">
           <TextField
-            value={meta.name}
+            value={activeScene?.name ?? meta.name}
             onCommit={(n) => {
-              api.setMeta({ name: n })
+              if (activeScene) project.updateScene(activeScene.id, { name: n })
+              else api.setMeta({ name: n })
               // Keep the layers-panel label in sync. The root node's
               // name is what LayersPanel renders; without this they
               // drift (Inspector shows the new name, Layers still shows
@@ -359,51 +715,110 @@ function SceneDetails({ api }: { api: SceneAPI }) {
             allowEmpty={false}
           />
         </FieldRow>
-        <FieldRow label="Width">
-          <NumberField
-            value={meta.canvas.width}
-            onCommit={(v) => setCanvasSize(v, meta.canvas.height)}
-            min={1}
-          />
-        </FieldRow>
-        <FieldRow label="Height">
-          <NumberField
-            value={meta.canvas.height}
-            onCommit={(v) => setCanvasSize(meta.canvas.width, v)}
-            min={1}
-          />
-        </FieldRow>
-        <FieldRow label="Duration">
-          <NumberField
-            value={meta.duration}
-            onCommit={(v) => api.setMeta({ duration: Math.max(0.1, v) })}
-            min={0.1}
-            step={0.1}
-            suffix="s"
-          />
-        </FieldRow>
-        <FieldRow label="Frame rate">
-          <NumberField
-            value={meta.frameRate}
-            onCommit={(v) => api.setMeta({ frameRate: Math.max(1, Math.round(v)) })}
-            min={1}
-            step={1}
-          />
-        </FieldRow>
+        <KeyframeSliderRow
+          label="Width"
+          value={meta.canvas.width}
+          onCommit={(v) => setCanvasSize(v, meta.canvas.height)}
+          min={1}
+          adaptiveSpan={1920}
+          step={1}
+          suffix="px"
+        />
+        <KeyframeSliderRow
+          label="Height"
+          value={meta.canvas.height}
+          onCommit={(v) => setCanvasSize(meta.canvas.width, v)}
+          min={1}
+          adaptiveSpan={1080}
+          step={1}
+          suffix="px"
+        />
+        <KeyframeSliderRow
+          label="Duration"
+          value={activeScene?.duration ?? meta.duration}
+          onCommit={(v) => {
+            const duration = Math.max(0.1, v)
+            if (activeScene) {
+              project.updateScene(activeScene.id, { duration })
+            } else {
+              api.setMeta({ duration })
+            }
+          }}
+          min={0.1}
+          adaptiveSpan={20}
+          step={0.1}
+          suffix="s"
+        />
+        <KeyframeSliderRow
+          label="Frame rate"
+          value={meta.frameRate}
+          onCommit={(v) =>
+            api.setMeta({ frameRate: Math.max(1, Math.round(v)) })
+          }
+          min={1}
+          max={240}
+          step={1}
+          suffix="FPS"
+        />
       </Section>
+
+      {activeSequenceItem ? (
+        <Section title="Sequence">
+          <FieldRow label="Transition">
+            <SelectField<'cut' | 'crossfade'>
+              value={activeTransition.kind}
+              options={[
+                { value: 'cut', label: 'Cut' },
+                { value: 'crossfade', label: 'Crossfade' },
+              ]}
+              onCommit={(kind) =>
+                project.setTransition(activeSequenceItem.id, {
+                  kind,
+                  duration: kind === 'crossfade' ? 0.35 : 0,
+                })
+              }
+              width="w-full"
+            />
+          </FieldRow>
+          {activeTransition.kind === 'crossfade' ? (
+            <FieldRow label="Blend duration">
+              <TimeField
+                value={activeTransition.duration}
+                onCommit={(duration) =>
+                  project.setTransition(activeSequenceItem.id, {
+                    kind: 'crossfade',
+                    duration,
+                  })
+                }
+                min={0}
+                max={activeScene?.duration ?? meta.duration}
+                step={0.05}
+                ariaLabel="Crossfade duration"
+              />
+            </FieldRow>
+          ) : null}
+        </Section>
+      ) : null}
 
       {root && root.kind === 'frame' ? (
         <>
           <Section title="Background">
             <FillField
-              value={root.appearance.fill}
-              onCommit={(fill) =>
-                api.setNodeProperty(root.id, 'appearance', {
-                  ...root.appearance,
-                  fill,
-                })
+              value={liveRootFill}
+              onCommit={commitRootFill}
+              keyframe={
+                <KeyframeButton
+                  nodeId={root.id}
+                  propertyId="appearance.fill"
+                  currentValue={
+                    liveRootFill?.kind === 'solid'
+                      ? liveRootFill.color
+                      : null
+                  }
+                />
               }
             />
+            <div aria-hidden="true" className="border-t border-border" />
             <StrokeControls
               value={root.appearance.stroke}
               onCommit={(stroke) =>
@@ -413,51 +828,119 @@ function SceneDetails({ api }: { api: SceneAPI }) {
                 })
               }
             />
-            <FieldRow label="Corner">
-              <CornerField
-                uniformValue={root.appearance.cornerRadius}
-                cornerRadii={root.appearance.cornerRadii}
-                onCommitUniform={(v) =>
-                  api.setNodeProperty(root.id, 'appearance', {
-                    ...root.appearance,
-                    cornerRadius: Math.max(0, v),
+            {root.appearance.cornerRadii ? (
+              <FieldRow
+                label="Corner"
+                keyframe={
+                  <KeyframeButton
+                    nodeId={root.id}
+                    propertyId="appearance.cornerRadius"
+                    currentValue={null}
+                  />
+                }
+              >
+                <CornerField
+                  uniformValue={liveRootCorner}
+                  cornerRadii={root.appearance.cornerRadii}
+                  onCommitUniform={commitRootCorner}
+                  onPromoteToPerCorner={(initial) =>
+                    api.setNodeProperty(root.id, 'appearance', {
+                      ...root.appearance,
+                      cornerRadii: initial,
+                    })
+                  }
+                  onCommitPerCorner={(next) =>
+                    api.setNodeProperty(root.id, 'appearance', {
+                      ...root.appearance,
+                      cornerRadii: next,
+                    })
+                  }
+                  onClearPerCorner={() =>
+                    api.setNodeProperty(root.id, 'appearance', {
+                      ...root.appearance,
+                      cornerRadii: undefined,
+                    })
+                  }
+                />
+              </FieldRow>
+            ) : (
+              <KeyframeSliderRow
+                label="Corner"
+                value={liveRootCorner}
+                onCommit={commitRootCorner}
+                onScrubPreview={(value) =>
+                  nodeTransformPreviewStore.preview({
+                    [root.id]: { cornerRadius: Math.max(0, value) },
                   })
                 }
-                onPromoteToPerCorner={(initial) =>
-                  api.setNodeProperty(root.id, 'appearance', {
-                    ...root.appearance,
-                    cornerRadii: initial,
-                  })
+                onScrubCommit={(value) => {
+                  commitRootCorner(value)
+                  nodeTransformPreviewStore.finish()
+                }}
+                onScrubCancel={() => nodeTransformPreviewStore.clear()}
+                min={0}
+                adaptiveSpan={100}
+                step={1}
+                suffix="px"
+                labelAccessory={
+                  <CornerLinkButton
+                    linked={true}
+                    onToggle={() =>
+                      api.setNodeProperty(root.id, 'appearance', {
+                        ...root.appearance,
+                        cornerRadii: {
+                          tl: liveRootCorner,
+                          tr: liveRootCorner,
+                          br: liveRootCorner,
+                          bl: liveRootCorner,
+                        },
+                      })
+                    }
+                  />
                 }
-                onCommitPerCorner={(next) =>
-                  api.setNodeProperty(root.id, 'appearance', {
-                    ...root.appearance,
-                    cornerRadii: next,
-                  })
-                }
-                onClearPerCorner={() =>
-                  api.setNodeProperty(root.id, 'appearance', {
-                    ...root.appearance,
-                    cornerRadii: undefined,
-                  })
+                keyframe={
+                  <KeyframeButton
+                    nodeId={root.id}
+                    propertyId="appearance.cornerRadius"
+                    currentValue={liveRootCorner}
+                  />
                 }
               />
-            </FieldRow>
-            <FieldRow label="Clip">
-              <CheckboxField
-                value={root.clipsContent}
-                onCommit={(v) => api.setNodeProperty(root.id, 'clipsContent', v)}
-              />
-            </FieldRow>
+            )}
+            <SectionToggleRow
+              label="Clip"
+              value={root.clipsContent}
+              plain
+              onCommit={(v) => api.setNodeProperty(root.id, 'clipsContent', v)}
+            />
           </Section>
 
           <LayoutSection
+            nodeId={root.id}
             layout={root.layout}
             onPatch={(patch) => {
               api.setNodeProperty(root.id, 'layout', {
                 ...root.layout,
                 ...patch,
               })
+              const authorTime = currentAnimationAuthorTime()
+              if (useUI.getState().recording) {
+                recordKeyframesForPatch(
+                  api,
+                  root.id,
+                  authorTime,
+                  'layout',
+                  patch,
+                )
+              } else {
+                stampToActiveTracksForPatch(
+                  api,
+                  root.id,
+                  authorTime,
+                  'layout',
+                  patch,
+                )
+              }
               // Scene root never gets renamed — its label is the scene
               // name (meta.name), not a mode-derived default. A user who
               // named their scene "Landing hero" expects that name to
@@ -498,6 +981,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   const staggerOn = useUI((s) => s.staggerOn)
   const staggerDelay = useUI((s) => s.staggerDelay)
   const activeStaggerSetId = useUI((s) => s.activeStaggerSetId)
+  const staggerDraftLayerIds = useUI((s) => s.staggerDraftLayerIds)
   const activeStaggerSet = activeStaggerSetId
     ? api.getUiState().staggerSets[activeStaggerSetId]
     : undefined
@@ -508,7 +992,10 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     ? {
         setId: activeStaggerSetId,
         layerIds:
-          activeStaggerSet?.layerIds ?? nodes.map((node) => node.id),
+          activeStaggerSet?.layerIds ??
+          (staggerDraftLayerIds.length > 1
+            ? staggerDraftLayerIds
+            : nodes.map((node) => node.id)),
         delay: activeStaggerSet?.delay ?? staggerDelay,
         order: activeStaggerSet?.order ?? ('forward' as const),
       }
@@ -535,7 +1022,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   // recording=on already covers active tracks (it stamps everything),
   // so the two paths never overlap.
   const stampPatchAll = (
-    group: 'transform' | 'appearance' | 'size',
+    group: 'transform' | 'appearance' | 'size' | 'layout',
     patch: Record<string, unknown>,
   ) => {
     const authorTime = currentAnimationAuthorTime()
@@ -577,6 +1064,20 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
       stampPatchAll('appearance', patch)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
+  const previewVisualAll = (patch: AnimatedValue) => {
+    const previews: Record<NodeId, AnimatedValue> = {}
+    for (const current of nodes) previews[current.id] = patch
+    nodeTransformPreviewStore.preview(previews)
+  }
+  const commitTransformScrubAll = (patch: Partial<Transform>) => {
+    patchTransformAll(patch)
+    nodeTransformPreviewStore.finish()
+  }
+  const commitAppearanceScrubAll = (patch: Partial<Appearance>) => {
+    patchAppearanceAll(patch)
+    nodeTransformPreviewStore.finish()
+  }
+  const cancelVisualPreview = () => nodeTransformPreviewStore.clear()
   const patchSizeAll = (patch: Partial<Size>) => {
     api.doc.transact(() => {
       for (const n of nodes) {
@@ -593,6 +1094,22 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
       stampPatchAll('size', patch)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
+  const previewSizeAll = (patch: Partial<Size>) => {
+    nodeGeometryPreviewStore.preview(
+      Object.fromEntries(
+        nodes.flatMap((current) =>
+          'size' in current
+            ? [[current.id, { size: patch }] as const]
+            : [],
+        ),
+      ),
+    )
+  }
+  const commitSizeScrubAll = (patch: Partial<Size>) => {
+    patchSizeAll(patch)
+    nodeGeometryPreviewStore.finish()
+  }
+  const cancelGeometryPreview = () => nodeGeometryPreviewStore.clear()
   const patchLayoutAll = (patch: Partial<Layout>) => {
     const DEFAULT_FRAME_NAMES = new Set(['Auto layout', 'Grid', 'Frame'])
     api.doc.transact(() => {
@@ -640,6 +1157,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
           }
         }
       }
+      stampPatchAll('layout', patch)
     })
   }
 
@@ -709,7 +1227,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
     : null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="rounded border border-border bg-panel-raised px-3 py-2 text-text-muted">
         <div className="text-[12px]">{count} layers selected</div>
         <div className="mt-0.5 text-[10px] text-text-dim">
@@ -756,11 +1274,9 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             selection sits inside a stack (parent has flex / grid
             layout) — alignment via transform would just visually
             shift the node out of its solved Yoga position. */}
-        <div className="mb-3">
           <AlignTools api={api} selection={selection} />
-        </div>
         {cRenderMode ? (
-          <FieldRow label="Render Mode">
+          <FieldRow label="Render mode">
             <MixedCell mixed={cRenderMode.mixed}>
               <SelectField<RenderMode>
                 value={cRenderMode.value}
@@ -773,7 +1289,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             </MixedCell>
           </FieldRow>
         ) : null}
-        <FieldRow label="3D Space">
+        <FieldRow label="3D space">
           <MixedCell mixed={cSpace.mixed}>
             <SelectField<NonNullable<Transform['space']>>
               value={cSpace.value}
@@ -786,24 +1302,56 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             />
           </MixedCell>
         </FieldRow>
-        <FieldRow label="Scale">
-          <ScalePairField
-            scaleX={cSX.value}
-            scaleY={cSY.value}
-            mixedX={cSX.mixed}
-            mixedY={cSY.mixed}
-            onCommitX={(v) => patchTransformAll({ scaleX: v })}
-            onCommitY={(v) => patchTransformAll({ scaleY: v })}
-            onCommitPair={({ scaleX, scaleY }) =>
-              patchTransformAll({ scaleX, scaleY })
-            }
-          />
-        </FieldRow>
+        <ScalePairField
+          scaleX={cSX.value}
+          scaleY={cSY.value}
+          mixedX={cSX.mixed}
+          mixedY={cSY.mixed}
+          onCommitX={(v) => patchTransformAll({ scaleX: v })}
+          onCommitY={(v) => patchTransformAll({ scaleY: v })}
+          onCommitPair={({ scaleX, scaleY }) =>
+            patchTransformAll({ scaleX, scaleY })
+          }
+          onScrubPreviewPair={({ scaleX, scaleY }) =>
+            previewVisualAll({ scaleX, scaleY })
+          }
+          onScrubCommitPair={({ scaleX, scaleY }) =>
+            commitTransformScrubAll({ scaleX, scaleY })
+          }
+          onScrubCancel={cancelVisualPreview}
+          keyframeX={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.scaleX,
+              }))}
+              propertyId="transform.scaleX"
+            />
+          }
+          keyframeY={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.scaleY,
+              }))}
+              propertyId="transform.scaleY"
+            />
+          }
+        />
       </Section>
 
       <Section title="Position">
-        <FieldRow
+        <KeyframeSliderRow
           label="Position X"
+          value={cX.value}
+          onCommit={(v) => patchTransformAll({ x: v })}
+          onScrubPreview={(v) => previewVisualAll({ x: v })}
+          onScrubCommit={(v) => commitTransformScrubAll({ x: v })}
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          mixed={cX.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -813,16 +1361,18 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.x"
             />
           }
-        >
-          <MixedCell mixed={cX.mixed}>
-            <NumberField
-              value={cX.value}
-              onCommit={(v) => patchTransformAll({ x: v })}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Position Y"
+          value={cY.value}
+          onCommit={(v) => patchTransformAll({ y: v })}
+          onScrubPreview={(v) => previewVisualAll({ y: v })}
+          onScrubCommit={(v) => commitTransformScrubAll({ y: v })}
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          mixed={cY.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -832,16 +1382,18 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.y"
             />
           }
-        >
-          <MixedCell mixed={cY.mixed}>
-            <NumberField
-              value={cY.value}
-              onCommit={(v) => patchTransformAll({ y: v })}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Position Z"
+          value={cZ.value}
+          onCommit={(v) => patchTransformAll({ z: v })}
+          onScrubPreview={(v) => previewVisualAll({ z: v })}
+          onScrubCommit={(v) => commitTransformScrubAll({ z: v })}
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          mixed={cZ.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -851,19 +1403,24 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.z"
             />
           }
-        >
-          <MixedCell mixed={cZ.mixed}>
-            <NumberField
-              value={cZ.value}
-              onCommit={(v) => patchTransformAll({ z: v })}
-            />
-          </MixedCell>
-        </FieldRow>
+        />
       </Section>
 
       <Section title="Rotation">
-        <FieldRow
+        <KeyframeSliderRow
           label="Rotate X"
+          value={cRotX.value}
+          onCommit={(v) => patchTransformAll({ rotationX: v })}
+          onScrubPreview={(v) => previewVisualAll({ rotationX: v })}
+          onScrubCommit={(v) =>
+            commitTransformScrubAll({ rotationX: v })
+          }
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          mixed={cRotX.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -873,17 +1430,21 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.rotationX"
             />
           }
-        >
-          <MixedCell mixed={cRotX.mixed}>
-            <NumberField
-              value={cRotX.value}
-              onCommit={(v) => patchTransformAll({ rotationX: v })}
-              suffix="°"
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Rotate Y"
+          value={cRotY.value}
+          onCommit={(v) => patchTransformAll({ rotationY: v })}
+          onScrubPreview={(v) => previewVisualAll({ rotationY: v })}
+          onScrubCommit={(v) =>
+            commitTransformScrubAll({ rotationY: v })
+          }
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          mixed={cRotY.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -893,17 +1454,21 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.rotationY"
             />
           }
-        >
-          <MixedCell mixed={cRotY.mixed}>
-            <NumberField
-              value={cRotY.value}
-              onCommit={(v) => patchTransformAll({ rotationY: v })}
-              suffix="°"
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Rotate Z"
+          value={cRot.value}
+          onCommit={(v) => patchTransformAll({ rotation: v })}
+          onScrubPreview={(v) => previewVisualAll({ rotation: v })}
+          onScrubCommit={(v) =>
+            commitTransformScrubAll({ rotation: v })
+          }
+          onScrubCancel={cancelVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          mixed={cRot.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -913,20 +1478,24 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="transform.rotation"
             />
           }
-        >
-          <MixedCell mixed={cRot.mixed}>
-            <NumberField
-              value={cRot.value}
-              onCommit={(v) => patchTransformAll({ rotation: v })}
-              suffix="°"
-            />
-          </MixedCell>
-        </FieldRow>
+        />
       </Section>
 
       {cW && cH ? (
         <Section title="Size">
-          <FieldRow label="Width">
+          <FieldRow
+            label="Width"
+            keyframe={
+              <MultiKeyframeButton
+                targets={nodes.flatMap((node) =>
+                  'size' in node && typeof node.size.width === 'number'
+                    ? [{ nodeId: node.id, currentValue: node.size.width }]
+                    : [],
+                )}
+                propertyId="size.width"
+              />
+            }
+          >
             {/* Don't wrap SizeAxisField in MixedCell — the badge used
              * to steal width from the Fixed/Hug/Fill pills on mixed
              * selections, forcing users to first pick Hug before Fill
@@ -936,13 +1505,31 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               value={cW.value}
               mixed={cW.mixed}
               onCommit={(w) => patchSizeAll({ width: w })}
+              onScrubPreview={(width) => previewSizeAll({ width })}
+              onScrubCommit={(width) => commitSizeScrubAll({ width })}
+              onScrubCancel={cancelGeometryPreview}
             />
           </FieldRow>
-          <FieldRow label="Height">
+          <FieldRow
+            label="Height"
+            keyframe={
+              <MultiKeyframeButton
+                targets={nodes.flatMap((node) =>
+                  'size' in node && typeof node.size.height === 'number'
+                    ? [{ nodeId: node.id, currentValue: node.size.height }]
+                    : [],
+                )}
+                propertyId="size.height"
+              />
+            }
+          >
             <SizeAxisField
               value={cH.value}
               mixed={cH.mixed}
               onCommit={(h) => patchSizeAll({ height: h })}
+              onScrubPreview={(height) => previewSizeAll({ height })}
+              onScrubCommit={(height) => commitSizeScrubAll({ height })}
+              onScrubCancel={cancelGeometryPreview}
             />
           </FieldRow>
         </Section>
@@ -952,12 +1539,25 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
         <MultiLayoutSection
           common={cLayout}
           onPatch={patchLayoutAll}
+          nodes={nodes}
         />
       ) : null}
 
       <Section title="Appearance">
-        <FieldRow
+        <KeyframeSliderRow
           label="Opacity"
+          value={cOpacity.value * 100}
+          onCommit={(v) => patchAppearanceAll({ opacity: v / 100 })}
+          onScrubPreview={(v) => previewVisualAll({ opacity: v / 100 })}
+          onScrubCommit={(v) =>
+            commitAppearanceScrubAll({ opacity: v / 100 })
+          }
+          onScrubCancel={cancelVisualPreview}
+          min={0}
+          max={100}
+          step={1}
+          suffix="%"
+          mixed={cOpacity.mixed}
           keyframe={
             <MultiKeyframeButton
               targets={nodes.map((node) => ({
@@ -967,18 +1567,19 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
               propertyId="appearance.opacity"
             />
           }
-        >
-          <MixedCell mixed={cOpacity.mixed}>
-            <NumberField
-              value={cOpacity.value}
-              onCommit={(v) => patchAppearanceAll({ opacity: v })}
-              min={0}
-              max={1}
-              step={0.05}
+        />
+        <FieldRow
+          label="Blend"
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.appearance.blendMode ?? 'normal',
+              }))}
+              propertyId="appearance.blendMode"
             />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow label="Blend">
+          }
+        >
           <MixedCell mixed={cBlendMode.mixed}>
             <SelectField<BlendMode>
               value={cBlendMode.value}
@@ -999,7 +1600,23 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
           value={cFill.value ?? null}
           mixed={cFill.mixed}
           onCommit={(fill) => patchAppearanceAll({ fill })}
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.flatMap((node) =>
+                node.appearance.fill?.kind === 'solid'
+                  ? [
+                      {
+                        nodeId: node.id,
+                        currentValue: node.appearance.fill.color,
+                      },
+                    ]
+                  : [],
+              )}
+              propertyId="appearance.fill"
+            />
+          }
         />
+        <div aria-hidden="true" className="border-t border-border" />
         <FieldRow label="Stroke">
           <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
             <MixedCell mixed={cStroke.mixed}>
@@ -1053,30 +1670,48 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             </FieldRow>
           </>
         ) : null}
-        <FieldRow label="Corner">
-          <MixedCell mixed={cCorner.mixed}>
-            <NumberField
-              value={cCorner.value}
-              onCommit={(v) => patchAppearanceAll({ cornerRadius: v })}
-              min={0}
+        <KeyframeSliderRow
+          label="Corner"
+          value={cCorner.value}
+          onCommit={(v) =>
+            patchAppearanceAll({ cornerRadius: Math.max(0, v) })
+          }
+          onScrubPreview={(v) =>
+            previewVisualAll({ cornerRadius: Math.max(0, v) })
+          }
+          onScrubCommit={(v) =>
+            commitAppearanceScrubAll({ cornerRadius: Math.max(0, v) })
+          }
+          onScrubCancel={cancelVisualPreview}
+          min={0}
+          adaptiveSpan={100}
+          step={1}
+          suffix="px"
+          mixed={cCorner.mixed}
+          keyframe={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.appearance.cornerRadius,
+              }))}
+              propertyId="appearance.cornerRadius"
             />
-          </MixedCell>
-        </FieldRow>
+          }
+        />
         {cClip ? (
-          <FieldRow label="Clip">
-            <MixedCell mixed={cClip.mixed}>
-              <CheckboxField
-                value={cClip.value}
-                onCommit={(v) => {
-                  for (const n of nodes) {
-                    if (n.kind === 'frame') {
-                      api.setNodeProperty(n.id, 'clipsContent', v)
-                    }
-                  }
-                }}
-              />
-            </MixedCell>
-          </FieldRow>
+          <SectionToggleRow
+            label="Clip"
+            value={cClip.value}
+            mixed={cClip.mixed}
+            plain
+            onCommit={(v) => {
+              for (const n of nodes) {
+                if (n.kind === 'frame') {
+                  api.setNodeProperty(n.id, 'clipsContent', v)
+                }
+              }
+            }}
+          />
         ) : null}
       </Section>
 
@@ -1113,6 +1748,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
 function MultiLayoutSection({
   common: c,
   onPatch,
+  nodes,
 }: {
   common: {
     mode: Common<LayoutMode>
@@ -1127,27 +1763,68 @@ function MultiLayoutSection({
     padding: Common<{ top: number; right: number; bottom: number; left: number }>
   }
   onPatch: (patch: Partial<Layout>) => void
+  nodes: Node[]
 }) {
+  const previewAll = (patch: NodeLayoutPreview) => {
+    nodeLayoutPreviewStore.preview(
+      Object.fromEntries(
+        nodes
+          .filter((node) => 'layout' in node)
+          .map((node) => [node.id, patch]),
+      ),
+    )
+  }
+  const commitPreviewAll = (patch: Partial<Layout>) => {
+    onPatch(patch)
+    nodeLayoutPreviewStore.finish()
+  }
+
   return (
     <Section title="Layout">
-      <MixedCell mixed={c.mode.mixed}>
-        <ModeToggle
-          value={c.mode.value}
-          onCommit={(m) => onPatch({ mode: m })}
-        />
-      </MixedCell>
+      <FieldRow label="Mode">
+        <MixedCell mixed={c.mode.mixed}>
+          <LayoutModeControl
+            value={c.mode.value}
+            onCommit={(m) => onPatch({ mode: m })}
+          />
+        </MixedCell>
+      </FieldRow>
       {c.mode.value === 'flex' && !c.mode.mixed ? (
         <>
-          <FieldRow label="Direction">
+          <FieldRow
+            label="Direction"
+            keyframe={
+              <MultiKeyframeButton
+                targets={nodes.flatMap((node) =>
+                  'layout' in node
+                    ? [
+                        {
+                          nodeId: node.id,
+                          currentValue: node.layout.direction,
+                        },
+                      ]
+                    : [],
+                )}
+                propertyId="layout.direction"
+              />
+            }
+          >
             <MixedCell mixed={c.direction.mixed}>
-              <SelectField<FlexDirection>
+              <IconSegmented<FlexDirection>
                 value={c.direction.value}
-                options={['row', 'column'] as const}
-                onCommit={(d) => onPatch({ direction: d })}
+                options={[
+                  { id: 'row', icon: <DirectionRowIcon />, title: 'Horizontal' },
+                  {
+                    id: 'column',
+                    icon: <DirectionColumnIcon />,
+                    title: 'Vertical',
+                  },
+                ]}
+                onChange={(d) => onPatch({ direction: d })}
               />
             </MixedCell>
           </FieldRow>
-          <FieldRow label="Justify">
+          <FieldRow label="Distribute">
             <MixedCell mixed={c.justify.mixed}>
               <SelectField<FlexJustify>
                 value={c.justify.value}
@@ -1160,30 +1837,73 @@ function MultiLayoutSection({
           </FieldRow>
           <FieldRow label="Align">
             <MixedCell mixed={c.align.mixed}>
-              <SelectField<FlexAlign>
+              <IconSegmented<FlexAlign>
                 value={c.align.value}
-                options={['start', 'center', 'end', 'stretch'] as const}
-                onCommit={(a) => onPatch({ align: a })}
-              />
-            </MixedCell>
-          </FieldRow>
-          <FieldRow label="Gap">
-            <MixedCell mixed={c.gap.mixed}>
-              <NumberField
-                value={c.gap.value}
-                onCommit={(v) => onPatch({ gap: v })}
-                min={0}
+                options={
+                  c.direction.value === 'row'
+                    ? ([
+                        { id: 'start', icon: <AlignTopIcon />, title: 'Top' },
+                        { id: 'center', icon: <AlignMidYIcon />, title: 'Middle' },
+                        { id: 'end', icon: <AlignBottomIcon />, title: 'Bottom' },
+                        {
+                          id: 'stretch',
+                          icon: <AlignStretchIcon />,
+                          title: 'Stretch',
+                        },
+                      ] as const)
+                    : ([
+                        { id: 'start', icon: <AlignLeftIcon />, title: 'Left' },
+                        { id: 'center', icon: <AlignMidXIcon />, title: 'Center' },
+                        { id: 'end', icon: <AlignRightIcon />, title: 'Right' },
+                        {
+                          id: 'stretch',
+                          icon: <AlignStretchIcon />,
+                          title: 'Stretch',
+                        },
+                      ] as const)
+                }
+                onChange={(a) => onPatch({ align: a })}
               />
             </MixedCell>
           </FieldRow>
           <FieldRow label="Wrap">
             <MixedCell mixed={c.wrap.mixed}>
-              <CheckboxField
-                value={c.wrap.value}
-                onCommit={(w) => onPatch({ wrap: w })}
+              <LabeledSegmented<'true' | 'false'>
+                value={c.wrap.value ? 'true' : 'false'}
+                options={[
+                  { id: 'true', label: 'Yes' },
+                  { id: 'false', label: 'No' },
+                ]}
+                onChange={(value) => onPatch({ wrap: value === 'true' })}
               />
             </MixedCell>
           </FieldRow>
+          <KeyframeSliderRow
+            label="Gap"
+            value={c.gap.value}
+            onCommit={(v) => onPatch({ gap: Math.max(0, v) })}
+            onScrubPreview={(v) => previewAll({ gap: Math.max(0, v) })}
+            onScrubCommit={(v) =>
+              commitPreviewAll({ gap: Math.max(0, v) })
+            }
+            onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+            min={0}
+            sliderMin={SPACING_SLIDER_MIN}
+            sliderMax={SPACING_SLIDER_MAX}
+            step={1}
+            suffix="px"
+            mixed={c.gap.mixed}
+            keyframe={
+              <MultiKeyframeButton
+                targets={nodes.flatMap((node) =>
+                  'layout' in node
+                    ? [{ nodeId: node.id, currentValue: node.layout.gap }]
+                    : [],
+                )}
+                propertyId="layout.gap"
+              />
+            }
+          />
         </>
       ) : c.mode.value === 'grid' && !c.mode.mixed ? (
         <>
@@ -1194,28 +1914,57 @@ function MultiLayoutSection({
                 onCommit={(v) =>
                   onPatch({ columns: Math.max(1, Math.round(v)) })
                 }
+                onScrubPreview={(v) =>
+                  previewAll({ columns: Math.max(1, Math.round(v)) })
+                }
+                onScrubCommit={(v) =>
+                  commitPreviewAll({ columns: Math.max(1, Math.round(v)) })
+                }
+                onScrubCancel={() => nodeLayoutPreviewStore.clear()}
                 min={1}
                 step={1}
               />
             </MixedCell>
           </FieldRow>
-          <FieldRow label="Row gap">
-            <MixedCell mixed={c.rowGap.mixed}>
-              <NumberField
-                value={c.rowGap.value}
-                onCommit={(v) => onPatch({ rowGap: Math.max(0, v) })}
-                min={0}
-              />
-            </MixedCell>
-          </FieldRow>
-          <FieldRow label="Column gap">
-            <MixedCell mixed={c.columnGap.mixed}>
-              <NumberField
-                value={c.columnGap.value}
-                onCommit={(v) => onPatch({ columnGap: Math.max(0, v) })}
-                min={0}
-              />
-            </MixedCell>
+          <FieldRow label="Gap">
+            <div className="grid w-full min-w-0 grid-cols-2 gap-1.5">
+              <MixedCell mixed={c.rowGap.mixed}>
+                <NumberField
+                  value={c.rowGap.value}
+                  onCommit={(v) => onPatch({ rowGap: Math.max(0, v) })}
+                  onScrubPreview={(v) =>
+                    previewAll({ rowGap: Math.max(0, v) })
+                  }
+                  onScrubCommit={(v) =>
+                    commitPreviewAll({ rowGap: Math.max(0, v) })
+                  }
+                  onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+                  min={0}
+                  prefix="R"
+                  suffix="px"
+                  ariaLabel="Row gap"
+                  width="w-full"
+                />
+              </MixedCell>
+              <MixedCell mixed={c.columnGap.mixed}>
+                <NumberField
+                  value={c.columnGap.value}
+                  onCommit={(v) => onPatch({ columnGap: Math.max(0, v) })}
+                  onScrubPreview={(v) =>
+                    previewAll({ columnGap: Math.max(0, v) })
+                  }
+                  onScrubCommit={(v) =>
+                    commitPreviewAll({ columnGap: Math.max(0, v) })
+                  }
+                  onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+                  min={0}
+                  prefix="C"
+                  suffix="px"
+                  ariaLabel="Column gap"
+                  width="w-full"
+                />
+              </MixedCell>
+            </div>
           </FieldRow>
           <FieldRow label="Align">
             <MixedCell mixed={c.align.mixed}>
@@ -1228,18 +1977,58 @@ function MultiLayoutSection({
           </FieldRow>
         </>
       ) : null}
-      {/* Padding is meaningful in all three modes (none uses it to pad
-          children when absolute). Skip only if modes disagree — the
-          underlying property still has a sane merge if mode is uniform. */}
-      {!c.mode.mixed ? (
-        <FieldRow label="Padding">
-          <MixedCell mixed={c.padding.mixed}>
-            <PaddingField
-              value={c.padding.value}
-              onCommit={(p) => onPatch({ padding: p })}
-            />
-          </MixedCell>
-        </FieldRow>
+      {/* Free-positioned children use their transforms directly. Preserve
+          stored padding while the mode is None, but do not expose a control
+          that has no predictable effect on that mode. */}
+      {!c.mode.mixed && c.mode.value !== 'none' ? (
+        (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+          <KeyframeSliderRow
+            key={side}
+            label={`Padding ${side.charAt(0).toUpperCase()}`}
+            value={c.padding.value[side]}
+            onCommit={(v) =>
+              onPatch({
+                padding: {
+                  ...c.padding.value,
+                  [side]: Math.max(0, v),
+                },
+              })
+            }
+            onScrubPreview={(v) =>
+              previewAll({ padding: { [side]: Math.max(0, v) } })
+            }
+            onScrubCommit={(v) =>
+              commitPreviewAll({
+                padding: {
+                  ...c.padding.value,
+                  [side]: Math.max(0, v),
+                },
+              })
+            }
+            onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+            min={0}
+            sliderMin={SPACING_SLIDER_MIN}
+            sliderMax={SPACING_SLIDER_MAX}
+            step={1}
+            suffix="px"
+            mixed={c.padding.mixed}
+            keyframe={
+              <MultiKeyframeButton
+                targets={nodes.flatMap((node) =>
+                  'layout' in node
+                    ? [
+                        {
+                          nodeId: node.id,
+                          currentValue: node.layout.padding[side],
+                        },
+                      ]
+                    : [],
+                )}
+                propertyId={PADDING_PROPERTY_IDS[side]}
+              />
+            }
+          />
+        ))
       ) : null}
     </Section>
   )
@@ -1259,14 +2048,14 @@ function MixedCell({
   children: ReactNode
 }) {
   return (
-    <div className="relative flex w-full items-center gap-1">
-      <div className="flex-1 min-w-0">{children}</div>
+    <div className="hm-inspector-mixed relative flex w-full items-center gap-1">
+      <div className="hm-inspector-mixed-value min-w-0 flex-1">{children}</div>
       {mixed ? (
         <span
           title="Values differ across the selection"
-          className="pointer-events-none shrink-0 rounded bg-panel px-1 text-[9px] font-medium tracking-wider text-accent uppercase"
+          className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 rounded bg-panel px-1 text-[9px] font-medium text-accent"
         >
-          mixed
+          Mixed
         </span>
       ) : null}
     </div>
@@ -1317,7 +2106,9 @@ type PivotPreset =
   | 'bottom-left'
   | 'bottom-right'
 
-function pivotPresetPatch(preset: Exclude<PivotPreset, 'custom'>): Pick<Transform, 'anchorX' | 'anchorY' | 'anchorZ'> {
+function pivotPresetPatch(
+  preset: Exclude<PivotPreset, 'custom'>,
+): { anchorX: number; anchorY: number; anchorZ: number } {
   switch (preset) {
     case 'left':
       return { anchorX: 0, anchorY: 0.5, anchorZ: 0 }
@@ -1398,7 +2189,31 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveRotY = anim?.rotationY ?? node.transform.rotationY
   const liveSX = anim?.scaleX ?? node.transform.scaleX
   const liveSY = anim?.scaleY ?? node.transform.scaleY
+  const liveAnchorX = anim?.anchorX ?? node.transform.anchorX ?? 0.5
+  const liveAnchorY = anim?.anchorY ?? node.transform.anchorY ?? 0.5
+  const liveAnchorZ = anim?.anchorZ ?? node.transform.anchorZ ?? 0
   const liveOpacity = anim?.opacity ?? node.appearance.opacity
+  const liveCornerRadius =
+    anim?.cornerRadius ?? node.appearance.cornerRadius
+  const liveBlendMode =
+    anim?.blendMode ?? node.appearance.blendMode ?? 'normal'
+  const liveEllipseArc =
+    node.kind === 'ellipse'
+      ? normalizeEllipseArc({
+          ...node.arc,
+          startAngle: anim?.arcStart ?? node.arc.startAngle,
+          sweep: anim?.arcSweep ?? node.arc.sweep,
+          innerRadius: anim?.arcInnerRadius ?? node.arc.innerRadius,
+        })
+      : null
+  const liveWidth =
+    'size' in node ? anim?.width ?? node.size.width : null
+  const liveHeight =
+    'size' in node ? anim?.height ?? node.size.height : null
+  const liveFill =
+    anim?.fill !== undefined
+      ? ({ kind: 'solid', color: anim.fill } as const)
+      : node.appearance.fill
   const cursorInstance = isCursorInstance(api, node)
   const supportsMotionPath =
     node.id !== api.getRoot() &&
@@ -1520,25 +2335,51 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // We read the store directly (not via hook) so commit handlers don't
   // re-subscribe per render — one-shot reads are fine here.
   const stampForPatch = (
-    group: 'transform' | 'appearance' | 'size' | 'camera' | 'motionPath',
+    group:
+      | 'transform'
+      | 'appearance'
+      | 'shape'
+      | 'size'
+      | 'camera'
+      | 'motionPath'
+      | 'layout',
     patch: Record<string, unknown>,
   ) => {
     const ui = useUI.getState()
     const activeSet = ui.activeStaggerSetId
       ? api.getUiState().staggerSets[ui.activeStaggerSetId]
       : undefined
-    if (ui.staggerOn && activeSet?.layerIds.includes(node.id)) {
+    const draftLayerIds =
+      !activeSet &&
+      ui.staggerDraftLayerIds.length > 1 &&
+      ui.staggerDraftLayerIds.includes(node.id)
+        ? ui.staggerDraftLayerIds
+        : null
+    if (
+      ui.staggerOn &&
+      (activeSet?.layerIds.includes(node.id) || draftLayerIds !== null)
+    ) {
+      const setId = activeSet?.id ?? ui.activeStaggerSetId
+      const layerIds = activeSet?.layerIds ?? draftLayerIds
+      if (!setId || !layerIds) return
+      const delay = activeSet?.delay ?? ui.staggerDelay
+      const order = activeSet?.order ?? 'forward'
+      const baseTime = Math.max(
+        0,
+        ui.playhead -
+          staggerLayerOffset(layerIds, node.id, delay, order),
+      )
       const trackIds = stampStaggerSetPatch(
         api,
-        ui.playhead,
+        baseTime,
         group,
         patch,
         ui.recording ? 'record' : 'active-track',
         {
-          setId: activeSet.id,
-          layerIds: activeSet.layerIds,
-          delay: activeSet.delay,
-          order: activeSet.order,
+          setId,
+          layerIds,
+          delay,
+          order,
         },
       )
       if (trackIds.length > 0) {
@@ -1608,19 +2449,128 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       stampForPatch('appearance', patch)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
-  const patchSize = (patch: Partial<Size>) => {
-    if (!('size' in node)) return
+  const patchEllipseArc = (
+    patch: Partial<NonNullable<typeof liveEllipseArc>>,
+  ) => {
+    const current = api.getNode(node.id)
+    if (!current || current.kind !== 'ellipse') return
+    const next = normalizeEllipseArc({ ...current.arc, ...patch })
     api.doc.transact(() => {
-      api.setNodeProperty(node.id, 'size', { ...node.size, ...patch })
+      api.setNodeProperty(node.id, 'arc', next)
+      stampForPatch('shape', patch)
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const commitEffects = (effects: Effect[]) => {
+    const current = api.getNode(node.id)
+    if (!current) return
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'appearance', {
+        ...current.appearance,
+        effects,
+      })
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const commitEffectBlur = (effectId: string, rawValue: number) => {
+    const current = api.getNode(node.id)
+    if (!current) return
+    const effects = [...(current.appearance.effects ?? [])]
+    const index = effects.findIndex(
+      (effect, effectIndex) =>
+        effectStableId(effect, effectIndex) === effectId,
+    )
+    const effect = effects[index]
+    if (!effect) return
+    const value = normalizedEffectBlur(effect, rawValue)
+    effects[index] =
+      effect.kind === 'blur'
+        ? { ...effect, amount: value }
+        : { ...effect, blur: value }
+    const propertyId = effectBlurPropertyId(effectId)
+    const authorTime = currentAnimationAuthorTime()
+    const ui = useUI.getState()
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'appearance', {
+        ...current.appearance,
+        effects,
+      })
+      if (ui.recording || findTrack(api, node.id, propertyId)) {
+        addKeyframe(api, node.id, propertyId, authorTime, value)
+      }
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const previewEffectBlur = (effectId: string, rawValue: number) => {
+    const current = api.getNode(node.id)
+    const effects = current?.appearance.effects ?? []
+    const effect = effects.find(
+      (candidate, index) => effectStableId(candidate, index) === effectId,
+    )
+    if (!effect) return
+    nodeTransformPreviewStore.preview({
+      [node.id]: {
+        effectBlur: {
+          [effectId]: normalizedEffectBlur(effect, rawValue),
+        },
+      },
+    })
+  }
+  const commitEffectBlurScrub = (effectId: string, value: number) => {
+    commitEffectBlur(effectId, value)
+    nodeTransformPreviewStore.finish()
+  }
+  const removeEffect = (effectId: string, effects: Effect[]) => {
+    const current = api.getNode(node.id)
+    if (!current) return
+    const propertyId = effectBlurPropertyId(effectId)
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'appearance', {
+        ...current.appearance,
+        effects,
+      })
+      const track = findTrack(api, node.id, propertyId)
+      if (track) removeTrack(api, track.id)
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const previewNodeVisual = (patch: AnimatedValue) => {
+    nodeTransformPreviewStore.preview({ [node.id]: patch })
+  }
+  const commitTransformScrub = (patch: Partial<Transform>) => {
+    patchTransform(patch)
+    nodeTransformPreviewStore.finish()
+  }
+  const commitAppearanceScrub = (patch: Partial<Appearance>) => {
+    patchAppearance(patch)
+    nodeTransformPreviewStore.finish()
+  }
+  const commitEllipseArcScrub = (
+    patch: Partial<NonNullable<typeof liveEllipseArc>>,
+  ) => {
+    patchEllipseArc(patch)
+    nodeTransformPreviewStore.finish()
+  }
+  const cancelNodeVisualPreview = () => nodeTransformPreviewStore.clear()
+  const patchSize = (patch: Partial<Size>) => {
+    const current = api.getNode(node.id)
+    if (!current || !('size' in current)) return
+    api.doc.transact(() => {
+      api.setNodeProperty(node.id, 'size', { ...current.size, ...patch })
       if (
-        node.kind === 'component' &&
+        current.kind === 'component' &&
         (patch.width === 'hug' || patch.height === 'hug')
       ) {
-        fitComponentToChildren(api, node.id, { preserveHug: true })
+        fitComponentToChildren(api, current.id, { preserveHug: true })
       }
       stampForPatch('size', patch)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
+  const previewSize = (patch: Partial<Size>) => {
+    if (!('size' in node)) return
+    nodeGeometryPreviewStore.preview({ [node.id]: { size: patch } })
+  }
+  const commitSizeScrub = (patch: Partial<Size>) => {
+    patchSize(patch)
+    nodeGeometryPreviewStore.finish()
+  }
+  const cancelGeometryPreview = () => nodeGeometryPreviewStore.clear()
   const addMotionPath = () => {
     if (!supportsMotionPath) return
     api.doc.transact(() => {
@@ -1853,10 +2803,26 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     stampForPatch('camera', patch)
   }
+  const previewCameraProperties = (patch: AnimatedValue) => {
+    if (node.kind !== 'camera') return
+    cameraPreviewStore.set(node.id, patch)
+  }
+  const commitCameraPropertiesScrub = (
+    patch: Parameters<typeof patchCamera>[0],
+  ) => {
+    if (node.kind !== 'camera') return
+    patchCamera(patch)
+    cameraPreviewStore.finish(node.id)
+  }
+  const cancelCameraPropertiesPreview = () => {
+    if (node.kind !== 'camera') return
+    cameraPreviewStore.clear(node.id)
+  }
   const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
     if (!('layout' in node)) return
     api.setNodeProperty(node.id, 'layout', { ...node.layout, ...patch })
+    stampForPatch('layout', patch)
     // If the user's changing the layout mode AND the frame still has
     // one of the default auto-generated names, retitle it so the layers
     // panel doesn't say "Auto layout" for a frame that's been flipped
@@ -1899,7 +2865,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
   }
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Section title="Node">
         <FieldRow label="Name">
           <TextField
@@ -1975,8 +2941,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           >
-            <FieldRow
+            <KeyframeSliderRow
               label="Position X"
+              value={liveX}
+              onCommit={(v) => patchTransform({ x: v })}
+              onScrubPreview={(v) => previewCameraTransform({ x: v })}
+              onScrubCommit={(v) => commitCameraTransformScrub({ x: v })}
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={POSITION_SLIDER_MIN}
+              sliderMax={POSITION_SLIDER_MAX}
+              step={1}
+              suffix="px"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -1984,19 +2959,18 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveX}
                 />
               }
-            >
-	              <NumberField
-	                value={liveX}
-	                onCommit={(v) => patchTransform({ x: v })}
-	                onScrubPreview={(v) => previewCameraTransform({ x: v })}
-	                onScrubCommit={(v) => commitCameraTransformScrub({ x: v })}
-	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-	                step={1}
-	                suffix="px"
-	              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Position Y"
+              value={liveY}
+              onCommit={(v) => patchTransform({ y: v })}
+              onScrubPreview={(v) => previewCameraTransform({ y: v })}
+              onScrubCommit={(v) => commitCameraTransformScrub({ y: v })}
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={POSITION_SLIDER_MIN}
+              sliderMax={POSITION_SLIDER_MAX}
+              step={1}
+              suffix="px"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2004,19 +2978,18 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveY}
                 />
               }
-            >
-	              <NumberField
-	                value={liveY}
-	                onCommit={(v) => patchTransform({ y: v })}
-	                onScrubPreview={(v) => previewCameraTransform({ y: v })}
-	                onScrubCommit={(v) => commitCameraTransformScrub({ y: v })}
-	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-	                step={1}
-	                suffix="px"
-	              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Position Z"
+              value={liveZ}
+              onCommit={(v) => patchTransform({ z: v })}
+              onScrubPreview={(v) => previewCameraTransform({ z: v })}
+              onScrubCommit={(v) => commitCameraTransformScrub({ z: v })}
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={POSITION_SLIDER_MIN}
+              sliderMax={POSITION_SLIDER_MAX}
+              step={1}
+              suffix="px"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2024,18 +2997,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveZ}
                 />
               }
-            >
-	              <NumberField
-	                value={liveZ}
-	                onCommit={(v) => patchTransform({ z: v })}
-	                onScrubPreview={(v) => previewCameraTransform({ z: v })}
-	                onScrubCommit={(v) => commitCameraTransformScrub({ z: v })}
-	                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-	                step={1}
-	                suffix="px"
-	              />
-            </FieldRow>
-            <FieldRow label="Scroll intensity">
+            />
+            <FieldRow label="Scroll intensity" layout="compound">
               <SliderField
                 value={Math.round(cameraScrollSensitivity * 100)}
                 onCommit={(percent) =>
@@ -2059,8 +3022,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           >
-            <FieldRow
+            <KeyframeSliderRow
               label="Rotate X"
+              value={liveRotX}
+              onCommit={(v) => patchTransform({ rotationX: v })}
+              onScrubPreview={(v) =>
+                previewCameraTransform({ rotationX: v })
+              }
+              onScrubCommit={(v) =>
+                commitCameraTransformScrub({ rotationX: v })
+              }
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={ROTATION_SLIDER_MIN}
+              sliderMax={ROTATION_SLIDER_MAX}
+              step={1}
+              suffix="°"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2068,22 +3044,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveRotX}
                 />
               }
-            >
-              <NumberField
-                value={liveRotX}
-                onCommit={(v) => patchTransform({ rotationX: v })}
-                onScrubPreview={(v) =>
-                  previewCameraTransform({ rotationX: v })
-                }
-                onScrubCommit={(v) =>
-                  commitCameraTransformScrub({ rotationX: v })
-                }
-                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-                suffix="°"
-              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Rotate Y"
+              value={liveRotY}
+              onCommit={(v) => patchTransform({ rotationY: v })}
+              onScrubPreview={(v) =>
+                previewCameraTransform({ rotationY: v })
+              }
+              onScrubCommit={(v) =>
+                commitCameraTransformScrub({ rotationY: v })
+              }
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={ROTATION_SLIDER_MIN}
+              sliderMax={ROTATION_SLIDER_MAX}
+              step={1}
+              suffix="°"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2091,22 +3067,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveRotY}
                 />
               }
-            >
-              <NumberField
-                value={liveRotY}
-                onCommit={(v) => patchTransform({ rotationY: v })}
-                onScrubPreview={(v) =>
-                  previewCameraTransform({ rotationY: v })
-                }
-                onScrubCommit={(v) =>
-                  commitCameraTransformScrub({ rotationY: v })
-                }
-                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-                suffix="°"
-              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Rotate Z"
+              value={liveRot}
+              onCommit={(v) => patchTransform({ rotation: v })}
+              onScrubPreview={(v) =>
+                previewCameraTransform({ rotation: v })
+              }
+              onScrubCommit={(v) =>
+                commitCameraTransformScrub({ rotation: v })
+              }
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              sliderMin={ROTATION_SLIDER_MIN}
+              sliderMax={ROTATION_SLIDER_MAX}
+              step={1}
+              suffix="°"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2114,20 +3090,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveRot}
                 />
               }
-            >
-              <NumberField
-                value={liveRot}
-                onCommit={(v) => patchTransform({ rotation: v })}
-                onScrubPreview={(v) =>
-                  previewCameraTransform({ rotation: v })
-                }
-                onScrubCommit={(v) =>
-                  commitCameraTransformScrub({ rotation: v })
-                }
-                onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-                suffix="°"
-              />
-            </FieldRow>
+            />
           </Section>
 
         </>
@@ -2147,30 +3110,18 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {node.kind !== 'camera' && node.kind !== 'audio' && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
-        <div className="mb-3">
-          <AlignTools api={api} selection={[node.id]} />
-        </div>
-        <FieldRow label="Render Mode">
-          <SelectField<RenderMode>
-            value={node.transform.renderMode ?? 'flat'}
-            options={RENDER_MODE_OPTIONS}
-            onCommit={(renderMode) => patchTransform({ renderMode })}
-            width="w-full"
-          />
-        </FieldRow>
-        <FieldRow label="3D Space">
-          <SelectField<NonNullable<Transform['space']>>
-            value={node.transform.space ?? 'local'}
-            options={[
-              { value: 'local', label: 'Local plane' },
-              { value: 'world', label: 'World' },
-            ]}
-            onCommit={(space) => patchTransform({ space })}
-            width="w-full"
-          />
-        </FieldRow>
-        <FieldRow
+        <AlignTools api={api} selection={[node.id]} />
+        <KeyframeSliderRow
           label="Position X"
+          value={liveX}
+          onCommit={(v) => patchTransform({ x: v })}
+          onScrubPreview={(v) => previewNodeVisual({ x: v })}
+          onScrubCommit={(v) => commitTransformScrub({ x: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          suffix="px"
           keyframe={
             <KeyframeButton
               nodeId={node.id}
@@ -2178,14 +3129,18 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               currentValue={liveX}
             />
           }
-        >
-          <NumberField
-            value={liveX}
-            onCommit={(v) => patchTransform({ x: v })}
-          />
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Position Y"
+          value={liveY}
+          onCommit={(v) => patchTransform({ y: v })}
+          onScrubPreview={(v) => previewNodeVisual({ y: v })}
+          onScrubCommit={(v) => commitTransformScrub({ y: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          suffix="px"
           keyframe={
             <KeyframeButton
               nodeId={node.id}
@@ -2193,62 +3148,18 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               currentValue={liveY}
             />
           }
-        >
-          <NumberField
-            value={liveY}
-            onCommit={(v) => patchTransform({ y: v })}
-          />
-        </FieldRow>
-        <FieldRow
-          label="Position Z"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.z"
-              currentValue={liveZ}
-            />
-          }
-        >
-          <NumberField
-            value={liveZ}
-            onCommit={(v) => patchTransform({ z: v })}
-            step={1}
-          />
-        </FieldRow>
-        <FieldRow
-          label="Rotate X"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationX"
-              currentValue={liveRotX}
-            />
-          }
-        >
-          <NumberField
-            value={liveRotX}
-            onCommit={(v) => patchTransform({ rotationX: v })}
-            suffix="°"
-          />
-        </FieldRow>
-        <FieldRow
-          label="Rotate Y"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationY"
-              currentValue={liveRotY}
-            />
-          }
-        >
-          <NumberField
-            value={liveRotY}
-            onCommit={(v) => patchTransform({ rotationY: v })}
-            suffix="°"
-          />
-        </FieldRow>
-        <FieldRow
+        />
+        <KeyframeSliderRow
           label="Rotate Z"
+          value={liveRot}
+          onCommit={(v) => patchTransform({ rotation: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotation: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotation: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
           keyframe={
             <KeyframeButton
               nodeId={node.id}
@@ -2256,94 +3167,274 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               currentValue={liveRot}
             />
           }
+        />
+        <ScalePairField
+          nodeId={node.id}
+          scaleX={liveSX}
+          scaleY={liveSY}
+          onCommitX={(v) => patchTransform({ scaleX: v })}
+          onCommitY={(v) => patchTransform({ scaleY: v })}
+          onCommitPair={({ scaleX, scaleY }) =>
+            patchTransform({ scaleX, scaleY })
+          }
+          onScrubPreviewPair={({ scaleX, scaleY }) =>
+            previewNodeVisual({ scaleX, scaleY })
+          }
+          onScrubCommitPair={({ scaleX, scaleY }) =>
+            commitTransformScrub({ scaleX, scaleY })
+          }
+          onScrubCancel={cancelNodeVisualPreview}
+        />
+        <InspectorDisclosure
+          storageKey="advanced-transform"
+          title="Advanced transform"
         >
-          <NumberField
-            value={liveRot}
-            onCommit={(v) => patchTransform({ rotation: v })}
-            suffix="°"
-          />
-        </FieldRow>
-        {/* Cameras don't expose Scale — they're 3D now, so Z position
-            in the row above does the dolly job that Scale used to.
-            Other layers still get the X/Y scale pair. Cameras *do*
-            have scaleX/scaleY in the data model (used by the renderer
-            for the camera transform), but those are computed from Z
-            via perspective rather than user-edited. */}
-        <FieldRow label="Scale">
-          <ScalePairField
-            nodeId={node.id}
-            scaleX={liveSX}
-            scaleY={liveSY}
-            onCommitX={(v) => patchTransform({ scaleX: v })}
-            onCommitY={(v) => patchTransform({ scaleY: v })}
-            onCommitPair={({ scaleX, scaleY }) =>
-              patchTransform({ scaleX, scaleY })
-            }
-          />
-        </FieldRow>
-        <FieldRow label="Pivot">
-          <SelectField<PivotPreset>
-            value={pivotPreset}
-            options={[
-              { value: 'center', label: 'Center' },
-              { value: 'left', label: 'Left edge' },
-              { value: 'right', label: 'Right edge' },
-              { value: 'top', label: 'Top edge' },
-              { value: 'bottom', label: 'Bottom edge' },
-              { value: 'top-left', label: 'Top left' },
-              { value: 'top-right', label: 'Top right' },
-              { value: 'bottom-left', label: 'Bottom left' },
-              { value: 'bottom-right', label: 'Bottom right' },
-              { value: 'custom', label: 'Custom' },
-            ]}
-            onCommit={(preset) => {
-              if (preset === 'custom') return
-              patchTransform(pivotPresetPatch(preset))
-            }}
-            width="w-full"
-          />
-        </FieldRow>
-        <FieldRow label="Anchor X">
-          <NumberField
-            value={node.transform.anchorX ?? 0.5}
-            onCommit={(v) => patchTransform({ anchorX: Math.max(0, Math.min(1, v)) })}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-        </FieldRow>
-        <FieldRow label="Anchor Y">
-          <NumberField
-            value={node.transform.anchorY ?? 0.5}
-            onCommit={(v) => patchTransform({ anchorY: Math.max(0, Math.min(1, v)) })}
-            min={0}
-            max={1}
-            step={0.05}
-          />
-        </FieldRow>
-        <FieldRow label="Anchor Z">
-          <NumberField
-            value={node.transform.anchorZ ?? 0}
-            onCommit={(v) => patchTransform({ anchorZ: v })}
+          <FieldRow label="Render mode">
+            <SelectField<RenderMode>
+              value={node.transform.renderMode ?? 'flat'}
+              options={RENDER_MODE_OPTIONS}
+              onCommit={(renderMode) => patchTransform({ renderMode })}
+              width="w-full"
+            />
+          </FieldRow>
+          <FieldRow label="3D space">
+            <SelectField<NonNullable<Transform['space']>>
+              value={node.transform.space ?? 'local'}
+              options={[
+                { value: 'local', label: 'Local plane' },
+                { value: 'world', label: 'World' },
+              ]}
+              onCommit={(space) => patchTransform({ space })}
+              width="w-full"
+            />
+          </FieldRow>
+          <KeyframeSliderRow
+            label="Position Z"
+            value={liveZ}
+            onCommit={(v) => patchTransform({ z: v })}
+            onScrubPreview={(v) => previewNodeVisual({ z: v })}
+            onScrubCommit={(v) => commitTransformScrub({ z: v })}
+            onScrubCancel={cancelNodeVisualPreview}
+            sliderMin={POSITION_SLIDER_MIN}
+            sliderMax={POSITION_SLIDER_MAX}
             step={1}
             suffix="px"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.z"
+                currentValue={liveZ}
+              />
+            }
           />
-        </FieldRow>
+          <KeyframeSliderRow
+            label="Rotate X"
+            value={liveRotX}
+            onCommit={(v) => patchTransform({ rotationX: v })}
+            onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
+            onScrubCommit={(v) =>
+              commitTransformScrub({ rotationX: v })
+            }
+            onScrubCancel={cancelNodeVisualPreview}
+            sliderMin={ROTATION_SLIDER_MIN}
+            sliderMax={ROTATION_SLIDER_MAX}
+            step={1}
+            suffix="°"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.rotationX"
+                currentValue={liveRotX}
+              />
+            }
+          />
+          <KeyframeSliderRow
+            label="Rotate Y"
+            value={liveRotY}
+            onCommit={(v) => patchTransform({ rotationY: v })}
+            onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
+            onScrubCommit={(v) =>
+              commitTransformScrub({ rotationY: v })
+            }
+            onScrubCancel={cancelNodeVisualPreview}
+            sliderMin={ROTATION_SLIDER_MIN}
+            sliderMax={ROTATION_SLIDER_MAX}
+            step={1}
+            suffix="°"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.rotationY"
+                currentValue={liveRotY}
+              />
+            }
+          />
+          <FieldRow label="Pivot">
+            <SelectField<PivotPreset>
+              value={pivotPreset}
+              options={[
+                { value: 'center', label: 'Center' },
+                { value: 'left', label: 'Left edge' },
+                { value: 'right', label: 'Right edge' },
+                { value: 'top', label: 'Top edge' },
+                { value: 'bottom', label: 'Bottom edge' },
+                { value: 'top-left', label: 'Top left' },
+                { value: 'top-right', label: 'Top right' },
+                { value: 'bottom-left', label: 'Bottom left' },
+                { value: 'bottom-right', label: 'Bottom right' },
+                { value: 'custom', label: 'Custom' },
+              ]}
+              onCommit={(preset) => {
+                if (preset === 'custom') return
+                const nextPivot = pivotPresetPatch(preset)
+                const rect = getLastSolvedLayout()?.[node.id]
+                if (!rect) {
+                  patchTransform(nextPivot)
+                  return
+                }
+                patchTransform(
+                  pivotPreservingTransformPatch(
+                    {
+                      ...node.transform,
+                      x: liveX,
+                      y: liveY,
+                      z: liveZ,
+                      rotation: liveRot,
+                      rotationX: liveRotX,
+                      rotationY: liveRotY,
+                      scaleX: liveSX,
+                      scaleY: liveSY,
+                      anchorX: anim?.anchorX ?? node.transform.anchorX,
+                      anchorY: anim?.anchorY ?? node.transform.anchorY,
+                      anchorZ: anim?.anchorZ ?? node.transform.anchorZ,
+                    },
+                    rect.width,
+                    rect.height,
+                    nextPivot,
+                  ),
+                )
+              }}
+              width="w-full"
+            />
+          </FieldRow>
+          <KeyframeSliderRow
+            label="Anchor X"
+            value={liveAnchorX * 100}
+            onCommit={(v) =>
+              patchTransform({ anchorX: Math.max(0, Math.min(1, v / 100)) })
+            }
+            onScrubPreview={(v) =>
+              previewNodeVisual({
+                anchorX: Math.max(0, Math.min(1, v / 100)),
+              })
+            }
+            onScrubCommit={(v) =>
+              commitTransformScrub({
+                anchorX: Math.max(0, Math.min(1, v / 100)),
+              })
+            }
+            onScrubCancel={cancelNodeVisualPreview}
+            min={0}
+            max={100}
+            step={1}
+            suffix="%"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.anchorX"
+                currentValue={liveAnchorX}
+              />
+            }
+          />
+          <KeyframeSliderRow
+            label="Anchor Y"
+            value={liveAnchorY * 100}
+            onCommit={(v) =>
+              patchTransform({ anchorY: Math.max(0, Math.min(1, v / 100)) })
+            }
+            onScrubPreview={(v) =>
+              previewNodeVisual({
+                anchorY: Math.max(0, Math.min(1, v / 100)),
+              })
+            }
+            onScrubCommit={(v) =>
+              commitTransformScrub({
+                anchorY: Math.max(0, Math.min(1, v / 100)),
+              })
+            }
+            onScrubCancel={cancelNodeVisualPreview}
+            min={0}
+            max={100}
+            step={1}
+            suffix="%"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.anchorY"
+                currentValue={liveAnchorY}
+              />
+            }
+          />
+          <KeyframeSliderRow
+            label="Anchor Z"
+            value={liveAnchorZ}
+            onCommit={(v) => patchTransform({ anchorZ: v })}
+            onScrubPreview={(v) => previewNodeVisual({ anchorZ: v })}
+            onScrubCommit={(v) => commitTransformScrub({ anchorZ: v })}
+            onScrubCancel={cancelNodeVisualPreview}
+            adaptiveSpan={1000}
+            step={1}
+            suffix="px"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="transform.anchorZ"
+                currentValue={liveAnchorZ}
+              />
+            }
+          />
+        </InspectorDisclosure>
       </Section>
       )}
 
       {'size' in node && node.kind !== 'audio' && (
-        <Section title="Size">
-          <FieldRow label="Width">
+        <Section
+          title={`Size · W ${formatInspectorSizeAxis(liveWidth ?? node.size.width)} × H ${formatInspectorSizeAxis(liveHeight ?? node.size.height)}`}
+        >
+          <FieldRow
+            label="Width"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="size.width"
+                currentValue={typeof liveWidth === 'number' ? liveWidth : null}
+              />
+            }
+          >
             <SizeAxisField
-              value={node.size.width}
+              value={liveWidth ?? node.size.width}
               onCommit={(w) => patchSize({ width: w })}
+              onScrubPreview={(width) => previewSize({ width })}
+              onScrubCommit={(width) => commitSizeScrub({ width })}
+              onScrubCancel={cancelGeometryPreview}
             />
           </FieldRow>
-          <FieldRow label="Height">
+          <FieldRow
+            label="Height"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="size.height"
+                currentValue={typeof liveHeight === 'number' ? liveHeight : null}
+              />
+            }
+          >
             <SizeAxisField
-              value={node.size.height}
+              value={liveHeight ?? node.size.height}
               onCommit={(h) => patchSize({ height: h })}
+              onScrubPreview={(height) => previewSize({ height })}
+              onScrubCommit={(height) => commitSizeScrub({ height })}
+              onScrubCancel={cancelGeometryPreview}
             />
           </FieldRow>
         </Section>
@@ -2366,7 +3457,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       )}
 
       {'layout' in node && (
-        <LayoutSection layout={node.layout} onPatch={patchLayout} />
+        <LayoutSection
+          nodeId={node.id}
+          layout={node.layout}
+          onPatch={patchLayout}
+        />
       )}
 
       {/* Layout guides — Figma-style stacked overlays. Only on
@@ -2383,8 +3478,19 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           expand the camera feature surface. */}
       {node.kind !== 'camera' && node.kind !== 'audio' ? (
         <Section title="Appearance">
-          <FieldRow
+          <KeyframeSliderRow
             label="Opacity"
+            value={liveOpacity * 100}
+            onCommit={(v) => patchAppearance({ opacity: v / 100 })}
+            onScrubPreview={(v) => previewNodeVisual({ opacity: v / 100 })}
+            onScrubCommit={(v) =>
+              commitAppearanceScrub({ opacity: v / 100 })
+            }
+            onScrubCancel={cancelNodeVisualPreview}
+            min={0}
+            max={100}
+            step={1}
+            suffix="%"
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -2392,65 +3498,200 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 currentValue={liveOpacity}
               />
             }
+          />
+          <FieldRow
+            label="Blend"
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="appearance.blendMode"
+                currentValue={liveBlendMode}
+              />
+            }
           >
-            <NumberField
-              value={liveOpacity}
-              onCommit={(v) => patchAppearance({ opacity: v })}
-              min={0}
-              max={1}
-              step={0.05}
-            />
-          </FieldRow>
-          <FieldRow label="Blend">
             <SelectField<BlendMode>
-              value={node.appearance.blendMode ?? 'normal'}
+              value={liveBlendMode}
               options={BLEND_MODE_OPTIONS}
               onCommit={(blendMode) => patchAppearance({ blendMode })}
               width="w-full"
             />
           </FieldRow>
+          {node.kind === 'ellipse' && liveEllipseArc ? (
+            <>
+              <div className="text-[11px] font-medium text-text-muted">
+                Arc
+              </div>
+              <KeyframeSliderRow
+                label="Start angle"
+                value={liveEllipseArc.startAngle}
+                onCommit={(startAngle) => patchEllipseArc({ startAngle })}
+                onScrubPreview={(arcStart) =>
+                  previewNodeVisual({ arcStart })
+                }
+                onScrubCommit={(startAngle) =>
+                  commitEllipseArcScrub({ startAngle })
+                }
+                onScrubCancel={cancelNodeVisualPreview}
+                min={-180}
+                max={180}
+                step={0.1}
+                suffix="°"
+                keyframe={
+                  <KeyframeButton
+                    nodeId={node.id}
+                    propertyId="shape.arcStart"
+                    currentValue={liveEllipseArc.startAngle}
+                  />
+                }
+              />
+              <KeyframeSliderRow
+                label="Sweep"
+                value={liveEllipseArc.sweep * 100}
+                onCommit={(sweep) =>
+                  patchEllipseArc({ sweep: sweep / 100 })
+                }
+                onScrubPreview={(sweep) =>
+                  previewNodeVisual({ arcSweep: sweep / 100 })
+                }
+                onScrubCommit={(sweep) =>
+                  commitEllipseArcScrub({ sweep: sweep / 100 })
+                }
+                onScrubCancel={cancelNodeVisualPreview}
+                min={0}
+                max={100}
+                step={0.1}
+                suffix="%"
+                keyframe={
+                  <KeyframeButton
+                    nodeId={node.id}
+                    propertyId="shape.arcSweep"
+                    currentValue={liveEllipseArc.sweep}
+                  />
+                }
+              />
+              <KeyframeSliderRow
+                label="Inner radius"
+                value={liveEllipseArc.innerRadius * 100}
+                onCommit={(innerRadius) =>
+                  patchEllipseArc({ innerRadius: innerRadius / 100 })
+                }
+                onScrubPreview={(innerRadius) =>
+                  previewNodeVisual({ arcInnerRadius: innerRadius / 100 })
+                }
+                onScrubCommit={(innerRadius) =>
+                  commitEllipseArcScrub({ innerRadius: innerRadius / 100 })
+                }
+                onScrubCancel={cancelNodeVisualPreview}
+                min={0}
+                max={100}
+                step={0.1}
+                suffix="%"
+                keyframe={
+                  <KeyframeButton
+                    nodeId={node.id}
+                    propertyId="shape.arcInnerRadius"
+                    currentValue={liveEllipseArc.innerRadius}
+                  />
+                }
+              />
+              <div aria-hidden="true" className="border-t border-border" />
+            </>
+          ) : null}
           <FillField
-            value={node.appearance.fill}
+            value={liveFill}
             onCommit={(fill) => patchAppearance({ fill })}
+            keyframe={
+              <KeyframeButton
+                nodeId={node.id}
+                propertyId="appearance.fill"
+                currentValue={
+                  liveFill?.kind === 'solid' ? liveFill.color : null
+                }
+              />
+            }
           />
+          <div aria-hidden="true" className="border-t border-border" />
           <StrokeControls
             value={node.appearance.stroke}
             onCommit={(stroke) => patchAppearance({ stroke })}
           />
-          <FieldRow
-            label="Corner"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="appearance.cornerRadius"
-                currentValue={node.appearance.cornerRadius}
-              />
-            }
-          >
-            <CornerField
-              uniformValue={node.appearance.cornerRadius}
-              cornerRadii={node.appearance.cornerRadii}
-              onCommitUniform={(v) => patchAppearance({ cornerRadius: v })}
-              onPromoteToPerCorner={(initial) =>
-                patchAppearance({ cornerRadii: initial })
+          {node.kind !== 'ellipse' ? (node.appearance.cornerRadii ? (
+            <FieldRow
+              label="Corner"
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="appearance.cornerRadius"
+                  currentValue={null}
+                />
               }
-              onCommitPerCorner={(next) =>
-                patchAppearance({ cornerRadii: next })
-              }
-              onClearPerCorner={() =>
-                patchAppearance({ cornerRadii: undefined })
-              }
-            />
-          </FieldRow>
-          {node.kind === 'frame' ? (
-            <FieldRow label="Clip">
-              <CheckboxField
-                value={node.clipsContent}
-                onCommit={(v) =>
-                  api.setNodeProperty(node.id, 'clipsContent', v)
+            >
+              <CornerField
+                uniformValue={liveCornerRadius}
+                cornerRadii={node.appearance.cornerRadii}
+                onCommitUniform={(v) => patchAppearance({ cornerRadius: v })}
+                onPromoteToPerCorner={(initial) =>
+                  patchAppearance({ cornerRadii: initial })
+                }
+                onCommitPerCorner={(next) =>
+                  patchAppearance({ cornerRadii: next })
+                }
+                onClearPerCorner={() =>
+                  patchAppearance({ cornerRadii: undefined })
                 }
               />
             </FieldRow>
+          ) : (
+            <KeyframeSliderRow
+              label="Corner"
+              value={liveCornerRadius}
+              onCommit={(v) =>
+                patchAppearance({ cornerRadius: Math.max(0, v) })
+              }
+              onScrubPreview={(v) =>
+                previewNodeVisual({ cornerRadius: Math.max(0, v) })
+              }
+              onScrubCommit={(v) =>
+                commitAppearanceScrub({ cornerRadius: Math.max(0, v) })
+              }
+              onScrubCancel={cancelNodeVisualPreview}
+              min={0}
+              adaptiveSpan={100}
+              step={1}
+              suffix="px"
+              labelAccessory={
+                <CornerLinkButton
+                  linked={true}
+                  onToggle={() =>
+                    patchAppearance({
+                      cornerRadii: {
+                        tl: liveCornerRadius,
+                        tr: liveCornerRadius,
+                        br: liveCornerRadius,
+                        bl: liveCornerRadius,
+                      },
+                    })
+                  }
+                />
+              }
+              keyframe={
+                <KeyframeButton
+                  nodeId={node.id}
+                  propertyId="appearance.cornerRadius"
+                  currentValue={liveCornerRadius}
+                />
+              }
+            />
+          )) : null}
+          {node.kind === 'frame' ? (
+            <SectionToggleRow
+              label="Clip"
+              value={node.clipsContent}
+              plain
+              onCommit={(v) =>
+                api.setNodeProperty(node.id, 'clipsContent', v)
+              }
+            />
           ) : null}
         </Section>
       ) : (
@@ -2459,37 +3700,80 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind !== 'camera' && (
         <EffectsSection
+          nodeId={node.id}
           value={node.appearance.effects ?? []}
-          onCommit={(effects) => patchAppearance({ effects })}
+          animatedBlur={anim?.effectBlur}
+          onCommit={commitEffects}
+          onRemove={removeEffect}
+          onBlurCommit={commitEffectBlur}
+          onBlurPreview={previewEffectBlur}
+          onBlurScrubCommit={commitEffectBlurScrub}
+          onBlurCancel={cancelNodeVisualPreview}
         />
       )}
 
       {node.kind === 'camera' && (
         <>
           <Section title="Lens">
-            <FieldRow
+            <KeyframeSliderRow
               label="Field of View"
+              value={liveFieldOfView}
+              onCommit={(v) =>
+                patchCamera({ fieldOfView: Math.max(1, Math.min(175, v)) })
+              }
+              onScrubPreview={(v) =>
+                previewCameraProperties({
+                  fieldOfView: Math.max(1, Math.min(175, v)),
+                })
+              }
+              onScrubCommit={(v) =>
+                commitCameraPropertiesScrub({
+                  fieldOfView: Math.max(1, Math.min(175, v)),
+                })
+              }
+              onScrubCancel={cancelCameraPropertiesPreview}
+              min={1}
+              max={175}
+              step={0.5}
+              suffix="°"
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
                   propertyId="camera.fieldOfView"
                   currentValue={liveFieldOfView}
+                  variant="boxed"
                 />
               }
-            >
-              <NumberField
-                value={liveFieldOfView}
-                onCommit={(v) =>
-                  patchCamera({ fieldOfView: Math.max(1, Math.min(175, v)) })
-                }
-                min={1}
-                max={175}
-                step={0.5}
-                suffix="°"
-              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Clip start"
+              value={liveNearClip}
+              onCommit={(v) =>
+                patchCamera({
+                  nearClip: Math.max(0.001, Math.min(liveFarClip - 0.001, v)),
+                })
+              }
+              onScrubPreview={(v) =>
+                previewCameraProperties({
+                  nearClip: Math.max(
+                    0.001,
+                    Math.min(liveFarClip - 0.001, v),
+                  ),
+                })
+              }
+              onScrubCommit={(v) =>
+                commitCameraPropertiesScrub({
+                  nearClip: Math.max(
+                    0.001,
+                    Math.min(liveFarClip - 0.001, v),
+                  ),
+                })
+              }
+              onScrubCancel={cancelCameraPropertiesPreview}
+              min={0.001}
+              max={Math.max(0.002, liveFarClip - 0.001)}
+              adaptiveSpan={1000}
+              step={0.1}
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2497,21 +3781,27 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveNearClip}
                 />
               }
-            >
-              <NumberField
-                value={liveNearClip}
-                onCommit={(v) =>
-                  patchCamera({
-                    nearClip: Math.max(0.001, Math.min(liveFarClip - 0.001, v)),
-                  })
-                }
-                min={0.001}
-                max={Math.max(0.002, liveFarClip - 0.001)}
-                step={0.1}
-              />
-            </FieldRow>
-            <FieldRow
+            />
+            <KeyframeSliderRow
               label="Clip end"
+              value={liveFarClip}
+              onCommit={(v) =>
+                patchCamera({ farClip: Math.max(liveNearClip + 0.001, v) })
+              }
+              onScrubPreview={(v) =>
+                previewCameraProperties({
+                  farClip: Math.max(liveNearClip + 0.001, v),
+                })
+              }
+              onScrubCommit={(v) =>
+                commitCameraPropertiesScrub({
+                  farClip: Math.max(liveNearClip + 0.001, v),
+                })
+              }
+              onScrubCancel={cancelCameraPropertiesPreview}
+              min={liveNearClip + 0.001}
+              adaptiveSpan={100000}
+              step={10}
               keyframe={
                 <KeyframeButton
                   nodeId={node.id}
@@ -2519,16 +3809,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   currentValue={liveFarClip}
                 />
               }
-            >
-              <NumberField
-                value={liveFarClip}
-                onCommit={(v) =>
-                  patchCamera({ farClip: Math.max(liveNearClip + 0.001, v) })
-                }
-                min={liveNearClip + 0.001}
-                step={10}
-              />
-            </FieldRow>
+            />
             <FillField
               label="Background"
               value={node.background ?? null}
@@ -2537,22 +3818,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           </Section>
 
           <Section title="Depth of Field">
-            <FieldRow label="Enable">
-              <CheckboxField
-                value={node.depthOfField ?? false}
-                onCommit={(depthOfField) =>
-                  patchCamera({
-                    depthOfField,
-                    ...(depthOfField && (node.aperture ?? 0) <= 0
-                      ? { aperture: 1 }
-                      : {}),
-                  })
-                }
-              />
-            </FieldRow>
+            <SectionToggleRow
+              label="Enable"
+              value={node.depthOfField ?? false}
+              onCommit={(depthOfField) =>
+                patchCamera({
+                  depthOfField,
+                  ...(depthOfField && (node.aperture ?? 0) <= 0
+                    ? { aperture: 1 }
+                    : {}),
+                })
+              }
+            />
             {node.depthOfField ? (
               <>
-                <FieldRow label="Focus mode">
+                <FieldRow label="Focus mode" layout="compound">
                   <SelectField<CameraNode['focusMode']>
                     value={node.focusMode ?? 'screen'}
                     options={[
@@ -2574,7 +3854,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 </FieldRow>
 
                 {node.focusMode === 'target' ? (
-                  <FieldRow label="Target">
+                  <FieldRow label="Target" layout="compound">
                     <SelectField<string>
                       value={node.focusTargetNodeId ?? ''}
                       options={[
@@ -2591,8 +3871,33 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   </FieldRow>
                 ) : (
-                  <FieldRow
+                  <KeyframeSliderRow
                     label="Focus distance"
+                    value={liveFocusDistance}
+                    onCommit={(v) =>
+                      patchCamera({
+                        focusDistance: v,
+                        focusWorldZ: v,
+                        focusTargetNodeId: null,
+                      })
+                    }
+                    onScrubPreview={(v) =>
+                      previewCameraProperties({
+                        focusDistance: v,
+                        focusWorldZ: v,
+                      })
+                    }
+                    onScrubCommit={(v) =>
+                      commitCameraPropertiesScrub({
+                        focusDistance: v,
+                        focusWorldZ: v,
+                        focusTargetNodeId: null,
+                      })
+                    }
+                    onScrubCancel={cancelCameraPropertiesPreview}
+                    adaptiveSpan={2000}
+                    step={1}
+                    suffix="px"
                     keyframe={
                       <KeyframeButton
                         nodeId={node.id}
@@ -2600,20 +3905,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                         currentValue={liveFocusDistance}
                       />
                     }
-                  >
-                    <NumberField
-                      value={liveFocusDistance}
-                      onCommit={(v) =>
-                        patchCamera({
-                          focusDistance: v,
-                          focusWorldZ: v,
-                          focusTargetNodeId: null,
-                        })
-                      }
-                      step={1}
-                      suffix="px"
-                    />
-                  </FieldRow>
+                  />
                 )}
 
                 {node.focusMode === 'screen' ? (
@@ -2638,8 +3930,38 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           : 'Pick on canvas'}
                       </button>
                     </FieldRow>
-                    <FieldRow
+                    <KeyframeSliderRow
                       label="Point X"
+                      value={liveFocusX}
+                      onCommit={(v) =>
+                        patchCamera({
+                          focusMode: 'screen',
+                          focusX: v,
+                          focusWorldX: v,
+                          focusTargetNodeId: null,
+                        })
+                      }
+                      onScrubPreview={(v) =>
+                        previewCameraProperties({
+                          focusX: v,
+                          focusWorldX: v,
+                        })
+                      }
+                      onScrubCommit={(v) =>
+                        commitCameraPropertiesScrub({
+                          focusMode: 'screen',
+                          focusX: v,
+                          focusWorldX: v,
+                          focusTargetNodeId: null,
+                        })
+                      }
+                      onScrubCancel={cancelCameraPropertiesPreview}
+                      adaptiveSpan={Math.max(
+                        1000,
+                        api.getMeta().canvas.width,
+                      )}
+                      step={1}
+                      suffix="px"
                       keyframe={
                         <KeyframeButton
                           nodeId={node.id}
@@ -2647,23 +3969,39 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           currentValue={liveFocusX}
                         />
                       }
-                    >
-                      <NumberField
-                        value={liveFocusX}
-                        onCommit={(v) =>
-                          patchCamera({
-                            focusMode: 'screen',
-                            focusX: v,
-                            focusWorldX: v,
-                            focusTargetNodeId: null,
-                          })
-                        }
-                        step={1}
-                        suffix="px"
-                      />
-                    </FieldRow>
-                    <FieldRow
+                    />
+                    <KeyframeSliderRow
                       label="Point Y"
+                      value={liveFocusY}
+                      onCommit={(v) =>
+                        patchCamera({
+                          focusMode: 'screen',
+                          focusY: v,
+                          focusWorldY: v,
+                          focusTargetNodeId: null,
+                        })
+                      }
+                      onScrubPreview={(v) =>
+                        previewCameraProperties({
+                          focusY: v,
+                          focusWorldY: v,
+                        })
+                      }
+                      onScrubCommit={(v) =>
+                        commitCameraPropertiesScrub({
+                          focusMode: 'screen',
+                          focusY: v,
+                          focusWorldY: v,
+                          focusTargetNodeId: null,
+                        })
+                      }
+                      onScrubCancel={cancelCameraPropertiesPreview}
+                      adaptiveSpan={Math.max(
+                        1000,
+                        api.getMeta().canvas.height,
+                      )}
+                      step={1}
+                      suffix="px"
                       keyframe={
                         <KeyframeButton
                           nodeId={node.id}
@@ -2671,126 +4009,159 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           currentValue={liveFocusY}
                         />
                       }
-                    >
-                      <NumberField
-                        value={liveFocusY}
-                        onCommit={(v) =>
-                          patchCamera({
-                            focusMode: 'screen',
-                            focusY: v,
-                            focusWorldY: v,
-                            focusTargetNodeId: null,
-                          })
-                        }
-                        step={1}
-                        suffix="px"
-                      />
-                    </FieldRow>
-                    <FieldRow
+                    />
+                    <KeyframeSliderRow
                       label="Point radius"
+                      value={liveFocusRadius}
+                      onCommit={(v) =>
+                        patchCamera({ focusRadius: Math.max(4, v) })
+                      }
+                      onScrubPreview={(v) =>
+                        previewCameraProperties({ focusRadius: Math.max(4, v) })
+                      }
+                      onScrubCommit={(v) =>
+                        commitCameraPropertiesScrub({
+                          focusRadius: Math.max(4, v),
+                        })
+                      }
+                      onScrubCancel={cancelCameraPropertiesPreview}
+                      min={4}
+                      adaptiveSpan={2000}
+                      step={5}
+                      suffix="px"
                       keyframe={
                         <KeyframeButton
                           nodeId={node.id}
                           propertyId="camera.focusRadius"
                           currentValue={liveFocusRadius}
+                          variant="boxed"
                         />
                       }
-                    >
-                      <NumberField
-                        value={liveFocusRadius}
-                        onCommit={(v) =>
-                          patchCamera({ focusRadius: Math.max(4, v) })
-                        }
-                        min={4}
-                        max={2000}
-                        step={5}
-                        suffix="px"
-                      />
-                    </FieldRow>
-                    <FieldRow
+                    />
+                    <KeyframeSliderRow
                       label="Blur falloff"
+                      value={liveFocusFalloff}
+                      onCommit={(v) =>
+                        patchCamera({ focusFalloff: Math.max(1, v) })
+                      }
+                      onScrubPreview={(v) =>
+                        previewCameraProperties({
+                          focusFalloff: Math.max(1, v),
+                        })
+                      }
+                      onScrubCommit={(v) =>
+                        commitCameraPropertiesScrub({
+                          focusFalloff: Math.max(1, v),
+                        })
+                      }
+                      onScrubCancel={cancelCameraPropertiesPreview}
+                      min={1}
+                      adaptiveSpan={4000}
+                      step={5}
+                      suffix="px"
                       keyframe={
                         <KeyframeButton
                           nodeId={node.id}
                           propertyId="camera.focusFalloff"
                           currentValue={liveFocusFalloff}
+                          variant="boxed"
                         />
                       }
-                    >
-                      <NumberField
-                        value={liveFocusFalloff}
-                        onCommit={(v) =>
-                          patchCamera({ focusFalloff: Math.max(1, v) })
-                        }
-                        min={1}
-                        max={4000}
-                        step={5}
-                        suffix="px"
-                      />
-                    </FieldRow>
-                    <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                    />
+                    <p className="px-2 text-[10px] leading-4 text-text-dim">
                       Sharp inside Point radius. Blur grows progressively across
                       Blur falloff, reaching Max blur beyond the outer ring.
                     </p>
                   </>
                 ) : null}
 
-                <FieldRow label="Show plane">
-                  <CheckboxField
-                    value={node.showFocusPlane ?? false}
-                    onCommit={(showFocusPlane) =>
-                      patchCamera({ showFocusPlane })
-                    }
-                  />
-                </FieldRow>
+                <SectionToggleRow
+                  label="Show focus plane"
+                  value={node.showFocusPlane ?? false}
+                  onCommit={(showFocusPlane) =>
+                    patchCamera({ showFocusPlane })
+                  }
+                />
 
                 <div className="!mt-4 border-t border-border pt-3 text-[11px] font-medium uppercase tracking-wide text-text-dim">
                   Aperture
                 </div>
-                <FieldRow
+                <KeyframeSliderRow
                   label="F-Stop"
+                  value={liveFStop}
+                  onCommit={(v) =>
+                    patchCamera({ fStop: Math.max(0.1, Math.min(64, v)) })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      fStop: Math.max(0.1, Math.min(64, v)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      fStop: Math.max(0.1, Math.min(64, v)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0.1}
+                  max={64}
+                  step={0.1}
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.fStop"
                       currentValue={liveFStop}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveFStop}
-                    onCommit={(v) =>
-                      patchCamera({ fStop: Math.max(0.1, Math.min(64, v)) })
-                    }
-                    min={0.1}
-                    max={64}
-                    step={0.1}
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Blades"
+                  value={Math.round(liveBladeCount)}
+                  onCommit={(v) =>
+                    patchCamera({
+                      bladeCount: Math.max(3, Math.min(16, Math.round(v))),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      bladeCount: Math.max(3, Math.min(16, Math.round(v))),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      bladeCount: Math.max(3, Math.min(16, Math.round(v))),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={3}
+                  max={16}
+                  step={1}
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.bladeCount"
                       currentValue={liveBladeCount}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={Math.round(liveBladeCount)}
-                    onCommit={(v) =>
-                      patchCamera({
-                        bladeCount: Math.max(3, Math.min(16, Math.round(v))),
-                      })
-                    }
-                    min={3}
-                    max={16}
-                    step={1}
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Rotation"
+                  value={liveBladeRotation}
+                  onCommit={(bladeRotation) =>
+                    patchCamera({ bladeRotation })
+                  }
+                  onScrubPreview={(bladeRotation) =>
+                    previewCameraProperties({ bladeRotation })
+                  }
+                  onScrubCommit={(bladeRotation) =>
+                    commitCameraPropertiesScrub({ bladeRotation })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  adaptiveSpan={360}
+                  step={1}
+                  suffix="°"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
@@ -2798,60 +4169,69 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       currentValue={liveBladeRotation}
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBladeRotation}
-                    onCommit={(bladeRotation) =>
-                      patchCamera({ bladeRotation })
-                    }
-                    step={1}
-                    suffix="°"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Bokeh ratio"
+                  value={liveBokehRatio}
+                  onCommit={(v) =>
+                    patchCamera({
+                      bokehRatio: Math.max(0.25, Math.min(4, v)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      bokehRatio: Math.max(0.25, Math.min(4, v)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      bokehRatio: Math.max(0.25, Math.min(4, v)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0.25}
+                  max={4}
+                  step={0.05}
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.bokehRatio"
                       currentValue={liveBokehRatio}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBokehRatio}
-                    onCommit={(v) =>
-                      patchCamera({
-                        bokehRatio: Math.max(0.25, Math.min(4, v)),
-                      })
-                    }
-                    min={0.25}
-                    max={4}
-                    step={0.05}
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Max blur"
+                  value={Math.max(0, Math.min(128, liveBlurLevel))}
+                  onCommit={(v) =>
+                    patchCamera({ blurLevel: Math.max(0, Math.min(128, v)) })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      blurLevel: Math.max(0, Math.min(128, v)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      blurLevel: Math.max(0, Math.min(128, v)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={128}
+                  step={1}
+                  suffix="px"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.blurLevel"
                       currentValue={liveBlurLevel}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={Math.max(0, Math.min(128, liveBlurLevel))}
-                    onCommit={(v) =>
-                      patchCamera({ blurLevel: Math.max(0, Math.min(128, v)) })
-                    }
-                    min={0}
-                    max={128}
-                    step={1}
-                    suffix="px"
-                  />
-                </FieldRow>
-                <FieldRow label="Preview quality">
+                />
+                <FieldRow label="Preview quality" layout="compound">
                   <SelectField<CameraNode['dofPreviewQuality']>
                     value={node.dofPreviewQuality ?? 'balanced'}
                     options={[
@@ -2865,303 +4245,377 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     width="w-full"
                   />
                 </FieldRow>
-                <FieldRow
+                <KeyframeSliderRow
                   label="Export samples"
+                  value={liveBlurQuality}
+                  onCommit={(v) =>
+                    patchCamera({
+                      blurQuality: Math.max(24, Math.min(48, Math.round(v))),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      blurQuality: Math.max(24, Math.min(48, Math.round(v))),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      blurQuality: Math.max(24, Math.min(48, Math.round(v))),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={24}
+                  max={48}
+                  step={1}
+                  suffix="taps"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.blurQuality"
                       currentValue={liveBlurQuality}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBlurQuality}
-                    onCommit={(v) =>
-                      patchCamera({
-                        blurQuality: Math.max(24, Math.min(48, Math.round(v))),
-                      })
-                    }
-                    min={24}
-                    max={48}
-                    step={1}
-                    suffix="taps"
-                  />
-                </FieldRow>
-                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                />
+                <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Preview controls live smoothness. Export samples controls the
                   final rendered bokeh quality.
                 </p>
               </>
             ) : (
-              <p className="pl-[22px] text-[11px] leading-4 text-text-dim">
+              <p className="px-2 text-[11px] leading-4 text-text-dim">
                 Enable depth of field to configure focus, aperture and quality.
               </p>
             )}
           </Section>
           <Section title="Post Effects">
-            <FieldRow label="Chromatic aberration">
-              <CheckboxField
-                value={node.chromaticAberrationEnabled ?? false}
-                onCommit={(chromaticAberrationEnabled) =>
-                  patchCamera({ chromaticAberrationEnabled })
-                }
-              />
-            </FieldRow>
+            <SectionToggleRow
+              label="Chromatic aberration"
+              value={node.chromaticAberrationEnabled ?? false}
+              onCommit={(chromaticAberrationEnabled) =>
+                patchCamera({ chromaticAberrationEnabled })
+              }
+            />
             {node.chromaticAberrationEnabled ? (
               <>
-                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Red and blue each move by Amount in opposite directions.
                 </p>
-                <FieldRow
+                <KeyframeSliderRow
                   label="Amount"
+                  value={liveChromaticAberrationAmount}
+                  onCommit={(v) =>
+                    patchCamera({
+                      chromaticAberrationAmount: Math.max(0, Math.min(64, v)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      chromaticAberrationAmount: Math.max(
+                        0,
+                        Math.min(64, v),
+                      ),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      chromaticAberrationAmount: Math.max(
+                        0,
+                        Math.min(64, v),
+                      ),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={64}
+                  step={0.5}
+                  suffix="px"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.chromaticAberrationAmount"
                       currentValue={liveChromaticAberrationAmount}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveChromaticAberrationAmount}
-                    onCommit={(v) =>
-                      patchCamera({
-                        chromaticAberrationAmount: Math.max(0, Math.min(64, v)),
-                      })
-                    }
-                    min={0}
-                    max={64}
-                    step={0.5}
-                    suffix="px"
-                    ariaLabel="Chromatic aberration amount"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Angle"
+                  value={liveChromaticAberrationAngle}
+                  onCommit={(v) =>
+                    patchCamera({ chromaticAberrationAngle: v })
+                  }
+                  onScrubPreview={(chromaticAberrationAngle) =>
+                    previewCameraProperties({ chromaticAberrationAngle })
+                  }
+                  onScrubCommit={(chromaticAberrationAngle) =>
+                    commitCameraPropertiesScrub({ chromaticAberrationAngle })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  adaptiveSpan={360}
+                  step={1}
+                  suffix="°"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.chromaticAberrationAngle"
                       currentValue={liveChromaticAberrationAngle}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveChromaticAberrationAngle}
-                    onCommit={(v) =>
-                      patchCamera({
-                        chromaticAberrationAngle: Math.max(
-                          -180,
-                          Math.min(180, v),
-                        ),
-                      })
-                    }
-                    min={-180}
-                    max={180}
-                    step={1}
-                    suffix="°"
-                    ariaLabel="Chromatic aberration angle"
-                  />
-                </FieldRow>
+                />
               </>
             ) : null}
 
-            <div className="!my-3 border-t border-border" />
+            <div className="border-t border-border" />
 
-            <FieldRow label="Bloom">
-              <CheckboxField
-                value={node.bloomEnabled ?? false}
-                onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
-              />
-            </FieldRow>
+            <SectionToggleRow
+              label="Bloom"
+              value={node.bloomEnabled ?? false}
+              onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
+            />
             {node.bloomEnabled ? (
               <>
-                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Spreads bright pixels into a soft glow around highlights.
                 </p>
-                <FieldRow
+                <KeyframeSliderRow
                   label="Strength"
+                  value={liveBloomStrength}
+                  onCommit={(v) =>
+                    patchCamera({ bloomStrength: Math.max(0, Math.min(4, v)) })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      bloomStrength: Math.max(0, Math.min(4, v)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      bloomStrength: Math.max(0, Math.min(4, v)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={4}
+                  step={0.05}
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.bloomStrength"
                       currentValue={liveBloomStrength}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBloomStrength}
-                    onCommit={(v) =>
-                      patchCamera({ bloomStrength: Math.max(0, Math.min(4, v)) })
-                    }
-                    min={0}
-                    max={4}
-                    step={0.05}
-                    ariaLabel="Bloom strength"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Radius"
+                  value={liveBloomRadius * 100}
+                  onCommit={(v) =>
+                    patchCamera({
+                      bloomRadius: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      bloomRadius: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      bloomRadius: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.bloomRadius"
                       currentValue={liveBloomRadius}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBloomRadius * 100}
-                    onCommit={(v) =>
-                      patchCamera({
-                        bloomRadius: Math.max(0, Math.min(1, v / 100)),
-                      })
-                    }
-                    min={0}
-                    max={100}
-                    step={1}
-                    suffix="%"
-                    ariaLabel="Bloom radius"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Threshold"
+                  value={liveBloomThreshold * 100}
+                  onCommit={(v) =>
+                    patchCamera({
+                      bloomThreshold: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      bloomThreshold: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      bloomThreshold: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.bloomThreshold"
                       currentValue={liveBloomThreshold}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveBloomThreshold * 100}
-                    onCommit={(v) =>
-                      patchCamera({
-                        bloomThreshold: Math.max(0, Math.min(1, v / 100)),
-                      })
-                    }
-                    min={0}
-                    max={100}
-                    step={1}
-                    suffix="%"
-                    ariaLabel="Bloom threshold"
-                  />
-                </FieldRow>
+                />
               </>
             ) : null}
 
-            <div className="!my-3 border-t border-border" />
+            <div className="border-t border-border" />
 
-            <FieldRow label="VHS tape">
-              <CheckboxField
-                value={node.vhsEnabled ?? false}
-                onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
-              />
-            </FieldRow>
+            <SectionToggleRow
+              label="VHS tape"
+              value={node.vhsEnabled ?? false}
+              onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
+            />
             {node.vhsEnabled ? (
               <>
-                <p className="pl-[22px] text-[10px] leading-4 text-text-dim">
+                <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Adds frame-stable tape wobble, grain, scanlines and color
                   bleed driven by the scene playhead.
                 </p>
-                <FieldRow
+                <KeyframeSliderRow
                   label="Intensity"
+                  value={liveVhsIntensity * 100}
+                  onCommit={(v) =>
+                    patchCamera({
+                      vhsIntensity: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      vhsIntensity: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      vhsIntensity: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.vhsIntensity"
                       currentValue={liveVhsIntensity}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveVhsIntensity * 100}
-                    onCommit={(v) =>
-                      patchCamera({
-                        vhsIntensity: Math.max(0, Math.min(1, v / 100)),
-                      })
-                    }
-                    min={0}
-                    max={100}
-                    step={1}
-                    suffix="%"
-                    ariaLabel="VHS intensity"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Noise"
+                  value={liveVhsNoise * 100}
+                  onCommit={(v) =>
+                    patchCamera({
+                      vhsNoise: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      vhsNoise: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      vhsNoise: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.vhsNoise"
                       currentValue={liveVhsNoise}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveVhsNoise * 100}
-                    onCommit={(v) =>
-                      patchCamera({
-                        vhsNoise: Math.max(0, Math.min(1, v / 100)),
-                      })
-                    }
-                    min={0}
-                    max={100}
-                    step={1}
-                    suffix="%"
-                    ariaLabel="VHS noise"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Scanlines"
+                  value={liveVhsScanlines * 100}
+                  onCommit={(v) =>
+                    patchCamera({
+                      vhsScanlines: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      vhsScanlines: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      vhsScanlines: Math.max(0, Math.min(1, v / 100)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={100}
+                  step={1}
+                  suffix="%"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.vhsScanlines"
                       currentValue={liveVhsScanlines}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveVhsScanlines * 100}
-                    onCommit={(v) =>
-                      patchCamera({
-                        vhsScanlines: Math.max(0, Math.min(1, v / 100)),
-                      })
-                    }
-                    min={0}
-                    max={100}
-                    step={1}
-                    suffix="%"
-                    ariaLabel="VHS scanlines"
-                  />
-                </FieldRow>
-                <FieldRow
+                />
+                <KeyframeSliderRow
                   label="Color bleed"
+                  value={liveVhsColorBleed}
+                  onCommit={(v) =>
+                    patchCamera({
+                      vhsColorBleed: Math.max(0, Math.min(32, v)),
+                    })
+                  }
+                  onScrubPreview={(v) =>
+                    previewCameraProperties({
+                      vhsColorBleed: Math.max(0, Math.min(32, v)),
+                    })
+                  }
+                  onScrubCommit={(v) =>
+                    commitCameraPropertiesScrub({
+                      vhsColorBleed: Math.max(0, Math.min(32, v)),
+                    })
+                  }
+                  onScrubCancel={cancelCameraPropertiesPreview}
+                  min={0}
+                  max={32}
+                  step={0.5}
+                  suffix="px"
                   keyframe={
                     <KeyframeButton
                       nodeId={node.id}
                       propertyId="camera.vhsColorBleed"
                       currentValue={liveVhsColorBleed}
+                      variant="boxed"
                     />
                   }
-                >
-                  <NumberField
-                    value={liveVhsColorBleed}
-                    onCommit={(v) =>
-                      patchCamera({
-                        vhsColorBleed: Math.max(0, Math.min(32, v)),
-                      })
-                    }
-                    min={0}
-                    max={32}
-                    step={0.5}
-                    suffix="px"
-                    ariaLabel="VHS color bleed"
-                  />
-                </FieldRow>
+                />
               </>
             ) : null}
           </Section>
@@ -3219,8 +4673,24 @@ function MotionPathSection({
         </button>
       }
     >
-      <FieldRow
+      <KeyframeSliderRow
         label="Progress"
+        value={Math.round(progress * 100)}
+        onCommit={(value) => onPatch({ progress: value / 100 })}
+        onScrubPreview={(value) =>
+          nodeTransformPreviewStore.preview({
+            [nodeId]: { motionPathProgress: value / 100 },
+          })
+        }
+        onScrubCommit={(value) => {
+          onPatch({ progress: value / 100 })
+          nodeTransformPreviewStore.finish()
+        }}
+        onScrubCancel={() => nodeTransformPreviewStore.clear()}
+        min={0}
+        max={100}
+        step={1}
+        suffix="%"
         keyframe={
           <KeyframeButton
             nodeId={nodeId}
@@ -3228,16 +4698,7 @@ function MotionPathSection({
             currentValue={progress}
           />
         }
-      >
-        <SliderField
-          value={Math.round(progress * 100)}
-          onCommit={(value) => onPatch({ progress: value / 100 })}
-          min={0}
-          max={100}
-          step={1}
-          suffix="%"
-        />
-      </FieldRow>
+      />
       <FieldRow label="Follow path">
         <CheckboxField
           value={path.autoOrient}
@@ -3397,7 +4858,7 @@ function CameraAnimationActions({ node, api }: { node: Node; api: SceneAPI }) {
 // animated zoom never produces a stretched view.
 // ---------------------------------------------------------------------------
 
-function UniformScaleField({
+export function UniformScaleField({
   nodeId,
   value,
   onCommit,
@@ -3481,14 +4942,11 @@ function UniformPercent({
   const [draft, setDraft] = useState(() => formatPct(value))
   const [focused, setFocused] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (!focused) setDraft(formatPct(value))
-  }, [value, focused])
+  const cancelBlurCommitRef = useRef(false)
 
   const commit = () => {
-    const parsed = parseFloat(draft)
-    if (!Number.isFinite(parsed)) {
+    const parsed = parseNumericExpression(draft)
+    if (parsed == null) {
       setDraft(formatPct(value))
       return
     }
@@ -3499,39 +4957,44 @@ function UniformPercent({
 
   return (
     <label
-      className={[
-        'inline-flex h-6 min-w-0 flex-1 items-center rounded',
-        'border border-transparent hover:border-border',
-        'focus-within:border-border-strong focus-within:bg-app-bg',
-      ].join(' ')}
+      className="hm-control-surface inline-flex h-7 min-w-0 flex-1 items-center"
       title="Uniform camera scale"
     >
       <input
         ref={ref}
         type="text"
         inputMode="decimal"
-        value={draft}
+        value={focused ? draft : formatNumericDisplayValue(value * 100)}
         onChange={(e) => setDraft(e.target.value)}
         onFocus={(e) => {
+          setDraft(formatPct(value))
           setFocused(true)
+          cancelBlurCommitRef.current = false
           e.currentTarget.select()
         }}
         onBlur={() => {
           setFocused(false)
-          commit()
+          if (cancelBlurCommitRef.current) {
+            cancelBlurCommitRef.current = false
+          } else {
+            commit()
+          }
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
-            commit()
             ref.current?.blur()
           } else if (e.key === 'Escape') {
+            e.preventDefault()
+            cancelBlurCommitRef.current = true
             setDraft(formatPct(value))
             ref.current?.blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
             e.preventDefault()
-            const delta = (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)
-            const nextPct = (parseFloat(draft) || 0) + delta
+            const multiplier = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+            const delta = (e.key === 'ArrowUp' ? 1 : -1) * multiplier
+            const current = parseNumericExpression(draft) ?? value * 100
+            const nextPct = stabilizeNumericValue(current + delta)
             setDraft(formatPctNumber(nextPct))
             onCommit(nextPct / 100)
           }
@@ -3549,14 +5012,10 @@ function UniformPercent({
 }
 
 function formatPct(scale: number): string {
-  return formatPctNumber(Math.round(scale * 10000) / 100)
+  return formatPctNumber(stabilizeNumericValue(scale * 100))
 }
 function formatPctNumber(p: number): string {
-  // Defensive: agent-built scenes may land here with undefined scale
-  // values — a single undefined.toFixed crashes the whole Inspector.
-  if (p == null || !Number.isFinite(p)) return ''
-  if (Number.isInteger(p)) return String(p)
-  return p.toFixed(2).replace(/\.?0+$/, '')
+  return formatNumericValue(p)
 }
 
 // ---------------------------------------------------------------------------
@@ -3571,11 +5030,25 @@ function formatPctNumber(p: number): string {
 // ---------------------------------------------------------------------------
 
 function EffectsSection({
+  nodeId,
   value,
+  animatedBlur,
   onCommit,
+  onRemove,
+  onBlurCommit,
+  onBlurPreview,
+  onBlurScrubCommit,
+  onBlurCancel,
 }: {
+  nodeId: NodeId
   value: Effect[]
+  animatedBlur?: Readonly<Record<string, number>>
   onCommit: (next: Effect[]) => void
+  onRemove: (effectId: string, next: Effect[]) => void
+  onBlurCommit: (effectId: string, value: number) => void
+  onBlurPreview: (effectId: string, value: number) => void
+  onBlurScrubCommit: (effectId: string, value: number) => void
+  onBlurCancel: () => void
 }) {
   const addEffect = () => {
     // New shadows default to a soft drop shadow that's visible on
@@ -3600,7 +5073,12 @@ function EffectsSection({
   }
 
   const removeAt = (i: number) => {
-    onCommit(value.filter((_, idx) => idx !== i))
+    const effect = value[i]
+    if (!effect) return
+    onRemove(
+      effectStableId(effect, i),
+      value.filter((_, idx) => idx !== i),
+    )
   }
 
   const moveUp = (i: number) => {
@@ -3638,18 +5116,36 @@ function EffectsSection({
         </div>
       ) : (
         <div className="space-y-2">
-          {value.map((effect, i) => (
-            <EffectRow
-              key={i}
-              effect={effect}
-              onChange={(patch) => updateAt(i, patch)}
-              onRemove={() => removeAt(i)}
-              onMoveUp={() => moveUp(i)}
-              onMoveDown={() => moveDown(i)}
-              canMoveUp={i > 0}
-              canMoveDown={i < value.length - 1}
-            />
-          ))}
+          {value.map((effect, i) => {
+            const effectId = effectStableId(effect, i)
+            const staticBlur =
+              effect.kind === 'blur' ? effect.amount : effect.blur
+            const liveBlur = normalizedEffectBlur(
+              effect,
+              animatedBlur?.[effectId] ?? staticBlur,
+            )
+            return (
+              <EffectRow
+                key={effectId}
+                nodeId={nodeId}
+                effectId={effectId}
+                effect={effect}
+                liveBlur={liveBlur}
+                onChange={(patch) => updateAt(i, patch)}
+                onRemove={() => removeAt(i)}
+                onMoveUp={() => moveUp(i)}
+                onMoveDown={() => moveDown(i)}
+                canMoveUp={i > 0}
+                canMoveDown={i < value.length - 1}
+                onBlurCommit={(next) => onBlurCommit(effectId, next)}
+                onBlurPreview={(next) => onBlurPreview(effectId, next)}
+                onBlurScrubCommit={(next) =>
+                  onBlurScrubCommit(effectId, next)
+                }
+                onBlurCancel={onBlurCancel}
+              />
+            )
+          })}
         </div>
       )}
     </Section>
@@ -3657,21 +5153,35 @@ function EffectsSection({
 }
 
 function EffectRow({
+  nodeId,
+  effectId,
   effect,
+  liveBlur,
   onChange,
   onRemove,
   onMoveUp,
   onMoveDown,
   canMoveUp,
   canMoveDown,
+  onBlurCommit,
+  onBlurPreview,
+  onBlurScrubCommit,
+  onBlurCancel,
 }: {
+  nodeId: NodeId
+  effectId: string
   effect: Effect
+  liveBlur: number
   onChange: (patch: Partial<Effect>) => void
   onRemove: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   canMoveUp: boolean
   canMoveDown: boolean
+  onBlurCommit: (value: number) => void
+  onBlurPreview: (value: number) => void
+  onBlurScrubCommit: (value: number) => void
+  onBlurCancel: () => void
 }) {
   const visible = effect.visible !== false
   // Convert kind in-place. We rebuild the row so the new kind picks up
@@ -3760,18 +5270,81 @@ function EffectRow({
         </button>
       </div>
       {effect.kind === 'blur' ? (
-        <FieldRow label="Amount">
-          <NumberField
-            value={effect.amount}
-            onCommit={(v) => onChange({ amount: Math.max(0, v) } as Partial<Effect>)}
-            min={0}
-            suffix="px"
-          />
-        </FieldRow>
+        <EffectBlurSlider
+          nodeId={nodeId}
+          effectId={effectId}
+          value={liveBlur}
+          layerBlur
+          onCommit={onBlurCommit}
+          onScrubPreview={onBlurPreview}
+          onScrubCommit={onBlurScrubCommit}
+          onScrubCancel={onBlurCancel}
+        />
       ) : (
-        <ShadowFields effect={effect} onChange={onChange} />
+        <ShadowFields
+          nodeId={nodeId}
+          effectId={effectId}
+          effect={effect}
+          liveBlur={liveBlur}
+          onChange={onChange}
+          onBlurCommit={onBlurCommit}
+          onBlurPreview={onBlurPreview}
+          onBlurScrubCommit={onBlurScrubCommit}
+          onBlurCancel={onBlurCancel}
+        />
       )}
     </div>
+  )
+}
+
+function normalizedEffectBlur(effect: Effect, value: number): number {
+  return effect.kind === 'blur'
+    ? clampLayerBlurAmount(value)
+    : Math.max(0, Number.isFinite(value) ? value : 0)
+}
+
+function EffectBlurSlider({
+  nodeId,
+  effectId,
+  value,
+  layerBlur = false,
+  onCommit,
+  onScrubPreview,
+  onScrubCommit,
+  onScrubCancel,
+}: {
+  nodeId: NodeId
+  effectId: string
+  value: number
+  layerBlur?: boolean
+  onCommit: (value: number) => void
+  onScrubPreview: (value: number) => void
+  onScrubCommit: (value: number) => void
+  onScrubCancel: () => void
+}) {
+  return (
+    <KeyframeSliderRow
+      label="Blur"
+      value={value}
+      onCommit={onCommit}
+      onScrubPreview={onScrubPreview}
+      onScrubCommit={onScrubCommit}
+      onScrubCancel={onScrubCancel}
+      min={0}
+      {...(layerBlur
+        ? { max: MAX_LAYER_BLUR_PX }
+        : { sliderMin: 0, sliderMax: MAX_LAYER_BLUR_PX })}
+      step={0.1}
+      suffix="px"
+      keyframe={
+        <KeyframeButton
+          nodeId={nodeId}
+          propertyId={effectBlurPropertyId(effectId)}
+          currentValue={value}
+          staggerable={false}
+        />
+      }
+    />
   )
 }
 
@@ -3781,11 +5354,25 @@ function EffectRow({
  * the two paths is the kind tag — fields are identical.
  */
 function ShadowFields({
+  nodeId,
+  effectId,
   effect,
+  liveBlur,
   onChange,
+  onBlurCommit,
+  onBlurPreview,
+  onBlurScrubCommit,
+  onBlurCancel,
 }: {
+  nodeId: NodeId
+  effectId: string
   effect: Extract<Effect, { kind: 'shadow' | 'inner-shadow' }>
+  liveBlur: number
   onChange: (patch: Partial<Effect>) => void
+  onBlurCommit: (value: number) => void
+  onBlurPreview: (value: number) => void
+  onBlurScrubCommit: (value: number) => void
+  onBlurCancel: () => void
 }) {
   return (
     <>
@@ -3807,14 +5394,15 @@ function ShadowFields({
           width="w-16"
         />
       </FieldRow>
-      <FieldRow label="Blur">
-        <NumberField
-          value={effect.blur}
-          onCommit={(v) => onChange({ blur: Math.max(0, v) } as Partial<Effect>)}
-          min={0}
-          suffix="px"
-        />
-      </FieldRow>
+      <EffectBlurSlider
+        nodeId={nodeId}
+        effectId={effectId}
+        value={liveBlur}
+        onCommit={onBlurCommit}
+        onScrubPreview={onBlurPreview}
+        onScrubCommit={onBlurScrubCommit}
+        onScrubCancel={onBlurCancel}
+      />
       <FieldRow label="Spread">
         <NumberField
           value={effect.spread ?? 0}
@@ -3875,7 +5463,7 @@ function ExposeComponentPropertiesSection({
               className={[
                 'h-7 rounded-md border px-2 text-left text-[11px] font-medium',
                 active
-                  ? 'border-[oklch(0.64_0.24_300)] bg-[oklch(0.64_0.24_300_/_0.14)] text-[oklch(0.5_0.22_300)]'
+                  ? 'border-accent bg-accent-soft text-accent'
                   : 'border-border bg-panel-raised text-text-muted hover:border-border-strong hover:text-text',
               ].join(' ')}
             >
@@ -3888,7 +5476,7 @@ function ExposeComponentPropertiesSection({
   )
 }
 
-function InstanceComponentPropertiesSection({
+export function InstanceComponentPropertiesSection({
   node,
   api,
 }: {
@@ -4045,7 +5633,7 @@ function ComponentVariablesSection({
                 <button
                   type="button"
                   onClick={() => setPropertyMenuOpen((open) => !open)}
-                  className="grid h-7 w-7 place-items-center rounded-md text-[18px] leading-none text-text-muted hover:bg-panel-raised hover:text-text"
+                  className="hm-icon-button text-[18px] leading-none"
                   aria-label="Create property"
                 >
                   +
@@ -4053,8 +5641,8 @@ function ComponentVariablesSection({
               ) : null}
             </div>
             {propertyMenuOpen && node.kind === 'component' ? (
-              <div className="absolute right-0 top-8 z-20 w-44 rounded-lg bg-neutral-950 p-2 text-white shadow-2xl">
-                <div className="px-2 pb-1.5 text-[11px] text-white/55">
+              <div className="hm-popover-surface absolute right-0 top-8 z-20 w-44 p-2 text-text">
+                <div className="px-2 pb-1.5 text-[11px] text-text-dim">
                   Create property
                 </div>
                 {[
@@ -4068,7 +5656,7 @@ function ComponentVariablesSection({
                     key={label}
                     type="button"
                     onClick={() => setPropertyMenuOpen(false)}
-                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-white/90 hover:bg-white/10"
+                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-text-muted hover:bg-control hover:text-text"
                   >
                     <span className="grid h-4 w-4 place-items-center font-mono text-[13px]">
                       {icon}
@@ -4508,7 +6096,6 @@ function VariantsSection({
 }) {
   const [draftName, setDraftName] = useState('')
   const [activeState, setActiveState] = useState<string | null>(null)
-  const playhead = useUI((s) => s.playhead)
   const component =
     node.kind === 'component' ? node : api.getNode(node.componentId)
   if (!component || component.kind !== 'component') return null
@@ -4557,7 +6144,7 @@ function VariantsSection({
                 className={[
                   'h-7 rounded-md border px-2.5 text-[11px] font-semibold',
                   value === selectedState
-                    ? 'border-[oklch(0.64_0.24_300)] bg-[oklch(0.64_0.24_300_/_0.16)] text-[oklch(0.5_0.22_300)]'
+                    ? 'border-accent bg-accent-soft text-accent'
                     : 'border-border bg-panel-raised text-text-muted hover:text-text',
                 ].join(' ')}
               >
@@ -4583,7 +6170,7 @@ function VariantsSection({
                   setActiveState(nextName)
                   setDraftName('')
                 }}
-                className="h-7 rounded-md bg-[oklch(0.64_0.24_300)] px-2 text-[11px] font-semibold text-white"
+                className="h-7 rounded-md bg-accent px-2 text-[11px] font-semibold text-white"
               >
                 Add
               </button>
@@ -4624,12 +6211,11 @@ function VariantsSection({
 
       <div className="border-t border-border pt-4">
         <FieldRow label="Duration">
-          <NumberField
+          <TimeField
             value={transition.duration}
             onCommit={(duration) => patchTransition({ duration: Math.max(0, duration) })}
             min={0}
             step={0.05}
-            suffix="s"
           />
         </FieldRow>
         <EasingPicker
@@ -4674,7 +6260,7 @@ function PrototypeSection({
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-dim">
+            <div className="mb-1 text-[10px] font-medium text-text-dim">
               Trigger
             </div>
             <SelectField<InteractionEventKind>
@@ -4685,7 +6271,7 @@ function PrototypeSection({
             />
           </div>
           <div>
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-dim">
+            <div className="mb-1 text-[10px] font-medium text-text-dim">
               To state
             </div>
             <SelectField<string>
@@ -4697,12 +6283,11 @@ function PrototypeSection({
           </div>
         </div>
         <FieldRow label="Delay">
-          <NumberField
+          <TimeField
             value={delay}
             onCommit={(value) => setDelay(Math.max(0, value))}
             min={0}
             step={0.05}
-            suffix="s"
           />
         </FieldRow>
         <button
@@ -4715,7 +6300,7 @@ function PrototypeSection({
               sourceNodeId: sourceNode?.id,
             })
           }
-          className="h-8 w-full rounded-md bg-[oklch(0.64_0.24_300)] text-[12px] font-semibold text-white"
+          className="h-8 w-full rounded-md bg-accent text-[12px] font-semibold text-white"
         >
           Add variant connector
         </button>
@@ -4738,8 +6323,8 @@ function PrototypeSection({
                     <span className="rounded bg-app-bg px-1.5 py-0.5 font-semibold text-text">
                       {triggerLabel}
                     </span>
-                    <span className="h-px flex-1 bg-[oklch(0.64_0.24_300_/_0.55)]" />
-                    <span className="rounded bg-[oklch(0.64_0.24_300_/_0.16)] px-1.5 py-0.5 font-semibold text-[oklch(0.5_0.22_300)]">
+                    <span className="h-px flex-1 bg-accent/55" />
+                    <span className="rounded bg-accent-soft px-1.5 py-0.5 font-semibold text-accent">
                       {target}
                     </span>
                   </div>
@@ -4870,34 +6455,33 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
 
   const onChange = (next: Position) => {
     if (next === node.position) return
-    if (next === 'absolute') {
-      // Capture the rect Yoga just placed this node at, and write the
-      // offset into transform.x / transform.y so the element doesn't
-      // visually snap to (0, 0) of the parent's content box. The
-      // renderer composes transform on top of the absolute origin, so
-      // the post-toggle frame matches the pre-toggle frame to the pixel.
-      const solved = getLastSolvedLayout()
-      const childRect = solved?.[node.id]
-      const parentRect = solved?.[parent.id]
-      if (childRect && parentRect && 'layout' in parent) {
-        const ox =
-          childRect.x - parentRect.x - parent.layout.padding.left
-        const oy =
-          childRect.y - parentRect.y - parent.layout.padding.top
-        // Merge with existing transform so we don't clobber rotation /
-        // scale / animated offsets.
-        api.setNodeProperty(node.id, 'transform', {
-          ...node.transform,
-          x: Math.round(ox * 100) / 100,
-          y: Math.round(oy * 100) / 100,
-        })
+    api.doc.transact(() => {
+      if (next === 'absolute') {
+        // Capture the slot Yoga is about to remove and fold that delta into
+        // the existing transform. Absolute left/top resolve from the parent
+        // border box here, so subtracting padding would introduce a jump.
+        const solved = getLastSolvedLayout()
+        const childRect = solved?.[node.id]
+        const parentRect = solved?.[parent.id]
+        const current = api.getNode(node.id)
+        if (childRect && parentRect && current) {
+          api.setNodeProperty(
+            node.id,
+            'transform',
+            transformForAbsolutePosition(
+              current.transform,
+              childRect,
+              parentRect,
+            ),
+          )
+        }
       }
-    }
-    api.setNodeProperty(node.id, 'position', next)
+      api.setNodeProperty(node.id, 'position', next)
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
 
   return (
-    <Section title="Position">
+    <Section title="Layout position">
       <FieldRow label="Mode">
         <SelectField<Position>
           value={node.position}
@@ -5043,7 +6627,6 @@ function useSceneCustomFonts(api: SceneAPI): CustomFont[] {
   return useMemo(() => {
     void version
     return api.getAllCustomFonts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, version])
 }
 
@@ -5135,10 +6718,8 @@ async function addCustomFontsFromPicker(
   api: SceneAPI,
   onApply: (family: string) => void,
 ): Promise<void> {
-  // eslint-disable-next-line no-console
   console.log('[fonts] opening file picker')
   const files = await pickFontFiles()
-  // eslint-disable-next-line no-console
   console.log(
     `[fonts] picker returned ${files.length} file${files.length === 1 ? '' : 's'}`,
   )
@@ -5167,10 +6748,8 @@ async function addCustomFontFiles(
   const errors: Array<{ name: string; error: string }> = []
   for (const file of files) {
     try {
-      // eslint-disable-next-line no-console
       console.log(`[fonts] importing "${file.name}" (${file.size} bytes)…`)
       const probe = await probeFontFile(file)
-      // eslint-disable-next-line no-console
       console.log(
         `[fonts] probed "${file.name}" → format=${probe.format} family="${probe.family}"`,
       )
@@ -5181,14 +6760,12 @@ async function addCustomFontFiles(
       // .hype file self-contained.
       await libraryAdd(font)
       api.setCustomFont(font)
-      // eslint-disable-next-line no-console
       console.log(
         `[fonts] ✓ added "${font.family}" (weight ${font.weight}, ${font.style}) — id=${font.id}`,
       )
       if (!firstFamily) firstFamily = font.family
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      // eslint-disable-next-line no-console
       console.error(`[fonts] ✗ failed to import "${file.name}": ${message}`)
       errors.push({ name: file.name, error: message })
     }
@@ -5345,6 +6922,24 @@ function TypographySection({
     [],
   )
 
+  const previewTypography = (
+    patch: Partial<
+      Pick<TextNode, 'fontSize' | 'lineHeight' | 'letterSpacing'>
+    >,
+  ) => {
+    nodeGeometryPreviewStore.preview({ [node.id]: patch })
+  }
+  const commitTypography = <
+    K extends 'fontSize' | 'lineHeight' | 'letterSpacing',
+  >(
+    key: K,
+    value: TextNode[K],
+  ) => {
+    api.setNodeProperty(node.id, key, value)
+    nodeGeometryPreviewStore.finish()
+  }
+  const cancelTypographyPreview = () => nodeGeometryPreviewStore.clear()
+
   return (
     <Section title="Typography">
       <FieldRow label="Content">
@@ -5395,6 +6990,13 @@ function TypographySection({
           onCommit={(v) =>
             api.setNodeProperty(node.id, 'fontSize', Math.max(1, Math.round(v)))
           }
+          onScrubPreview={(fontSize) =>
+            previewTypography({ fontSize: Math.max(1, fontSize) })
+          }
+          onScrubCommit={(fontSize) =>
+            commitTypography('fontSize', Math.max(1, Math.round(fontSize)))
+          }
+          onScrubCancel={cancelTypographyPreview}
           min={1}
           step={1}
           suffix="px"
@@ -5410,6 +7012,21 @@ function TypographySection({
               Math.max(0.5, v / Math.max(1, node.fontSize)),
             )
           }
+          onScrubPreview={(lineHeightPx) =>
+            previewTypography({
+              lineHeight: Math.max(
+                0.5,
+                lineHeightPx / Math.max(1, node.fontSize),
+              ),
+            })
+          }
+          onScrubCommit={(lineHeightPx) =>
+            commitTypography(
+              'lineHeight',
+              Math.max(0.5, lineHeightPx / Math.max(1, node.fontSize)),
+            )
+          }
+          onScrubCancel={cancelTypographyPreview}
           min={1}
           step={1}
           suffix="px"
@@ -5419,6 +7036,13 @@ function TypographySection({
         <NumberField
           value={node.letterSpacing}
           onCommit={(v) => api.setNodeProperty(node.id, 'letterSpacing', v)}
+          onScrubPreview={(letterSpacing) =>
+            previewTypography({ letterSpacing })
+          }
+          onScrubCommit={(letterSpacing) =>
+            commitTypography('letterSpacing', letterSpacing)
+          }
+          onScrubCancel={cancelTypographyPreview}
           min={-100}
           max={100}
           step={0.1}
@@ -5846,16 +7470,15 @@ function MediaSection({
         </div>
       </FieldRow>
       <FieldRow label="Start">
-        <NumberField
+        <TimeField
           value={node.startTime ?? 0}
           onCommit={(v) => api.setNodeProperty(node.id, 'startTime', Math.max(0, v))}
           min={0}
           step={0.05}
-          suffix="s"
         />
       </FieldRow>
       <FieldRow label="Trim in">
-        <NumberField
+        <TimeField
           value={trimStart}
           onCommit={(v) => {
             const nextTrimStart = Math.max(0, Math.min(trimEnd, v))
@@ -5876,11 +7499,10 @@ function MediaSection({
           min={0}
           max={duration}
           step={0.05}
-          suffix="s"
         />
       </FieldRow>
       <FieldRow label="Trim out">
-        <NumberField
+        <TimeField
           value={trimEnd}
           onCommit={(v) =>
             api.setNodeProperty(
@@ -5892,7 +7514,6 @@ function MediaSection({
           min={0}
           max={duration}
           step={0.05}
-          suffix="s"
         />
       </FieldRow>
       <FieldRow label="Loop">
@@ -6356,7 +7977,7 @@ function AudioBeatSection({
           <div>
             <FieldRow label="Lead-in">
               <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                <NumberField
+                <TimeField
                   value={leadInSeconds}
                   onCommit={(value) =>
                     writeGrid({
@@ -6366,7 +7987,6 @@ function AudioBeatSection({
                   }
                   min={0}
                   step={0.01}
-                  suffix="s"
                   ariaLabel="Lead-in duration"
                 />
                 <button
@@ -6448,10 +8068,7 @@ function TextAreaField({
 }) {
   const [draft, setDraft] = useState(value)
   const [focused, setFocused] = useState(false)
-
-  useEffect(() => {
-    if (!focused) setDraft(value)
-  }, [value, focused])
+  const skipNextBlurCommitRef = useRef(false)
 
   const commit = () => {
     if (draft !== value) onCommit(draft)
@@ -6459,20 +8076,29 @@ function TextAreaField({
 
   return (
     <textarea
-      value={draft}
+      value={focused ? draft : value}
       onChange={(e) => setDraft(e.target.value)}
-      onFocus={() => setFocused(true)}
+      onFocus={() => {
+        setDraft(value)
+        setFocused(true)
+      }}
       onBlur={() => {
         setFocused(false)
+        if (skipNextBlurCommitRef.current) {
+          skipNextBlurCommitRef.current = false
+          return
+        }
         commit()
       }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
+          skipNextBlurCommitRef.current = true
           setDraft(value)
           ;(e.currentTarget as HTMLTextAreaElement).blur()
         } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
           commit()
+          skipNextBlurCommitRef.current = true
           ;(e.currentTarget as HTMLTextAreaElement).blur()
         }
       }}
@@ -6634,43 +8260,6 @@ function CornerLinkButton({
 }
 
 // ---------------------------------------------------------------------------
-// Padding sub-field — four small inputs in a row (T R B L)
-// ---------------------------------------------------------------------------
-
-function PaddingField({
-  value,
-  onCommit,
-}: {
-  value: { top: number; right: number; bottom: number; left: number }
-  onCommit: (next: { top: number; right: number; bottom: number; left: number }) => void
-}) {
-  // Four inputs labeled T / R / B / L. Designers unfamiliar with CSS
-  // shorthand expect explicit sides; the bare-number layout we had
-  // before made users assume "the second slot must be right, right?"
-  // and treat it as a guessing game.
-  const cell = (
-    label: string,
-    v: number,
-    onChange: (n: number) => void,
-  ) => (
-    <div className="flex flex-col items-center gap-0.5">
-      <NumberField value={v} onCommit={onChange} min={0} width="w-10" />
-      <span className="text-[9px] uppercase tracking-wider text-text-dim">
-        {label}
-      </span>
-    </div>
-  )
-  return (
-    <div className="flex items-start gap-1">
-      {cell('T', value.top, (n) => onCommit({ ...value, top: n }))}
-      {cell('R', value.right, (n) => onCommit({ ...value, right: n }))}
-      {cell('B', value.bottom, (n) => onCommit({ ...value, bottom: n }))}
-      {cell('L', value.left, (n) => onCommit({ ...value, left: n }))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Layout section — shared between Scene and per-node inspectors.
 // ---------------------------------------------------------------------------
 
@@ -6680,7 +8269,7 @@ function PaddingField({
  * Top row is a three-way Mode toggle (None / Flex / Grid). The rest of
  * the panel swaps based on which mode is active:
  *
- *   - None: just padding. Children keep transform.x / y.
+ *   - None: children keep transform.x / y; flow spacing is hidden.
  *   - Flex: direction, justify, align, gap, padding, wrap.
  *   - Grid: columns, rowGap, columnGap, padding, align.
  *
@@ -6689,18 +8278,42 @@ function PaddingField({
  * Y.UndoManager captureTimeout).
  */
 function LayoutSection({
+  nodeId,
   layout,
   onPatch,
 }: {
+  nodeId: NodeId
   layout: Layout
   onPatch: (patch: Partial<Layout>) => void
 }) {
+  const previewLayout = (patch: NodeLayoutPreview) => {
+    nodeLayoutPreviewStore.preview({ [nodeId]: patch })
+  }
+  const commitLayoutPreview = (patch: Partial<Layout>) => {
+    onPatch(patch)
+    nodeLayoutPreviewStore.finish()
+  }
+
   return (
     <Section title="Layout">
-      <ModeToggle value={layout.mode} onCommit={(m) => onPatch({ mode: m })} />
+      <FieldRow label="Mode">
+        <LayoutModeControl
+          value={layout.mode}
+          onCommit={(m) => onPatch({ mode: m })}
+        />
+      </FieldRow>
       {layout.mode === 'flex' ? (
         <>
-          <FieldRow label="Direction">
+          <FieldRow
+            label="Direction"
+            keyframe={
+              <KeyframeButton
+                nodeId={nodeId}
+                propertyId="layout.direction"
+                currentValue={layout.direction}
+              />
+            }
+          >
             <IconSegmented<FlexDirection>
               value={layout.direction}
               options={[
@@ -6773,24 +8386,42 @@ function LayoutSection({
               layout.justify === 'space-between' ||
               layout.justify === 'space-around'
             return (
-              <FieldRow label="Gap">
-                <div
-                  className="w-full"
-                  title={
-                    autoSpacing
-                      ? `Gap is ignored when Distribute is ${layout.justify} — the layout fills the space automatically.`
-                      : undefined
+              <>
+                <KeyframeSliderRow
+                  label="Gap"
+                  value={layout.gap}
+                  onCommit={(v) => onPatch({ gap: Math.max(0, v) })}
+                  onScrubPreview={(v) =>
+                    previewLayout({ gap: Math.max(0, v) })
                   }
-                >
-                  <SliderField
-                    value={layout.gap}
-                    onCommit={(v) => onPatch({ gap: Math.max(0, v) })}
-                    min={0}
-                    max={120}
-                    disabled={autoSpacing}
-                  />
-                </div>
-              </FieldRow>
+                  onScrubCommit={(v) =>
+                    commitLayoutPreview({ gap: Math.max(0, v) })
+                  }
+                  onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+                  min={0}
+                  sliderMin={SPACING_SLIDER_MIN}
+                  sliderMax={SPACING_SLIDER_MAX}
+                  step={1}
+                  suffix="px"
+                  disabled={autoSpacing}
+                  keyframe={
+                    <KeyframeButton
+                      nodeId={nodeId}
+                      propertyId="layout.gap"
+                      currentValue={layout.gap}
+                    />
+                  }
+                />
+                {/* Keep the reason discoverable when auto spacing owns the gap. */}
+                {autoSpacing ? (
+                  <div
+                    className="-mt-1 pl-2 text-[10px] leading-4 text-text-dim"
+                    title={`Gap is ignored when Distribute is ${layout.justify} — the layout fills the space automatically.`}
+                  >
+                    Controlled by {layout.justify}
+                  </div>
+                ) : null}
+              </>
             )
           })()}
         </>
@@ -6800,23 +8431,52 @@ function LayoutSection({
             <NumberField
               value={layout.columns}
               onCommit={(v) => onPatch({ columns: Math.max(1, Math.round(v)) })}
+              onScrubPreview={(v) =>
+                previewLayout({ columns: Math.max(1, Math.round(v)) })
+              }
+              onScrubCommit={(v) =>
+                commitLayoutPreview({ columns: Math.max(1, Math.round(v)) })
+              }
+              onScrubCancel={() => nodeLayoutPreviewStore.clear()}
               min={1}
               step={1}
             />
           </FieldRow>
-          <FieldRow label="Row gap">
-            <NumberField
-              value={layout.rowGap}
-              onCommit={(v) => onPatch({ rowGap: Math.max(0, v) })}
-              min={0}
-            />
-          </FieldRow>
-          <FieldRow label="Column gap">
-            <NumberField
-              value={layout.columnGap}
-              onCommit={(v) => onPatch({ columnGap: Math.max(0, v) })}
-              min={0}
-            />
+          <FieldRow label="Gap">
+            <div className="grid w-full min-w-0 grid-cols-2 gap-1.5">
+              <NumberField
+                value={layout.rowGap}
+                onCommit={(v) => onPatch({ rowGap: Math.max(0, v) })}
+                onScrubPreview={(v) =>
+                  previewLayout({ rowGap: Math.max(0, v) })
+                }
+                onScrubCommit={(v) =>
+                  commitLayoutPreview({ rowGap: Math.max(0, v) })
+                }
+                onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+                min={0}
+                prefix="R"
+                suffix="px"
+                ariaLabel="Row gap"
+                width="w-full"
+              />
+              <NumberField
+                value={layout.columnGap}
+                onCommit={(v) => onPatch({ columnGap: Math.max(0, v) })}
+                onScrubPreview={(v) =>
+                  previewLayout({ columnGap: Math.max(0, v) })
+                }
+                onScrubCommit={(v) =>
+                  commitLayoutPreview({ columnGap: Math.max(0, v) })
+                }
+                onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+                min={0}
+                prefix="C"
+                suffix="px"
+                ariaLabel="Column gap"
+                width="w-full"
+              />
+            </div>
           </FieldRow>
           <FieldRow label="Align">
             <SelectField<FlexAlign>
@@ -6826,65 +8486,106 @@ function LayoutSection({
             />
           </FieldRow>
         </>
-      ) : null /* mode === 'none' — only padding below */}
-      <FieldRow label="Padding">
-        <PaddingField
-          value={layout.padding}
-          onCommit={(p) => onPatch({ padding: p })}
-        />
-      </FieldRow>
+      ) : null}
+      {layout.mode !== 'none'
+        ? (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+            <KeyframeSliderRow
+              key={side}
+              label={`Padding ${side.charAt(0).toUpperCase()}`}
+              value={layout.padding[side]}
+              onCommit={(v) =>
+                onPatch({
+                  padding: {
+                    ...layout.padding,
+                    [side]: Math.max(0, v),
+                  },
+                })
+              }
+              onScrubPreview={(v) =>
+                previewLayout({ padding: { [side]: Math.max(0, v) } })
+              }
+              onScrubCommit={(v) =>
+                commitLayoutPreview({
+                  padding: {
+                    ...layout.padding,
+                    [side]: Math.max(0, v),
+                  },
+                })
+              }
+              onScrubCancel={() => nodeLayoutPreviewStore.clear()}
+              min={0}
+              sliderMin={SPACING_SLIDER_MIN}
+              sliderMax={SPACING_SLIDER_MAX}
+              step={1}
+              suffix="px"
+              keyframe={
+                <KeyframeButton
+                  nodeId={nodeId}
+                  propertyId={PADDING_PROPERTY_IDS[side]}
+                  currentValue={layout.padding[side]}
+                />
+              }
+            />
+          ))
+        : null}
     </Section>
   )
 }
 
 /**
- * Three-button pill for the layout mode switch. Framer-leaning: 36px
- * tall, active segment is a raised inner pill with shadow, inactive is
- * transparent. Bigger visual presence than a tiny chip — matches the
- * Framer reference where Stack/Grid commands the top of the section.
+ * Value-only three-way layout mode control. Its owner supplies the shared
+ * FieldRow so single- and multi-selection never accidentally nest grids.
  */
-function ModeToggle({
+function LayoutModeControl({
   value,
   onCommit,
 }: {
   value: LayoutMode
   onCommit: (next: LayoutMode) => void
 }) {
-  const modes: { id: LayoutMode; label: string }[] = [
-    { id: 'none', label: 'None' },
-    { id: 'flex', label: 'Stack' },
-    { id: 'grid', label: 'Grid' },
+  const modes: { id: LayoutMode; label: string; icon: ReactNode }[] = [
+    {
+      id: 'none',
+      label: 'None',
+      icon: <AppIcon name="frame" size={14} />,
+    },
+    {
+      id: 'flex',
+      label: 'Stack',
+      icon: <AppIcon name="layers" size={14} />,
+    },
+    {
+      id: 'grid',
+      label: 'Grid',
+      icon: <AppIcon name="grid" size={14} />,
+    },
   ]
   return (
-    <FieldRow label="Type">
-      <LabeledSegmented
-        options={modes}
-        value={value}
-        onChange={(m) => onCommit(m as LayoutMode)}
-      />
-    </FieldRow>
+    <LabeledSegmented
+      options={modes}
+      value={value}
+      onChange={(m) => onCommit(m as LayoutMode)}
+    />
   )
 }
 
 /**
- * LabeledSegmented — Framer's tall text-segmented control.
- *
- * Used for binary / ternary picks where the labels are a couple words
- * long: Stack / Grid, Yes / No. Active segment is a darker pill on a
- * muted track; inactive segments are transparent text. The whole
- * control is `flex-1` so it fills the row's value column.
+ * Compact text-segmented control shared by Layout's labeled choices.
  */
 function LabeledSegmented<T extends string>({
   options,
   value,
   onChange,
 }: {
-  options: ReadonlyArray<{ id: T; label: string }>
+  options: ReadonlyArray<{ id: T; label: string; icon?: ReactNode }>
   value: T
   onChange: (next: T) => void
 }) {
   return (
-    <div className="flex h-9 w-full items-stretch gap-1 rounded-md bg-app-bg p-1">
+    <SquircleSurface
+      radius={6}
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
+    >
       {options.map((o) => {
         const active = o.id === value
         return (
@@ -6892,18 +8593,16 @@ function LabeledSegmented<T extends string>({
             key={o.id}
             type="button"
             onClick={() => onChange(o.id)}
-            className={[
-              'flex-1 rounded-[5px] text-[12px] font-medium transition-colors',
-              active
-                ? 'bg-panel-raised text-text shadow-sm'
-                : 'text-text-muted hover:text-text',
-            ].join(' ')}
+            aria-pressed={active}
+            data-active={active}
+            className="hm-inspector-segment"
           >
-            {o.label}
+            {o.icon}
+            <span>{o.label}</span>
           </button>
         )
       })}
-    </div>
+    </SquircleSurface>
   )
 }
 
@@ -6923,7 +8622,10 @@ function IconSegmented<T extends string>({
   onChange: (next: T) => void
 }) {
   return (
-    <div className="flex h-9 w-full items-stretch gap-1 rounded-md bg-app-bg p-1">
+    <SquircleSurface
+      radius={6}
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
+    >
       {options.map((o) => {
         const active = o.id === value
         return (
@@ -6932,18 +8634,15 @@ function IconSegmented<T extends string>({
             type="button"
             title={o.title}
             onClick={() => onChange(o.id)}
-            className={[
-              'flex flex-1 items-center justify-center rounded-[5px] transition-colors',
-              active
-                ? 'bg-panel-raised text-text shadow-sm'
-                : 'text-text-muted hover:text-text',
-            ].join(' ')}
+            aria-pressed={active}
+            data-active={active}
+            className="hm-inspector-segment"
           >
             {o.icon}
           </button>
         )
       })}
-    </div>
+    </SquircleSurface>
   )
 }
 
@@ -7176,45 +8875,30 @@ function StrokeControls({
 
   return (
     <>
-      <FieldRow label="Stroke">
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-          <div className="min-w-0 flex-1">
-            <FillField
-              label=""
-              value={currentStrokeFill}
-              onCommit={(fill) => {
-                if (fill === null) {
-                  onCommit(null)
-                  return
-                }
-                // Mirror solid-fill color into the legacy `color` field so
-                // code outside the renderer (exports, future migrations) still
-                // sees a plausible flat color. Gradients keep the last known
-                // solid color for fallback.
-                const nextColor =
-                  fill.kind === 'solid'
-                    ? fill.color
-                    : (v?.color ?? STROKE_DEFAULT.color)
-                onCommit({
-                  ...(v ?? STROKE_DEFAULT),
-                  color: nextColor,
-                  fill,
-                })
-              }}
-            />
-          </div>
-          {v ? (
-            <button
-              type="button"
-              onClick={() => onCommit(null)}
-              title="Remove stroke"
-              aria-label="Remove stroke"
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-panel text-text-dim hover:border-border-strong hover:text-text"
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
+      <FieldRow label="Stroke" reserveAction>
+        <FillField
+          label=""
+          value={currentStrokeFill}
+          onCommit={(fill) => {
+            if (fill === null) {
+              onCommit(null)
+              return
+            }
+            // Mirror solid-fill color into the legacy `color` field so
+            // code outside the renderer (exports, future migrations) still
+            // sees a plausible flat color. Gradients keep the last known
+            // solid color for fallback.
+            const nextColor =
+              fill.kind === 'solid'
+                ? fill.color
+                : (v?.color ?? STROKE_DEFAULT.color)
+            onCommit({
+              ...(v ?? STROKE_DEFAULT),
+              color: nextColor,
+              fill,
+            })
+          }}
+        />
       </FieldRow>
       {v ? (
         <>
@@ -7336,7 +9020,7 @@ function LayoutGuidesSection({
     setGuides([...guides, { ...DEFAULT_GUIDES[kind] }])
   }
   return (
-    <div>
+    <section className="border-t border-border pt-4 first:border-t-0 first:pt-0">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-[11px] font-semibold text-text-muted">
           Layout guide
@@ -7372,7 +9056,7 @@ function LayoutGuidesSection({
           ))}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -7390,7 +9074,9 @@ function AddGuideButton({
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as globalThis.Node)) {
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
@@ -7535,7 +9221,7 @@ function GridGuideEditor({
       <FieldRow label="Color">
         <ColorField
           value={guide.color}
-          onCommit={(c) => onChange({ ...guide, color: c })}
+          onCommit={(c) => c && onChange({ ...guide, color: c })}
         />
       </FieldRow>
       <FieldRow label="Opacity">
@@ -7571,7 +9257,7 @@ function ColumnsGuideEditor({
       <FieldRow label="Color">
         <ColorField
           value={guide.color}
-          onCommit={(c) => onChange({ ...guide, color: c })}
+          onCommit={(c) => c && onChange({ ...guide, color: c })}
         />
       </FieldRow>
       <FieldRow label="Opacity">
@@ -7645,7 +9331,7 @@ function RowsGuideEditor({
       <FieldRow label="Color">
         <ColorField
           value={guide.color}
-          onCommit={(c) => onChange({ ...guide, color: c })}
+          onCommit={(c) => c && onChange({ ...guide, color: c })}
         />
       </FieldRow>
       <FieldRow label="Opacity">
@@ -7767,21 +9453,10 @@ function Section({
   action?: ReactNode
   preserveTimelineSelection?: boolean
 }) {
-  // Spacing tuned to the rad-spacing 40% rule:
-  //   - inside a row (icon, label, value): tight (4-6px) — owned by
-  //     the row primitive itself, not Section
-  //   - between rows in a section: 8px (`space-y-2`)
-  //   - title-to-first-row: 12px (`mb-3`)
-  // The wrapping panel (Inspector body) provides the section-to-section
-  // gap (16px) via `space-y-6` on the parent.
   return (
-    <div>
-      {/* Framer-leaning header: 13px semibold in the panel's main text
-          color, with optional right-aligned action (collapse, add).
-          Larger than the previous 11px-muted header so it reads as a
-          proper section delimiter rather than a quiet label. */}
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[13px] font-semibold text-text">{title}</span>
+    <section className="border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <div className="mb-2 flex h-6 items-center justify-between">
+        <span className="text-[12px] font-bold text-text">{title}</span>
         {action ? (
           <span className="flex items-center text-text-muted">{action}</span>
         ) : null}
@@ -7790,10 +9465,45 @@ function Section({
         data-timeline-selection-surface={
           preserveTimelineSelection ? '1' : undefined
         }
-        className="space-y-2"
+        className="space-y-2.5"
       >
         {children}
       </div>
-    </div>
+    </section>
+  )
+}
+
+/**
+ * Section-level boolean switches do not use the property value grid. Their
+ * labels need the full row, while the native checkbox stays on the same
+ * right-hand guide as other Inspector actions.
+ */
+function SectionToggleRow({
+  label,
+  value,
+  onCommit,
+  mixed = false,
+  plain = false,
+}: {
+  label: string
+  value: boolean
+  onCommit: (next: boolean) => void
+  mixed?: boolean
+  /** Property rows align to the section edge without a hover well. */
+  plain?: boolean
+}) {
+  return (
+    <label
+      data-inspector-toggle-row="1"
+      className={[
+        'flex min-h-7 w-full cursor-pointer items-center justify-between gap-3 text-[12px] text-text-muted transition-colors hover:text-text',
+        plain ? '' : 'rounded-md pl-2 hover:bg-panel-raised/55',
+      ].join(' ')}
+    >
+      <span className="min-w-0 flex-1">{label}</span>
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+        <CheckboxField value={value} mixed={mixed} onCommit={onCommit} />
+      </span>
+    </label>
   )
 }

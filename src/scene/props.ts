@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PropertyId } from '@/scene/types'
+import type {
+  EffectBlurPropertyId,
+  PropertyId,
+} from '@/scene/types'
 
 /**
  * Property descriptor registry.
@@ -17,7 +20,7 @@ import type { PropertyId } from '@/scene/types'
  *   3. Anim engine will pick it up automatically
  */
 
-export type PropertyGroup = 'transform' | 'camera' | 'appearance' | 'text' | 'layout' | 'size' | 'semantic'
+export type PropertyGroup = 'transform' | 'camera' | 'appearance' | 'shape' | 'text' | 'layout' | 'size' | 'semantic'
 export type Interpolation = 'numeric' | 'discrete' | 'color' | 'angle'
 
 export interface PropertyDescriptor {
@@ -35,7 +38,9 @@ export interface PropertyDescriptor {
   defaultValue: unknown
 }
 
-export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
+type StaticPropertyId = Exclude<PropertyId, EffectBlurPropertyId>
+
+export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   // transform group — applied after layout, no relayout needed
   'transform.x': {
     id: 'transform.x', group: 'transform', label: 'X',
@@ -240,6 +245,20 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     layoutAffecting: false, interpolation: 'discrete', defaultValue: 'normal',
   },
 
+  // native ellipse geometry — post-layout and texture-only
+  'shape.arcStart': {
+    id: 'shape.arcStart', group: 'shape', label: 'Arc Start',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: -90,
+  },
+  'shape.arcSweep': {
+    id: 'shape.arcSweep', group: 'shape', label: 'Arc Sweep',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
+  'shape.arcInnerRadius': {
+    id: 'shape.arcInnerRadius', group: 'shape', label: 'Inner Radius',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+
   // text effect group — post-layout; controls text-specific reveal progress
   'text.progress': {
     id: 'text.progress', group: 'text', label: 'Text Animation',
@@ -287,6 +306,59 @@ export const PROPERTIES: Record<PropertyId, PropertyDescriptor> = {
     id: 'variant', group: 'semantic', label: 'Variant',
     layoutAffecting: true, interpolation: 'discrete', defaultValue: {},
   },
+}
+
+const EFFECT_BLUR_PREFIX = 'appearance.effects.'
+const EFFECT_BLUR_SUFFIX = '.blur'
+const EFFECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+const effectBlurDescriptors = new Map<string, PropertyDescriptor>()
+
+export function effectBlurPropertyId(
+  effectId: string,
+): EffectBlurPropertyId {
+  const normalized = effectId.trim()
+  if (!EFFECT_ID_PATTERN.test(normalized)) {
+    throw new Error(`Invalid effect id: ${effectId}`)
+  }
+  return `${EFFECT_BLUR_PREFIX}${normalized}${EFFECT_BLUR_SUFFIX}`
+}
+
+export function effectIdFromBlurPropertyId(
+  propertyId: PropertyId | string,
+): string | null {
+  if (
+    !propertyId.startsWith(EFFECT_BLUR_PREFIX) ||
+    !propertyId.endsWith(EFFECT_BLUR_SUFFIX)
+  ) {
+    return null
+  }
+  const effectId = propertyId.slice(
+    EFFECT_BLUR_PREFIX.length,
+    -EFFECT_BLUR_SUFFIX.length,
+  )
+  return EFFECT_ID_PATTERN.test(effectId) ? effectId : null
+}
+
+/** Resolve static and stable per-effect properties through one registry API. */
+export function propertyDescriptor(
+  propertyId: PropertyId,
+): PropertyDescriptor | undefined {
+  const staticDescriptor = PROPERTIES[propertyId as StaticPropertyId]
+  if (staticDescriptor) return staticDescriptor
+  const effectId = effectIdFromBlurPropertyId(propertyId)
+  if (!effectId) return undefined
+  const cached = effectBlurDescriptors.get(effectId)
+  if (cached) return cached
+  const descriptor: PropertyDescriptor = {
+    id: propertyId,
+    group: 'appearance',
+    label: 'Blur',
+    layoutAffecting: false,
+    interpolation: 'numeric',
+    defaultValue: 0,
+  }
+  effectBlurDescriptors.set(effectId, descriptor)
+  return descriptor
 }
 
 /** Returns all property descriptors whose group is layoutAffecting === true. */

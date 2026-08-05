@@ -37,6 +37,28 @@ type GetCapabilitiesToolPayload = {
   validation: {
     structuralSceneValidation: boolean
   }
+  cameraSupport: {
+    multipleCameras: boolean
+    explicitOwnership: boolean
+    defaultCamera: boolean
+    timedHardCuts: boolean
+  }
+  sequenceSupport: {
+    schemaVersion: 2
+    multipleScenes: boolean
+    reusableSceneOccurrences: boolean
+    compositionWorkAreas: boolean
+    occurrenceTrimming: boolean
+    occurrenceMasterAudioMute: boolean
+    transitionWeightedMasterAudioMute: boolean
+    masterOwnedSoundtracks: boolean
+    sceneAudioOverlays: boolean
+    translatedSceneMasterAudio: boolean
+    sceneExportMasterAudioParity: boolean
+    projectedSceneBeatGuides: boolean
+    transitions: readonly ['cut', 'crossfade']
+    frameAlignedMasterTimeline: boolean
+  }
   nodeKinds: readonly NodeKindJson[]
   patchOperations: readonly PatchOperation['op'][]
   queryTools: readonly QueryToolName[]
@@ -63,9 +85,33 @@ test('capability tools list the full supported keyframe property set', async () 
     'get_layer',
     'list_tracks',
     'list_cameras',
+    'list_scenes',
+    'get_sequence',
   ])
   assert.deepEqual(capabilities.validation, {
     structuralSceneValidation: true,
+  })
+  assert.deepEqual(capabilities.cameraSupport, {
+    multipleCameras: true,
+    explicitOwnership: true,
+    defaultCamera: true,
+    timedHardCuts: true,
+  })
+  assert.deepEqual(capabilities.sequenceSupport, {
+    schemaVersion: 2,
+    multipleScenes: true,
+    reusableSceneOccurrences: true,
+    compositionWorkAreas: true,
+    occurrenceTrimming: true,
+    occurrenceMasterAudioMute: true,
+    transitionWeightedMasterAudioMute: true,
+    masterOwnedSoundtracks: true,
+    sceneAudioOverlays: true,
+    translatedSceneMasterAudio: true,
+    sceneExportMasterAudioParity: true,
+    projectedSceneBeatGuides: true,
+    transitions: ['cut', 'crossfade'],
+    frameAlignedMasterTimeline: true,
   })
   assert.deepEqual(capabilities.validationTools, ['validate_scene'])
   assert.deepEqual(capabilities.renderFormats, RENDER_FORMATS)
@@ -73,6 +119,14 @@ test('capability tools list the full supported keyframe property set', async () 
   assert.equal(capabilities.renderFileSceneInput, true)
   assert.deepEqual(capabilities.keyframeableProperties, PROPERTY_IDS)
   assert.deepEqual(listed.keyframeableProperties, PROPERTY_IDS)
+  for (const propertyId of [
+    'shape.arcStart',
+    'shape.arcSweep',
+    'shape.arcInnerRadius',
+  ] as const) {
+    assert.ok(capabilities.keyframeableProperties.includes(propertyId))
+    assert.ok(listed.keyframeableProperties.includes(propertyId))
+  }
   const registeredToolNames = TOOLS.map((tool) => tool.name)
   assert.deepEqual(
     capabilities.mcpTools,
@@ -143,6 +197,8 @@ test('get_capabilities description mentions agent-facing capability groups', () 
   const description = getCapabilities?.description ?? ''
 
   assert.match(description, /render formats\/qualities/)
+  assert.match(description, /multi-camera\/cut features/)
+  assert.match(description, /multi-scene sequence features/)
   assert.match(description, /saved-scene render support/)
   assert.match(description, /validation\/query tools/)
   assert.match(description, /keyframeable properties/)
@@ -166,6 +222,70 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
     structuralSceneValidation,
   }
 
+  const rawCameraSupport = parsedObject.cameraSupport
+  assertRecord(rawCameraSupport)
+  const cameraSupport = {
+    multipleCameras: requiredBoolean(rawCameraSupport, 'multipleCameras'),
+    explicitOwnership: requiredBoolean(rawCameraSupport, 'explicitOwnership'),
+    defaultCamera: requiredBoolean(rawCameraSupport, 'defaultCamera'),
+    timedHardCuts: requiredBoolean(rawCameraSupport, 'timedHardCuts'),
+  }
+
+  const rawSequenceSupport = parsedObject.sequenceSupport
+  assertRecord(rawSequenceSupport)
+  assert.equal(rawSequenceSupport.schemaVersion, 2)
+  const rawTransitions = rawSequenceSupport.transitions
+  assert.deepEqual(rawTransitions, ['cut', 'crossfade'])
+  const sequenceSupport = {
+    schemaVersion: 2 as const,
+    multipleScenes: requiredBoolean(rawSequenceSupport, 'multipleScenes'),
+    reusableSceneOccurrences: requiredBoolean(
+      rawSequenceSupport,
+      'reusableSceneOccurrences',
+    ),
+    compositionWorkAreas: requiredBoolean(
+      rawSequenceSupport,
+      'compositionWorkAreas',
+    ),
+    occurrenceTrimming: requiredBoolean(
+      rawSequenceSupport,
+      'occurrenceTrimming',
+    ),
+    occurrenceMasterAudioMute: requiredBoolean(
+      rawSequenceSupport,
+      'occurrenceMasterAudioMute',
+    ),
+    transitionWeightedMasterAudioMute: requiredBoolean(
+      rawSequenceSupport,
+      'transitionWeightedMasterAudioMute',
+    ),
+    masterOwnedSoundtracks: requiredBoolean(
+      rawSequenceSupport,
+      'masterOwnedSoundtracks',
+    ),
+    sceneAudioOverlays: requiredBoolean(
+      rawSequenceSupport,
+      'sceneAudioOverlays',
+    ),
+    translatedSceneMasterAudio: requiredBoolean(
+      rawSequenceSupport,
+      'translatedSceneMasterAudio',
+    ),
+    sceneExportMasterAudioParity: requiredBoolean(
+      rawSequenceSupport,
+      'sceneExportMasterAudioParity',
+    ),
+    projectedSceneBeatGuides: requiredBoolean(
+      rawSequenceSupport,
+      'projectedSceneBeatGuides',
+    ),
+    transitions: ['cut', 'crossfade'] as const,
+    frameAlignedMasterTimeline: requiredBoolean(
+      rawSequenceSupport,
+      'frameAlignedMasterTimeline',
+    ),
+  }
+
   const keyframeableProperties = requiredKnownStringArray(
     parsedObject,
     'keyframeableProperties',
@@ -179,6 +299,8 @@ function parseCapabilitiesJson(result: CallToolResult): GetCapabilitiesToolPaylo
     sceneExtension,
     mcpTools: requiredKnownStringArray(parsedObject, 'mcpTools', MCP_TOOLS),
     validation,
+    cameraSupport,
+    sequenceSupport,
     nodeKinds,
     patchOperations: requiredKnownStringArray(
       parsedObject,

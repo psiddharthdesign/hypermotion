@@ -8,7 +8,12 @@ import type {
   NodeId,
   NodeKind,
   Position,
+  EllipseArc,
 } from '@/scene'
+import {
+  DEFAULT_ELLIPSE_ARC,
+  ellipseArcFromRadians,
+} from '@/scene/ellipseArc'
 import type { SceneAPI } from '@/scene/doc'
 import { figmaToFill, figmaToStroke } from './fillMap'
 import {
@@ -23,6 +28,7 @@ import type {
   FigmaCapturedFrame,
   FigmaCapturedNode,
   FigmaCapturedEffect,
+  FigmaCapturedEllipse,
   FigmaBlendMode,
   FigmaCapturedText,
   FigmaCapturedVector,
@@ -31,6 +37,7 @@ import type {
 import {
   FIGMA_PAYLOAD_FORMAT,
   FIGMA_PAYLOAD_LEGACY_VERSION,
+  FIGMA_PAYLOAD_VECTOR_VERSION,
   FIGMA_PAYLOAD_VERSION,
 } from './types'
 
@@ -237,11 +244,12 @@ export function parseFigmaPayload(text: string): FigmaPayload | null {
   if (p.format !== FIGMA_PAYLOAD_FORMAT) return null
   if (
     p.version !== FIGMA_PAYLOAD_VERSION &&
+    p.version !== FIGMA_PAYLOAD_VECTOR_VERSION &&
     p.version !== FIGMA_PAYLOAD_LEGACY_VERSION
   ) {
     console.warn(
       `[figma-import] unsupported payload version ${p.version}; ` +
-        `expected ${FIGMA_PAYLOAD_LEGACY_VERSION} or ${FIGMA_PAYLOAD_VERSION}. ` +
+        `expected ${FIGMA_PAYLOAD_LEGACY_VERSION}, ${FIGMA_PAYLOAD_VECTOR_VERSION}, or ${FIGMA_PAYLOAD_VERSION}. ` +
         `Reinstall the plugin.`,
     )
     return null
@@ -289,7 +297,12 @@ function walk(
     return null
   }
   const transform = figmaToTransform(node, parentLayoutMode)
-  const cornerRadii = perCornerRadiiFromFigma(node.cornerRadius)
+  // Ellipses are geometric primitives, not rounded rectangles. Figma exposes
+  // corner fields on the shared scene-node surface, but applying them to an
+  // ellipse turns pasted circles into iOS-style squircles in renderers that
+  // honor corner smoothing.
+  const cornerRadii =
+    kind === 'ellipse' ? undefined : perCornerRadiiFromFigma(node.cornerRadius)
   const appearance: Appearance = {
     opacity: node.opacity,
     fill: figmaToFill(node.fills, assets),
@@ -301,7 +314,10 @@ function walk(
       assets,
       node.strokeWidths,
     ),
-    cornerRadius: averageCornerRadius(node.cornerRadius),
+    cornerRadius:
+      kind === 'ellipse' ? 0 : averageCornerRadius(node.cornerRadius),
+    cornerSmoothing:
+      kind === 'ellipse' ? 0 : clamp01(node.cornerSmoothing ?? 0),
     blendMode: figmaToBlendMode(node.blendMode),
     // Preserve Figma's per-corner radii when they're non-uniform. The
     // uniform `cornerRadius` above stays populated as the fallback so
@@ -394,7 +410,13 @@ function pickKind(
     case 'TEXT':
       return 'text'
     case 'VECTOR':
-      return payloadVersion >= 2 ? 'vector' : 'image'
+      return payloadVersion >= 2 &&
+        node.primitive?.kind === 'ellipse' &&
+        node.fidelity === 'editable'
+        ? 'ellipse'
+        : payloadVersion >= 2
+          ? 'vector'
+          : 'image'
     default:
       return null
   }
@@ -424,8 +446,14 @@ function createFrame(
     layout,
     clipsContent: node.clipsContent,
   })
+  const childLayoutMode =
+    node.layoutMode === 'HORIZONTAL' ||
+    node.layoutMode === 'VERTICAL' ||
+    node.layoutMode === 'GRID'
+      ? node.layoutMode
+      : 'NONE'
   for (const child of node.children) {
-    walk(child, api, id, assets, node.layoutMode, payloadVersion)
+    walk(child, api, id, assets, childLayoutMode, payloadVersion)
   }
   return id
 }
@@ -440,6 +468,7 @@ function createShape(
   position: Position,
 ): NodeId {
   const size = figmaToSize(node)
+  const arc = kind === 'ellipse' ? figmaEllipseArc(node) : undefined
   return api.createNode(kind, parentId, {
     name: node.name || (kind === 'rect' ? 'Rectangle' : 'Ellipse'),
     visible: node.visible,
@@ -448,7 +477,29 @@ function createShape(
     appearance,
     position,
     size,
+    ...(arc ? { arc } : {}),
   })
+}
+
+function figmaEllipseArc(node: FigmaCapturedNode): EllipseArc {
+  if (node.type === 'ELLIPSE') {
+    const arc = (node as FigmaCapturedEllipse).arcData
+    return arc
+      ? ellipseArcFromRadians(
+          arc.startingAngle,
+          arc.endingAngle,
+          arc.innerRadius,
+        )
+      : { ...DEFAULT_ELLIPSE_ARC }
+  }
+  if (node.type === 'VECTOR' && node.primitive?.kind === 'ellipse') {
+    return ellipseArcFromRadians(
+      node.primitive.startAngle,
+      node.primitive.endAngle,
+      node.primitive.innerRadius,
+    )
+  }
+  return { ...DEFAULT_ELLIPSE_ARC }
 }
 
 function createText(
@@ -467,6 +518,7 @@ function createText(
     stroke: null,
     cornerRadius: 0,
     cornerRadii: undefined,
+    cornerSmoothing: 0,
   }
   return api.createNode('text', parentId, {
     name: node.name || 'Text',
@@ -490,6 +542,24 @@ function createVector(
   payloadVersion: FigmaPayload['version'],
 ): NodeId | null {
   const mapped = figmaToVectorDocument(node, assets, payloadVersion)
+  const hasVisualFallback = !!node.svg.trim() || !!node.rasterPng
+  if (
+    hasVisualFallback &&
+    (node.fidelity === 'partial' || node.fidelity === 'preserved')
+  ) {
+    // Native geometry remains in the payload for future editing support, but
+    // it cannot represent every Figma vector feature. Prefer the captured SVG
+    // (or PNG when SVG export failed) so partial vectors do not silently lose
+    // donut cut-outs, advanced strokes, filters, or paint effects.
+    return createVectorAsImage(
+      node,
+      api,
+      parentId,
+      transform,
+      appearance,
+      position,
+    )
+  }
   if (!mapped) {
     return createVectorAsImage(node, api, parentId, transform, appearance, position)
   }

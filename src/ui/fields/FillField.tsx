@@ -16,6 +16,7 @@ import { defaultFill, fillToCss, imageBackgroundStyle } from '@/scene'
 import { FieldRow } from './FieldRow'
 import { NumberField } from './NumberField'
 import { SelectField } from './SelectField'
+import { SquircleSurface } from './SquircleSurface'
 import { TextField } from './TextField'
 import { hexToOklch, oklchToHex } from './colorConvert'
 
@@ -56,6 +57,7 @@ export function FillField({
   mixed = false,
   disabled = false,
   disabledReason,
+  keyframe,
 }: {
   value: Fill | null
   onCommit: (next: Fill | null) => void
@@ -64,9 +66,11 @@ export function FillField({
   mixed?: boolean
   disabled?: boolean
   disabledReason?: string
+  /** Optional timeline diamond aligned with the Fill row label. */
+  keyframe?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const anchorRef = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
 
   // Cached CSS preview so the swatch doesn't re-serialize during hover /
   // re-render. Trivial today, but the popover's stops list re-renders on
@@ -74,25 +78,33 @@ export function FillField({
   // tag along.
   const swatchBg = useMemo(() => fillToCss(value), [value])
   const imageBg = useMemo(() => imageBackgroundStyle(value), [value])
+  const swatchStyle = {
+    ...(imageBg ?? {}),
+    backgroundColor:
+      !mixed && !imageBg && value?.kind === 'solid'
+        ? value.color
+        : undefined,
+    backgroundImage: mixed
+      ? 'linear-gradient(135deg, var(--color-accent) 0 25%, transparent 25% 50%, var(--color-accent) 50% 75%, transparent 75%)'
+      : imageBg
+        ? imageBg.backgroundImage
+        : value && value.kind !== 'solid' && swatchBg
+          ? swatchBg
+          : 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 3px)',
+    backgroundSize: mixed ? '6px 6px' : undefined,
+  }
   const control = (
-    <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-      <span className="min-w-[56px] truncate text-right font-mono text-[10px] uppercase text-text-muted">
-        {mixed ? 'Mixed' : summary(value)}
-      </span>
-      {/* Inline eyedropper — pick any color on screen and have it
-          land directly on the fill, without opening the popover.
-          Surfacing it on the row matters because designers reach for
-          it constantly when matching against an external reference
-          (a brand color in another tab, a screenshot, etc.). */}
-      <RowEyedropper
-        onPick={(lch) =>
-          onCommit({ kind: 'solid', color: formatOklch(lch) })
-        }
-      />
+    <SquircleSurface
+      radius={8}
+      data-fill-control="1"
+      className="hm-control-surface flex h-7 min-w-0 flex-1 items-center gap-1 px-1"
+    >
       <button
-        ref={anchorRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={(event) => {
+          setAnchor(event.currentTarget)
+          setOpen((o) => !o)
+        }}
         aria-label={
           mixed
             ? 'Set fill for selected layers'
@@ -100,47 +112,53 @@ export function FillField({
               ? `Edit fill (${value.kind})`
               : 'Add fill'
         }
-        className={[
-          'h-5 w-5 shrink-0 rounded border hover:border-border-strong',
-          mixed ? 'border-accent' : 'border-border',
-        ].join(' ')}
-        style={{
-          ...(imageBg ?? {}),
-          background: mixed
-            ? undefined
-            : imageBg
-              ? undefined
-              : swatchBg ?? undefined,
-          backgroundImage:
-            mixed
-              ? 'linear-gradient(135deg, var(--color-accent) 0 25%, transparent 25% 50%, var(--color-accent) 50% 75%, transparent 75%)'
-              : imageBg
-              ? imageBg.backgroundImage
-              : swatchBg
-                ? undefined
-                : 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 3px)',
-          backgroundSize: mixed ? '6px 6px' : undefined,
-        }}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <span
+          aria-hidden="true"
+          className={[
+            'h-5 w-5 shrink-0 rounded-[4px] shadow-[0_0_0_1px_var(--color-border)]',
+            mixed ? 'ring-1 ring-accent' : '',
+          ].join(' ')}
+          style={swatchStyle}
+        />
+        <span className="min-w-0 flex-1 truncate text-[10px] uppercase text-text">
+          {mixed ? 'Mixed' : summary(value)}
+        </span>
+      </button>
+      {/* Inline eyedropper — pick any color on screen and have it
+          land directly on the fill, without opening the popover. */}
+      <RowEyedropper
+        onPick={(lch) =>
+          onCommit({ kind: 'solid', color: formatOklch(lch) })
+        }
       />
-    </div>
+    </SquircleSurface>
   )
 
   return (
     <div
       className={
-        'relative ' + (disabled ? 'pointer-events-none opacity-40' : '')
+        'relative min-w-0 w-full ' +
+        (disabled ? 'pointer-events-none opacity-40' : '')
       }
       title={disabled ? disabledReason : undefined}
       aria-disabled={disabled || undefined}
     >
-      {label ? <FieldRow label={label}>{control}</FieldRow> : control}
+      {label ? (
+        <FieldRow label={label} keyframe={keyframe}>
+          {control}
+        </FieldRow>
+      ) : (
+        control
+      )}
 
       {open && (
         <FillPopover
           value={value}
           onCommit={onCommit}
           onClose={() => setOpen(false)}
-          anchor={anchorRef.current}
+          anchor={anchor}
         />
       )}
     </div>
@@ -467,7 +485,9 @@ function SolidEditor({
 }) {
   const initial = value?.color ?? 'oklch(0.62 0.21 250)'
   const [lch, setLch] = useState<Lch>(
-    () => parseOklch(initial) ?? { l: 0.62, c: 0.21, h: 250 },
+    () =>
+      parseOklch(initial) ??
+      hexToOklch(initial) ?? { l: 0.62, c: 0.21, h: 250 },
   )
   const commit = (next: Lch) => {
     setLch(next)
@@ -693,35 +713,32 @@ function HexInput({
   onCommit: (next: Lch) => void
 }) {
   const hex = oklchToHex(lch)
-  const [draft, setDraft] = useState(hex)
-  const [editing, setEditing] = useState(false)
-  // When the LCH changes from elsewhere (slider drag, parent re-render),
-  // the hex display should follow — but only when the user isn't
-  // actively typing. Otherwise their half-typed hex would be clobbered.
-  useEffect(() => {
-    if (!editing) setDraft(hex)
-  }, [hex, editing])
+  // A null draft means the field is not being edited, so the display derives
+  // directly from the latest LCH value. While focused, the string is isolated
+  // from slider updates so half-typed hex values are not clobbered.
+  const [draft, setDraft] = useState<string | null>(null)
+  const displayed = draft ?? hex
   const commit = () => {
-    setEditing(false)
+    if (draft === null) return
     const parsed = hexToOklch(draft)
+    setDraft(null)
     if (parsed) onCommit(parsed)
-    else setDraft(hex) // revert to last valid value
   }
   return (
     <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded border border-border bg-panel px-2">
       <span className="font-mono text-[10px] text-text-dim">#</span>
       <input
         type="text"
-        value={draft.startsWith('#') ? draft.slice(1) : draft}
-        onFocus={() => setEditing(true)}
+        value={displayed.startsWith('#') ? displayed.slice(1) : displayed}
+        onFocus={() => setDraft(hex)}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
           if (e.key === 'Escape') {
-            setDraft(hex)
-            setEditing(false)
-            ;(e.currentTarget as HTMLInputElement).blur()
+            const input = e.currentTarget
+            setDraft(null)
+            requestAnimationFrame(() => input.blur())
           }
         }}
         spellCheck={false}
@@ -784,7 +801,7 @@ function EyedropperButton({ onPick }: { onPick: (lch: Lch) => void }) {
   )
 }
 
-/** 5px-square version of the eyedropper button for inline row use. */
+/** Compact embedded eyedropper action for a full-width paint field. */
 function RowEyedropper({ onPick }: { onPick: (lch: Lch) => void }) {
   const supported =
     typeof window !== 'undefined' &&
@@ -817,7 +834,7 @@ function RowEyedropper({ onPick }: { onPick: (lch: Lch) => void }) {
           : 'Eyedropper not supported in this browser'
       }
       aria-label="Pick color from screen"
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-panel text-text-muted hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-border bg-transparent text-text-muted hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
     >
       <EyedropperGlyph />
     </button>
@@ -1160,13 +1177,15 @@ function StopColor({
   onCommit: (next: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const anchorRef = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
   return (
     <div className="relative min-w-0 flex-1">
       <button
-        ref={anchorRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={(event) => {
+          setAnchor(event.currentTarget)
+          setOpen((o) => !o)
+        }}
         className="h-5 w-full rounded border border-border hover:border-border-strong"
         style={{ background: value }}
         aria-label={`Stop color ${value}`}
@@ -1176,7 +1195,7 @@ function StopColor({
           value={value}
           onCommit={onCommit}
           onClose={() => setOpen(false)}
-          anchor={anchorRef.current}
+          anchor={anchor}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,14 +12,18 @@ import { useSceneAPI, useSceneVersion } from '@/scene'
 import type { ComponentNode, NodeId } from '@/scene'
 import { useUI } from '@/state/ui'
 import { useLayout } from '@/ui/hooks/useLayout'
+import { SceneLayer } from '@/ui/Canvas'
 import {
-  SceneLayer,
   composeInheritedAnim,
   type InheritedAnim,
-} from '@/ui/Canvas'
+} from '@/ui/canvasRenderHelpers'
 import { SelectionOverlay } from '@/ui/SelectionOverlay'
 import { evaluator } from '@/anim/easing'
-import type { AnimatedValue } from '@/ui/hooks/useAnimatedValues'
+import {
+  mergeTransformPreviews,
+  useNodeTransformPreviews,
+  type AnimatedValue,
+} from '@/ui/hooks/useAnimatedValues'
 import {
   addComponentVariantInteraction,
   applyComponentVariantState,
@@ -54,7 +59,7 @@ export function ComponentEditor() {
   const view = useUI((s) => s.view)
   const setView = useUI((s) => s.setView)
   const zoomAt = useUI((s) => s.zoomAt)
-  const workspaceRef = useRef<HTMLElement>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const suppressVariantClickRef = useRef(false)
   const [activeState, setActiveState] = useState<string | null>(null)
@@ -76,17 +81,21 @@ export function ComponentEditor() {
     component && component.kind === 'component'
       ? (component as ComponentNode)
       : null
+  const masterId = master?.id ?? null
+  const masterWidth = master?.size.width
+  const masterHeight = master?.size.height
 
   const container = useMemo(() => {
-    const bounds = master ? measureComponentChildBounds(api, master.id) : null
+    void sceneVersion
+    const bounds = masterId ? measureComponentChildBounds(api, masterId) : null
     const hugWidth = bounds ? Math.ceil(bounds.maxX - bounds.minX) : 480
     const hugHeight = bounds ? Math.ceil(bounds.maxY - bounds.minY) : 240
     return {
-      width: Math.max(1, numericSize(master?.size.width, hugWidth)),
-      height: Math.max(1, numericSize(master?.size.height, hugHeight)),
+      width: Math.max(1, numericSize(masterWidth, hugWidth)),
+      height: Math.max(1, numericSize(masterHeight, hugHeight)),
     }
-  }, [api, master, master?.id, master?.size.height, master?.size.width, sceneVersion])
-  const solved = useLayout(master?.id ?? null, container)
+  }, [api, masterHeight, masterId, masterWidth, sceneVersion])
+  const solved = useLayout(masterId, container)
   const order = useMemo<NodeId[]>(() => {
     void sceneVersion
     if (!master) return []
@@ -98,14 +107,25 @@ export function ComponentEditor() {
     visit(master.id)
     return out
   }, [api, master, sceneVersion])
-  const animated = previewing ? previewAnimated : EMPTY_ANIMATED
+  const dragAnimated = useNodeTransformPreviews(order)
+  const animated = useMemo(
+    () =>
+      previewing
+        ? mergeTransformPreviews(previewAnimated, dragAnimated)
+        : dragAnimated,
+    [dragAnimated, previewAnimated, previewing],
+  )
   const inherited = useMemo(
     () => (master ? composeInheritedAnim(api, master.id, animated, solved) : EMPTY_INHERITED),
     [api, master, animated, solved],
   )
 
-  const variants = master ? variantNames(master) : ['Default']
-  const baseVariants = baseVariantNames(variants)
+  const variants = useMemo(() => {
+    void sceneVersion
+    const current = masterId ? api.getNode(masterId) : null
+    return current?.kind === 'component' ? variantNames(current) : ['Default']
+  }, [api, masterId, sceneVersion])
+  const baseVariants = useMemo(() => baseVariantNames(variants), [variants])
   const selectedState =
     activeState && variants.includes(activeState) ? activeState : variants[0]!
   const selectedParts = parseVariantState(selectedState)
@@ -151,8 +171,7 @@ export function ComponentEditor() {
       }),
     [
       baseVariants,
-      container.height,
-      container.width,
+      container,
       liveVariantPositions,
       master?.variantPositions,
       tileGap,
@@ -175,45 +194,45 @@ export function ComponentEditor() {
     applyComponentVariantState(api, master.id, name)
     setActiveState(name)
   }
-  const addInteractionState = (state: 'Hover' | 'Pressed') => {
-    if (!master) return
+  const addInteractionState = useCallback((state: 'Hover' | 'Pressed') => {
+    if (!masterId) return
     const name = `${selectedBase} / ${state}`
-    upsertComponentVariant(api, master.id, selectedState)
+    upsertComponentVariant(api, masterId, selectedState)
     if (!variants.includes(name)) {
-      applyComponentVariantState(api, master.id, selectedBase)
-      upsertComponentVariant(api, master.id, name)
+      applyComponentVariantState(api, masterId, selectedBase)
+      upsertComponentVariant(api, masterId, name)
       if (state === 'Hover') {
-        addComponentVariantInteraction(api, master.id, {
+        addComponentVariantInteraction(api, masterId, {
           event: 'hoverIn',
           targetState: name,
         })
-        addComponentVariantInteraction(api, master.id, {
+        addComponentVariantInteraction(api, masterId, {
           event: 'hoverOut',
           targetState: selectedBase,
         })
       } else {
-        addComponentVariantInteraction(api, master.id, {
+        addComponentVariantInteraction(api, masterId, {
           event: 'pointerDown',
           targetState: name,
         })
-        addComponentVariantInteraction(api, master.id, {
+        addComponentVariantInteraction(api, masterId, {
           event: 'pointerUp',
           targetState: selectedBase,
         })
       }
     }
-    applyComponentVariantState(api, master.id, name)
+    applyComponentVariantState(api, masterId, name)
     setActiveState(name)
-    setSelection([master.id])
-  }
-  const screenToSurfacePoint = (clientX: number, clientY: number): SurfacePoint | null => {
+    setSelection([masterId])
+  }, [api, masterId, selectedBase, selectedState, setSelection, variants])
+  const screenToSurfacePoint = useCallback((clientX: number, clientY: number): SurfacePoint | null => {
     const rect = surfaceRef.current?.getBoundingClientRect()
     if (!rect) return null
     return {
       x: (clientX - rect.left) / view.zoom,
       y: (clientY - rect.top) / view.zoom,
     }
-  }
+  }, [view.zoom])
   const startConnector = (
     event: ReactPointerEvent,
     fromState: string,
@@ -240,8 +259,8 @@ export function ComponentEditor() {
       moved: false,
     })
   }
-  const finishConnector = (point: SurfacePoint) => {
-    if (!master || !connectorDraft) return
+  const finishConnector = useCallback((point: SurfacePoint) => {
+    if (!masterId || !connectorDraft) return
     const target = findConnectorTarget(point, {
       variants,
       baseVariants,
@@ -258,15 +277,30 @@ export function ComponentEditor() {
     if (!target) return
     if (target.kind === 'variant' && target.state === connectorDraft.fromState) return
     if (target.kind === 'variant') {
-      addComponentVariantInteraction(api, master.id, {
+      addComponentVariantInteraction(api, masterId, {
         event: 'click',
         targetState: target.state,
       })
       return
     }
     addInteractionState(target.state)
-  }
-  const fitComponent = () => {
+  }, [
+    addInteractionState,
+    addTileWidth,
+    api,
+    baseVariants,
+    connectorDraft,
+    container,
+    interactionSlotHeight,
+    interactionSlotTop,
+    masterId,
+    selectedBase,
+    tileGap,
+    tileLabelHeight,
+    variantPositions,
+    variants,
+  ])
+  const fitComponent = useCallback(() => {
     const el = workspaceRef.current
     if (!el) {
       setView({ zoom: 1, panX: 0, panY: 0 })
@@ -284,20 +318,22 @@ export function ComponentEditor() {
       ),
     )
     setView({ zoom: targetZoom, panX: 0, panY: 0 })
-  }
+  }, [setView, surfaceHeight, surfaceWidth])
 
   useEffect(() => {
-    if (!master) return
-    if (seededDefaultRef.current !== master.id) {
-      const hasDefaultSnapshot = master.variantOverrides.some(
+    void sceneVersion
+    if (!masterId) return
+    if (seededDefaultRef.current !== masterId) {
+      const hasDefaultSnapshot = master?.variantOverrides.some(
         (entry) => entry.match.State === 'Default',
-      )
-      if (!hasDefaultSnapshot) upsertComponentVariant(api, master.id, 'Default')
-      seededDefaultRef.current = master.id
+      ) ?? false
+      if (!hasDefaultSnapshot) upsertComponentVariant(api, masterId, 'Default')
+      seededDefaultRef.current = masterId
     }
-    if (fitComponentToChildren(api, master.id, { preserveHug: true })) return
-    requestAnimationFrame(fitComponent)
-  }, [api, master?.id, sceneVersion])
+    if (fitComponentToChildren(api, masterId, { preserveHug: true })) return
+    const frame = requestAnimationFrame(fitComponent)
+    return () => cancelAnimationFrame(frame)
+  }, [api, fitComponent, master, masterId, sceneVersion])
 
   useEffect(() => {
     const el = workspaceRef.current
@@ -346,7 +382,7 @@ export function ComponentEditor() {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [connectorDraft, variantPositions, view.zoom])
+  }, [connectorDraft, finishConnector, screenToSurfacePoint])
 
   useEffect(() => {
     if (!variantDrag || !master) return
@@ -471,7 +507,7 @@ export function ComponentEditor() {
             Home
           </button>
           <span className="text-text-dim">›</span>
-          <div className="flex min-w-0 items-center gap-2 rounded-md bg-[oklch(0.64_0.24_300_/_0.18)] px-3 py-1.5 text-[12px] font-semibold text-[oklch(0.76_0.22_300)]">
+          <div className="flex min-w-0 items-center gap-2 rounded-md bg-accent-soft px-3 py-1.5 text-[12px] font-semibold text-accent">
             <span className="font-mono">◆</span>
             <span className="max-w-[220px] truncate">{master.name}</span>
           </div>
@@ -480,7 +516,7 @@ export function ComponentEditor() {
           <button
             type="button"
             onClick={playPrototype}
-            className="h-8 rounded-md bg-[oklch(0.64_0.24_300)] px-3 text-[12px] font-semibold text-white shadow-sm"
+            className="hm-primary-action h-8"
           >
             {previewing ? 'Playing' : 'Play'}
           </button>
@@ -588,7 +624,7 @@ export function ComponentEditor() {
                     className={[
                       'mb-2 flex h-5 items-center gap-2 text-[11px] font-semibold',
                       isFamilyActive
-                        ? 'text-[oklch(0.5_0.22_300)]'
+                        ? 'text-accent'
                         : 'text-text-muted',
                     ].join(' ')}
                   >
@@ -596,8 +632,8 @@ export function ComponentEditor() {
                       className={[
                         'grid h-4 w-4 place-items-center rounded',
                         isFamilyActive
-                          ? 'bg-[oklch(0.64_0.24_300)] text-white'
-                          : 'bg-panel-raised text-[oklch(0.64_0.24_300)]',
+                          ? 'bg-accent text-white'
+                          : 'bg-panel-raised text-accent',
                       ].join(' ')}
                     >
                       {isFamilyActive ? '▶' : '◆'}
@@ -613,7 +649,7 @@ export function ComponentEditor() {
                           if (event.key === 'Escape') setEditingVariant(null)
                         }}
                         autoFocus
-                        className="h-6 w-36 rounded border border-[oklch(0.64_0.24_300)] bg-panel px-1.5 text-[11px] text-text outline-none"
+                        className="h-6 w-36 rounded border border-accent bg-panel px-1.5 text-[11px] text-text outline-none"
                       />
                     ) : (
                       <span className="max-w-full truncate">{name}</span>
@@ -623,8 +659,8 @@ export function ComponentEditor() {
                     className={[
                       'relative overflow-visible rounded-lg border bg-panel shadow-2xl',
                       isActive
-                        ? 'border-[oklch(0.64_0.24_300)]'
-                        : 'border-border hover:border-[oklch(0.64_0.24_300_/_0.45)]',
+                        ? 'border-accent'
+                        : 'border-border hover:border-accent/45',
                     ].join(' ')}
                     style={{
                       width: container.width,
@@ -657,7 +693,7 @@ export function ComponentEditor() {
                         ) : null}
                         {isFamilyActive ? (
                           <>
-                            <span className="pointer-events-none absolute left-[-9px] top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-[oklch(0.64_0.24_300)] bg-panel" />
+                            <span className="pointer-events-none absolute left-[-9px] top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-accent bg-panel" />
                             <span
                               role="button"
                               tabIndex={0}
@@ -669,7 +705,7 @@ export function ComponentEditor() {
                                   tilePosition.y + tileLabelHeight + container.height / 2,
                                 )
                               }
-                              className="absolute right-[-17px] top-1/2 z-20 grid h-8 w-8 -translate-y-1/2 cursor-crosshair place-items-center rounded-full border-2 border-[oklch(0.64_0.24_300)] bg-panel text-[oklch(0.64_0.24_300)] shadow-sm hover:bg-[oklch(0.64_0.24_300)] hover:text-white"
+                              className="absolute right-[-17px] top-1/2 z-20 grid h-8 w-8 -translate-y-1/2 cursor-crosshair place-items-center rounded-full border-2 border-accent bg-panel text-accent shadow-sm hover:bg-accent hover:text-white"
                               title="Drag to another variant"
                             >
                               ⚡
@@ -685,7 +721,7 @@ export function ComponentEditor() {
             <button
               type="button"
               onClick={addVariant}
-              className="absolute grid place-items-center rounded-lg border border-dashed border-border bg-panel text-center text-text-dim hover:border-[oklch(0.64_0.24_300_/_0.55)] hover:text-[oklch(0.5_0.22_300)]"
+              className="absolute grid place-items-center rounded-lg border border-dashed border-border bg-panel text-center text-text-dim hover:border-accent/55 hover:text-accent"
               style={{
                 left: boardMaxX(variantPositions, container.width) + tileGap,
                 top: tileLabelHeight,
@@ -899,15 +935,15 @@ function InteractionStateSlot({
           className={[
             'absolute inset-x-0 rounded-lg border bg-panel text-left shadow-2xl outline-none',
             selectedState === name
-              ? 'border-[oklch(0.64_0.24_300)]'
-              : 'border-border hover:border-[oklch(0.64_0.24_300_/_0.45)]',
+              ? 'border-accent'
+              : 'border-border hover:border-accent/45',
           ].join(' ')}
           style={{
             top: index * 48,
             height: Math.max(44, height / 2 - 12),
           }}
         >
-          <span className="absolute left-4 top-3 text-[11px] font-semibold text-[oklch(0.5_0.22_300)]">
+          <span className="absolute left-4 top-3 text-[11px] font-semibold text-accent">
             {parseVariantState(name).state}
           </span>
           <span className="absolute bottom-3 left-4 text-[11px] text-text-dim">
@@ -926,7 +962,7 @@ function InteractionStateSlot({
               <button
                 type="button"
                 onClick={() => onAdd('Hover')}
-                className="h-8 rounded-md bg-[oklch(0.64_0.24_300)] px-3 text-[11px] font-semibold text-white"
+                className="hm-primary-action h-8"
               >
                 Hover
               </button>
@@ -944,7 +980,7 @@ function InteractionStateSlot({
         <button
           type="button"
           onClick={() => onAdd(hoverExists ? 'Pressed' : 'Hover')}
-          className="absolute bottom-0 grid h-10 w-full place-items-center rounded-md border border-dashed border-border bg-panel/70 text-[11px] font-semibold text-text-dim hover:border-[oklch(0.64_0.24_300_/_0.55)] hover:text-[oklch(0.5_0.22_300)]"
+          className="absolute bottom-0 grid h-10 w-full place-items-center rounded-md border border-dashed border-border bg-panel/70 text-[11px] font-semibold text-text-dim hover:border-accent/55 hover:text-accent"
         >
           + {hoverExists ? 'Pressed' : 'Hover'}
         </button>
@@ -1033,7 +1069,7 @@ function ConnectorOverlay({
           refY="4"
           orient="auto"
         >
-          <path d="M 0 0 L 8 4 L 0 8 z" fill="oklch(0.64 0.24 300)" />
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="var(--color-accent)" />
         </marker>
       </defs>
       {lines.map((line) => (
@@ -1078,14 +1114,14 @@ function ConnectorPath({
       <path
         d={path}
         fill="none"
-        stroke="oklch(0.64 0.24 300 / 0.18)"
+        stroke="color-mix(in srgb, var(--color-accent) 18%, transparent)"
         strokeWidth={7}
         strokeLinecap="round"
       />
       <path
         d={path}
         fill="none"
-        stroke="oklch(0.64 0.24 300)"
+        stroke="var(--color-accent)"
         strokeWidth={2.25}
         strokeLinecap="round"
         strokeDasharray={dashed ? '8 7' : undefined}
@@ -1096,7 +1132,7 @@ function ConnectorPath({
           x={(line.x1 + line.x2) / 2}
           y={(line.y1 + line.y2) / 2 - 8}
           textAnchor="middle"
-          className="fill-[oklch(0.5_0.22_300)] text-[10px] font-semibold"
+          className="fill-accent text-[10px] font-semibold"
         >
           {connectorEventLabel(line.event)}
         </text>
@@ -1256,7 +1292,10 @@ function connectorEventLabel(event: string): string {
   }
 }
 
-function numericSize(value: ComponentNode['size']['width'], fallback: number): number {
+function numericSize(
+  value: ComponentNode['size']['width'] | undefined,
+  fallback: number,
+): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 

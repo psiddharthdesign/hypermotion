@@ -138,7 +138,8 @@ export async function transcodeWebmToMp4(
     if (typeof data === 'string') {
       throw new Error('ffmpeg returned a string for a binary readFile')
     }
-    return new Blob([data], { type: 'video/mp4' })
+    const bytes = Uint8Array.from(data)
+    return new Blob([bytes.buffer], { type: 'video/mp4' })
   } finally {
     ffmpeg.off('progress', onFfmpegProgress)
     // Clean up the in-FS files so back-to-back exports don't inherit

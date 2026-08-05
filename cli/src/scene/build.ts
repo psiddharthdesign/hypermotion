@@ -6,8 +6,9 @@
  * The CLI is standalone — it doesn't import the desktop app's
  * SceneAPI. To produce a `.hype` we mirror the SceneAPI's Y.Doc
  * layout directly: a top-level `scene` Y.Map carrying `nodes`,
- * `tracks`, `meta`, `sections`, and `uiState`, plus the scalar
- * `root` and `activeCameraId`. The encoded update bytes are byte-identical
+ * `tracks`, `meta`, `sections`, and `uiState`, plus scene-level
+ * camera ownership/cut metadata and the scalar `root` and
+ * `activeCameraId`. The encoded update bytes are byte-identical
  * (mod CRDT history details) to what the desktop app's
  * `sceneToBytes` produces, so the desktop app reads our output
  * back without any special handling.
@@ -29,6 +30,27 @@ export interface SceneJson {
   meta?: SceneMetaJson
   root?: string
   activeCameraId?: string | null
+  /** Project compositions. Nodes and tracks remain project-global. */
+  compositionScenes?: Record<string, CompositionSceneJson>
+  /** Ordered occurrences reference compositions by sceneId. */
+  sequenceItems?: Record<string, SequenceItemJson>
+  /** Sequence item ids in master-timeline order. */
+  sequenceOrder?: string[]
+  activeCompositionId?: string
+  /** Current project/sequence persistence schema. */
+  sequenceSchemaVersion?: number
+  /**
+   * Cameras owned by this scene. Omit for legacy behavior, which
+   * infers ownership from every scene-level camera node.
+   */
+  cameraIds?: string[]
+  /**
+   * Camera used before the first timed cut. Omit to fall back to the
+   * active camera, then the first owned camera.
+   */
+  defaultCameraId?: string | null
+  /** Timed hard cuts, keyed by each cut's declared id. */
+  cameraCuts?: Record<string, CameraCutJson>
   nodes?: Record<string, NodeJson>
   tracks?: Record<string, TrackJson>
   sections?: Record<string, SectionJson>
@@ -238,6 +260,12 @@ export interface NodeJson {
   }
   appearance?: AppearanceJson
   size?: SizeJson
+  /** Editable pie/donut geometry for ellipse nodes. */
+  arc?: {
+    startAngle?: number
+    sweep?: number
+    innerRadius?: number
+  }
   layout?: LayoutJson
   variants?: VariantAxisJson[]
   defaultSelection?: Record<string, string>
@@ -508,6 +536,9 @@ export const PROPERTY_IDS = [
   'appearance.cornerRadii.bl',
   'appearance.fill',
   'appearance.blendMode',
+  'shape.arcStart',
+  'shape.arcSweep',
+  'shape.arcInnerRadius',
   'text.progress',
   'motionPath.progress',
   'layout.gap',
@@ -521,9 +552,15 @@ export const PROPERTY_IDS = [
   'variant',
 ] as const
 
-export type PropertyIdJson = (typeof PROPERTY_IDS)[number]
+export type EffectBlurPropertyIdJson =
+  `appearance.effects.${string}.blur`
+export type PropertyIdJson =
+  | (typeof PROPERTY_IDS)[number]
+  | EffectBlurPropertyIdJson
 
-const PROPERTY_ID_SET: ReadonlySet<PropertyIdJson> = new Set(PROPERTY_IDS)
+const PROPERTY_ID_SET: ReadonlySet<string> = new Set(PROPERTY_IDS)
+const EFFECT_BLUR_PROPERTY_ID =
+  /^appearance\.effects\.[A-Za-z0-9_-]+\.blur$/
 
 export type EasingJson =
   | 'linear'
@@ -684,6 +721,56 @@ export interface SectionJson {
   end: number
 }
 
+export interface CameraCutJson {
+  id: string
+  cameraId: string
+  /** Scene-local time in seconds at which this camera becomes active. */
+  time: number
+}
+
+export interface CompositionSceneJson {
+  id: string
+  name: string
+  rootNodeId: string
+  duration: number
+  /**
+   * Optional composition-local source window. Master occurrences are
+   * intersected with it; omission means the complete composition.
+   */
+  workArea?: {
+    start: number
+    end: number
+  }
+  /** Parentless pasteboard assets whose lifecycle follows this composition. */
+  workspaceNodeIds?: string[]
+  cameraIds: string[]
+  defaultCameraId: string | null
+  /** Camera cuts are composition-local even though camera nodes are global. */
+  cameraCuts: Record<string, CameraCutJson>
+}
+
+export type SequenceTransitionKindJson = 'cut' | 'crossfade'
+
+export interface SequenceTransitionJson {
+  kind: SequenceTransitionKindJson
+  duration: number
+}
+
+export interface SequenceItemJson {
+  id: string
+  sceneId: string
+  /**
+   * Mute the project-level Master soundtrack for this occurrence.
+   * Omitted is equivalent to false.
+   */
+  masterAudioMuted?: boolean
+  trimStart?: number
+  duration?: number
+  transitionOut?: SequenceTransitionJson
+}
+
+export const SEQUENCE_SCHEMA_VERSION = 2
+
 export interface LayoutGuideJson {
   id: string
   axis: 'x' | 'y'
@@ -761,10 +848,14 @@ export interface SceneSummary {
   meta: SceneSummaryMeta
   root: string | null
   activeCameraId: string | null
+  activeCompositionId: string | null
+  sequenceSchemaVersion: number | null
   layerCount: number
   trackCount: number
   sectionCount: number
   keyframeCount: number
+  compositionSceneCount: number
+  sequenceItemCount: number
 }
 
 interface SceneAppearance {
@@ -833,6 +924,35 @@ const DEFAULT_LAYOUT: SceneLayout = {
 }
 
 const DEFAULT_SIZE: SceneSize = { width: 100, height: 100 }
+const DEFAULT_ELLIPSE_ARC = {
+  startAngle: -90,
+  sweep: 1,
+  innerRadius: 0,
+} as const
+
+function normalizeEllipseArcJson(value: NodeJson['arc']) {
+  const finite = (candidate: unknown, fallback: number) =>
+    typeof candidate === 'number' && Number.isFinite(candidate)
+      ? candidate
+      : fallback
+  const rawAngle = finite(value?.startAngle, DEFAULT_ELLIPSE_ARC.startAngle)
+  const wrappedAngle = ((rawAngle + 180) % 360 + 360) % 360 - 180
+  const startAngle = wrappedAngle === -180 && rawAngle > 0 ? 180 : wrappedAngle
+  return {
+    startAngle: Object.is(startAngle, -0) ? 0 : startAngle,
+    sweep: Math.max(
+      0,
+      Math.min(1, finite(value?.sweep, DEFAULT_ELLIPSE_ARC.sweep)),
+    ),
+    innerRadius: Math.max(
+      0,
+      Math.min(
+        1,
+        finite(value?.innerRadius, DEFAULT_ELLIPSE_ARC.innerRadius),
+      ),
+    ),
+  }
+}
 const DEFAULT_SHADER_SIZE: SceneSize = { width: 640, height: 360 }
 const PAPER_SHADER_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
 const PAPER_SHADER_TYPE_SET: ReadonlySet<string> = new Set(PAPER_SHADER_TYPES)
@@ -1084,11 +1204,22 @@ const DEFAULT_META: SceneMeta = {
 export function buildSceneBytes(json: SceneJson): Uint8Array {
   const doc = new Y.Doc()
   const scene = doc.getMap<unknown>('scene')
+  const activeComposition = resolveAuthoredActiveComposition(json)
+  const hasSequenceData =
+    json.compositionScenes !== undefined ||
+    json.sequenceItems !== undefined ||
+    json.sequenceOrder !== undefined ||
+    json.activeCompositionId !== undefined ||
+    json.sequenceSchemaVersion !== undefined
 
   // --- meta ---
   const meta = new Y.Map<unknown>()
   scene.set('meta', meta)
-  const metaIn = mergeWithDefaults(DEFAULT_META, json.meta)
+  const metaInput =
+    json.meta?.duration === undefined && activeComposition
+      ? { ...json.meta, duration: activeComposition.duration }
+      : json.meta
+  const metaIn = mergeWithDefaults(DEFAULT_META, metaInput)
   for (const [k, v] of Object.entries(metaIn)) meta.set(k, v)
 
   // --- nodes ---
@@ -1166,6 +1297,9 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     }
     if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
       y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    }
+    if (node.kind === 'ellipse') {
+      y.set('arc', normalizeEllipseArcJson(node.arc))
     }
     if (node.kind === 'image') {
       y.set('src', node.src ?? '')
@@ -1322,12 +1456,73 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     sections.set(section.id, section)
   }
 
+  // --- camera ownership + timed cuts ---
+  // These fields are optional so existing .hype files keep their exact
+  // legacy meaning. Consumers infer all camera nodes as owned, and use
+  // activeCameraId (then the first owned camera) as the default when the
+  // explicit fields are absent.
+  if (json.cameraIds !== undefined) {
+    const cameraIds = new Y.Array<string>()
+    if (json.cameraIds.length > 0) cameraIds.push(json.cameraIds)
+    scene.set('cameraIds', cameraIds)
+  }
+  if (json.defaultCameraId !== undefined) {
+    scene.set('defaultCameraId', json.defaultCameraId)
+  }
+  if (json.cameraCuts !== undefined) {
+    const cameraCuts = new Y.Map<unknown>()
+    for (const cut of Object.values(json.cameraCuts)) {
+      cameraCuts.set(cut.id, cut)
+    }
+    scene.set('cameraCuts', cameraCuts)
+  }
+
+  // --- compositions + master sequence ---
+  // Nodes and tracks stay project-global. Composition records only own a
+  // root, cameras, local cuts and duration; sequence items reference those
+  // records and can reuse the same composition more than once.
+  if (json.compositionScenes !== undefined) {
+    const compositionScenes = new Y.Map<unknown>()
+    for (const composition of Object.values(json.compositionScenes)) {
+      compositionScenes.set(composition.id, composition)
+    }
+    scene.set('compositionScenes', compositionScenes)
+  }
+  if (json.sequenceItems !== undefined) {
+    const sequenceItems = new Y.Map<unknown>()
+    for (const item of Object.values(json.sequenceItems)) {
+      sequenceItems.set(item.id, item)
+    }
+    scene.set('sequenceItems', sequenceItems)
+  }
+  if (json.sequenceOrder !== undefined) {
+    const sequenceOrder = new Y.Array<string>()
+    if (json.sequenceOrder.length > 0) {
+      sequenceOrder.push(json.sequenceOrder)
+    }
+    scene.set('sequenceOrder', sequenceOrder)
+  }
+  if (hasSequenceData) {
+    scene.set(
+      'sequenceSchemaVersion',
+      json.sequenceSchemaVersion ?? SEQUENCE_SCHEMA_VERSION,
+    )
+    const activeCompositionId =
+      json.activeCompositionId ?? activeComposition?.id
+    if (activeCompositionId) {
+      scene.set('activeCompositionId', activeCompositionId)
+    }
+  }
+
   // --- scalars ---
   // root + activeCameraId. The desktop app auto-promotes the first
   // parentless non-camera node to root on load, so we don't strictly
   // need to set this — but doing so matches what `Save` produces and
   // makes round-trips byte-stable.
   if (json.root) scene.set('root', json.root)
+  else if (activeComposition) {
+    scene.set('root', activeComposition.rootNodeId)
+  }
   else {
     // Infer: first parentless non-camera node.
     for (const node of Object.values(json.nodes ?? {})) {
@@ -1339,13 +1534,18 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   }
   if (json.activeCameraId !== undefined) {
     scene.set('activeCameraId', json.activeCameraId)
+  } else if (activeComposition) {
+    scene.set('activeCameraId', activeComposition.defaultCameraId)
   } else {
-    // Infer: first camera node.
-    for (const node of Object.values(json.nodes ?? {})) {
-      if (node.kind === 'camera') {
-        scene.set('activeCameraId', node.id)
-        break
-      }
+    // Prefer the explicit default, then the first explicitly-owned
+    // camera, then the first camera node for legacy input.
+    const inferredCameraId =
+      (typeof json.defaultCameraId === 'string'
+        ? json.defaultCameraId
+        : json.cameraIds?.[0]) ??
+      Object.values(json.nodes ?? {}).find((node) => node.kind === 'camera')?.id
+    if (inferredCameraId) {
+      scene.set('activeCameraId', inferredCameraId)
     }
   }
 
@@ -1355,6 +1555,33 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('uiState', new Y.Map<unknown>())
 
   return Y.encodeStateAsUpdate(doc)
+}
+
+function resolveAuthoredActiveComposition(
+  json: SceneJson,
+): CompositionSceneJson | undefined {
+  const compositions = Object.values(json.compositionScenes ?? {})
+  const compositionById = new Map(
+    compositions.map((composition) => [composition.id, composition]),
+  )
+  if (json.activeCompositionId !== undefined) {
+    return compositionById.get(json.activeCompositionId)
+  }
+
+  const items = Object.values(json.sequenceItems ?? {})
+  const itemById = new Map(items.map((item) => [item.id, item]))
+  for (const itemId of json.sequenceOrder ?? []) {
+    const item = itemById.get(itemId)
+    const composition = item
+      ? compositionById.get(item.sceneId)
+      : undefined
+    if (composition) return composition
+  }
+  for (const item of items) {
+    const composition = compositionById.get(item.sceneId)
+    if (composition) return composition
+  }
+  return compositions[0]
 }
 
 export function inspectScene(bytes: Uint8Array): Record<string, unknown> {
@@ -1378,9 +1605,14 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   const tracks = asRecord(data.tracks)
   const root = typeof data.root === 'string' ? data.root : ''
   const activeCameraId = typeof data.activeCameraId === 'string' ? data.activeCameraId : ''
-  const cameraIds = Object.entries(nodes)
+  const cameraNodeIds = Object.entries(nodes)
     .filter(([, raw]) => asRecord(raw).kind === 'camera')
     .map(([id]) => id)
+  const declaredCameraIds = Array.isArray(data.cameraIds)
+    ? data.cameraIds.filter((id): id is string => typeof id === 'string')
+    : null
+  const effectiveCameraIds = declaredCameraIds ?? cameraNodeIds
+  const effectiveCameraIdSet = new Set(effectiveCameraIds)
 
   if (data.meta !== undefined && !isPlainObject(data.meta)) {
     errors.push('scene.meta must be an object')
@@ -1393,6 +1625,39 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   }
   if (data.sections !== undefined && !isPlainObject(data.sections)) {
     errors.push('scene.sections must be an object')
+  }
+  if (data.cameraIds !== undefined && !Array.isArray(data.cameraIds)) {
+    errors.push('scene.cameraIds must be an array')
+  }
+  if (data.cameraCuts !== undefined && !isPlainObject(data.cameraCuts)) {
+    errors.push('scene.cameraCuts must be an object')
+  }
+
+  if (Array.isArray(data.cameraIds)) {
+    const seenCameraIds = new Set<string>()
+    data.cameraIds.forEach((cameraId, index) => {
+      if (typeof cameraId !== 'string' || cameraId.length === 0) {
+        errors.push(`scene.cameraIds[${index}] must be a non-empty string`)
+        return
+      }
+      if (seenCameraIds.has(cameraId)) {
+        errors.push(`scene.cameraIds contains duplicate camera id: ${cameraId}`)
+        return
+      }
+      seenCameraIds.add(cameraId)
+      if (!nodes[cameraId]) {
+        errors.push(`scene.cameraIds points to missing node: ${cameraId}`)
+      } else if (asRecord(nodes[cameraId]).kind !== 'camera') {
+        errors.push(`scene.cameraIds includes non-camera node: ${cameraId}`)
+      }
+    })
+    for (const cameraNodeId of cameraNodeIds) {
+      if (!effectiveCameraIdSet.has(cameraNodeId)) {
+        errors.push(
+          `camera node ${cameraNodeId} is not owned by scene.cameraIds`,
+        )
+      }
+    }
   }
 
   if (data.root !== undefined && typeof data.root !== 'string') {
@@ -1407,10 +1672,44 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
 
   if (data.activeCameraId !== undefined && data.activeCameraId !== null && typeof data.activeCameraId !== 'string') {
     errors.push('scene.activeCameraId must be a string')
-  } else if (!activeCameraId && cameraIds.length > 0) warnings.push('scene.activeCameraId is missing')
+  } else if (!activeCameraId && effectiveCameraIds.length > 0) warnings.push('scene.activeCameraId is missing')
   else if (activeCameraId && !nodes[activeCameraId]) errors.push(`scene.activeCameraId points to missing node: ${activeCameraId}`)
   else if (activeCameraId && asRecord(nodes[activeCameraId]).kind !== 'camera') {
     errors.push(`scene.activeCameraId is not a camera node: ${activeCameraId}`)
+  } else if (
+    activeCameraId &&
+    declaredCameraIds !== null &&
+    !effectiveCameraIdSet.has(activeCameraId)
+  ) {
+    errors.push(`scene.activeCameraId is not owned by this scene: ${activeCameraId}`)
+  }
+
+  const defaultCameraId =
+    typeof data.defaultCameraId === 'string' ? data.defaultCameraId : ''
+  if (
+    data.defaultCameraId !== undefined &&
+    data.defaultCameraId !== null &&
+    (typeof data.defaultCameraId !== 'string' || data.defaultCameraId.length === 0)
+  ) {
+    errors.push('scene.defaultCameraId must be a non-empty string or null')
+  } else if (defaultCameraId && !nodes[defaultCameraId]) {
+    errors.push(`scene.defaultCameraId points to missing node: ${defaultCameraId}`)
+  } else if (
+    defaultCameraId &&
+    asRecord(nodes[defaultCameraId]).kind !== 'camera'
+  ) {
+    errors.push(`scene.defaultCameraId is not a camera node: ${defaultCameraId}`)
+  } else if (
+    defaultCameraId &&
+    asRecord(nodes[defaultCameraId]).enabled === false
+  ) {
+    errors.push(`scene.defaultCameraId points to a disabled camera: ${defaultCameraId}`)
+  } else if (
+    defaultCameraId &&
+    declaredCameraIds !== null &&
+    !effectiveCameraIdSet.has(defaultCameraId)
+  ) {
+    errors.push(`scene.defaultCameraId is not owned by this scene: ${defaultCameraId}`)
   }
 
   for (const [id, raw] of Object.entries(nodes)) {
@@ -1568,8 +1867,62 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
   }
 
-  if (cameraIds.length > 1) {
-    errors.push(`scene has multiple camera nodes: ${cameraIds.join(', ')}`)
+  const cameraCuts = asRecord(data.cameraCuts)
+  const sceneDuration = asRecord(data.meta).duration
+  for (const [id, raw] of Object.entries(cameraCuts)) {
+    const cut = asRecord(raw)
+    if (!isPlainObject(raw)) errors.push(`camera cut ${id} must be an object`)
+    if (cut.id !== id) {
+      errors.push(
+        `camera cut map key ${id} does not match camera cut id: ${String(cut.id)}`,
+      )
+    }
+    const cutCameraId =
+      typeof cut.cameraId === 'string' ? cut.cameraId : ''
+    if (!cutCameraId) {
+      errors.push(`camera cut ${id} cameraId must be a non-empty string`)
+    } else if (!nodes[cutCameraId]) {
+      errors.push(
+        `camera cut ${id} points to missing camera node: ${cutCameraId}`,
+      )
+    } else if (asRecord(nodes[cutCameraId]).kind !== 'camera') {
+      errors.push(`camera cut ${id} points to non-camera node: ${cutCameraId}`)
+    } else if (asRecord(nodes[cutCameraId]).enabled === false) {
+      errors.push(`camera cut ${id} points to disabled camera: ${cutCameraId}`)
+    } else if (
+      declaredCameraIds !== null &&
+      !effectiveCameraIdSet.has(cutCameraId)
+    ) {
+      errors.push(
+        `camera cut ${id} camera is not owned by this scene: ${cutCameraId}`,
+      )
+    }
+    if (typeof cut.time !== 'number' || !Number.isFinite(cut.time)) {
+      errors.push(`camera cut ${id} time must be a finite number`)
+    } else {
+      if (cut.time < 0) {
+        errors.push(`camera cut ${id} time must be greater than or equal to 0`)
+      }
+      if (
+        typeof sceneDuration === 'number' &&
+        Number.isFinite(sceneDuration) &&
+        cut.time >= sceneDuration
+      ) {
+        errors.push(
+          `camera cut ${id} time must be less than scene duration ${sceneDuration}`,
+        )
+      }
+    }
+  }
+
+  if (
+    data.compositionScenes !== undefined ||
+    data.sequenceItems !== undefined ||
+    data.sequenceOrder !== undefined ||
+    data.activeCompositionId !== undefined ||
+    data.sequenceSchemaVersion !== undefined
+  ) {
+    validateSequenceModel(data, nodes, errors, warnings)
   }
 
   for (const [id, raw] of Object.entries(tracks)) {
@@ -1649,15 +2002,507 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
   return { ok: errors.length === 0, errors, warnings }
 }
 
-function isNodeKind(value: unknown): value is NodeKindJson {
+function validateSequenceModel(
+  data: Record<string, unknown>,
+  nodes: Record<string, unknown>,
+  errors: string[],
+  warnings: string[],
+): void {
+  if (
+    data.sequenceSchemaVersion !== undefined &&
+    data.sequenceSchemaVersion !== SEQUENCE_SCHEMA_VERSION
+  ) {
+    errors.push(
+      `scene.sequenceSchemaVersion must be ${SEQUENCE_SCHEMA_VERSION}`,
+    )
+  } else if (data.sequenceSchemaVersion === undefined) {
+    warnings.push('scene.sequenceSchemaVersion is missing')
+  }
+
+  if (!isPlainObject(data.compositionScenes)) {
+    errors.push('scene.compositionScenes must be an object')
+  }
+  if (!isPlainObject(data.sequenceItems)) {
+    errors.push('scene.sequenceItems must be an object')
+  }
+  if (data.sequenceOrder !== undefined && !Array.isArray(data.sequenceOrder)) {
+    errors.push('scene.sequenceOrder must be an array')
+  }
+
+  const compositions = asRecord(data.compositionScenes)
+  const sequenceItems = asRecord(data.sequenceItems)
+  if (Object.keys(compositions).length === 0) {
+    errors.push('scene.compositionScenes must contain at least one composition')
+  }
+  if (Object.keys(sequenceItems).length === 0) {
+    errors.push('scene.sequenceItems must contain at least one sequence item')
+  }
+
+  const rootOwner = new Map<string, string>()
+  const cameraOwner = new Map<string, string>()
+  for (const [id, raw] of Object.entries(compositions)) {
+    const composition = asRecord(raw)
+    if (!isPlainObject(raw)) {
+      errors.push(`composition scene ${id} must be an object`)
+    }
+    if (composition.id !== id) {
+      errors.push(
+        `composition scene map key ${id} does not match composition id: ${String(composition.id)}`,
+      )
+    }
+    if (
+      typeof composition.name !== 'string' ||
+      composition.name.trim().length === 0
+    ) {
+      errors.push(`composition scene ${id} name must be a non-empty string`)
+    }
+
+    const rootNodeId =
+      typeof composition.rootNodeId === 'string'
+        ? composition.rootNodeId
+        : ''
+    if (!rootNodeId) {
+      errors.push(`composition scene ${id} rootNodeId must be a non-empty string`)
+    } else if (!nodes[rootNodeId]) {
+      errors.push(
+        `composition scene ${id} rootNodeId points to missing node: ${rootNodeId}`,
+      )
+    } else if (asRecord(nodes[rootNodeId]).kind !== 'frame') {
+      errors.push(
+        `composition scene ${id} rootNodeId is not a frame node: ${rootNodeId}`,
+      )
+    } else if (typeof asRecord(nodes[rootNodeId]).parent === 'string') {
+      errors.push(
+        `composition scene ${id} rootNodeId must be project-level with parent: null: ${rootNodeId}`,
+      )
+    }
+    if (rootNodeId) {
+      const existingOwner = rootOwner.get(rootNodeId)
+      if (existingOwner && existingOwner !== id) {
+        errors.push(
+          `composition scenes ${existingOwner} and ${id} share rootNodeId: ${rootNodeId}`,
+        )
+      } else {
+        rootOwner.set(rootNodeId, id)
+      }
+    }
+
+    if (
+      composition.workspaceNodeIds !== undefined &&
+      !Array.isArray(composition.workspaceNodeIds)
+    ) {
+      errors.push(
+        `composition scene ${id} workspaceNodeIds must be an array when provided`,
+      )
+    }
+    const localWorkspaceNodeIds = new Set<string>()
+    const workspaceNodeIds = Array.isArray(composition.workspaceNodeIds)
+      ? composition.workspaceNodeIds
+      : []
+    workspaceNodeIds.forEach((nodeId, index) => {
+      if (typeof nodeId !== 'string' || nodeId.length === 0) {
+        errors.push(
+          `composition scene ${id} workspaceNodeIds[${index}] must be a non-empty string`,
+        )
+        return
+      }
+      if (localWorkspaceNodeIds.has(nodeId)) {
+        errors.push(
+          `composition scene ${id} contains duplicate workspace node id: ${nodeId}`,
+        )
+        return
+      }
+      localWorkspaceNodeIds.add(nodeId)
+      const workspaceNode = asRecord(nodes[nodeId])
+      if (!nodes[nodeId]) {
+        errors.push(
+          `composition scene ${id} workspaceNodeIds points to missing node: ${nodeId}`,
+        )
+      } else if (typeof workspaceNode.parent === 'string') {
+        errors.push(
+          `composition scene ${id} workspace node ${nodeId} must be project-level with parent: null`,
+        )
+      } else if (workspaceNode.workspaceOnly !== true) {
+        errors.push(
+          `composition scene ${id} workspace node ${nodeId} must set workspaceOnly: true`,
+        )
+      }
+    })
+
+    const duration = composition.duration
+    if (
+      typeof duration !== 'number' ||
+      !Number.isFinite(duration) ||
+      duration <= 0
+    ) {
+      errors.push(`composition scene ${id} duration must be greater than 0`)
+    }
+    if (composition.workArea !== undefined) {
+      const workArea = asRecord(composition.workArea)
+      if (!isPlainObject(composition.workArea)) {
+        errors.push(
+          `composition scene ${id} workArea must be an object when provided`,
+        )
+      }
+      if (
+        typeof workArea.start !== 'number' ||
+        !Number.isFinite(workArea.start) ||
+        workArea.start < 0
+      ) {
+        errors.push(
+          `composition scene ${id} workArea.start must be a finite number greater than or equal to 0`,
+        )
+      }
+      if (
+        typeof workArea.end !== 'number' ||
+        !Number.isFinite(workArea.end)
+      ) {
+        errors.push(
+          `composition scene ${id} workArea.end must be a finite number`,
+        )
+      } else {
+        if (
+          typeof workArea.start === 'number' &&
+          Number.isFinite(workArea.start) &&
+          workArea.end <= workArea.start
+        ) {
+          errors.push(
+            `composition scene ${id} workArea.end must be greater than workArea.start`,
+          )
+        }
+        if (
+          typeof duration === 'number' &&
+          Number.isFinite(duration) &&
+          workArea.end > duration
+        ) {
+          errors.push(
+            `composition scene ${id} workArea.end must not exceed composition duration ${duration}`,
+          )
+        }
+      }
+    }
+
+    const ownedCameraIds = Array.isArray(composition.cameraIds)
+      ? composition.cameraIds
+      : []
+    if (!Array.isArray(composition.cameraIds)) {
+      errors.push(`composition scene ${id} cameraIds must be an array`)
+    }
+    const localCameraIds = new Set<string>()
+    ownedCameraIds.forEach((cameraId, index) => {
+      if (typeof cameraId !== 'string' || cameraId.length === 0) {
+        errors.push(
+          `composition scene ${id} cameraIds[${index}] must be a non-empty string`,
+        )
+        return
+      }
+      if (localCameraIds.has(cameraId)) {
+        errors.push(
+          `composition scene ${id} contains duplicate camera id: ${cameraId}`,
+        )
+        return
+      }
+      localCameraIds.add(cameraId)
+      const existingOwner = cameraOwner.get(cameraId)
+      if (existingOwner && existingOwner !== id) {
+        errors.push(
+          `camera node ${cameraId} is owned by composition scenes ${existingOwner} and ${id}`,
+        )
+      } else {
+        cameraOwner.set(cameraId, id)
+      }
+      if (!nodes[cameraId]) {
+        errors.push(
+          `composition scene ${id} cameraIds points to missing node: ${cameraId}`,
+        )
+      } else if (asRecord(nodes[cameraId]).kind !== 'camera') {
+        errors.push(
+          `composition scene ${id} cameraIds includes non-camera node: ${cameraId}`,
+        )
+      } else if (typeof asRecord(nodes[cameraId]).parent === 'string') {
+        errors.push(
+          `composition scene ${id} camera ${cameraId} must be project-level with parent: null`,
+        )
+      }
+    })
+
+    const defaultCameraId =
+      typeof composition.defaultCameraId === 'string'
+        ? composition.defaultCameraId
+        : ''
+    if (
+      composition.defaultCameraId !== null &&
+      (typeof composition.defaultCameraId !== 'string' ||
+        composition.defaultCameraId.length === 0)
+    ) {
+      errors.push(
+        `composition scene ${id} defaultCameraId must be a non-empty string or null`,
+      )
+    } else if (defaultCameraId && !localCameraIds.has(defaultCameraId)) {
+      errors.push(
+        `composition scene ${id} defaultCameraId is not owned by the composition: ${defaultCameraId}`,
+      )
+    } else if (
+      defaultCameraId &&
+      asRecord(nodes[defaultCameraId]).enabled === false
+    ) {
+      errors.push(
+        `composition scene ${id} defaultCameraId points to a disabled camera: ${defaultCameraId}`,
+      )
+    }
+
+    if (!isPlainObject(composition.cameraCuts)) {
+      errors.push(`composition scene ${id} cameraCuts must be an object`)
+    }
+    for (const [cutId, rawCut] of Object.entries(asRecord(composition.cameraCuts))) {
+      const cut = asRecord(rawCut)
+      if (!isPlainObject(rawCut)) {
+        errors.push(`composition scene ${id} camera cut ${cutId} must be an object`)
+      }
+      if (cut.id !== cutId) {
+        errors.push(
+          `composition scene ${id} camera cut map key ${cutId} does not match cut id: ${String(cut.id)}`,
+        )
+      }
+      const cutCameraId =
+        typeof cut.cameraId === 'string' ? cut.cameraId : ''
+      if (!cutCameraId) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} cameraId must be a non-empty string`,
+        )
+      } else if (!localCameraIds.has(cutCameraId)) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} targets an unowned camera: ${cutCameraId}`,
+        )
+      } else if (asRecord(nodes[cutCameraId]).enabled === false) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} targets a disabled camera: ${cutCameraId}`,
+        )
+      }
+      if (typeof cut.time !== 'number' || !Number.isFinite(cut.time)) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} time must be a finite number`,
+        )
+      } else if (cut.time < 0) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} time must be greater than or equal to 0`,
+        )
+      } else if (
+        typeof duration === 'number' &&
+        Number.isFinite(duration) &&
+        cut.time >= duration
+      ) {
+        errors.push(
+          `composition scene ${id} camera cut ${cutId} time must be less than composition duration ${duration}`,
+        )
+      }
+    }
+  }
+
+  const globalCameraIds = Object.entries(nodes)
+    .filter(([, raw]) => asRecord(raw).kind === 'camera')
+    .map(([id]) => id)
+  for (const cameraId of globalCameraIds) {
+    if (!cameraOwner.has(cameraId)) {
+      errors.push(
+        `camera node ${cameraId} is not owned by a composition scene`,
+      )
+    }
+  }
+
+  for (const [id, raw] of Object.entries(sequenceItems)) {
+    const item = asRecord(raw)
+    if (!isPlainObject(raw)) {
+      errors.push(`sequence item ${id} must be an object`)
+    }
+    if (item.id !== id) {
+      errors.push(
+        `sequence item map key ${id} does not match sequence item id: ${String(item.id)}`,
+      )
+    }
+    const sceneId = typeof item.sceneId === 'string' ? item.sceneId : ''
+    if (!sceneId) {
+      errors.push(`sequence item ${id} sceneId must be a non-empty string`)
+    } else if (!compositions[sceneId]) {
+      errors.push(`sequence item ${id} points to missing composition: ${sceneId}`)
+    }
+
+    const compositionDuration = asRecord(compositions[sceneId]).duration
+    if (
+      item.masterAudioMuted !== undefined &&
+      typeof item.masterAudioMuted !== 'boolean'
+    ) {
+      errors.push(
+        `sequence item ${id} masterAudioMuted must be a boolean when provided`,
+      )
+    }
+    const trimStart = item.trimStart ?? 0
+    if (
+      typeof trimStart !== 'number' ||
+      !Number.isFinite(trimStart) ||
+      trimStart < 0
+    ) {
+      errors.push(
+        `sequence item ${id} trimStart must be a finite number greater than or equal to 0`,
+      )
+    } else if (
+      typeof compositionDuration === 'number' &&
+      Number.isFinite(compositionDuration) &&
+      trimStart >= compositionDuration
+    ) {
+      errors.push(
+        `sequence item ${id} trimStart must be less than composition duration ${compositionDuration}`,
+      )
+    }
+    if (item.duration !== undefined) {
+      if (
+        typeof item.duration !== 'number' ||
+        !Number.isFinite(item.duration) ||
+        item.duration <= 0
+      ) {
+        errors.push(`sequence item ${id} duration must be greater than 0`)
+      } else if (
+        typeof trimStart === 'number' &&
+        Number.isFinite(trimStart) &&
+        typeof compositionDuration === 'number' &&
+        Number.isFinite(compositionDuration) &&
+        trimStart + item.duration > compositionDuration
+      ) {
+        errors.push(
+          `sequence item ${id} trimStart + duration exceeds composition duration ${compositionDuration}`,
+        )
+      }
+    }
+
+    if (item.transitionOut !== undefined) {
+      const transition = asRecord(item.transitionOut)
+      if (!isPlainObject(item.transitionOut)) {
+        errors.push(`sequence item ${id} transitionOut must be an object`)
+      }
+      if (transition.kind !== 'cut' && transition.kind !== 'crossfade') {
+        errors.push(
+          `sequence item ${id} transitionOut.kind must be cut or crossfade`,
+        )
+      }
+      if (
+        typeof transition.duration !== 'number' ||
+        !Number.isFinite(transition.duration) ||
+        transition.duration < 0
+      ) {
+        errors.push(
+          `sequence item ${id} transitionOut.duration must be a finite number greater than or equal to 0`,
+        )
+      } else if (transition.kind === 'cut' && transition.duration !== 0) {
+        errors.push(
+          `sequence item ${id} cut transition duration must be 0`,
+        )
+      }
+    }
+  }
+
+  const orderedItemIds: string[] = []
+  const seenItemIds = new Set<string>()
+  if (Array.isArray(data.sequenceOrder)) {
+    data.sequenceOrder.forEach((rawItemId, index) => {
+      if (typeof rawItemId !== 'string' || rawItemId.length === 0) {
+        errors.push(
+          `scene.sequenceOrder[${index}] must be a non-empty string`,
+        )
+        return
+      }
+      if (seenItemIds.has(rawItemId)) {
+        errors.push(`scene.sequenceOrder contains duplicate item id: ${rawItemId}`)
+        return
+      }
+      seenItemIds.add(rawItemId)
+      if (!sequenceItems[rawItemId]) {
+        errors.push(
+          `scene.sequenceOrder points to missing sequence item: ${rawItemId}`,
+        )
+        return
+      }
+      orderedItemIds.push(rawItemId)
+    })
+    for (const itemId of Object.keys(sequenceItems)) {
+      if (!seenItemIds.has(itemId)) {
+        errors.push(`sequence item ${itemId} is missing from scene.sequenceOrder`)
+        orderedItemIds.push(itemId)
+      }
+    }
+  } else {
+    warnings.push(
+      'scene.sequenceOrder is missing; sequence item map insertion order will be used',
+    )
+    orderedItemIds.push(...Object.keys(sequenceItems))
+  }
+
+  const finalItemId = orderedItemIds.at(-1)
+  if (finalItemId) {
+    const finalTransition = asRecord(
+      asRecord(sequenceItems[finalItemId]).transitionOut,
+    )
+    if (
+      finalTransition.kind === 'crossfade' &&
+      typeof finalTransition.duration === 'number' &&
+      finalTransition.duration > 0
+    ) {
+      errors.push(
+        `final sequence item ${finalItemId} cannot have a non-zero crossfade transition`,
+      )
+    }
+  }
+
+  const activeCompositionId =
+    typeof data.activeCompositionId === 'string'
+      ? data.activeCompositionId
+      : ''
+  if (!activeCompositionId) {
+    warnings.push('scene.activeCompositionId is missing')
+    return
+  }
+  const activeComposition = asRecord(compositions[activeCompositionId])
+  if (!compositions[activeCompositionId]) {
+    errors.push(
+      `scene.activeCompositionId points to missing composition: ${activeCompositionId}`,
+    )
+    return
+  }
+
+  if (data.root !== activeComposition.rootNodeId) {
+    errors.push(
+      `scene.root must mirror active composition ${activeCompositionId} rootNodeId`,
+    )
+  }
+  const activeDefaultCameraId =
+    typeof activeComposition.defaultCameraId === 'string'
+      ? activeComposition.defaultCameraId
+      : null
+  const projectedCameraId =
+    typeof data.activeCameraId === 'string' ? data.activeCameraId : null
+  if (projectedCameraId !== activeDefaultCameraId) {
+    errors.push(
+      `scene.activeCameraId must mirror active composition ${activeCompositionId} defaultCameraId`,
+    )
+  }
+  if (asRecord(data.meta).duration !== activeComposition.duration) {
+    errors.push(
+      `scene.meta.duration must mirror active composition ${activeCompositionId} duration`,
+    )
+  }
+}
+
+function isNodeKind(value: unknown): value is NodeKindJson | 'vector' {
   return (
     typeof value === 'string' &&
-    NODE_KIND_SET.has(value as NodeKindJson)
+    (value === 'vector' || NODE_KIND_SET.has(value as NodeKindJson))
   )
 }
 
 function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown): void {
-  if (kind === 'primitive3d') {
+  // Vector nodes are valid in app-authored files (including the built-in
+  // Cursor component), but the JSON authoring surface cannot yet reconstruct
+  // their preserved SVG/vector payload without losing fidelity.
+  if (kind === 'primitive3d' || kind === 'vector') {
     throw new Error(
       `node ${String(nodeId)} has unsupported kind: ${String(kind)}`,
     )
@@ -1669,7 +2514,7 @@ function isNodePosition(value: string): value is NodePositionJson {
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
-  return PROPERTY_ID_SET.has(value as PropertyIdJson)
+  return PROPERTY_ID_SET.has(value) || EFFECT_BLUR_PROPERTY_ID.test(value)
 }
 
 function validateLayerMotionPath(
@@ -2004,6 +2849,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
     handledKeys.add('size')
     y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+  }
+  if (node.kind === 'ellipse') {
+    handledKeys.add('arc')
+    y.set('arc', normalizeEllipseArcJson(node.arc))
   }
   if (node.kind === 'image') {
     handledKeys.add('src')
@@ -2357,6 +3206,9 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
   const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>> | undefined
   const tracks = scene.get('tracks') as Y.Map<Y.Map<unknown>> | undefined
   const sections = scene.get('sections') as Y.Map<unknown> | undefined
+  const compositionScenes = scene.get('compositionScenes')
+  const sequenceItems = scene.get('sequenceItems')
+  const sequenceSchemaVersion = scene.get('sequenceSchemaVersion')
 
   // Count keyframes across every track. Newly-authored CLI scenes store
   // keyframes as plain arrays, while older or hand-built docs may contain
@@ -2372,10 +3224,20 @@ export function readSceneSummary(bytes: Uint8Array): SceneSummary {
     meta,
     root: nonEmptySceneId(scene.get('root')),
     activeCameraId: nonEmptySceneId(scene.get('activeCameraId')),
+    activeCompositionId: nonEmptySceneId(scene.get('activeCompositionId')),
+    sequenceSchemaVersion:
+      typeof sequenceSchemaVersion === 'number' &&
+      Number.isFinite(sequenceSchemaVersion)
+        ? sequenceSchemaVersion
+        : null,
     layerCount: nodes?.size ?? 0,
     trackCount: tracks?.size ?? 0,
     sectionCount: sections?.size ?? 0,
     keyframeCount,
+    compositionSceneCount:
+      compositionScenes instanceof Y.Map ? compositionScenes.size : 0,
+    sequenceItemCount:
+      sequenceItems instanceof Y.Map ? sequenceItems.size : 0,
   }
 }
 

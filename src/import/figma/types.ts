@@ -23,16 +23,19 @@
  */
 
 export const FIGMA_PAYLOAD_FORMAT = 'hyper-motion/figma' as const
-export const FIGMA_PAYLOAD_VERSION = 2 as const
+export const FIGMA_PAYLOAD_VERSION = 3 as const
+/** Native-vector payload used by plugin builds before editable ellipse arcs. */
+export const FIGMA_PAYLOAD_VECTOR_VERSION = 2 as const
 export const FIGMA_PAYLOAD_LEGACY_VERSION = 1 as const
 
 export type FigmaPayloadVersion =
   | typeof FIGMA_PAYLOAD_LEGACY_VERSION
+  | typeof FIGMA_PAYLOAD_VECTOR_VERSION
   | typeof FIGMA_PAYLOAD_VERSION
 
 export interface FigmaPayload {
   format: typeof FIGMA_PAYLOAD_FORMAT
-  /** Version 1 is accepted for backwards compatibility; new plugins emit 2. */
+  /** Versions 1/2 are accepted for compatibility; new plugins emit 3. */
   version: FigmaPayloadVersion
   /** Root nodes from the user's selection. May be one or many. */
   nodes: FigmaCapturedNode[]
@@ -84,6 +87,8 @@ interface FigmaCapturedNodeBase {
   maxHeight?: number | null
   /** Per-corner radii [tl, tr, br, bl]. */
   cornerRadius: [number, number, number, number]
+  /** Figma's continuous-corner smoothing in the normalized 0..1 range. */
+  cornerSmoothing?: number
   fills: FigmaCapturedFill[]
   strokes: FigmaCapturedFill[]
   strokeWeight: number
@@ -176,6 +181,11 @@ export interface FigmaCapturedRect extends FigmaCapturedNodeBase {
 
 export interface FigmaCapturedEllipse extends FigmaCapturedNodeBase {
   type: 'ELLIPSE'
+  arcData?: {
+    startingAngle: number
+    endingAngle: number
+    innerRadius: number
+  }
 }
 
 export interface FigmaCapturedText extends FigmaCapturedNodeBase {

@@ -198,7 +198,7 @@ export function PaperShaderPicker({
                   'h-6 rounded-md px-2 text-[10px] font-medium transition-colors',
                   active
                     ? 'bg-accent text-white'
-                    : 'text-text-muted hover:bg-white/[0.06] hover:text-text',
+                    : 'text-text-muted hover:bg-control hover:text-text',
                 ].join(' ')}
               >
                 {tab.label}
@@ -229,7 +229,7 @@ export function PaperShaderPicker({
                 'group flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors',
                 selected
                   ? 'border-accent bg-accent-soft/55'
-                  : 'border-transparent hover:border-border hover:bg-white/[0.045]',
+                  : 'border-transparent hover:border-border hover:bg-control',
               ].join(' ')}
             >
               <span

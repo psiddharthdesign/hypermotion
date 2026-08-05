@@ -18,6 +18,17 @@ export interface ScalePairCommitters {
   onCommitPair?: (next: ScalePair) => void
 }
 
+export interface ScalePairPreviewers {
+  onPreviewX?: (next: number) => void
+  onPreviewY?: (next: number) => void
+  /**
+   * Preferred when the owner can publish both transient axes in one update.
+   * The complete pair is emitted for linked and unlinked gestures alike so a
+   * single preview store can own the whole Scale interaction.
+   */
+  onPreviewPair?: (next: ScalePair) => void
+}
+
 const ZERO_EPSILON = 1e-8
 
 /**
@@ -93,5 +104,44 @@ export function commitScaleAxisEdit({
 
   if (changedX) onCommitX(nextPair.scaleX)
   if (changedY) onCommitY(nextPair.scaleY)
+  return nextPair
+}
+
+/**
+ * Resolve and publish a transient Scale gesture without creating a durable
+ * edit. A pair preview is preferred when available; otherwise the changed
+ * axes are delivered independently. Callers keep the returned pair as the
+ * comparison point for the next hardware packet while retaining the original
+ * gesture baseline for ratio resolution.
+ */
+export function previewScaleAxisEdit({
+  baseline,
+  current,
+  axis,
+  next,
+  linked,
+  onPreviewX,
+  onPreviewY,
+  onPreviewPair,
+}: {
+  baseline: ScalePair
+  current: ScalePair
+  axis: ScaleAxis
+  next: number
+  linked: boolean
+} & ScalePairPreviewers): ScalePair {
+  const nextPair = resolveScaleAxisEdit(baseline, axis, next, linked)
+  const changedX = nextPair.scaleX !== current.scaleX
+  const changedY = nextPair.scaleY !== current.scaleY
+
+  if (!changedX && !changedY) return nextPair
+
+  if (onPreviewPair) {
+    onPreviewPair(nextPair)
+    return nextPair
+  }
+
+  if (changedX) onPreviewX?.(nextPair.scaleX)
+  if (changedY) onPreviewY?.(nextPair.scaleY)
   return nextPair
 }

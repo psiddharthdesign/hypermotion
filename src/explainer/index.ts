@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: Apache-2.0
+
+export {
+  DEFAULT_EXPLAINER_DURATION_SECONDS,
+  DEFAULT_EXPLAINER_MAX_DURATION_SECONDS,
+  DEFAULT_EXPLAINER_MIN_DURATION_SECONDS,
+  compileBriefToStoryboard,
+} from './compiler'
+export { materializeStoryboard } from './materialize'
+export { validateStoryboard } from './validate'
+export type {
+  MaterializedStoryboardScene,
+  MaterializeStoryboardInput,
+  MaterializeStoryboardIssue,
+  MaterializeStoryboardIssueSeverity,
+  MaterializeStoryboardMode,
+  MaterializeStoryboardResult,
+} from './materialize'
+export type {
+  CompileStoryboardOptions,
+  DemoStoryboardScene,
+  DesignStoryboardScene,
+  ExplainerAudioAnalysis,
+  ExplainerBrand,
+  ExplainerBrief,
+  ExplainerDirection,
+  ExplainerScript,
+  ExplainerScriptBeat,
+  ExplainerSourceKind,
+  ExplainerSourceRef,
+  ExplainerStoryboard,
+  LogoStoryboardScene,
+  StoryboardBeatPlan,
+  StoryboardCameraAction,
+  StoryboardCameraCut,
+  StoryboardCameraDirection,
+  StoryboardCameraPose,
+  StoryboardCameraRole,
+  StoryboardComponentDirection,
+  StoryboardCue,
+  StoryboardCueKind,
+  StoryboardDemoStep,
+  StoryboardLayer3DDirection,
+  StoryboardLayerRole,
+  StoryboardQcCode,
+  StoryboardQcIssue,
+  StoryboardQcSeverity,
+  StoryboardScene,
+  StoryboardSceneBase,
+  StoryboardSceneKind,
+  StoryboardTransition,
+  StoryboardTransitionKind,
+  StoryboardValidationOptions,
+  StoryboardValidationResult,
+  TextStoryboardScene,
+} from './types'

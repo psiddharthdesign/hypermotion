@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MeasureFunction, Yoga } from 'yoga-layout/load'
-import type { VectorNode } from '@/scene'
+import type { VectorNode } from '@/scene/types'
 
 /**
  * Give Yoga an intrinsic size for native vectors. The viewBox is the stable

@@ -6,7 +6,9 @@ import { textAnimationDefaults } from '@/anim/textAnimations'
 import { createSceneAPI } from '@/scene/doc'
 import {
   createAnimatedSnapshotSelector,
+  createTransformPreviewSnapshotSelector,
   hasNodeDrivenTextAnimation,
+  mergeTransformPreviews,
 } from './useAnimatedValues'
 
 describe('animated snapshot selection', () => {
@@ -28,6 +30,54 @@ describe('animated snapshot selection', () => {
     expect(held).toBe(first)
     expect(changed).not.toBe(first)
     expect(changed['scene-node']?.opacity).toBe(0.75)
+  })
+
+  it('keeps transform previews scoped and lets them override authored tracks', () => {
+    const selectPreview = createTransformPreviewSnapshotSelector(['layer'])
+    const unrelated = selectPreview({ other: { x: 10, y: 20 } })
+    const selected = selectPreview({ layer: { x: 30, y: 40 } })
+
+    expect(unrelated).toEqual({})
+    expect(selected).toEqual({ layer: { x: 30, y: 40 } })
+    expect(
+      mergeTransformPreviews(
+        { layer: { x: 4, y: 8, opacity: 0.5 } },
+        selected,
+      ),
+    ).toEqual({ layer: { x: 30, y: 40, opacity: 0.5 } })
+  })
+
+  it('publishes non-positional visual previews without scene writes', () => {
+    const selectPreview = createTransformPreviewSnapshotSelector(['layer'])
+    const opacity = selectPreview({ layer: { opacity: 0.42 } })
+    const held = selectPreview({ layer: { opacity: 0.42 } })
+    const corner = selectPreview({ layer: { cornerRadius: 18 } })
+
+    expect(opacity).toEqual({ layer: { opacity: 0.42 } })
+    expect(held).toBe(opacity)
+    expect(corner).toEqual({ layer: { cornerRadius: 18 } })
+    expect(corner).not.toBe(opacity)
+  })
+
+  it('deep-merges one scrubbed effect without erasing other blur tracks', () => {
+    expect(
+      mergeTransformPreviews(
+        {
+          layer: {
+            effectBlur: { 'effect-1': 8, 'effect-2': 16 },
+          },
+        },
+        {
+          layer: {
+            effectBlur: { 'effect-1': 24 },
+          },
+        },
+      ),
+    ).toEqual({
+      layer: {
+        effectBlur: { 'effect-1': 24, 'effect-2': 16 },
+      },
+    })
   })
 
   it('exposes every intermediate engine opacity snapshot to a scene leaf', () => {

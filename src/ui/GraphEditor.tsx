@@ -3,7 +3,11 @@
 import { useMemo, useRef, useState } from 'react'
 import type { EasingKind, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
-import { useSceneAPI, useSceneVersion } from '@/scene'
+import {
+  effectIdFromBlurPropertyId,
+  useSceneAPI,
+  useSceneVersion,
+} from '@/scene'
 import { useUI } from '@/state/ui'
 import { patchStaggerKeyframeBundle } from '@/anim/staggerSets'
 import {
@@ -70,8 +74,8 @@ export function GraphEditor() {
 
   if (!target) {
     return (
-      <div className="rounded border border-border bg-panel-raised p-3">
-        <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
+      <div className="rounded-md bg-app-bg p-3 shadow-[var(--shadow-control)]">
+        <div className="text-[12px] font-semibold text-text">
           Graph editor
         </div>
         <div className="mt-1.5 text-[11px] text-text-dim leading-snug">
@@ -85,9 +89,9 @@ export function GraphEditor() {
   }
 
   return (
-    <div className="rounded border border-border bg-panel-raised p-2.5">
+    <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
+        <div className="text-[12px] font-semibold text-text">
           Graph editor
         </div>
         <div className="font-mono text-[10px] text-text-dim">
@@ -454,6 +458,7 @@ function formatNumber(n: number): string {
 }
 
 function humanProperty(id: string): string {
+  if (effectIdFromBlurPropertyId(id)) return 'Blur'
   const map: Record<string, string> = {
     'transform.x': 'X',
     'transform.y': 'Y',

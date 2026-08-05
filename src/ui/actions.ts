@@ -15,6 +15,7 @@ import type {
   VariantSelection,
 } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { addKeyframe, findTrack, getAnimEngine } from '@/anim'
 import { isCursorInstance } from '@/scene/builtins/cursorComponent'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
@@ -102,6 +103,125 @@ export function wrapInAutoLayout(
  */
 export function wrapInGrid(api: SceneAPI, ids: NodeId[]): NodeId | null {
   return wrapInContainer(api, ids, { name: 'Grid', layout: DEFAULT_GRID_LAYOUT })
+}
+
+/**
+ * Wrap same-parent layers in a neutral, fixed-size frame while preserving
+ * their rendered positions and sibling order.
+ *
+ * A plain group is deliberately different from auto layout: children remain
+ * absolutely positioned inside the new frame, so grouping is structural and
+ * does not rearrange the design. Invalid or mixed-parent selections are an
+ * atomic no-op.
+ */
+export function wrapInGroup(api: SceneAPI, ids: NodeId[]): NodeId | null {
+  const uniqueIds = [...new Set(ids)]
+  if (uniqueIds.length === 0) return null
+
+  const nodes = uniqueIds.map((id) => api.getNode(id))
+  if (nodes.some((node) => !node)) return null
+  const wrappable = nodes as SceneNode[]
+  const parentId = wrappable[0]?.parent
+  if (
+    !parentId ||
+    wrappable.some(
+      (node) => node.parent !== parentId || node.kind === 'camera',
+    )
+  ) {
+    return null
+  }
+
+  const siblings = api.getChildren(parentId).map((child) => child.id)
+  if (uniqueIds.some((id) => !siblings.includes(id))) return null
+  const sortedIds = [...uniqueIds].sort(
+    (a, b) => siblings.indexOf(a) - siblings.indexOf(b),
+  )
+  const insertionIndex = Math.min(
+    ...sortedIds.map((id) => siblings.indexOf(id)),
+  )
+  const parent = api.getNode(parentId)
+  if (!parent) return null
+  const parentLayoutMode = 'layout' in parent ? parent.layout.mode : 'none'
+  const staysInFlow =
+    parentLayoutMode !== 'none' &&
+    wrappable.every((node) => node.position !== 'absolute')
+  const bounds = getSelectionBounds(wrappable, parentId, false)
+  const solved = getLastSolvedLayout()
+  const parentRect = solved?.[parentId] ?? { x: 0, y: 0 }
+  const firstSolvedRect = solved?.[sortedIds[0]!]
+  const flowOriginX = firstSolvedRect
+    ? firstSolvedRect.x - parentRect.x
+    : bounds.x
+  const flowOriginY = firstSolvedRect
+    ? firstSolvedRect.y - parentRect.y
+    : bounds.y
+  const groupTransformX = staysInFlow ? bounds.x - flowOriginX : bounds.x
+  const groupTransformY = staysInFlow ? bounds.y - flowOriginY : bounds.y
+
+  let groupId: NodeId | null = null
+  api.doc.transact(() => {
+    const createdGroupId = api.createNode('frame', parentId, {
+      name: 'Group',
+      size: { width: bounds.width, height: bounds.height },
+      layout: {
+        mode: 'none',
+        direction: 'row',
+        justify: 'start',
+        align: 'start',
+        gap: 0,
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        wrap: false,
+        columns: 1,
+        rowGap: 0,
+        columnGap: 0,
+      },
+      appearance: {
+        opacity: 1,
+        fill: null,
+        stroke: null,
+        cornerRadius: 0,
+        cornerSmoothing: 0,
+        blendMode: 'normal',
+        effects: [],
+      },
+      clipsContent: false,
+      position: staysInFlow ? 'flow' : 'absolute',
+      transform: {
+        x: groupTransformX,
+        y: groupTransformY,
+        z: 0,
+        rotation: 0,
+        rotationX: 0,
+        rotationY: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+    })
+    groupId = createdGroupId
+    api.moveChild(parentId, createdGroupId, insertionIndex)
+
+    for (const id of sortedIds) {
+      const child = api.getNode(id)
+      const childRect = bounds.rects[id]
+      if (!child || !childRect) continue
+      const nextX = childRect.x - bounds.x
+      const nextY = childRect.y - bounds.y
+      api.appendChild(createdGroupId, id)
+      api.setNodeProperty(id, 'transform', {
+        ...child.transform,
+        x: nextX,
+        y: nextY,
+      })
+      shiftTransformTracks(
+        api,
+        id,
+        nextX - child.transform.x,
+        nextY - child.transform.y,
+      )
+    }
+  }, UNDOABLE_GESTURE_ORIGIN)
+
+  return groupId
 }
 
 /**
@@ -1049,11 +1169,11 @@ function unsetPathValue(
   return next
 }
 
-function deepMerge<T extends Record<string, unknown>>(
+function deepMerge<T extends object>(
   base: T,
-  patch: Record<string, unknown>,
+  patch: object,
 ): T {
-  const out: Record<string, unknown> = { ...base }
+  const out = { ...base } as unknown as Record<string, unknown>
   for (const [key, value] of Object.entries(patch)) {
     const current = out[key]
     if (
@@ -1190,7 +1310,11 @@ function measureSizeAxis(value: SizeAxis, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function getSelectionBounds(nodes: SceneNode[], parentId: NodeId): {
+function getSelectionBounds(
+  nodes: SceneNode[],
+  parentId: NodeId,
+  round = true,
+): {
   x: number
   y: number
   width: number
@@ -1231,10 +1355,18 @@ function getSelectionBounds(nodes: SceneNode[], parentId: NodeId): {
     maxX = Math.max(maxX, rect.x + rect.width)
     maxY = Math.max(maxY, rect.y + rect.height)
   }
-  const x = Number.isFinite(minX) ? Math.round(minX) : 0
-  const y = Number.isFinite(minY) ? Math.round(minY) : 0
-  const width = Number.isFinite(maxX) ? Math.max(1, Math.round(maxX - minX)) : 1
-  const height = Number.isFinite(maxY) ? Math.max(1, Math.round(maxY - minY)) : 1
+  const normalizedX = Number.isFinite(minX) ? minX : 0
+  const normalizedY = Number.isFinite(minY) ? minY : 0
+  const normalizedWidth = Number.isFinite(maxX)
+    ? Math.max(1, maxX - minX)
+    : 1
+  const normalizedHeight = Number.isFinite(maxY)
+    ? Math.max(1, maxY - minY)
+    : 1
+  const x = round ? Math.round(normalizedX) : normalizedX
+  const y = round ? Math.round(normalizedY) : normalizedY
+  const width = round ? Math.round(normalizedWidth) : normalizedWidth
+  const height = round ? Math.round(normalizedHeight) : normalizedHeight
   return {
     x,
     y,
@@ -1413,15 +1545,76 @@ export function ungroupFrame(api: SceneAPI, frameId: NodeId): NodeId[] {
   const parentId = frame.parent
   const siblings = api.getChildren(parentId).map((c) => c.id)
   const frameIdx = siblings.indexOf(frameId)
-  const kids = api.getChildren(frameId).map((c) => c.id)
-  // Reparent each kid, then slide it into position just before the frame.
-  for (let i = 0; i < kids.length; i++) {
-    const kid = kids[i]!
-    api.appendChild(parentId, kid)
-    api.moveChild(parentId, kid, Math.max(0, frameIdx + i))
+  const children = api.getChildren(frameId)
+  const kids = children.map((child) => child.id)
+  if (kids.length === 0) {
+    api.deleteNode(frameId)
+    return []
   }
-  api.deleteNode(frameId)
+  const childBounds = getSelectionBounds(children, parentId, false)
+  const solved = getLastSolvedLayout()
+  const parentRect = solved?.[parentId] ?? { x: 0, y: 0 }
+  const frameRect = solved?.[frameId]
+  const frameRenderedOffsetX =
+    (frameRect ? frameRect.x - parentRect.x : 0) + frame.transform.x
+  const frameRenderedOffsetY =
+    (frameRect ? frameRect.y - parentRect.y : 0) + frame.transform.y
+
+  api.doc.transact(() => {
+    // Reparent each child at the frame's sibling slot and pin it to the exact
+    // rendered location it occupied inside the group. This keeps ungroup from
+    // teleporting layers, including when the outer parent uses flex/grid.
+    for (let i = 0; i < kids.length; i++) {
+      const kid = kids[i]!
+      const child = api.getNode(kid)
+      const rect = childBounds.rects[kid]
+      if (!child || !rect) continue
+      api.appendChild(parentId, kid)
+      api.moveChild(parentId, kid, Math.max(0, frameIdx + i))
+      api.setNodeProperty(kid, 'position', 'absolute')
+      api.setNodeProperty(kid, 'transform', {
+        ...child.transform,
+        x: rect.x + frame.transform.x,
+        y: rect.y + frame.transform.y,
+      })
+      shiftTransformTracks(
+        api,
+        kid,
+        frameRenderedOffsetX,
+        frameRenderedOffsetY,
+      )
+    }
+    api.deleteNode(frameId)
+  }, UNDOABLE_GESTURE_ORIGIN)
   return kids
+}
+
+function shiftTransformTracks(
+  api: SceneAPI,
+  nodeId: NodeId,
+  deltaX: number,
+  deltaY: number,
+): void {
+  if (Math.abs(deltaX) < 1e-9 && Math.abs(deltaY) < 1e-9) return
+  for (const track of api.getTracksForNode(nodeId)) {
+    const delta =
+      track.propertyId === 'transform.x'
+        ? deltaX
+        : track.propertyId === 'transform.y'
+          ? deltaY
+          : null
+    if (delta === null || Math.abs(delta) < 1e-9) continue
+    api.setTrack({
+      ...track,
+      keyframes: track.keyframes.map((keyframe) => ({
+        ...keyframe,
+        value:
+          typeof keyframe.value === 'number'
+            ? keyframe.value + delta
+            : keyframe.value,
+      })),
+    })
+  }
 }
 
 /**

@@ -60,20 +60,24 @@ export function DistanceOverlay({
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
   const [altDown, setAltDown] = useState(false)
-  const [pointer, setPointer] = useState<{ clientX: number; clientY: number } | null>(null)
   const hoverNodeRef = useRef<NodeId | null>(null)
   const [hoverNode, setHoverNode] = useState<NodeId | null>(null)
 
   // Track Alt globally. Using keydown/keyup on window avoids focus
   // issues (a form field having focus shouldn't disable measurements).
   useEffect(() => {
+    const clearMeasurement = () => {
+      setAltDown(false)
+      setHoverNode(null)
+      hoverNodeRef.current = null
+    }
     const down = (e: KeyboardEvent) => {
       if (e.key === 'Alt' || e.altKey) setAltDown(true)
     }
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'Alt' || !e.altKey) setAltDown(false)
+      if (e.key === 'Alt' || !e.altKey) clearMeasurement()
     }
-    const blur = () => setAltDown(false)
+    const blur = () => clearMeasurement()
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
@@ -88,14 +92,8 @@ export function DistanceOverlay({
   // don't need the pointer position, so we avoid the overhead of
   // storing it on every mouse twitch the rest of the time.
   useEffect(() => {
-    if (!altDown) {
-      setPointer(null)
-      setHoverNode(null)
-      hoverNodeRef.current = null
-      return
-    }
+    if (!altDown) return
     const move = (e: PointerEvent) => {
-      setPointer({ clientX: e.clientX, clientY: e.clientY })
       // Hit test — find the nearest [data-node-id] under the cursor.
       // Because this overlay is pointer-events:none, elementFromPoint
       // sees the node DOM directly.
@@ -133,7 +131,6 @@ export function DistanceOverlay({
   // Suppress the listed pointer position when it's not over the canvas
   // — avoids ghost hovers when Alt is held during a drag outside the
   // workspace (the pointer listener still fires globally).
-  void pointer
   void workspaceRef
   void view
 

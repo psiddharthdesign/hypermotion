@@ -8,7 +8,7 @@ import type {
   Track,
   TrackId,
 } from '@/scene/types'
-import { PROPERTIES } from '@/scene/props'
+import { propertyDescriptor } from '@/scene/props'
 import type { SceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { resolveStaggerKeyframeBundle } from './staggerSets'
@@ -337,7 +337,7 @@ function segmentEligibility(
   if (!start || !end || end.time <= start.time) {
     return { eligible: false, reason: 'endpoint' }
   }
-  const interpolation = PROPERTIES[track.propertyId]?.interpolation
+  const interpolation = propertyDescriptor(track.propertyId)?.interpolation
   const compatible =
     (interpolation === 'numeric' || interpolation === 'angle') &&
     typeof start.value === 'number' &&

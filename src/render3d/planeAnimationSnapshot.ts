@@ -23,6 +23,7 @@ const WORLD_PLANE_ANIMATION_PROPERTIES = [
   'anchorY',
   'anchorZ',
   'opacity',
+  'effectBlur',
 ] as const satisfies readonly (keyof AnimatedValue)[]
 
 const EMPTY_WORLD_PLANE_ANIMATION = Object.freeze({}) as Record<

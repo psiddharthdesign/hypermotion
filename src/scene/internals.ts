@@ -5,6 +5,7 @@ import * as Y from 'yjs'
 import { createSceneAPI, type SceneAPI } from '@/scene/doc'
 import { persistScene } from '@/scene/persistence'
 import { createSampleScene } from '@/scene/sample'
+import { getProjectAPI } from '@/project/doc'
 
 /**
  * Internal module-scope singletons for the scene layer.
@@ -70,6 +71,9 @@ export const apiReady: Promise<SceneAPI> = (
       if (!isRenderWindow && !api.getRoot()) {
         createSampleScene(api)
       }
+      if (!isRenderWindow) {
+        getProjectAPI(api).ensureInitialized()
+      }
       // Dev-only: expose the API on window so you can poke at the scene
       // from the DevTools console (e.g. `scene.setNodeProperty(id, 'layout', ...)`).
       // Vite strips `import.meta.env.DEV` to `false` in production, so this
@@ -84,13 +88,13 @@ export const apiReady: Promise<SceneAPI> = (
       // doesn't tolerate) silently rejects apiReady and the whole app
       // shows a blank screen because SceneProvider is stuck on its
       // fallback. Logging here lets the error reach devtools console.
-      // eslint-disable-next-line no-console
+
       console.error('[hyper-motion] failed to initialize scene API:', err)
       throw err
     }
   })
   .catch((err) => {
-    // eslint-disable-next-line no-console
+
     console.error('[hyper-motion] apiReady rejected:', err)
     throw err
   })
