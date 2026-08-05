@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { SquircleSurface } from './SquircleSurface'
 
 /**
  * Text input that commits on blur or Enter, cancels on Escape.
@@ -26,10 +27,6 @@ export function TextField({
   const [focused, setFocused] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (!focused) setDraft(value)
-  }, [value, focused])
-
   const commit = () => {
     if (!allowEmpty && draft.trim() === '') {
       setDraft(value)
@@ -39,36 +36,40 @@ export function TextField({
   }
 
   return (
-    <input
-      ref={ref}
-      type="text"
-      value={draft}
-      placeholder={placeholder}
-      onChange={(e) => setDraft(e.target.value)}
-      onFocus={(e) => {
-        setFocused(true)
-        e.currentTarget.select()
-      }}
-      onBlur={() => {
-        setFocused(false)
-        commit()
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          commit()
-          ref.current?.blur()
-        } else if (e.key === 'Escape') {
-          setDraft(value)
-          ref.current?.blur()
-        }
-      }}
+    <SquircleSurface
+      as="label"
+      radius={6}
       className={[
         width,
-        'min-w-0 h-7 rounded-md bg-app-bg px-2 text-left text-[12px] text-text outline-none',
-        'ring-1 ring-transparent transition-shadow',
-        'hover:ring-border focus:ring-2 focus:ring-accent/45',
+        'hm-control-surface hm-control-compact block min-w-0 h-7',
       ].join(' ')}
-    />
+    >
+      <input
+        ref={ref}
+        type="text"
+        value={focused ? draft : value}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => {
+          setFocused(true)
+          e.currentTarget.select()
+        }}
+        onBlur={() => {
+          setFocused(false)
+          commit()
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+            ref.current?.blur()
+          } else if (e.key === 'Escape') {
+            setDraft(value)
+            ref.current?.blur()
+          }
+        }}
+        className="h-full w-full min-w-0 bg-transparent px-3 text-left text-[12px] text-text outline-none"
+      />
+    </SquircleSurface>
   )
 }

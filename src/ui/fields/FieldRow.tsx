@@ -3,46 +3,63 @@
 import type { ReactNode } from 'react'
 
 /**
- * Standard three-column Inspector row: optional keyframe indicator, label,
- * and field.
+ * The Inspector's single field grammar from the reference panel:
+ * a quiet label line above the value, with an optional fixed keyframe column.
  *
- * Kept as its own component so every field (Number/Text/Select/...) gets
- * consistent spacing, label styling, and focus-within highlight without
- * each field re-rolling its own wrapper.
- *
- * Layout columns (left → right):
- *   1. `keyframe` — a tiny (~16px) slot for the Inspector's keyframe
- *      toggle diamond. Always reserved so every row aligns whether or
- *      not it carries a button; fields that aren't animatable just
- *      leave the slot empty.
- *   2. label     — the property name.
- *   3. children  — the actual field(s). Anything fits here — one input,
- *      a segmented control, a row of four padding cells.
- *
- * Voice (Framer-leaning): label is text-text-muted at 12px, sitting in an
- * 88px column. Field column is `flex-1` so multi-cell layouts (Width +
- * unit dropdown) get the full remaining width.
+ * Keyframeable rows share the same value / 28px action guide. Static rows use
+ * the full width instead of carrying a blank action column. Compound controls
+ * intentionally span the full second line.
  */
 export function FieldRow({
   label,
   children,
   keyframe,
+  reserveAction = false,
+  layout = 'inline',
 }: {
   label: string
   children: ReactNode
   keyframe?: ReactNode
+  /** Keep the 28px action guide aligned even when this row is static. */
+  reserveAction?: boolean
+  /** Wide compound controls span value + action while keeping the label grid. */
+  layout?: 'inline' | 'compound'
 }) {
+  const hasActionColumn = (keyframe || reserveAction) && layout !== 'compound'
   return (
-    <div className="flex items-center gap-1.5">
-      <div className="flex w-4 shrink-0 items-center justify-center">
-        {keyframe}
-      </div>
-      <span className="w-[88px] shrink-0 whitespace-nowrap text-[12px] text-text-muted">
+    <div
+      data-inspector-row="1"
+      className={[
+        'grid min-h-7 min-w-0 items-center gap-x-2 gap-y-1',
+        hasActionColumn
+          ? 'grid-cols-[minmax(0,1fr)_28px]'
+          : 'grid-cols-1',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'min-w-0 break-words pr-1 text-[10px] leading-4 text-text-muted',
+          hasActionColumn ? 'col-span-2' : '',
+        ].join(' ')}
+      >
         {label}
       </span>
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+      <div
+        data-inspector-value="1"
+        className="hm-inspector-value flex min-w-0 items-center gap-1.5"
+      >
         {children}
       </div>
+      {hasActionColumn ? (
+        <div
+          data-inspector-keyframe={keyframe ? '1' : undefined}
+          data-inspector-action="1"
+          aria-hidden={keyframe ? undefined : true}
+          className="flex h-7 w-7 items-center justify-center"
+        >
+          {keyframe}
+        </div>
+      ) : null}
     </div>
   )
 }

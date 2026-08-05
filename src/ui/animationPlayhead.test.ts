@@ -43,4 +43,32 @@ describe('currentAnimationAuthorTime', () => {
     ).toBe(3.75)
     expect(readEnginePlayhead).toHaveBeenCalledOnce()
   })
+
+  it('uses composition-local engine time in paused sequence preview', () => {
+    const readEnginePlayhead = vi.fn(() => 2.13)
+
+    expect(
+      currentAnimationAuthorTime(
+        {
+          playing: false,
+          playhead: 4.44,
+          previewScope: 'sequence',
+        },
+        readEnginePlayhead,
+      ),
+    ).toBe(2.13)
+    expect(readEnginePlayhead).toHaveBeenCalledOnce()
+  })
+
+  it('keeps paused scene preview on the UI playhead', () => {
+    const readEnginePlayhead = vi.fn(() => 9)
+
+    expect(
+      currentAnimationAuthorTime(
+        { playing: false, playhead: 1.25, previewScope: 'scene' },
+        readEnginePlayhead,
+      ),
+    ).toBe(1.25)
+    expect(readEnginePlayhead).not.toHaveBeenCalled()
+  })
 })

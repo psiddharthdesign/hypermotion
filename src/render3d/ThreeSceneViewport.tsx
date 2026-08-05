@@ -28,6 +28,7 @@ import {
   createTextMotionRailWorkspace,
   refreshTextMotionRailWorkspace,
   resolveTextMotionRailOffsets,
+  textMotionPathUsesSharedRail,
   type TextMotionRailSegment,
   type TextMotionRailWorkspace,
 } from '@/anim/textMotionRail'
@@ -40,6 +41,8 @@ import type { Rect, SolvedLayout } from '@/layout'
 import type {
   BlendMode,
   CameraNode,
+  Effect,
+  EllipseArc,
   Fill,
   GradientStop,
   Node,
@@ -56,7 +59,6 @@ import {
   depthBlurAmount,
   effectiveApertureStrength,
   resolveCamera3D,
-  textNodeNeedsSegmentPlane,
   type PlaneBuildContext,
   type PlaneClip3D,
   type Plane3D,
@@ -102,24 +104,41 @@ import {
 import {
   layoutCanvasTextAnimationSegments as computeCanvasTextAnimationSegments,
   layoutCanvasTextLines as computeCanvasTextLines,
+  trackedGlyphOffsets,
   type CanvasTextAnimationSegment,
   type CanvasTextLine,
 } from '@/render3d/textAnimationLayout'
 import { applyCanvasStrokePattern } from '@/render/strokePattern'
 import {
+  nodeEffectsWrapSubtree,
+  paintLayerWithEffects,
+  resolveAnimatedLayerEffects,
+} from '@/render/layerEffects'
+import {
+  resolveEllipseArc,
+  traceCanvasEllipseArc,
+} from '@/render/ellipseShape'
+import {
+  cornerShapePath,
+  needsCornerShapePath,
+  normalizeCornerSmoothing,
+  type CornerRadiiLike,
+} from '@/render/cornerShape'
+import {
   paintVectorNodeToCanvas,
   vectorTrimState,
 } from '@/render/vectorPaint'
-import {
-  isAlwaysOnTopNode,
-  layerRenderOrder,
-} from '@/render/layerCompositing'
+import { layerRenderOrder } from '@/render/layerCompositing'
 import {
   getPaperShaderSourceCanvas,
   paperShaderSourceEventName,
 } from '@/render/paperShaderSource'
 import { getPreservedVectorSource } from '@/render/vectorSource'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
+import {
+  getCachedTextureImage,
+  IMAGE_TEXTURE_LOADED_EVENT,
+} from '@/render3d/imageTextureCache'
 
 interface ThreeSceneViewportProps {
   api: SceneAPI
@@ -131,6 +150,11 @@ interface ThreeSceneViewportProps {
   height: number
   sceneFill: string | null
   selectedIds: NodeId[]
+  /**
+   * Temporarily suppress existing GPU planes while a focused DOM proxy paints
+   * those nodes. Visibility-only: the records and raster textures stay warm.
+   */
+  hiddenNodeIds?: readonly NodeId[]
   showHelpers?: boolean
   showPlanes?: boolean
   focusWorldPoint?: { x: number; y: number; z: number } | null
@@ -147,13 +171,16 @@ interface ThreeSceneViewportProps {
   texturePixelRatio?: number
   playing?: boolean
   playhead?: number
-  sceneVersion?: number
+  /** Invalidates the captured scene graph when roots or node topology change. */
+  sceneVersion: number
   onAvailabilityChange?: (available: boolean) => void
   /** Camera gesture/scrub is transient; keep GPU DOF on its realtime budget. */
   interactiveCameraPreview?: boolean
   /** Keep GPU resources mounted while suppressing all scene/post rendering. */
   suspended?: boolean
 }
+
+const EMPTY_HIDDEN_NODE_IDS: readonly NodeId[] = Object.freeze([])
 
 interface PlaneRecord {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
@@ -270,10 +297,8 @@ interface HelperBundle {
   marker: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
 }
 
-const IMAGE_TEXTURE_LOADED_EVENT = 'hypermotion:render3d-image-loaded'
 const RENDER3D_VIDEO_REGISTRY = '__hypermotionRender3dVideos'
 const EMPTY_PLANES: Plane3D[] = []
-const imageCache = new Map<string, HTMLImageElement>()
 const parsedCanvasColorCache = new Map<string, string | null>()
 const helperBundles = new WeakMap<THREE.Group, HelperBundle>()
 let canvasColorParserContext: CanvasRenderingContext2D | null | undefined
@@ -450,6 +475,7 @@ export function ThreeSceneViewport({
   height,
   sceneFill,
   selectedIds,
+  hiddenNodeIds = EMPTY_HIDDEN_NODE_IDS,
   showHelpers = true,
   showPlanes = true,
   focusWorldPoint = null,
@@ -459,7 +485,7 @@ export function ThreeSceneViewport({
   texturePixelRatio,
   playing = false,
   playhead = 0,
-  sceneVersion = 0,
+  sceneVersion,
   onAvailabilityChange,
   interactiveCameraPreview = false,
   suspended = false,
@@ -479,6 +505,7 @@ export function ThreeSceneViewport({
     planes: Plane3D[]
     animated: Record<NodeId, AnimatedValue>
     selectedIds: NodeId[]
+    hiddenNodeIds: readonly NodeId[]
     textureRevision: PlaneTextureRevision
     playing: boolean
     playhead: number
@@ -506,12 +533,16 @@ export function ThreeSceneViewport({
     textStaggerCurvePreviewStore.getRevision,
   )
 
+  const activeRootId = api.getRoot()
   const planeBuildContext = useMemo(() => {
     // Document transactions are the only way node/track topology changes.
     // Animation frames reuse this plain snapshot instead of decoding Yjs.
     void sceneVersion
+    // Root identity is also explicit so a composition switch remains safe if
+    // a future caller accidentally lags the broader document revision.
+    void activeRootId
     return createPlaneBuildContext(api)
-  }, [api, sceneVersion])
+  }, [api, sceneVersion, activeRootId])
 
   const selectWorldPlaneAnimation = useMemo(
     () => createWorldPlaneAnimationSelector(),
@@ -646,6 +677,7 @@ export function ThreeSceneViewport({
     if (webglUnavailable) return
     const host = hostRef.current
     if (!host) return
+    const planes = planesRef.current
     let renderer: THREE.WebGLRenderer
     try {
       renderer = new THREE.WebGLRenderer({
@@ -655,9 +687,12 @@ export function ThreeSceneViewport({
       })
     } catch (error) {
       console.warn('3D helper disabled: WebGL context creation failed.', error)
-      setWebglUnavailable(true)
       onAvailabilityChange?.(false)
-      return
+      const unavailableTimer = window.setTimeout(
+        () => setWebglUnavailable(true),
+        0,
+      )
+      return () => window.clearTimeout(unavailableTimer)
     }
     renderer.setPixelRatio(1)
     renderer.setSize(width, height, false)
@@ -686,14 +721,14 @@ export function ThreeSceneViewport({
       // not retain a full-resolution framebuffer chain.
       postEffectsRef.current?.dispose()
       postEffectsRef.current = null
-      for (const record of planesRef.current.values()) {
+      for (const record of planes.values()) {
         disposePlaneRecord(record)
         record.outline.geometry.dispose()
         ;(record.outline.material as THREE.Material).dispose()
       }
-      planesRef.current.clear()
+      planes.clear()
       planeSyncRef.current = null
-      publishRender3dVideos(planesRef.current)
+      publishRender3dVideos(planes)
       clearHelperGroup(helpers)
       renderer.dispose()
       // HMR and React development remounts can otherwise leave retired WebGL
@@ -779,6 +814,7 @@ export function ThreeSceneViewport({
       // buffers, material opacity, and canvas texture signatures stay exact.
       previousPlaneSync.animated !== animated ||
       previousPlaneSync.selectedIds !== selectedIds ||
+      previousPlaneSync.hiddenNodeIds !== hiddenNodeIds ||
       previousPlaneSync.textureRevision !== textureRevision ||
       previousPlaneSync.curvePreviewRevision !== curvePreviewRevision ||
       previousPlaneSync.showPlanes !== showPlanes ||
@@ -802,6 +838,7 @@ export function ThreeSceneViewport({
           layout,
           planes,
           selectedIds,
+          hiddenNodeIds,
           resolvedCamera,
           renderer,
           perspective,
@@ -826,6 +863,7 @@ export function ThreeSceneViewport({
       planes,
       animated,
       selectedIds,
+      hiddenNodeIds,
       textureRevision,
       playing,
       playhead,
@@ -920,6 +958,7 @@ export function ThreeSceneViewport({
     resolvedCamera,
     sceneFill,
     selectedIds,
+    hiddenNodeIds,
     showHelpers,
     showPlanes,
     focusWorldPoint,
@@ -1022,6 +1061,10 @@ function syncBackground(scene: THREE.Scene, sceneFill: string | null) {
 const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
   'cornerRadius',
   'fill',
+  'effectBlur',
+  'arcStart',
+  'arcSweep',
+  'arcInnerRadius',
   'textProgress',
 ])
 
@@ -1037,6 +1080,7 @@ const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
 function planeTextureAnimationSignature(
   context: PlaneBuildContext,
   plane: Plane3D,
+  emittedPlaneNodeIds: ReadonlySet<NodeId>,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
   playheadDrivenTextureRanges: ReadonlyMap<NodeId, PlayheadDrivenTextureRange>,
@@ -1045,17 +1089,7 @@ function planeTextureAnimationSignature(
   const visit = (id: NodeId, isRoot: boolean) => {
     const node = context.nodesById.get(id)
     if (!node) return
-    if (
-      !isRoot &&
-      ((!!node.parent &&
-        context.directVideoChildNodeIds.has(node.parent)) ||
-        context.segmentTextNodeIds.has(id) ||
-        isAlwaysOnTopNode(node) ||
-        node.transform.renderMode === 'plane' ||
-        node.transform.renderMode === 'group3d')
-    ) {
-      return
-    }
+    if (!isRoot && emittedPlaneNodeIds.has(id)) return
 
     const value = animated[id]
     if (value) {
@@ -1132,6 +1166,7 @@ function syncPlanes(
   layout: SolvedLayout,
   planes: Plane3D[],
   selectedIds: NodeId[],
+  hiddenNodeIds: readonly NodeId[],
   camera: ResolvedCamera3D,
   renderer: THREE.WebGLRenderer,
   perspective: THREE.PerspectiveCamera,
@@ -1147,6 +1182,8 @@ function syncPlanes(
 ) {
   const active = new Set<NodeId>()
   const selected = new Set(selectedIds)
+  const hidden = new Set(hiddenNodeIds)
+  const emittedPlaneNodeIds = new Set(planes.map((plane) => plane.nodeId))
   const apertureStrength = effectiveApertureStrength(
     camera.aperture,
     camera.fStop,
@@ -1226,6 +1263,7 @@ function syncPlanes(
         playhead,
         textureRevision,
         selected: selected.has(plane.nodeId),
+        hidden: hidden.has(plane.nodeId),
         apertureStrength,
         maximumBlurLevel,
         pointBlurLevel,
@@ -1240,13 +1278,17 @@ function syncPlanes(
       continue
     }
     const videoNode = plane.node.kind === 'video' ? plane.node : null
+    const textureRect = plane.textureRect ?? plane.rect
     const textureSignature = [
       plane.contentMode,
-      Number(plane.rect.width.toFixed(3)),
-      Number(plane.rect.height.toFixed(3)),
+      Number(textureRect.x.toFixed(3)),
+      Number(textureRect.y.toFixed(3)),
+      Number(textureRect.width.toFixed(3)),
+      Number(textureRect.height.toFixed(3)),
       planeTextureAnimationSignature(
         planeBuildContext,
         plane,
+        emittedPlaneNodeIds,
         animated,
         playhead,
         playheadDrivenTextureRanges,
@@ -1265,10 +1307,20 @@ function syncPlanes(
       textureSignature,
     )
     const canvas = needsCanvasRaster
-      ? renderPlaneCanvas(api, layout, plane, animated, playhead)
+      ? renderPlaneCanvas(
+          api,
+          layout,
+          plane,
+          emittedPlaneNodeIds,
+          animated,
+          playhead,
+        )
       : null
     if (!record) {
-      const geometry = new THREE.PlaneGeometry(plane.rect.width, plane.rect.height)
+      const geometry = new THREE.PlaneGeometry(
+        textureRect.width,
+        textureRect.height,
+      )
       const texture = videoNode
         ? createVideoTexture(createVideoElement(videoNode))
         : createPlaneTexture(canvas!, renderer)
@@ -1302,11 +1354,31 @@ function syncPlanes(
       records.set(plane.nodeId, record)
     } else {
       const current = (record.mesh.geometry as THREE.PlaneGeometry).parameters
-      if (current.width !== plane.rect.width || current.height !== plane.rect.height) {
+      if (
+        current.width !== textureRect.width ||
+        current.height !== textureRect.height
+      ) {
         record.mesh.geometry.dispose()
-        record.mesh.geometry = new THREE.PlaneGeometry(plane.rect.width, plane.rect.height)
+        record.mesh.geometry = new THREE.PlaneGeometry(
+          textureRect.width,
+          textureRect.height,
+        )
+      }
+      const outlineSize = record.outline.userData
+        .hyperMotionOutlineSize as
+        | { width: number; height: number }
+        | undefined
+      if (
+        !outlineSize ||
+        outlineSize.width !== plane.rect.width ||
+        outlineSize.height !== plane.rect.height
+      ) {
         record.outline.geometry.dispose()
         record.outline.geometry = makePlaneOutlineGeometry(plane.rect.width, plane.rect.height)
+        record.outline.userData.hyperMotionOutlineSize = {
+          width: plane.rect.width,
+          height: plane.rect.height,
+        }
       }
     }
     const material = record.mesh.material as THREE.MeshBasicMaterial
@@ -1314,8 +1386,8 @@ function syncPlanes(
       enabled: camera.depthOfField && apertureStrength > 0,
       blurPx: blur,
       minimumBlurPx: minimumBlur,
-      planeWidth: plane.rect.width,
-      planeHeight: plane.rect.height,
+      planeWidth: textureRect.width,
+      planeHeight: textureRect.height,
       focusMask,
       focusX: focusMask ? camera.focusScreen.x : 0,
       // gl_FragCoord uses a bottom-left origin; authored canvas coordinates
@@ -1370,7 +1442,7 @@ function syncPlanes(
       record.textureRevision = textureRevision
       record.textureSignature = textureSignature
     }
-    applyPlaneTransform(record.mesh, plane)
+    applyPlaneTextureTransform(record.mesh, plane)
     applyPlaneTransform(record.outline, plane)
     record.mesh.renderOrder = layerRenderOrder(plane.node, plane.paintOrder)
     record.outline.renderOrder = 100000 + plane.paintOrder
@@ -1384,8 +1456,9 @@ function syncPlanes(
     }
     syncMaterialClipping(record, plane)
     record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
-    record.mesh.visible = plane.node.visible
-    record.outline.visible = selected.has(plane.nodeId)
+    record.mesh.visible = plane.node.visible && !hidden.has(plane.nodeId)
+    record.outline.visible =
+      selected.has(plane.nodeId) && !hidden.has(plane.nodeId)
     // Keep the deterministic scene-data texture as the source of truth.
     // The DOM foreignObject snapshot path can drop nested text in Chrome
     // when the texture source lives under an invisible compositor source.
@@ -1417,6 +1490,7 @@ interface TextSegmentPlaneSyncOptions {
   playhead: number
   textureRevision: PlaneTextureRevision
   selected: boolean
+  hidden: boolean
   apertureStrength: number
   maximumBlurLevel: number
   pointBlurLevel: number
@@ -1445,6 +1519,7 @@ function syncTextSegmentPlane({
   playhead,
   textureRevision,
   selected,
+  hidden,
   apertureStrength,
   maximumBlurLevel,
   pointBlurLevel,
@@ -1752,8 +1827,8 @@ function syncTextSegmentPlane({
   )
   syncMaterialClipping(record, plane)
   record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
-  record.mesh.visible = plane.node.visible
-  record.outline.visible = selected
+  record.mesh.visible = plane.node.visible && !hidden
+  record.outline.visible = selected && !hidden
   return record
 }
 
@@ -2088,7 +2163,7 @@ function ensureWebGLTextMotionRailCache(
 ): WebGLTextMotionRailCache | null {
   if (
     !config?.motionPath ||
-    (config.applyTo !== 'letters' && config.applyTo !== 'words')
+    !textMotionPathUsesSharedRail(config.applyTo)
   ) {
     return null
   }
@@ -2868,18 +2943,15 @@ function paintTextSegmentAtlasCell(
       ctx.strokeStyle = stroke.color
       ctx.lineWidth = stroke.width
       applyCanvasStrokePattern(ctx, stroke)
-      roundedRectPath(
+      strokeCornerShape(
         ctx,
+        rect.width,
+        rect.height,
+        node.appearance.cornerRadius ?? 0,
+        node.appearance.cornerRadii,
+        appearanceCornerSmoothing(node),
         stroke.width / 2,
-        stroke.width / 2,
-        rect.width - stroke.width,
-        rect.height - stroke.width,
-        Math.max(
-          0,
-          (node.appearance.cornerRadius ?? 0) - stroke.width / 2,
-        ),
       )
-      ctx.stroke()
     }
   } else {
     configureCanvasTextContext(ctx, node)
@@ -3073,12 +3145,20 @@ function renderPlaneCanvas(
   api: SceneAPI,
   layout: SolvedLayout,
   plane: Plane3D,
+  emittedPlaneNodeIds: ReadonlySet<NodeId>,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
 ): HTMLCanvasElement {
-  return applyPlaneClipMask(
-    renderSharpPlaneCanvas(api, layout, plane, animated, playhead),
+  // Clipping is applied by the material's world-space clipping planes. Baking
+  // the same mask into this bitmap makes it move with an animated layer and
+  // permanently hides overflow that should scroll into the viewport.
+  return renderSharpPlaneCanvas(
+    api,
+    layout,
     plane,
+    emittedPlaneNodeIds,
+    animated,
+    playhead,
   )
 }
 
@@ -3086,109 +3166,54 @@ function renderSharpPlaneCanvas(
   api: SceneAPI,
   layout: SolvedLayout,
   plane: Plane3D,
+  emittedPlaneNodeIds: ReadonlySet<NodeId>,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
 ): HTMLCanvasElement {
   if (plane.contentMode === 'self') {
-    return renderPlaneTexture(plane.node, plane.rect, animated[plane.nodeId], playhead)
+    return renderPlaneTexture(
+      plane.node,
+      plane.rect,
+      animated[plane.nodeId],
+      playhead,
+      plane.textureRect ?? plane.rect,
+    )
   }
+  const textureRect = plane.textureRect ?? plane.rect
   return (
-    renderSubtreeTexture(api, layout, plane.nodeId, plane.rect, plane, animated, playhead) ??
-    renderPlaneTexture(plane.node, plane.rect, animated[plane.nodeId], playhead)
+    renderSubtreeTexture(
+      api,
+      layout,
+      plane.nodeId,
+      textureRect,
+      emittedPlaneNodeIds,
+      animated,
+      playhead,
+    ) ??
+    renderPlaneTexture(
+      plane.node,
+      plane.rect,
+      animated[plane.nodeId],
+      playhead,
+      plane.textureRect ?? plane.rect,
+    )
   )
-}
-
-function applyPlaneClipMask(canvas: HTMLCanvasElement, plane: Plane3D): HTMLCanvasElement {
-  if (!plane.clips?.length) return canvas
-  const scale = Number(canvas.dataset.textureScale || '1') || 1
-  const maskPolygon = clippedPlaneLocalPolygon(plane)
-  if (maskPolygon.length < 3) {
-    const empty = document.createElement('canvas')
-    empty.width = canvas.width
-    empty.height = canvas.height
-    empty.dataset.textureScale = String(scale)
-    return empty
-  }
-  const output = document.createElement('canvas')
-  output.width = canvas.width
-  output.height = canvas.height
-  output.dataset.textureScale = String(scale)
-  const ctx = output.getContext('2d')
-  if (!ctx) return canvas
-  ctx.drawImage(canvas, 0, 0)
-  ctx.globalCompositeOperation = 'destination-in'
-  ctx.beginPath()
-  maskPolygon.forEach((point, index) => {
-    const x = point.x * scale
-    const y = point.y * scale
-    if (index === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  })
-  ctx.closePath()
-  ctx.fillStyle = '#000'
-  ctx.fill()
-  ctx.globalCompositeOperation = 'source-over'
-  return output
-}
-
-interface LocalPoint2D {
-  x: number
-  y: number
-}
-
-function clippedPlaneLocalPolygon(plane: Plane3D): LocalPoint2D[] {
-  let polygon: LocalPoint2D[] = [
-    { x: 0, y: 0 },
-    { x: plane.rect.width, y: 0 },
-    { x: plane.rect.width, y: plane.rect.height },
-    { x: 0, y: plane.rect.height },
-  ]
-  for (const clip of plane.clips ?? []) {
-    for (const boundary of clippingPlanesForClip(clip)) {
-      polygon = clipLocalPolygonByWorldPlane(polygon, plane, boundary)
-      if (polygon.length < 3) return []
-    }
-  }
-  return polygon
-}
-
-function clipLocalPolygonByWorldPlane(
-  polygon: LocalPoint2D[],
-  plane: Plane3D,
-  boundary: THREE.Plane,
-): LocalPoint2D[] {
-  const next: LocalPoint2D[] = []
-  for (let i = 0; i < polygon.length; i++) {
-    const current = polygon[i]!
-    const previous = polygon[(i + polygon.length - 1) % polygon.length]!
-    const currentDistance = boundary.distanceToPoint(localPlanePointToWorld(plane, current))
-    const previousDistance = boundary.distanceToPoint(localPlanePointToWorld(plane, previous))
-    const currentInside = currentDistance >= -0.001
-    const previousInside = previousDistance >= -0.001
-
-    if (currentInside !== previousInside) {
-      const denom = previousDistance - currentDistance
-      const t = Math.abs(denom) < 0.0001 ? 0 : previousDistance / denom
-      next.push({
-        x: previous.x + (current.x - previous.x) * t,
-        y: previous.y + (current.y - previous.y) * t,
-      })
-    }
-    if (currentInside) next.push(current)
-  }
-  return next
-}
-
-function localPlanePointToWorld(plane: Plane3D, point: LocalPoint2D): THREE.Vector3 {
-  const right = toThreeVector(plane.right).normalize()
-  const down = toThreeVector(plane.down).normalize()
-  return toThreeVector(plane.center)
-    .addScaledVector(right, (point.x - plane.rect.width / 2) * plane.scaleX)
-    .addScaledVector(down, (point.y - plane.rect.height / 2) * plane.scaleY)
 }
 
 function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
   object.position.set(plane.center.x, plane.center.y, plane.center.z)
+  object.rotation.set(
+    THREE.MathUtils.degToRad(plane.rotation.x),
+    THREE.MathUtils.degToRad(plane.rotation.y),
+    THREE.MathUtils.degToRad(plane.rotation.z),
+    'XYZ',
+  )
+  object.scale.set(plane.scaleX, plane.scaleY, 1)
+}
+
+function applyPlaneTextureTransform(object: THREE.Object3D, plane: Plane3D) {
+  const textureCenter = plane.textureCenter ?? plane.center
+  object.position.set(textureCenter.x, textureCenter.y, textureCenter.z)
   object.rotation.set(
     THREE.MathUtils.degToRad(plane.rotation.x),
     THREE.MathUtils.degToRad(plane.rotation.y),
@@ -3254,12 +3279,17 @@ function applyMaterialBlendMode(
 
 function syncMaterialClipping(record: PlaneRecord, plane: Plane3D) {
   const signature = clippingSignatureForPlane(plane)
-  if (record.clipSignature === signature) return
   const material = record.mesh.material
+  // A clip rectangle is the intersection of its four inward half-spaces, so
+  // fragments outside *any* boundary must be discarded. In Three.js that is
+  // the default union-clipping mode (`clipIntersection = false`); setting it
+  // true discards only fragments outside every boundary at once, which cannot
+  // correctly form a box.
+  if (record.clipSignature === signature && !material.clipIntersection) return
   const previousCount = material.clippingPlanes?.length ?? 0
   const clippingPlanes = clippingPlanesForPlane(plane)
   material.clippingPlanes = clippingPlanes
-  material.clipIntersection = true
+  material.clipIntersection = false
   record.clipSignature = signature
   if (previousCount !== (clippingPlanes?.length ?? 0)) {
     material.needsUpdate = true
@@ -3486,54 +3516,28 @@ function renderPlaneTexture(
   rect: Rect,
   anim: AnimatedValue | undefined,
   playhead: number,
+  textureRect: Rect = rect,
 ): HTMLCanvasElement {
   const w = Math.max(1, Math.ceil(rect.width))
   const h = Math.max(1, Math.ceil(rect.height))
-  const scale = textureScaleForRect(rect)
+  const canvasWidth = Math.max(1, Math.ceil(textureRect.width))
+  const canvasHeight = Math.max(1, Math.ceil(textureRect.height))
+  const scale = textureScaleForRect(textureRect)
   const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.ceil(w * scale))
-  canvas.height = Math.max(1, Math.ceil(h * scale))
+  canvas.width = Math.max(1, Math.ceil(canvasWidth * scale))
+  canvas.height = Math.max(1, Math.ceil(canvasHeight * scale))
   canvas.dataset.textureScale = String(scale)
   const ctx = canvas.getContext('2d')!
   ctx.scale(scale, scale)
-  ctx.clearRect(0, 0, w, h)
-  if (node.kind === 'vector') {
-    paintVectorLayerToCanvas(ctx, node, w, h)
-    return canvas
-  }
-  const cornerRadius =
-    node.kind === 'ellipse'
-      ? Math.min(w, h) / 2
-      : Math.max(0, Math.min(node.appearance.cornerRadius ?? 0, Math.min(w, h) / 2))
-  withRoundedClip(ctx, w, h, cornerRadius, () => {
-    paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
-    if (node.kind === 'image' && node.src) {
-      paintImageNode(ctx, node, w, h)
-    }
-    if (node.kind === 'shader') {
-      paintPaperShaderNode(ctx, node, w, h)
-    }
-  })
-  if (node.kind === 'text') {
-    paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
-  }
-  const stroke = node.appearance.stroke
-  if (stroke && stroke.width > 0) {
-    ctx.save()
-    ctx.strokeStyle = stroke.color
-    ctx.lineWidth = stroke.width
-    applyCanvasStrokePattern(ctx, stroke)
-    roundedRectPath(
-      ctx,
-      stroke.width / 2,
-      stroke.width / 2,
-      w - stroke.width,
-      h - stroke.width,
-      Math.max(0, cornerRadius - stroke.width / 2),
-    )
-    ctx.stroke()
-    ctx.restore()
-  }
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight)
+  ctx.translate(rect.x - textureRect.x, rect.y - textureRect.y)
+  renderNodePaint(
+    ctx,
+    node,
+    { x: 0, y: 0, width: w, height: h },
+    anim,
+    playhead,
+  )
   return canvas
 }
 
@@ -3542,7 +3546,7 @@ function renderSubtreeTexture(
   layout: SolvedLayout,
   rootId: NodeId,
   rootRect: Rect,
-  rootPlane?: Plane3D,
+  emittedPlaneNodeIds: ReadonlySet<NodeId> = new Set(),
   animated: Record<NodeId, AnimatedValue> = {},
   playhead = 0,
 ): HTMLCanvasElement | null {
@@ -3558,73 +3562,81 @@ function renderSubtreeTexture(
   if (!ctx) return null
   ctx.scale(scale, scale)
   ctx.clearRect(0, 0, width, height)
-  const paint = (id: NodeId, context: SubtreeTransformContext) => {
+  const paint = (
+    target: CanvasRenderingContext2D,
+    id: NodeId,
+    context: SubtreeTransformContext,
+  ) => {
     const node = api.getNode(id)
     const rect = layout[id]
     if (!node || !rect || node.kind === 'camera' || !node.visible) return
-    if (id !== rootId && rootPlane && shouldSkipExtractedVideoStackNode(api, rootPlane, id)) {
-      return
-    }
-    const extracted3D = id !== rootId && isExtractable3DNode(api, id, rootId, node)
-    if (extracted3D) return
+    if (id !== rootId && emittedPlaneNodeIds.has(id)) return
     const applyOwnTransform = id !== rootId
     const inherited = subtreeInheritedForNode(rect, context)
-    paintNodeIntoSubtree(
-      ctx,
-      node,
-      rect,
-      rootRect,
-      animated[id],
-      playhead,
-      applyOwnTransform,
-      inherited,
+    const resolvedEffects = resolveAnimatedLayerEffects(
+      node.appearance.effects,
+      animated[id]?.effectBlur,
     )
-    const childContext = subtreeChildContext(node, rect, context, animated[id], applyOwnTransform)
-    if (node.kind === 'frame' && node.clipsContent) {
-      withNodeClipInSubtree(ctx, node, rect, rootRect, animated[id], applyOwnTransform, inherited, () => {
-        for (const child of node.children) paint(child, childContext)
-      })
+
+    const paintNodeAndChildren = (
+      layer: CanvasRenderingContext2D,
+      effects: readonly Effect[] | null | undefined = resolvedEffects,
+    ) => {
+      paintNodeIntoSubtree(
+        layer,
+        node,
+        rect,
+        rootRect,
+        animated[id],
+        playhead,
+        applyOwnTransform,
+        inherited,
+        effects,
+      )
+      const childContext = subtreeChildContext(
+        node,
+        rect,
+        context,
+        animated[id],
+        applyOwnTransform,
+      )
+      if (node.kind === 'frame' && node.clipsContent) {
+        withNodeClipInSubtree(
+          layer,
+          node,
+          rect,
+          rootRect,
+          animated[id],
+          applyOwnTransform,
+          inherited,
+          () => {
+            for (const child of node.children) paint(layer, child, childContext)
+          },
+        )
+        return
+      }
+      for (const child of node.children) paint(layer, child, childContext)
+    }
+
+    if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
+      // A frame is a compositing group. Rasterize its complete clipped subtree
+      // first, then apply the frame's effect stack to that result. Previously
+      // only the frame fill was blurred/shadowed and its children were painted
+      // afterward, so blur appeared to do nothing on transparent frames.
+      paintLayerWithEffects(
+        target,
+        width,
+        height,
+        resolvedEffects,
+        (source) => paintNodeAndChildren(source, []),
+      )
       return
     }
-    for (const child of node.children) paint(child, childContext)
+
+    paintNodeAndChildren(target)
   }
-  paint(rootId, IDENTITY_SUBTREE_TRANSFORM)
+  paint(ctx, rootId, IDENTITY_SUBTREE_TRANSFORM)
   return canvas
-}
-
-function shouldSkipExtractedVideoStackNode(
-  api: SceneAPI,
-  rootPlane: Plane3D,
-  id: NodeId,
-): boolean {
-  const node = api.getNode(id)
-  if (!node?.parent) return false
-  if (!isDescendantOf(api, id, rootPlane.nodeId)) return false
-  const parent = api.getNode(node.parent)
-  if (!parent) return false
-  return parent.children.some((childId) => api.getNode(childId)?.kind === 'video')
-}
-
-function isDescendantOf(api: SceneAPI, id: NodeId, ancestorId: NodeId): boolean {
-  let current = api.getNode(id)
-  while (current?.parent) {
-    if (current.parent === ancestorId) return true
-    current = api.getNode(current.parent)
-  }
-  return false
-}
-
-function isExtractable3DNode(
-  api: SceneAPI,
-  id: NodeId,
-  rootId: NodeId,
-  node: Node,
-): boolean {
-  void rootId
-  if (textNodeNeedsSegmentPlane(api, id)) return true
-  if (isAlwaysOnTopNode(node)) return true
-  const renderMode = node.transform.renderMode ?? 'flat'
-  return renderMode === 'plane' || renderMode === 'group3d'
 }
 
 function subtreeInheritedForNode(
@@ -3735,6 +3747,10 @@ function paintNodeIntoSubtree(
   playhead: number,
   applyOwnTransform = true,
   inherited: SubtreeTransformContext = IDENTITY_SUBTREE_TRANSFORM,
+  effects: readonly Effect[] | null | undefined = resolveAnimatedLayerEffects(
+    node.appearance.effects,
+    anim?.effectBlur,
+  ),
 ) {
   const x = rect.x - rootRect.x
   const y = rect.y - rootRect.y
@@ -3765,7 +3781,7 @@ function paintNodeIntoSubtree(
   ctx.translate(-w / 2, -h / 2)
   const localRect = { x: 0, y: 0, width: w, height: h }
   const nodeForPaint = node
-  renderNodePaint(ctx, nodeForPaint, localRect, anim, playhead)
+  renderNodePaint(ctx, nodeForPaint, localRect, anim, playhead, effects)
   ctx.globalCompositeOperation = previousComposite
   ctx.restore()
 }
@@ -3813,6 +3829,10 @@ function withNodeClipInSubtree(
     node.kind === 'ellipse'
       ? Math.min(w, h) / 2
       : Math.max(0, Math.min(anim?.cornerRadius ?? node.appearance.cornerRadius ?? 0, Math.min(w, h) / 2))
+  const cornerRadii =
+    node.kind === 'ellipse' ? undefined : node.appearance.cornerRadii
+  const cornerSmoothing =
+    node.kind === 'ellipse' ? 0 : appearanceCornerSmoothing(node)
   const currentTransform = ctx.getTransform()
   ctx.save()
   const tx = applyOwnTransform ? anim?.x ?? node.transform.x : 0
@@ -3824,14 +3844,55 @@ function withNodeClipInSubtree(
   const inheritedRotation = inherited.rotation + rot
   if (inheritedRotation !== 0) ctx.rotate(THREE.MathUtils.degToRad(inheritedRotation))
   ctx.scale(inherited.scaleX * scaleX, inherited.scaleY * scaleY)
-  roundedRectPath(ctx, -w / 2, -h / 2, w, h, cornerRadius)
-  ctx.clip()
+  if (node.kind === 'ellipse') {
+    clipEllipseShape(
+      ctx,
+      -w / 2,
+      -h / 2,
+      w,
+      h,
+      resolveEllipseArc(node.arc, anim),
+    )
+  } else {
+    clipCornerShape(
+      ctx,
+      -w / 2,
+      -h / 2,
+      w,
+      h,
+      cornerRadius,
+      cornerRadii,
+      cornerSmoothing,
+    )
+  }
   ctx.setTransform(currentTransform)
   paint()
   ctx.restore()
 }
 
 function renderNodePaint(
+  ctx: CanvasRenderingContext2D,
+  node: Node,
+  rect: Rect,
+  anim: AnimatedValue | undefined,
+  playhead: number,
+  effects: readonly Effect[] | null | undefined = resolveAnimatedLayerEffects(
+    node.appearance.effects,
+    anim?.effectBlur,
+  ),
+) {
+  const w = Math.max(1, rect.width)
+  const h = Math.max(1, rect.height)
+  paintLayerWithEffects(
+    ctx,
+    w,
+    h,
+    effects,
+    (source) => paintNodeSource(source, node, rect, anim, playhead),
+  )
+}
+
+function paintNodeSource(
   ctx: CanvasRenderingContext2D,
   node: Node,
   rect: Rect,
@@ -3847,12 +3908,41 @@ function renderNodePaint(
   const cornerRadius =
     node.kind === 'ellipse'
       ? Math.min(w, h) / 2
-      : Math.max(0, Math.min(node.appearance.cornerRadius ?? 0, Math.min(w, h) / 2))
-  withRoundedClip(ctx, w, h, cornerRadius, () => {
+      : Math.max(
+          0,
+          Math.min(
+            anim?.cornerRadius ?? node.appearance.cornerRadius ?? 0,
+            Math.min(w, h) / 2,
+          ),
+        )
+  const cornerRadii =
+    node.kind === 'ellipse' ? undefined : node.appearance.cornerRadii
+  const cornerSmoothing =
+    node.kind === 'ellipse' ? 0 : appearanceCornerSmoothing(node)
+  const paintContent = () => {
     paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
     if (node.kind === 'image' && node.src) paintImageNode(ctx, node, w, h)
     if (node.kind === 'shader') paintPaperShaderNode(ctx, node, w, h)
-  })
+  }
+  if (node.kind === 'ellipse') {
+    withEllipseClip(
+      ctx,
+      w,
+      h,
+      resolveEllipseArc(node.arc, anim),
+      paintContent,
+    )
+  } else {
+    withRoundedClip(
+      ctx,
+      w,
+      h,
+      cornerRadius,
+      paintContent,
+      cornerRadii,
+      cornerSmoothing,
+    )
+  }
   if (node.kind === 'text') {
     paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
   }
@@ -3862,15 +3952,25 @@ function renderNodePaint(
     ctx.strokeStyle = stroke.color
     ctx.lineWidth = stroke.width
     applyCanvasStrokePattern(ctx, stroke)
-    roundedRectPath(
-      ctx,
-      stroke.width / 2,
-      stroke.width / 2,
-      w - stroke.width,
-      h - stroke.width,
-      Math.max(0, cornerRadius - stroke.width / 2),
-    )
-    ctx.stroke()
+    if (node.kind === 'ellipse') {
+      strokeEllipseShape(
+        ctx,
+        w,
+        h,
+        resolveEllipseArc(node.arc, anim),
+        stroke.width / 2,
+      )
+    } else {
+      strokeCornerShape(
+        ctx,
+        w,
+        h,
+        cornerRadius,
+        cornerRadii,
+        cornerSmoothing,
+        stroke.width / 2,
+      )
+    }
     ctx.restore()
   }
 }
@@ -4055,9 +4155,20 @@ function parseCanvasSolidColor(css: string): string | null {
     parsedCanvasColorCache.set(value, value)
     return value
   }
+  ctx.clearRect(0, 0, 1, 1)
   ctx.fillStyle = '#000000'
   ctx.fillStyle = value
-  const parsed = ctx.fillStyle
+  ctx.fillRect(0, 0, 1, 1)
+  // Canvas retains modern inputs such as `oklch(...)` in fillStyle, while
+  // Three's color parser does not understand that syntax. Sampling the
+  // painted pixel converts every browser-supported solid color to sRGB.
+  // Emit hex rather than modern space-separated rgb(): the pinned Three.js
+  // parser accepts legacy comma rgb() only and otherwise silently leaves the
+  // background at its previous color.
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+  const parsed = `#${[r, g, b]
+    .map((channel) => channel.toString(16).padStart(2, '0'))
+    .join('')}`
   parsedCanvasColorCache.set(value, parsed)
   return parsed
 }
@@ -4111,16 +4222,141 @@ function roundedRectPath(
   ctx.closePath()
 }
 
+function clipEllipseShape(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  arc: EllipseArc,
+) {
+  traceCanvasEllipseArc(ctx, x, y, width, height, arc)
+  ctx.clip()
+}
+
+function strokeEllipseShape(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  arc: EllipseArc,
+  inset = 0,
+) {
+  traceCanvasEllipseArc(ctx, 0, 0, width, height, arc, inset)
+  ctx.stroke()
+}
+
+function appearanceCornerSmoothing(node: Node): number {
+  return normalizeCornerSmoothing(node.appearance.cornerSmoothing)
+}
+
+/**
+ * Clip with the established quadratic path unless continuous/per-corner
+ * geometry is actually required. The translate/inverse-translate pair keeps
+ * the clip in the caller's transformed coordinate system without restoring
+ * (and therefore accidentally discarding) the new clipping region.
+ */
+function clipCornerShape(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  cornerRadii?: CornerRadiiLike,
+  cornerSmoothing: unknown = 0,
+) {
+  if (!needsCornerShapePath(cornerSmoothing, cornerRadii)) {
+    roundedRectPath(ctx, x, y, width, height, radius)
+    ctx.clip()
+    return
+  }
+
+  const path = new Path2D(
+    cornerShapePath({
+      width,
+      height,
+      cornerRadius: radius,
+      cornerRadii,
+      cornerSmoothing,
+    }),
+  )
+  ctx.translate(x, y)
+  ctx.clip(path)
+  ctx.translate(-x, -y)
+}
+
+/** Paint a stroke on the same path used by the fill/clip. */
+function strokeCornerShape(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  radius: number,
+  cornerRadii?: CornerRadiiLike,
+  cornerSmoothing: unknown = 0,
+  inset = 0,
+) {
+  if (!needsCornerShapePath(cornerSmoothing, cornerRadii)) {
+    roundedRectPath(
+      ctx,
+      inset,
+      inset,
+      width - inset * 2,
+      height - inset * 2,
+      Math.max(0, radius - inset),
+    )
+    ctx.stroke()
+    return
+  }
+
+  const path = new Path2D(
+    cornerShapePath({
+      width,
+      height,
+      cornerRadius: radius,
+      cornerRadii,
+      cornerSmoothing,
+      inset,
+    }),
+  )
+  ctx.save()
+  ctx.translate(inset, inset)
+  ctx.stroke(path)
+  ctx.restore()
+}
+
 function withRoundedClip(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   radius: number,
   paint: () => void,
+  cornerRadii?: CornerRadiiLike,
+  cornerSmoothing: unknown = 0,
 ) {
   ctx.save()
-  roundedRectPath(ctx, 0, 0, width, height, radius)
-  ctx.clip()
+  clipCornerShape(
+    ctx,
+    0,
+    0,
+    width,
+    height,
+    radius,
+    cornerRadii,
+    cornerSmoothing,
+  )
+  paint()
+  ctx.restore()
+}
+
+function withEllipseClip(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  arc: EllipseArc,
+  paint: () => void,
+) {
+  ctx.save()
+  clipEllipseShape(ctx, 0, 0, width, height, arc)
   paint()
   ctx.restore()
 }
@@ -4468,7 +4704,7 @@ function resolveCanvasTextMotionRailOffsets(
 ): Float64Array | null {
   if (
     !config.motionPath ||
-    (config.applyTo !== 'letters' && config.applyTo !== 'words')
+    !textMotionPathUsesSharedRail(config.applyTo)
   ) {
     return null
   }
@@ -4546,6 +4782,7 @@ function layoutCanvasTextAnimationSegments(
     maxWidth,
     lineHeightPx,
     align,
+    tracking,
     measure: (value) => measureCanvasTextWidth(ctx, value, tracking),
   })
 }
@@ -4787,19 +5024,23 @@ function paintTrackedText(
   lineHeight: number,
 ) {
   const lineHeightPx = Math.max(1, fontSize * lineHeight)
-  let cursorX = x
   let lineTop = y
-  let cursorY = canvasTextBaseline(ctx, lineTop, fontSize, lineHeight)
-  for (const char of Array.from(text)) {
-    if (char === '\n') {
-      cursorX = x
+  const lines = text.split('\n')
+  lines.forEach((line, lineIndex) => {
+    const characters = Array.from(line)
+    const offsets = trackedGlyphOffsets(
+      line,
+      tracking,
+      (value) => ctx.measureText(value).width,
+    )
+    const baseline = canvasTextBaseline(ctx, lineTop, fontSize, lineHeight)
+    characters.forEach((character, index) => {
+      ctx.fillText(character, x + offsets[index]!, baseline)
+    })
+    if (lineIndex < lines.length - 1) {
       lineTop += lineHeightPx
-      cursorY = canvasTextBaseline(ctx, lineTop, fontSize, lineHeight)
-      continue
     }
-    ctx.fillText(char, cursorX, cursorY)
-    cursorX += ctx.measureText(char).width + tracking
-  }
+  })
 }
 
 function paintText(
@@ -5040,21 +5281,4 @@ function paintVectorLayerToCanvas(
     }
   }
   paintVectorNodeToCanvas(ctx, node, width, height, trim)
-}
-
-function getCachedTextureImage(src: string): HTMLImageElement {
-  const cached = imageCache.get(src)
-  if (cached) return cached
-  const image = new Image()
-  image.crossOrigin = 'anonymous'
-  image.decoding = 'async'
-  image.onload = () => {
-    window.dispatchEvent(new Event(IMAGE_TEXTURE_LOADED_EVENT))
-  }
-  image.onerror = () => {
-    window.dispatchEvent(new Event(IMAGE_TEXTURE_LOADED_EVENT))
-  }
-  image.src = src
-  imageCache.set(src, image)
-  return image
 }

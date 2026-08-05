@@ -103,6 +103,71 @@ test('create_scene description keeps camera nodes optional', () => {
   assert.doesNotMatch(description, /Include exactly one 'camera' kind node/)
 })
 
+test('create_scene description documents editable ellipse arcs', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /arc: \{ startAngle, sweep, innerRadius \}/)
+  assert.match(description, /startAngle is expressed in degrees/)
+  assert.match(description, /sweep and innerRadius are ratios in 0\.\.1/)
+  for (const propertyId of [
+    'shape.arcStart',
+    'shape.arcSweep',
+    'shape.arcInnerRadius',
+  ]) {
+    assert.match(description, new RegExp(propertyId.replaceAll('.', '\\.')))
+  }
+})
+
+test('create_scene description documents multi-camera ownership and timed cuts', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  assert.match(description, /supports multiple camera nodes per scene/)
+  assert.match(description, /cameraIds/)
+  assert.match(description, /defaultCameraId/)
+  assert.match(description, /cameraCuts/)
+  assert.match(description, /\{ id, cameraId, time \}/)
+  assert.match(description, /\(time, id\)/)
+  assert.doesNotMatch(description, /supports only one camera node/)
+})
+
+test('create_scene description documents multi-scene sequence authoring', () => {
+  const description = createSceneTool.description
+  if (typeof description !== 'string') {
+    throw new Error('create_scene description is missing')
+  }
+
+  for (const field of [
+    'compositionScenes',
+    'sequenceItems',
+    'sequenceOrder',
+    'activeCompositionId',
+    'sequenceSchemaVersion',
+    'rootNodeId',
+    'workspaceNodeIds',
+    'transitionOut',
+    'masterAudioMuted',
+  ]) {
+    assert.match(description, new RegExp(field))
+  }
+  assert.match(description, /project-global nodes\/tracks/)
+  assert.match(description, /workspaceOnly: true/)
+  assert.match(description, /preserved when a composition is deleted/)
+  assert.match(description, /schema-v2 project/)
+  assert.match(description, /list_scenes/)
+  assert.match(description, /get_sequence/)
+  assert.match(description, /Master-audio gain follows/)
+  assert.match(description, /parentless audio node is a Master-owned soundtrack/)
+  assert.match(description, /Scene-local overlay/)
+  assert.match(description, /masterStart \+ sceneTime - sourceStart/)
+  assert.match(description, /beat\/bar guides stay visible/)
+})
+
 test('create_scene description lists supported transform property ids', () => {
   const description = createSceneTool.description
   if (typeof description !== 'string') {

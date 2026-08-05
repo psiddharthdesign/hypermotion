@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadYoga, type Node as YogaNode, type Yoga } from 'yoga-layout/load'
-import type { Node as SceneNode, NodeId, SizeAxis } from '@/scene'
+import type { Node as SceneNode, NodeId, SizeAxis } from '@/scene/types'
 import type { SceneAPI } from '@/scene/doc'
 import { applyChildLayoutForParent, applyNodeStyle } from '@/layout/mapper'
 import type { ContainerSize, Rect, SolvedLayout } from '@/layout/types'
@@ -50,7 +50,11 @@ export function solveLayout(
 
   const build = (id: NodeId, knownInnerWidth: number | null): YogaNode | null => {
     const node = api.getNode(id)
-    if (!node) return null
+    // Hidden layers behave like `display: none`, not `visibility: hidden`.
+    // Keeping them in Yoga made invisible flow children reserve space and
+    // shift every visible sibling. Returning before creating a Yoga node also
+    // drops the entire hidden subtree from layout, rendering, and hit testing.
+    if (!node || !node.visible) return null
 
     const yNode = yoga.Node.create()
     created.push(yNode)
@@ -63,11 +67,14 @@ export function solveLayout(
     // we can. Grid cell math needs a concrete number; flex and none
     // don't care. Rules: if the container's declared width is a number,
     // use it; if not and we inherited a known width from the caller,
-    // pass it through; otherwise null (hug / fill parents). Padding is
-    // always subtracted.
+    // pass it through; otherwise null (hug / fill parents). Flow padding is
+    // subtracted for flex/grid; None-mode children see the full parent box.
     let innerWidth: number | null = null
     if (parentLayout) {
-      const pad = parentLayout.padding.left + parentLayout.padding.right
+      const pad =
+        parentLayout.mode === 'none'
+          ? 0
+          : parentLayout.padding.left + parentLayout.padding.right
       if ('size' in node && typeof node.size.width === 'number') {
         innerWidth = Math.max(0, node.size.width - pad)
       } else if (knownInnerWidth !== null) {
@@ -75,7 +82,7 @@ export function solveLayout(
       }
     }
 
-    const children = api.getChildren(id)
+    const children = api.getChildren(id).filter((child) => child.visible)
     children.forEach((child, i) => {
       // For children: we pass the parent's inner width as the child's
       // "known outer width" floor — it can further narrow to its own
@@ -101,7 +108,7 @@ export function solveLayout(
     return yNode
   }
 
-  const yRoot = build(rootId)
+  const yRoot = build(rootId, null)
   if (!yRoot) return out
 
   // The scene root IS the artboard, so it fills the visible box. A
@@ -134,7 +141,9 @@ export function solveLayout(
     const rect: Rect = { x, y, width, height }
     out[sceneId] = rect
 
-    const children = api.getChildren(sceneId)
+    // `build` inserts only visible children, so the scene/Yoga indexes must
+    // use the same filtered list during the result walk.
+    const children = api.getChildren(sceneId).filter((child) => child.visible)
     children.forEach((child, i) => {
       walk(yNode.getChild(i), child.id, x, y)
     })
@@ -168,7 +177,9 @@ function measureAbsoluteChildren(
   api: SceneAPI,
   parentId: NodeId,
 ): { width: number; height: number } | null {
-  const children = api.getChildren(parentId)
+  // Hidden absolute children must not keep a hug-sized component expanded.
+  // This mirrors the main Yoga tree's display-none visibility semantics.
+  const children = api.getChildren(parentId).filter((child) => child.visible)
   if (children.length === 0) return null
   let maxX = 0
   let maxY = 0

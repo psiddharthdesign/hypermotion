@@ -5,6 +5,11 @@ import { createSceneAPI, snapshotScene, type SceneAPI } from '@/scene/doc'
 import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
 import { migrateCursorComponents } from '@/scene/builtins/migrateCursorComponent'
 import type { NodeId, Scene } from '@/scene/types'
+import type {
+  CameraCut,
+  CompositionScene,
+  SequenceItem,
+} from '@/sequence/types'
 
 /**
  * `.hype` file format — version 1.
@@ -200,7 +205,8 @@ export function sceneToJsonString(api: SceneAPI): string {
  * supplied and need not match the IDs the SceneAPI mints. We walk
  * the tree, call `api.createNode` (which generates a real ID), and
  * thread the agent's references through an `idMap` so parent links,
- * `activeCameraId`, and per-track `nodeId` all translate.
+ * `root`, `activeCameraId`, per-track `nodeId`, and composition
+ * root/camera/cut references all translate.
  *
  * Walk order is topological — parentless nodes (root + camera) first,
  * then their children breadth-first — so every `createNode` call sees
@@ -221,6 +227,7 @@ export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
     for (const id of api.getAllNodeIds()) {
       api.deleteNode(id)
     }
+    clearProjectSequenceState(doc.getMap<unknown>('scene'))
   })
 
   // Apply meta (canvas size, duration, framerate, name). setMeta does
@@ -286,6 +293,35 @@ export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
     }
   }
 
+  // Component links are project-global node references, just like parents and
+  // cameras. They can only be translated after every parentless workspace
+  // component and every composition subtree has received its fresh local id.
+  for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
+    const realId = idMap.get(agentId)
+    if (!realId) continue
+    if (typeof node.componentSourceId === 'string') {
+      const componentSourceId = idMap.get(node.componentSourceId)
+      if (componentSourceId) {
+        api.setNodeProperty(realId, 'componentSourceId', componentSourceId)
+      }
+    }
+    if (node.kind === 'instance' && typeof node.componentId === 'string') {
+      const componentId = idMap.get(node.componentId)
+      if (componentId) {
+        api.setNodeProperty(realId, 'componentId', componentId)
+      }
+    }
+  }
+
+  // With multiple compositions there can be several parentless frame nodes.
+  // createNode chooses the first as the legacy root, which may not be the
+  // composition that was active when the snapshot was taken. Restore the
+  // explicit root reference after every node has received its translated id.
+  const mappedRootId = idMap.get(json.root)
+  if (mappedRootId) {
+    doc.getMap<unknown>('scene').set('root', mappedRootId)
+  }
+
   // Set active camera if the JSON named one (and it was created).
   if (json.activeCameraId) {
     const realCamId = idMap.get(json.activeCameraId)
@@ -308,6 +344,150 @@ export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
     api.setSection(section)
   }
 
+  doc.transact(() => {
+    applyProjectSequenceState(
+      doc.getMap<unknown>('scene'),
+      json,
+      idMap,
+    )
+  })
+
   migrateCursorComponents(doc)
   return api
+}
+
+/**
+ * Clear first-class project state without replacing existing Y collections.
+ * ProjectAPI instances close over these maps/arrays, just like SceneAPI closes
+ * over nodes and tracks, so preserving collection identity is required when a
+ * file is applied into an already-open editor.
+ */
+function clearProjectSequenceState(scene: Y.Map<unknown>): void {
+  for (const key of ['compositionScenes', 'sequenceItems'] as const) {
+    const value = scene.get(key)
+    if (value instanceof Y.Map) {
+      for (const id of [...value.keys()]) value.delete(id)
+    } else {
+      scene.delete(key)
+    }
+  }
+  const sequenceOrder = scene.get('sequenceOrder')
+  if (sequenceOrder instanceof Y.Array) {
+    sequenceOrder.delete(0, sequenceOrder.length)
+  } else {
+    scene.delete('sequenceOrder')
+  }
+  scene.delete('activeCompositionId')
+  scene.delete('sequenceSchemaVersion')
+}
+
+function applyProjectSequenceState(
+  scene: Y.Map<unknown>,
+  json: Scene,
+  idMap: ReadonlyMap<string, NodeId>,
+): void {
+  const hasProjectState =
+    json.compositionScenes !== undefined ||
+    json.sequenceItems !== undefined ||
+    json.sequenceOrder !== undefined ||
+    json.activeCompositionId !== undefined ||
+    json.sequenceSchemaVersion !== undefined
+  if (!hasProjectState) return
+
+  if (json.compositionScenes !== undefined) {
+    const target = ensureProjectMap<CompositionScene>(
+      scene,
+      'compositionScenes',
+    )
+    for (const [id, composition] of Object.entries(
+      json.compositionScenes,
+    )) {
+      const translated = translateCompositionScene(composition, idMap)
+      if (translated) target.set(id, translated)
+    }
+  }
+
+  if (json.sequenceItems !== undefined) {
+    const target = ensureProjectMap<SequenceItem>(scene, 'sequenceItems')
+    for (const [id, item] of Object.entries(json.sequenceItems)) {
+      target.set(id, clonePlainValue(item))
+    }
+  }
+
+  if (json.sequenceOrder !== undefined) {
+    const target = ensureProjectArray<string>(scene, 'sequenceOrder')
+    if (json.sequenceOrder.length > 0) {
+      target.push([...json.sequenceOrder])
+    }
+  }
+
+  if (json.activeCompositionId !== undefined) {
+    scene.set('activeCompositionId', json.activeCompositionId)
+  }
+  if (json.sequenceSchemaVersion !== undefined) {
+    scene.set('sequenceSchemaVersion', json.sequenceSchemaVersion)
+  }
+}
+
+function translateCompositionScene(
+  composition: CompositionScene,
+  idMap: ReadonlyMap<string, NodeId>,
+): CompositionScene | null {
+  const rootNodeId = idMap.get(composition.rootNodeId)
+  if (!rootNodeId) return null
+
+  const cameraIds = (composition.cameraIds ?? [])
+    .map((cameraId) => idMap.get(cameraId))
+    .filter((cameraId): cameraId is NodeId => cameraId !== undefined)
+  const workspaceNodeIds = (composition.workspaceNodeIds ?? [])
+    .map((nodeId) => idMap.get(nodeId))
+    .filter((nodeId): nodeId is NodeId => nodeId !== undefined)
+  const defaultCameraId = composition.defaultCameraId === null
+    ? null
+    : idMap.get(composition.defaultCameraId) ?? null
+  const cameraCuts: Record<string, CameraCut> = {}
+  for (const [id, cut] of Object.entries(composition.cameraCuts ?? {})) {
+    const cameraId = idMap.get(cut.cameraId)
+    if (!cameraId) continue
+    cameraCuts[id] = {
+      ...clonePlainValue(cut),
+      cameraId,
+    }
+  }
+
+  return {
+    ...clonePlainValue(composition),
+    rootNodeId,
+    workspaceNodeIds,
+    cameraIds,
+    defaultCameraId,
+    cameraCuts,
+  }
+}
+
+function ensureProjectMap<T>(
+  scene: Y.Map<unknown>,
+  key: string,
+): Y.Map<T> {
+  const existing = scene.get(key)
+  if (existing instanceof Y.Map) return existing as Y.Map<T>
+  const created = new Y.Map<T>()
+  scene.set(key, created)
+  return created
+}
+
+function ensureProjectArray<T>(
+  scene: Y.Map<unknown>,
+  key: string,
+): Y.Array<T> {
+  const existing = scene.get(key)
+  if (existing instanceof Y.Array) return existing as Y.Array<T>
+  const created = new Y.Array<T>()
+  scene.set(key, created)
+  return created
+}
+
+function clonePlainValue<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  return JSON.parse(JSON.stringify(value)) as T
 }

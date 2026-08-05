@@ -28,7 +28,7 @@ export function ColorField({
   onCommit: (next: string | null) => void
 }) {
   const [open, setOpen] = useState(false)
-  const anchorRef = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
 
   // Browser EyeDropper API (Chromium-only). Returns sRGB hex; we
   // convert through OKLab to OKLCH so the committed color lives in the
@@ -74,9 +74,11 @@ export function ColorField({
         <EyedropperGlyph />
       </button>
       <button
-        ref={anchorRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={(event) => {
+          setAnchor(event.currentTarget)
+          setOpen((o) => !o)
+        }}
         className="h-5 w-5 shrink-0 rounded border border-border hover:border-border-strong"
         style={{
           background: value ?? undefined,
@@ -91,7 +93,7 @@ export function ColorField({
           value={value}
           onCommit={(next) => onCommit(next)}
           onClose={() => setOpen(false)}
-          anchor={anchorRef.current}
+          anchor={anchor}
         />
       )}
     </div>

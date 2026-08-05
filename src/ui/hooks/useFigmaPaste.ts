@@ -5,11 +5,13 @@ import { useSceneAPI } from '@/scene'
 import { useUI } from '@/state/ui'
 import {
   FIGMA_PAYLOAD_LEGACY_VERSION,
+  FIGMA_PAYLOAD_VECTOR_VERSION,
   FIGMA_PAYLOAD_VERSION,
   importFigmaPayload,
   parseFigmaPayload,
 } from '@/import/figma'
 import { useToast } from '@/ui/toastStore'
+import { resolveFigmaImportRoot } from './figmaImportRoot'
 
 export const FIGMA_PASTE_TEXT_EVENT = 'hypermotion:figma-paste-text'
 
@@ -49,6 +51,7 @@ export function useFigmaPaste() {
           const versionMismatch =
             typeof copiedVersion === 'number' &&
             copiedVersion !== FIGMA_PAYLOAD_LEGACY_VERSION &&
+            copiedVersion !== FIGMA_PAYLOAD_VECTOR_VERSION &&
             copiedVersion !== FIGMA_PAYLOAD_VERSION
               ? `The Figma plugin copied version ${copiedVersion}, but this Hyper Motion build cannot read it. Update or rebuild Hyper Motion, then paste again.`
               : 'The copied data is incomplete. Copy the selection again in Figma, then paste here.'
@@ -61,12 +64,13 @@ export function useFigmaPaste() {
         }
         return false
       }
-      const rootId = api.getRoot()
+      const rootId = resolveFigmaImportRoot(api)
       if (!rootId) {
         showToast({
           tone: 'error',
           title: "Couldn't paste from Figma",
-          description: 'The scene is still loading. Wait a moment, then paste again.',
+          description:
+            'The active scene has no available canvas. Reopen the scene, then paste again.',
         })
         return true
       }
@@ -81,11 +85,21 @@ export function useFigmaPaste() {
       // clipboard payload performs its synchronous scene transaction.
       window.requestAnimationFrame(() => {
         try {
+          const liveRootId = resolveFigmaImportRoot(api)
+          if (!liveRootId) {
+            showToast({
+              tone: 'error',
+              title: "Couldn't paste from Figma",
+              description:
+                'The active scene changed before the import started. Select a scene, then paste again.',
+            })
+            return
+          }
           console.log(
             `[figma-import] received payload — ${payload.nodes.length} root nodes, ` +
               `${Object.keys(payload.assets).length} assets`,
           )
-          const ids = importFigmaPayload(payload, api, rootId)
+          const ids = importFigmaPayload(payload, api, liveRootId)
           console.log(
             `[figma-import] created ${ids.length} top-level node(s):`,
             ids,

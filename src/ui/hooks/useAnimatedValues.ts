@@ -3,12 +3,17 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import type {
   BlendMode,
+  FlexDirection,
   NodeId,
   SceneAPI,
   VariantSelection,
 } from '@/scene'
 import { getAnimEngine } from '@/anim'
 import type { TextAnimationConfig } from '@/anim'
+import {
+  nodeTransformPreviewStore,
+  type NodeTransformPreviewSnapshot,
+} from '@/ui/nodeTransformPreviewStore'
 
 /**
  * Per-node animated value bundle produced by the anim engine each tick.
@@ -41,6 +46,19 @@ export interface AnimatedValue {
   cornerRadius?: number
   fill?: string
   blendMode?: BlendMode
+  /** Per-effect blur overrides keyed by the effect row's stable id. */
+  effectBlur?: Record<string, number>
+  arcStart?: number
+  arcSweep?: number
+  arcInnerRadius?: number
+  width?: number
+  height?: number
+  layoutDirection?: FlexDirection
+  layoutGap?: number
+  layoutPaddingTop?: number
+  layoutPaddingRight?: number
+  layoutPaddingBottom?: number
+  layoutPaddingLeft?: number
   textProgress?: number
   textAnimation?: TextAnimationConfig
   motionPathProgress?: number
@@ -85,6 +103,99 @@ const EMPTY_ANIMATED_VALUES = Object.freeze({}) as Record<
 >
 const subscribeToNothing = () => () => {}
 const getZeroPlaybackClock = () => 0
+
+function sameTransformPreview(
+  left: AnimatedValue | undefined,
+  right: AnimatedValue | undefined,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  const leftKeys = Object.keys(left) as (keyof AnimatedValue)[]
+  const rightKeys = Object.keys(right) as (keyof AnimatedValue)[]
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every((key) => Object.is(left[key], right[key]))
+}
+
+export function createTransformPreviewSnapshotSelector(
+  nodeIds: readonly NodeId[],
+) {
+  const selectedIds = [...nodeIds]
+  let previousSource: NodeTransformPreviewSnapshot | null = null
+  let previousSelection = EMPTY_ANIMATED_VALUES
+
+  return (
+    source: NodeTransformPreviewSnapshot,
+  ): Record<NodeId, AnimatedValue> => {
+    if (source === previousSource) return previousSelection
+    previousSource = source
+
+    const next: Record<NodeId, AnimatedValue> = {}
+    for (const id of selectedIds) {
+      const value = source[id]
+      if (value) next[id] = value
+    }
+    const nextIds = Object.keys(next)
+    if (nextIds.length === 0) {
+      previousSelection = EMPTY_ANIMATED_VALUES
+      return previousSelection
+    }
+
+    const previousIds = Object.keys(previousSelection)
+    if (
+      previousIds.length === nextIds.length &&
+      nextIds.every((id) =>
+        sameTransformPreview(previousSelection[id], next[id]),
+      )
+    ) {
+      return previousSelection
+    }
+
+    previousSelection = next
+    return previousSelection
+  }
+}
+
+export function mergeTransformPreviews(
+  animated: Record<NodeId, AnimatedValue>,
+  previews: Record<NodeId, AnimatedValue>,
+): Record<NodeId, AnimatedValue> {
+  if (Object.keys(previews).length === 0) return animated
+  const merged = { ...animated }
+  for (const [nodeId, preview] of Object.entries(previews)) {
+    const base = animated[nodeId]
+    merged[nodeId] = {
+      ...base,
+      ...preview,
+      ...(base?.effectBlur || preview.effectBlur
+        ? {
+            effectBlur: {
+              ...base?.effectBlur,
+              ...preview.effectBlur,
+            },
+          }
+        : {}),
+    }
+  }
+  return merged
+}
+
+export function useNodeTransformPreviews(
+  nodeIds: NodeId[],
+): Record<NodeId, AnimatedValue> {
+  const selectPreviewSnapshot = useMemo(
+    () => createTransformPreviewSnapshotSelector(nodeIds),
+    [nodeIds],
+  )
+  const getSelectedPreviewSnapshot = useMemo(
+    () => () => selectPreviewSnapshot(nodeTransformPreviewStore.getSnapshot()),
+    [selectPreviewSnapshot],
+  )
+  return useSyncExternalStore(
+    nodeTransformPreviewStore.subscribe,
+    getSelectedPreviewSnapshot,
+    getSelectedPreviewSnapshot,
+  )
+}
 
 function sameAnimatedValue(
   left: AnimatedValue | undefined,
@@ -162,10 +273,15 @@ export function useAnimatedValues(
     () => () => selectSnapshot(engine.getSnapshot()),
     [engine, selectSnapshot],
   )
-  return useSyncExternalStore(
+  const engineValues = useSyncExternalStore(
     engine.subscribe,
     getSelectedSnapshot,
     getSelectedSnapshot,
+  )
+  const previewValues = useNodeTransformPreviews(nodeIds)
+  return useMemo(
+    () => mergeTransformPreviews(engineValues, previewValues),
+    [engineValues, previewValues],
   )
 }
 

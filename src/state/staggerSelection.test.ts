@@ -15,6 +15,7 @@ describe('local stagger timeline selection', () => {
       staggerOn: false,
       staggerDelay: 0.1,
       activeStaggerSetId: null,
+      staggerDraftLayerIds: [],
       selectedStaggerSetId: null,
       selection: [],
       selectedTrackIds: [],
@@ -33,14 +34,28 @@ describe('local stagger timeline selection', () => {
   })
 
   it('creates an explicit armed draft session for immediate UI feedback', () => {
+    useUI.getState().setSelection(['card-a', 'card-b', 'card-c'])
     useUI.getState().setStaggerOn(true)
 
     expect(useUI.getState().staggerOn).toBe(true)
     expect(useUI.getState().activeStaggerSetId).toMatch(/^stagger_/)
+    expect(useUI.getState().staggerDraftLayerIds).toEqual([
+      'card-a',
+      'card-b',
+      'card-c',
+    ])
     expect(useUI.getState().selectedStaggerSetId).toBeNull()
+
+    useUI.getState().setSelection(['card-b'])
+    expect(useUI.getState().staggerDraftLayerIds).toEqual([
+      'card-a',
+      'card-b',
+      'card-c',
+    ])
 
     useUI.getState().setStaggerOn(false)
     expect(useUI.getState().activeStaggerSetId).toBeNull()
+    expect(useUI.getState().staggerDraftLayerIds).toEqual([])
   })
 
   it('activates the selected relationship explicitly and preserves selection on exit', () => {
@@ -49,6 +64,7 @@ describe('local stagger timeline selection', () => {
 
     expect(useUI.getState().staggerOn).toBe(true)
     expect(useUI.getState().activeStaggerSetId).toBe('cards')
+    expect(useUI.getState().staggerDraftLayerIds).toEqual([])
     expect(useUI.getState().selectedStaggerSetId).toBe('cards')
     expect(useUI.getState().staggerDelay).toBe(0.18)
 
@@ -94,7 +110,7 @@ describe('local stagger timeline selection', () => {
       selectedTrackIds: [],
       selectedTrackId: null,
       selectedKeyframes: [],
-      inspectorMode: 'animate',
+      inspectorMode: 'properties',
     })
 
     useUI.getState().setSelection([])
@@ -104,5 +120,31 @@ describe('local stagger timeline selection', () => {
 
     expect(toggleStaggerSetEditing(api, 'cards')).toBe('deactivated')
     expect(useUI.getState().staggerOn).toBe(false)
+  })
+
+  it('keeps Animate explicit across layer, track, keyframe, stagger, and sequence selection', () => {
+    const expectPropertiesAfter = (select: () => void) => {
+      useUI.getState().setInspectorMode('animate')
+      select()
+      expect(useUI.getState().inspectorMode).toBe('properties')
+    }
+
+    expectPropertiesAfter(() => useUI.getState().setSelection(['node']))
+    expectPropertiesAfter(() =>
+      useUI.getState().toggleInSelection('second-node', true),
+    )
+    expectPropertiesAfter(() =>
+      useUI.getState().setSelectedTrackIds(['track']),
+    )
+    expectPropertiesAfter(() => useUI.getState().setSelectedTrackId('track'))
+    expectPropertiesAfter(() =>
+      useUI.getState().setSelectedKeyframes(['track:keyframe']),
+    )
+    expectPropertiesAfter(() =>
+      useUI.getState().setSelectedStaggerSetId('cards'),
+    )
+    expectPropertiesAfter(() =>
+      useUI.getState().setSelectedSequenceItem('item', 'composition'),
+    )
   })
 })

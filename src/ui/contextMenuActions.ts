@@ -9,6 +9,7 @@ import {
   instantiateComponent,
   ungroupFrame,
   wrapInAutoLayout,
+  wrapInGroup,
   wrapInGrid,
 } from '@/ui/actions'
 
@@ -32,14 +33,30 @@ export function buildNodeContextMenu(
 
   const nodes = ids.map((id) => api.getNode(id)).filter((n) => n !== null)
   const allSameParent =
+    nodes.length === ids.length &&
     nodes.length > 0 &&
-    nodes.every((n) => n!.parent === nodes[0]!.parent && n!.parent !== null)
+    nodes.every(
+      (n) =>
+        n!.parent === nodes[0]!.parent &&
+        n!.parent !== null &&
+        n!.kind !== 'camera',
+    )
   const singleFrame =
     ids.length === 1 && nodes[0] && nodes[0].kind === 'frame'
       ? nodes[0]
       : null
 
   const items: ContextMenuItem[] = []
+
+  items.push({
+    label: 'Wrap in group',
+    shortcut: '⌘G',
+    disabled: !allSameParent,
+    onClick: () => {
+      const newId = wrapInGroup(api, ids)
+      if (newId) useUI.getState().setSelection([newId])
+    },
+  })
 
   // Wrap in auto layout — requires 1+ nodes with a common parent.
   items.push({
@@ -66,7 +83,10 @@ export function buildNodeContextMenu(
   // has a parent. Matches Figma's Cmd+Shift+G ergonomics.
   if (singleFrame && singleFrame.parent) {
     items.push({
-      label: 'Remove auto layout',
+      label:
+        singleFrame.layout.mode === 'none'
+          ? 'Ungroup'
+          : 'Remove auto layout',
       shortcut: '⇧⌘G',
       onClick: () => {
         const kids = ungroupFrame(api, singleFrame.id)

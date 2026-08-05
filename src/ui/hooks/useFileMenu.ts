@@ -28,6 +28,8 @@ declare global {
   interface Window {
     hypermotion?: {
       clipboard?: {
+        readTextSync?: () => string
+        writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
         readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>

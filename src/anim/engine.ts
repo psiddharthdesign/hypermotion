@@ -2,6 +2,7 @@
 
 import type {
   BlendMode,
+  FlexDirection,
   NodeId,
   PropertyId,
   Track,
@@ -10,7 +11,10 @@ import type {
   VariantSelection,
 } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
-import { PROPERTIES } from '@/scene/props'
+import {
+  effectIdFromBlurPropertyId,
+  propertyDescriptor,
+} from '@/scene/props'
 import { findCursorComponent } from '@/scene/builtins/cursorComponent'
 import { CURSOR_STATES } from '@/scene/builtins/cursorAssets'
 import { lerpOklchStrings } from './color'
@@ -37,10 +41,9 @@ import type { TextAnimationConfig } from './textAnimations'
  *
  * What the engine does NOT do:
  *   - Mutate the scene tree per frame.
- *   - Trigger Yoga resolves per frame. Layout-property keyframes
- *     (gap, padding, direction) will go through a FLIP pass added in
- *     a follow-up; for MVP only the transform/opacity properties are
- *     live, which never require a relayout.
+ *   - Own layout. Width/height, gap, padding, and direction snapshots are
+ *     consumed by the layout hook, with a rect-only fast path for
+ *     free-positioned size-only leaves.
  *
  * Lifecycle: `getAnimEngine()` returns a module-scope singleton that
  * binds to the scene when `attach()` is called. The rAF loop starts
@@ -89,6 +92,22 @@ export interface AnimatedValue {
   fill?: string
   /** Discrete override for `node.appearance.blendMode`. */
   blendMode?: BlendMode
+  /** Per-effect blur overrides keyed by the effect row's stable id. */
+  effectBlur?: Record<string, number>
+  /** Editable ellipse geometry overrides. */
+  arcStart?: number
+  arcSweep?: number
+  arcInnerRadius?: number
+  /** Numeric layout-size overrides evaluated from size.width/size.height. */
+  width?: number
+  height?: number
+  /** Layout-container overrides consumed by the shared Yoga solve. */
+  layoutDirection?: FlexDirection
+  layoutGap?: number
+  layoutPaddingTop?: number
+  layoutPaddingRight?: number
+  layoutPaddingBottom?: number
+  layoutPaddingLeft?: number
   /** 0→1 progress for text-specific animation effects. */
   textProgress?: number
   /** Text effect config attached to the active text.progress track. */
@@ -571,7 +590,7 @@ function applyTrack(
   }
   const span = b.time - a.time
   const rawU = span <= 0 ? 0 : (t - a.time) / span
-  const descriptor = PROPERTIES[track.propertyId]
+  const descriptor = propertyDescriptor(track.propertyId)
   if (descriptor?.interpolation === 'discrete') {
     // State-like properties change exactly on the destination keyframe.
     // Their value must not jump early if a user applies an overshooting
@@ -596,9 +615,9 @@ function applyTrack(
     // Colour-interpolated properties get OKLCH perceptual tween. We
     // check via the registry rather than sniffing by property name so
     // any future `color`-interpolation property picks this up for
-    // free. If the OKLCH parse fails on either endpoint (e.g. a hex
-    // that snuck in from an import), fall through to step so the
-    // animation still advances — a hard stop at u<1 / end at u=1.
+    // free. Imported hexadecimal endpoints are normalized into OKLCH by the
+    // interpolator. Truly unsupported formats still fall through to step so
+    // the animation advances — a hard stop at u<1 / end at u=1.
     if (descriptor?.interpolation === 'color') {
       const tween = lerpOklchStrings(av, bv, u)
       writeProperty(track.propertyId, tween ?? (u < 1 ? av : bv), into)
@@ -673,7 +692,8 @@ function applyTextProgressTrack(
  * Post-layout numeric and color properties are applied directly here.
  * Cursor variant selections are retained as semantic values and expanded
  * into their materialized state children after the ordinary tracks resolve.
- * Other layout-affecting values remain inert until the generic FLIP pass.
+ * Layout-affecting values are retained as read-only overrides for useLayout's
+ * shared Yoga pass; the authored scene document is never changed per frame.
  */
 function writeProperty(
   id: PropertyId,
@@ -695,7 +715,16 @@ function writeProperty(
     if (selection) into.variant = selection
     return
   }
+  if (id === 'layout.direction') {
+    if (value === 'row' || value === 'column') into.layoutDirection = value
+    return
+  }
   if (typeof value !== 'number') return
+  const effectId = effectIdFromBlurPropertyId(id)
+  if (effectId) {
+    ;(into.effectBlur ??= {})[effectId] = value
+    return
+  }
   // REPLACE semantics — a track's keyframe value is the absolute value
   // the rendered property should take on at that instant. Composition
   // happens at the render layer: `animated.x ?? static.x`.
@@ -738,6 +767,36 @@ function writeProperty(
       break
     case 'appearance.cornerRadius':
       into.cornerRadius = value
+      break
+    case 'shape.arcStart':
+      into.arcStart = value
+      break
+    case 'shape.arcSweep':
+      into.arcSweep = value
+      break
+    case 'shape.arcInnerRadius':
+      into.arcInnerRadius = value
+      break
+    case 'size.width':
+      into.width = Math.max(0, value)
+      break
+    case 'size.height':
+      into.height = Math.max(0, value)
+      break
+    case 'layout.gap':
+      into.layoutGap = Math.max(0, value)
+      break
+    case 'layout.padding.top':
+      into.layoutPaddingTop = Math.max(0, value)
+      break
+    case 'layout.padding.right':
+      into.layoutPaddingRight = Math.max(0, value)
+      break
+    case 'layout.padding.bottom':
+      into.layoutPaddingBottom = Math.max(0, value)
+      break
+    case 'layout.padding.left':
+      into.layoutPaddingLeft = Math.max(0, value)
       break
     case 'text.progress':
       into.textProgress = value
@@ -841,7 +900,7 @@ function writeProperty(
     case 'camera.vhsColorBleed':
       into.vhsColorBleed = value
       break
-    // Other PropertyIds ignored for MVP (layout goes through FLIP).
+    // Other PropertyIds are not represented by AnimatedValue yet.
     default:
       break
   }

@@ -48,11 +48,22 @@ import type {
 } from '@/anim'
 import { EasingPicker } from '@/ui/EasingPicker'
 import { GraphEditor } from '@/ui/GraphEditor'
-import { NumberField } from '@/ui/fields'
+import {
+  FieldRow,
+  NumberField,
+  SquircleSurface,
+  TimeField,
+} from '@/ui/fields'
+import {
+  resolveCursorVariantKeyframeSelection,
+  setSelectedCursorVariantKeyframeState,
+} from '@/ui/cursorVariantKeyframeEditing'
+import type { CursorVariantKeyframeSelection } from '@/ui/cursorVariantKeyframeEditing'
 import {
   currentAnimationAuthorTime,
   pausedInspectorPlayhead,
 } from '@/ui/animationPlayhead'
+import { selectTextAnimationTrackForAuthoring } from '@/ui/textAnimationTrackSelection'
 import {
   StaggerCurveEditor,
   StaggerCurveMini,
@@ -202,7 +213,7 @@ export function PresetsPanel() {
       )
     }
     return (
-      <div className="rounded border border-border bg-panel-raised p-3 text-text-muted">
+      <div className="rounded-md bg-app-bg p-3 text-text-muted shadow-[var(--shadow-control)]">
         <div className="text-[12px]">Nothing selected</div>
         <div className="mt-1 text-[11px] text-text-dim">
           Select one or more layers or keyframe sets to add animation presets.
@@ -307,6 +318,10 @@ export function PresetsPanel() {
     trackIds: selectedTrackIds,
     nodeIds: targets,
   })
+  const cursorVariantSelection = resolveCursorVariantKeyframeSelection(
+    api,
+    selectedKeyframes,
+  )
   const savedTimingPreset = timingSummary.commonPreset
   const pickerPresetId =
     !timingSummary.mixed && savedTimingPreset
@@ -318,7 +333,16 @@ export function PresetsPanel() {
     !timingSummary.mixed && savedTimingPreset
       ? savedTimingPreset.strength
       : easingStrength
-  const timelineTimingCard = hasTimelineTimingSelection ? (
+  const cursorVariantCard = cursorVariantSelection ? (
+    <CursorVariantKeyframeEditor
+      selection={cursorVariantSelection}
+      onChange={(state) =>
+        setSelectedCursorVariantKeyframeState(api, selectedKeyframes, state)
+      }
+    />
+  ) : null
+  const timelineTimingCard =
+    hasTimelineTimingSelection && !cursorVariantSelection ? (
     <EasingPicker
       title={
         timingSummary.scope === 'keyframes'
@@ -360,10 +384,9 @@ export function PresetsPanel() {
       title="Layer animation"
       summary={layerSummary}
       open={openSections.layer}
-      primary={!hasTextSelection}
       onToggle={() => toggleSection('layer')}
     >
-      <div className="rounded-md border border-border bg-panel-raised">
+      <div className="overflow-hidden rounded-md bg-app-bg shadow-[var(--shadow-control)]">
         <div className="flex items-center gap-2 p-2.5">
           <div className="min-w-0 flex-1">
             <div className="font-mono text-[13px] text-text tabular-nums">
@@ -431,7 +454,7 @@ export function PresetsPanel() {
 
       <button
         onClick={clearAll}
-        className="w-full rounded border border-border bg-panel px-3 py-2 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
+        className="hm-control-surface h-7 w-full px-3 text-[11px] text-text-muted hover:text-text"
       >
         {selection.length > 1
           ? 'Clear layer animation on selected layers'
@@ -444,7 +467,6 @@ export function PresetsPanel() {
       title="Text animation"
       summary={textSummary}
       open={openSections.text}
-      primary={hasTextSelection}
       onToggle={() => toggleSection('text')}
     >
       <TextAnimationPanel playhead={playhead} />
@@ -452,13 +474,14 @@ export function PresetsPanel() {
   ) : null
 
   return (
-    <div className="space-y-2" data-timeline-selection-surface="1">
+    <div className="space-y-4" data-timeline-selection-surface="1">
       {selectedStaggerSetId ? (
         <StaggerGroupPanel
           key={selectedStaggerSetId}
           setId={selectedStaggerSetId}
         />
       ) : null}
+      {cursorVariantCard}
       {timelineTimingCard}
       {hasTextSelection ? (
         <>
@@ -475,54 +498,93 @@ export function PresetsPanel() {
   )
 }
 
+function CursorVariantKeyframeEditor({
+  selection,
+  onChange,
+}: {
+  selection: CursorVariantKeyframeSelection
+  onChange: (state: string) => void
+}) {
+  const count = selection.selectedKeyframeIds.length
+  return (
+    <div
+      className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]"
+      data-cursor-variant-keyframe-editor="1"
+    >
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-semibold text-text">Cursor state</div>
+          <div className="mt-0.5 text-[10px] text-text-dim">
+            {count} selected {count === 1 ? 'keyframe' : 'keyframes'}
+          </div>
+        </div>
+        <SquircleSurface
+          as="label"
+          radius={6}
+          className="hm-control-surface hm-control-compact h-7 w-36"
+        >
+          <select
+            value={selection.currentState ?? ''}
+            onChange={(event) => onChange(event.target.value)}
+            className="h-full w-full cursor-pointer bg-transparent pl-3 pr-2 text-[12px] text-text outline-none"
+            aria-label="Selected cursor keyframe state"
+          >
+            {selection.currentState === null ? (
+              <option value="" disabled className="bg-panel text-text-dim">
+                Mixed states
+              </option>
+            ) : null}
+            {selection.stateValues.map((state) => (
+              <option key={state} value={state} className="bg-panel text-text">
+                {state}
+              </option>
+            ))}
+          </select>
+        </SquircleSurface>
+      </div>
+    </div>
+  )
+}
+
 function AnimationAccordion({
   title,
   summary,
   open,
-  primary,
   onToggle,
   children,
 }: {
   title: string
   summary: string
   open: boolean
-  primary?: boolean
   onToggle: () => void
   children: ReactNode
 }) {
   return (
-    <section
-      className={[
-        'overflow-hidden rounded-md border bg-panel-raised',
-        primary ? 'border-border-strong shadow-sm' : 'border-border',
-      ].join(' ')}
-    >
+    <section className="border-t border-border pt-4 first:border-t-0 first:pt-0">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2.5 text-left hover:bg-panel"
+        className="flex h-7 w-full min-w-0 items-center gap-2 text-left text-text-muted hover:text-text"
       >
         <span
           className={[
-            'text-[11px] font-semibold tracking-wider uppercase',
-            open || primary ? 'text-text' : 'text-text-muted',
+            'text-[13px] font-semibold',
+            open ? 'text-text' : 'text-text-muted',
           ].join(' ')}
         >
           {title}
         </span>
-        <span className="min-w-0 flex-1 truncate text-right text-[10px] text-text-dim">
+        <span className="min-w-0 flex-1 truncate text-right text-[11px] text-text-dim">
           {summary}
         </span>
         <span
           className={[
-            'grid h-5 w-5 shrink-0 place-items-center rounded text-[12px]',
-            open ? 'text-accent' : 'text-text-dim',
+            'h-2 w-2 shrink-0 border-b border-r transition-transform duration-150 ease-[var(--ease-ui-out)]',
+            open ? 'rotate-45 text-accent' : '-rotate-45 text-text-dim',
           ].join(' ')}
           aria-hidden="true"
-        >
-          {open ? '−' : '+'}
-        </span>
+        />
       </button>
       <div
         className={[
@@ -534,7 +596,7 @@ function AnimationAccordion({
         <div className="min-h-0 overflow-hidden">
           <div
             className={[
-              'space-y-3 border-t border-border p-2.5 transition-opacity duration-150',
+              'space-y-3 pt-2 transition-opacity duration-150 ease-[var(--ease-ui-out)]',
               open ? 'opacity-100' : 'pointer-events-none opacity-0',
             ].join(' ')}
           >
@@ -996,7 +1058,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
   if (!current) {
     return (
       <div className="space-y-3" data-timeline-selection-surface="1">
-        <div className="rounded-md border border-border-strong/60 bg-panel-raised p-2">
+        <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-semibold text-text">
@@ -1016,7 +1078,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           </div>
         </div>
         {showPicker ? <TextPresetPicker current={null} onPick={pickPreset} /> : null}
-        <div className="rounded-md border border-border bg-panel-raised p-2.5">
+        <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
           <StaggerControls
             on={staggerOn}
             delay={staggerDelay}
@@ -1037,7 +1099,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
 
   return (
     <div className="space-y-3" data-timeline-selection-surface="1">
-      <div className="rounded-md border border-border bg-panel-raised">
+      <div className="overflow-hidden rounded-md bg-app-bg shadow-[var(--shadow-control)]">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-2.5">
           <div className="grid min-w-0 grid-cols-[minmax(72px,96px)_minmax(0,1fr)] items-center gap-2">
             <TextAnimationThumb preset={currentPreset} active />
@@ -1053,34 +1115,37 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           <button
             type="button"
             onClick={() => setShowPicker((v) => !v)}
-            className="h-8 rounded bg-accent/12 px-3 text-[11px] font-semibold text-accent hover:bg-accent/18"
+            className="h-7 rounded bg-accent/12 px-3 text-[11px] font-semibold text-accent hover:bg-accent/18"
           >
             Change
           </button>
         </div>
         <div className="border-t border-border p-2.5">
-          <div className="grid grid-cols-2 rounded bg-panel p-0.5">
+          <SquircleSurface
+            radius={6}
+            className="hm-control-surface hm-control-compact hm-inspector-segmented"
+          >
             {(['in', 'out'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => patch({ mode })}
                 className={[
-                  'h-8 rounded text-[12px] font-semibold',
-                  current.mode === mode
-                    ? 'bg-panel-raised text-text shadow-sm'
-                    : 'text-text-dim hover:text-text-muted',
+                  'hm-inspector-segment text-[12px] font-semibold',
+                  current.mode === mode ? '' : 'text-text-dim',
                 ].join(' ')}
+                data-active={current.mode === mode}
+                aria-pressed={current.mode === mode}
               >
                 {mode === 'in' ? 'In' : 'Out'}
               </button>
             ))}
-          </div>
+          </SquircleSurface>
         </div>
       </div>
 
       {showPicker ? <TextPresetPicker current={current.id} onPick={pickPreset} /> : null}
-      <div className="rounded-md border border-border bg-panel-raised p-2.5">
+      <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
         <StaggerControls
           on={staggerOn}
           delay={staggerDelay}
@@ -1136,7 +1201,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
               }}
               aria-expanded={current.motionPath ? showMotionPath : false}
               className={[
-                'flex h-8 min-w-[116px] items-center justify-between gap-2 rounded bg-panel px-1.5 text-left ring-1 ring-transparent hover:ring-border',
+                'hm-control-surface flex h-7 min-w-[116px] items-center justify-between gap-2 px-1.5 text-left ring-1 ring-transparent hover:ring-border',
                 current.motionPath && showMotionPath ? 'ring-accent/55' : '',
               ].join(' ')}
               title={
@@ -1161,7 +1226,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
                   patch({ motionPath: null })
                   setShowMotionPath(false)
                 }}
-                className="grid h-8 w-8 place-items-center rounded bg-panel text-[14px] text-text-dim hover:text-text"
+                className="hm-control-surface grid h-7 w-7 place-items-center text-[14px] text-text-dim hover:text-text"
                 aria-label="Remove text motion path"
                 title="Remove path and restore straight motion"
               >
@@ -1240,7 +1305,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12px] text-text-dim">Travel distance</span>
-              <span className="text-[9px] tracking-wide text-text-dim uppercase">
+              <span className="text-[9px] text-text-dim">
                 XYZ · hidden endpoint
               </span>
             </div>
@@ -1263,11 +1328,11 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           />
         ) : null}
         <ParamRow label="Segment duration">
-          <NumberField
+          <TimeField
             value={Math.round(current.duration * 1000)}
             onCommit={(ms) => patch({ duration: ms / 1000 })}
             min={50}
-            suffix="ms"
+            valueUnit="milliseconds"
             width="w-24"
           />
         </ParamRow>
@@ -1300,13 +1365,13 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             <input
               value={visibleEasingDraft}
               onChange={(e) => updateEasingText(e.currentTarget.value)}
-              className="h-8 min-w-0 rounded bg-panel px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+              className="hm-control-surface h-7 min-w-0 px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
               title="Comma-separated cubic bezier values"
             />
             <button
               type="button"
               onClick={copyEasing}
-              className="h-8 rounded bg-panel px-2 text-[11px] text-text-muted hover:text-text"
+              className="hm-control-surface h-7 px-2 text-[11px] text-text-muted hover:text-text"
               title="Copy easing values"
             >
               {copiedEasing ? 'Copied' : 'Copy'}
@@ -1316,7 +1381,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
               onClick={() => setShowEasing((v) => !v)}
               aria-pressed={showEasing}
               className={[
-                'grid h-8 w-8 place-items-center rounded bg-panel text-text-muted hover:text-text',
+                'hm-control-surface grid h-7 w-7 place-items-center text-text-muted hover:text-text',
                 showEasing ? 'bg-accent/14 text-accent' : '',
               ].join(' ')}
               title="Show curve presets and graph editor"
@@ -1409,7 +1474,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
                 onClick={() => setShowStaggerCurve((open) => !open)}
                 aria-expanded={showStaggerCurve}
                 className={[
-                  'flex h-8 min-w-[116px] items-center justify-between gap-2 rounded bg-panel px-1.5 text-left ring-1 ring-transparent hover:ring-border',
+                  'hm-control-surface flex h-7 min-w-[116px] items-center justify-between gap-2 px-1.5 text-left ring-1 ring-transparent hover:ring-border',
                   showStaggerCurve ? 'ring-stagger-ring' : '',
                 ].join(' ')}
                 title={
@@ -1606,12 +1671,12 @@ function ControlCard({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-md border border-border bg-panel-raised">
-      <div className="border-b border-border px-2.5 py-2 text-[10px] font-semibold tracking-wider text-text-muted uppercase">
+    <section className="border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <div className="mb-2 flex h-6 items-center text-[13px] font-semibold text-text">
         {title}
       </div>
-      <div className="space-y-2.5 p-2.5">{children}</div>
-    </div>
+      <div className="space-y-1.5">{children}</div>
+    </section>
   )
 }
 
@@ -1622,12 +1687,7 @@ function ParamRow({
   label: string
   children: ReactNode
 }) {
-  return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-3">
-      <div className="min-w-0 truncate text-[12px] text-text-dim">{label}</div>
-      <div className="min-w-0 justify-self-end">{children}</div>
-    </div>
-  )
+  return <FieldRow label={label}>{children}</FieldRow>
 }
 
 function SelectField<T extends string>({
@@ -1646,7 +1706,7 @@ function SelectField<T extends string>({
       aria-label={ariaLabel}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value as T)}
-      className="h-8 max-w-full rounded bg-panel px-2 text-[12px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+      className="hm-control-surface h-7 w-full px-2 text-[12px] text-text outline-none"
     >
       {options.map(([id, label]) => (
         <option key={id} value={id}>
@@ -1671,21 +1731,23 @@ function DirectionButtons({
     ['right', '→'],
   ]
   return (
-    <div className="grid grid-cols-4 rounded bg-panel p-0.5">
+    <SquircleSurface
+      radius={6}
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
+    >
       {buttons.map(([id, label]) => (
         <button
           key={id}
           type="button"
           onClick={() => onChange(id)}
-          className={[
-            'h-8 w-8 rounded text-[17px]',
-            value === id ? 'bg-accent/14 text-accent' : 'text-text-dim hover:text-text',
-          ].join(' ')}
+          aria-pressed={value === id}
+          data-active={value === id}
+          className="hm-inspector-segment text-[15px]"
         >
           {label}
         </button>
       ))}
-    </div>
+    </SquircleSurface>
   )
 }
 
@@ -1697,9 +1759,10 @@ function TextMotionModeToggle({
   onChange: (next: '2d' | 'xyz') => void
 }) {
   return (
-    <div
+    <SquircleSurface
+      radius={6}
       role="group"
-      className="grid grid-cols-2 rounded bg-panel p-0.5"
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
       aria-label="Text motion dimensions"
       title="XYZ offsets: +X right, +Y down, +Z toward the viewer"
     >
@@ -1709,17 +1772,13 @@ function TextMotionModeToggle({
           type="button"
           aria-pressed={mode === id}
           onClick={() => onChange(id)}
-          className={[
-            'h-7 min-w-12 rounded px-2 text-[11px] font-semibold uppercase',
-            mode === id
-              ? 'bg-panel-raised text-text shadow-sm'
-              : 'text-text-dim hover:text-text-muted',
-          ].join(' ')}
+          data-active={mode === id}
+          className="hm-inspector-segment"
         >
           {id === '2d' ? '2D' : 'XYZ'}
         </button>
       ))}
-    </div>
+    </SquircleSurface>
   )
 }
 
@@ -1789,7 +1848,7 @@ function TextSegmentDelayField({
   const displayed = scrubPreview ?? value
   return (
     <div title={`Time for the moving bend to advance one of the ${unit}`}>
-      <NumberField
+      <TimeField
         value={Math.round(displayed * 1000)}
         onCommit={(milliseconds) => {
           setScrubPreview(null)
@@ -1806,7 +1865,7 @@ function TextSegmentDelayField({
         min={0}
         max={1000}
         step={10}
-        suffix="ms"
+        valueUnit="milliseconds"
         ariaLabel={`Step delay between ${unit}`}
         width="w-24"
       />
@@ -1888,7 +1947,7 @@ function GradientTextField({
           e.currentTarget.blur()
         }
       }}
-      className="h-8 w-48 max-w-full rounded bg-panel px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
+      className="hm-control-surface h-7 w-48 max-w-full px-2 font-mono text-[11px] text-text outline-none ring-1 ring-transparent hover:ring-border focus:ring-2 focus:ring-accent/45"
       title="Comma-separated gradient colors"
     />
   )
@@ -2105,18 +2164,11 @@ function findTextAnimationTrack(
   trackFilter?: ReadonlySet<string>,
   playhead?: number,
 ): ReturnType<typeof listTracksForNode>[number] | null {
-  const tracks = listTracksForNode(api, nodeId).filter(
-    (track) => track.propertyId === 'text.progress' && track.keyframes.length >= 2,
+  return selectTextAnimationTrackForAuthoring(
+    listTracksForNode(api, nodeId),
+    trackFilter,
+    playhead,
   )
-  if (trackFilter) {
-    const selected = tracks.find((track) => trackFilter.has(track.id))
-    if (selected) return selected
-  }
-  if (playhead !== undefined) {
-    const active = tracks.find((track) => trackContainsTime(track, playhead))
-    return active ?? (tracks.length === 1 ? tracks[0]! : null)
-  }
-  return tracks[0] ?? null
 }
 
 function findSelectedTimelineTrack(
@@ -2150,16 +2202,6 @@ function findTextAnimationTrackMatchingRange(
         )
       }) ?? null
   )
-}
-
-function trackContainsTime(
-  track: ReturnType<typeof listTracksForNode>[number],
-  time: number,
-): boolean {
-  const range = trackRange(track)
-  if (!range) return false
-  const { start, end } = range
-  return time >= start - 0.01 && time <= end + 0.01
 }
 
 function trackStartTime(track: ReturnType<typeof listTracksForNode>[number]): number {
@@ -2212,7 +2254,10 @@ function PresetTabs({
   outCount: number
 }) {
   return (
-    <div className="grid grid-cols-2 rounded-md border border-border bg-panel p-0.5">
+    <SquircleSurface
+      radius={6}
+      className="hm-control-surface hm-control-compact hm-inspector-segmented"
+    >
       {([
         ['in', `In (${inCount})`],
         ['out', `Out (${outCount})`],
@@ -2221,17 +2266,14 @@ function PresetTabs({
           key={id}
           type="button"
           onClick={() => onChange(id)}
-          className={[
-            'h-8 rounded text-[12px] font-semibold',
-            value === id
-              ? 'bg-panel-raised text-text shadow-sm'
-              : 'text-text-dim hover:text-text-muted',
-          ].join(' ')}
+          aria-pressed={value === id}
+          data-active={value === id}
+          className="hm-inspector-segment"
         >
           {label}
         </button>
       ))}
-    </div>
+    </SquircleSurface>
   )
 }
 
@@ -2243,7 +2285,7 @@ function PresetGrid({
   onPick: (id: AnimPresetId) => void
 }) {
   return (
-    <div className="rounded-md border border-border bg-panel-raised p-2.5">
+    <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
       <div className="grid grid-cols-2 gap-2">
         {presets.map((p) => (
           <PresetButton key={p.id} preset={p} onPick={onPick} />
@@ -2323,7 +2365,7 @@ function StaggerControls({
   return (
     <div>
       <div className="flex items-center justify-between">
-        <div className="text-[10px] font-medium tracking-wider text-text-dim uppercase">
+        <div className="text-[12px] font-medium text-text-muted">
           Layer stagger
         </div>
         <button
@@ -2367,14 +2409,13 @@ function StaggerControls({
           Layer delay
         </label>
         <div>
-          <NumberField
+          <TimeField
             value={delay}
             onCommit={onDelayChange}
             onScrubPreview={() => {}}
             onScrubCommit={onDelayChange}
             min={0}
             step={0.05}
-            suffix="s"
             ariaLabel="Layer stagger delay"
             disabled={!on}
             width="w-16"
@@ -2390,11 +2431,12 @@ function StaggerControls({
         >
           Layer order
         </span>
-        <div
+        <SquircleSurface
+          radius={6}
           role="group"
           aria-label="Layer stagger order"
           className={[
-            'grid grid-cols-2 rounded bg-panel p-0.5',
+            'hm-control-surface hm-control-compact hm-inspector-segmented',
             orderDisabled ? 'opacity-50' : '',
           ].join(' ')}
           title={
@@ -2413,18 +2455,16 @@ function StaggerControls({
               aria-pressed={order === value}
               disabled={orderDisabled}
               onClick={() => onOrderChange(value)}
+              data-active={order === value}
               className={[
-                'h-7 min-w-[58px] rounded px-2 text-[10px] font-medium transition-colors',
-                order === value
-                  ? 'bg-panel-raised text-text shadow-sm'
-                  : 'text-text-dim hover:text-text-muted',
+                'hm-inspector-segment',
                 orderDisabled ? 'cursor-not-allowed' : '',
               ].join(' ')}
             >
               {label}
             </button>
           ))}
-        </div>
+        </SquircleSurface>
       </div>
     </div>
   )

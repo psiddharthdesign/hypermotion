@@ -3,7 +3,7 @@
 import { useSceneAPI } from '@/scene'
 import { useUI } from '@/state/ui'
 import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
-import { findKeyframeAt, findTrack, getAnimEngine, toggleKeyframe } from '@/anim'
+import { findKeyframeAt, findTrack } from '@/anim'
 import {
   inspectMultiKeyframes,
   toggleMultiKeyframes,
@@ -12,9 +12,12 @@ import {
 import {
   inspectStaggerSetPropertyFromMember,
   inspectStaggerSetProperty,
-  toggleStaggerSetPropertyFromMember,
+  staggerLayerOffset,
   toggleStaggerSetPropertyKeyframes,
 } from '@/anim/staggerSets'
+import { toggleInspectorPropertyKeyframe } from './keyframeAuthoring'
+import { SquircleSurface } from './SquircleSurface'
+import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 
 /**
  * Per-property keyframe toggle — the small diamond that sits next to an
@@ -51,28 +54,72 @@ export function KeyframeButton({
   nodeId,
   propertyId,
   currentValue,
+  variant = 'boxed',
+  staggerable = true,
 }: {
   nodeId: NodeId
   propertyId: PropertyId
   currentValue: KeyframeValue | null | undefined
+  variant?: 'compact' | 'boxed'
+  /** Dynamic row properties do not necessarily exist on peer layers. */
+  staggerable?: boolean
 }) {
   const api = useSceneAPI()
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
   )
-  const playhead = pausedPlayhead ?? getAnimEngine().getPlayhead()
+  // Keep the UI playhead subscription so the control rerenders when the user
+  // scrubs. The shared resolver converts Master time to the engine's active
+  // composition-local clock in sequence preview.
+  void pausedPlayhead
+  const playhead = currentAnimationAuthorTime()
 
   const staggerOn = useUI((state) => state.staggerOn)
+  const staggerDelay = useUI((state) => state.staggerDelay)
   const activeStaggerSetId = useUI((state) => state.activeStaggerSetId)
+  const staggerDraftLayerIds = useUI(
+    (state) => state.staggerDraftLayerIds,
+  )
+  const activeStaggerSet = activeStaggerSetId
+    ? api.getUiState().staggerSets[activeStaggerSetId]
+    : undefined
+  const activeLayerIds =
+    activeStaggerSet?.layerIds ?? staggerDraftLayerIds
+  const activeDelay = activeStaggerSet?.delay ?? staggerDelay
+  const activeOrder = activeStaggerSet?.order ?? ('forward' as const)
   const staggerSummary =
-    staggerOn && activeStaggerSetId
-      ? inspectStaggerSetPropertyFromMember(
-          api,
-          activeStaggerSetId,
-          nodeId,
-          propertyId,
-          playhead,
-        )
+    staggerable && staggerOn && activeStaggerSetId
+      ? activeStaggerSet
+        ? inspectStaggerSetPropertyFromMember(
+            api,
+            activeStaggerSetId,
+            nodeId,
+            propertyId,
+            playhead,
+          )
+        : activeLayerIds.length > 1 && activeLayerIds.includes(nodeId)
+          ? inspectStaggerSetProperty(
+              api,
+              activeLayerIds.map((draftNodeId) => ({
+                nodeId: draftNodeId,
+                currentValue: 0,
+              })),
+              propertyId,
+              playhead -
+                staggerLayerOffset(
+                  activeLayerIds,
+                  nodeId,
+                  activeDelay,
+                  activeOrder,
+                ),
+              {
+                setId: activeStaggerSetId,
+                layerIds: activeLayerIds,
+                delay: activeDelay,
+                order: activeOrder,
+              },
+            )
+          : null
       : null
 
   const track = findTrack(api, nodeId, propertyId)
@@ -87,29 +134,23 @@ export function KeyframeButton({
 
   const onClick = () => {
     if (disabled) return
-    const currentPlayhead = useUI.getState().playing
-      ? getAnimEngine().getPlayhead()
-      : useUI.getState().playhead
+    const currentPlayhead = currentAnimationAuthorTime()
     const ui = useUI.getState()
-    if (ui.staggerOn && ui.activeStaggerSetId) {
-      const result = toggleStaggerSetPropertyFromMember(
-        api,
-        ui.activeStaggerSetId,
-        nodeId,
-        propertyId,
-        currentPlayhead,
-        currentValue,
-      )
-      if (result) {
-        ui.setSelectedTrackIds(result.trackIds)
-        return
-      }
+    const result = toggleInspectorPropertyKeyframe(
+      api,
+      { ...ui, staggerOn: staggerable && ui.staggerOn },
+      nodeId,
+      propertyId,
+      currentPlayhead,
+      currentValue,
+    )
+    if (result.staggered) {
+      ui.setSelectedTrackIds(result.trackIds)
     }
-    toggleKeyframe(api, nodeId, propertyId, currentPlayhead, currentValue)
   }
 
   const title = disabled
-    ? 'Set a numeric value to keyframe'
+    ? 'Set a keyframeable value first'
     : state === 'at'
       ? staggerSummary
         ? `Remove ${propertyId} from all ${staggerSummary.targetCount} stagger layers at ${playhead.toFixed(2)}s`
@@ -129,13 +170,22 @@ export function KeyframeButton({
   // the hit area a touch larger than the visible diamond so these are
   // comfortably clickable inside a dense inspector.
   return (
-    <button
+    <SquircleSurface
+      as="button"
+      radius={variant === 'boxed' ? 6 : 4}
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="group flex h-4 w-4 shrink-0 items-center justify-center disabled:cursor-not-allowed"
+      aria-pressed={state === 'at'}
+      data-keyframe-state={state}
+      className={[
+        'hm-keyframe-surface group flex h-7 shrink-0 items-center justify-center disabled:cursor-not-allowed',
+        variant === 'boxed'
+          ? 'hm-control-surface hm-control-compact w-7 active:scale-[0.96] transition-transform'
+          : 'hm-squircle-transparent w-4',
+      ].join(' ')}
     >
       <span
         className={[
@@ -150,7 +200,7 @@ export function KeyframeButton({
           disabled ? 'opacity-40' : '',
         ].join(' ')}
       />
-    </button>
+    </SquircleSurface>
   )
 }
 
@@ -162,28 +212,41 @@ export function KeyframeButton({
 export function MultiKeyframeButton({
   targets,
   propertyId,
+  variant = 'boxed',
 }: {
   targets: readonly MultiKeyframeTarget[]
   propertyId: PropertyId
+  variant?: 'compact' | 'boxed'
 }) {
   const api = useSceneAPI()
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
   )
-  const playhead = pausedPlayhead ?? getAnimEngine().getPlayhead()
+  // Retain the UI subscription for scrub-driven rerenders, then resolve the
+  // same scene-local authoring clock used by single-layer keyframe controls.
+  void pausedPlayhead
+  const playhead = currentAnimationAuthorTime()
   const staggerOn = useUI((state) => state.staggerOn)
   const staggerDelay = useUI((state) => state.staggerDelay)
   const activeStaggerSetId = useUI((state) => state.activeStaggerSetId)
+  const staggerDraftLayerIds = useUI(
+    (state) => state.staggerDraftLayerIds,
+  )
   const activeStaggerSet = activeStaggerSetId
     ? api.getUiState().staggerSets[activeStaggerSetId]
     : undefined
   const staggerActive =
-    staggerOn && activeStaggerSetId !== null && targets.length > 1
+    staggerOn &&
+    activeStaggerSetId !== null &&
+    targets.length > 1
   const staggerOptions = activeStaggerSetId
     ? {
         setId: activeStaggerSetId,
         layerIds:
-          activeStaggerSet?.layerIds ?? targets.map((target) => target.nodeId),
+          activeStaggerSet?.layerIds ??
+          (staggerDraftLayerIds.length > 1
+            ? staggerDraftLayerIds
+            : targets.map((target) => target.nodeId)),
         delay: activeStaggerSet?.delay ?? staggerDelay,
         order: activeStaggerSet?.order ?? ('forward' as const),
       }
@@ -211,9 +274,7 @@ export function MultiKeyframeButton({
   const onClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (disabled) return
     const ui = useUI.getState()
-    const currentPlayhead = ui.playing
-      ? getAnimEngine().getPlayhead()
-      : ui.playhead
+    const currentPlayhead = currentAnimationAuthorTime(ui)
     const previousPropertyTrackIds = targets.flatMap((target) => {
       const track = findTrack(api, target.nodeId, propertyId)
       return track ? [track.id] : []
@@ -266,14 +327,22 @@ export function MultiKeyframeButton({
     : 'The resulting tracks will be selected. Press S to begin a stagger set.'
 
   return (
-    <button
+    <SquircleSurface
+      as="button"
+      radius={variant === 'boxed' ? 6 : 4}
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={`${title}. ${help}`}
       aria-label={title}
       aria-pressed={state === 'at'}
-      className="group flex h-4 w-4 shrink-0 items-center justify-center disabled:cursor-not-allowed"
+      data-keyframe-state={state}
+      className={[
+        'hm-keyframe-surface group flex h-7 shrink-0 items-center justify-center disabled:cursor-not-allowed',
+        variant === 'boxed'
+          ? 'hm-control-surface hm-control-compact w-7 active:scale-[0.96] transition-transform'
+          : 'hm-squircle-transparent w-4',
+      ].join(' ')}
     >
       <span
         className={[
@@ -288,7 +357,7 @@ export function MultiKeyframeButton({
           disabled ? 'opacity-40' : '',
         ].join(' ')}
       />
-    </button>
+    </SquircleSurface>
   )
 }
 

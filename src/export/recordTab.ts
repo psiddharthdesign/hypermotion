@@ -10,6 +10,8 @@ import {
 } from './formats'
 import type { ExportSceneContext } from './orchestrator'
 import { useExportProgress } from './progressStore'
+import { useUI } from '@/state/ui'
+import { getProjectAPI } from '@/project/doc'
 
 /**
  * Tab-capture export pipeline.
@@ -91,6 +93,13 @@ export async function recordTabCapture(
 ): Promise<void> {
   const progress = useExportProgress.getState()
   const engine = getAnimEngine()
+  const sequenceCapture = ctx.scope === 'sequence'
+  const sequenceCaptureError = getSequenceTabCaptureError(ctx)
+
+  if (sequenceCaptureError) {
+    progress.setError(sequenceCaptureError)
+    return
+  }
 
   if (!isTabCaptureSupported()) {
     progress.setError(
@@ -133,10 +142,20 @@ export async function recordTabCapture(
   // Pause + seek to the start of the range. We'll engine.play() once
   // the recorder is armed and the user has dismissed the share prompt.
   const wasPlaying = engine.isPlaying()
+  const originalUi = useUI.getState()
+  const originalUiPlayhead = originalUi.playhead
+  const originalUiPlaying = originalUi.playing
+  const originalPreviewScope = originalUi.previewScope
   engine.pause()
   const originalPlayhead = engine.getPlayhead()
   engine.setLoopRange(null) // record straight through; loop range
-  engine.seek(startSec)
+  if (sequenceCapture) {
+    originalUi.setPlaying(false)
+    originalUi.setPreviewScope('sequence')
+    originalUi.setPlayhead(startSec)
+  } else {
+    engine.seek(startSec)
+  }
 
   // Toggle the document's "recording" mode so CSS can hide the editor
   // chrome (panels, top bar, timeline) while the capture is active.
@@ -158,8 +177,16 @@ export async function recordTabCapture(
       stream = null
     }
     engine.pause()
-    engine.seek(originalPlayhead)
-    if (wasPlaying) engine.play()
+    const latestUi = useUI.getState()
+    if (sequenceCapture) {
+      latestUi.setPlaying(false)
+      latestUi.setPreviewScope(originalPreviewScope)
+      latestUi.setPlayhead(originalUiPlayhead)
+      if (originalUiPlaying) latestUi.setPlaying(true)
+    } else {
+      engine.seek(originalPlayhead)
+      if (wasPlaying) engine.play()
+    }
   }
 
   try {
@@ -203,7 +230,6 @@ export async function recordTabCapture(
         const cropTarget = await win.CropTarget.fromElement(artboardEl)
         await trackWithCrop.cropTo(cropTarget)
       } catch (cropErr) {
-        // eslint-disable-next-line no-console
         console.warn(
           '[export] Region Capture not applied; recording the full tab. ' +
             'If you picked a different tab in the share picker, this is expected. ' +
@@ -225,7 +251,11 @@ export async function recordTabCapture(
     recorder.start(500)
 
     await new Promise<void>((resolve) => setTimeout(resolve, 80))
-    engine.play()
+    if (sequenceCapture) {
+      useUI.getState().setPlaying(true)
+    } else {
+      engine.play()
+    }
 
     const playStart = performance.now()
     let lastProgressUpdate = 0
@@ -246,7 +276,8 @@ export async function recordTabCapture(
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     }
 
-    engine.pause()
+    if (sequenceCapture) useUI.getState().setPlaying(false)
+    else engine.pause()
 
     progress.setPhase('encoding')
     await new Promise<void>((resolve) => {
@@ -304,6 +335,25 @@ export async function recordTabCapture(
   } finally {
     cleanup()
   }
+}
+
+/**
+ * Real-time tab capture records the editor's Master preview. That preview can
+ * switch compositions at cuts, but it intentionally renders only one side of
+ * a crossfade until a dual-surface compositor is mounted. Refuse to flatten a
+ * visibly different movie; native MP4/GIF export has the correct compositor.
+ */
+export function getSequenceTabCaptureError(
+  ctx: Pick<ExportSceneContext, 'api' | 'scope'>,
+): string | null {
+  if (ctx.scope !== 'sequence') return null
+  const project = getProjectAPI(ctx.api)
+  project.ensureInitialized()
+  if (project.getSequenceTimeMap().transitions.length === 0) return null
+  return (
+    'WebM sequence export cannot render crossfades yet. ' +
+    'Choose MP4 or GIF for the full composited sequence, or change the transitions to cuts.'
+  )
 }
 
 function triggerDownload(url: string, filename: string): void {

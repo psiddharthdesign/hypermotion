@@ -1,12 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap');
+@import "@fontsource-variable/bricolage-grotesque/standard.css";
 @import "tailwindcss";
 
 /*
  * Typography — app chrome.
  *
- * UI chrome uses Geist Mono in all caps. Scene/canvas content is reset
- * below so designed text layers keep their authored font, casing, and
- * letter spacing.
+ * UI chrome uses the bundled Bricolage Grotesque variable family. Keeping the
+ * font local avoids an Electron startup request while scene/canvas content is
+ * reset below so designed text layers retain their authored typography.
  */
 
 /*
@@ -26,14 +26,16 @@
      below override these at runtime. Tailwind needs values at build
      time so utility classes (`bg-app-bg`, `text-text-muted`, etc.)
      get generated. */
-  --color-app-bg: oklch(0.18 0.004 280);
-  --color-panel: oklch(0.22 0.005 280);
-  --color-panel-raised: oklch(0.26 0.006 280);
-  --color-border: oklch(0.30 0.006 280 / 0.6);
-  --color-border-strong: oklch(0.36 0.008 280 / 0.7);
-  --color-text: oklch(0.94 0.008 280);
-  --color-text-muted: oklch(0.70 0.008 280);
-  --color-text-dim: oklch(0.54 0.006 280);
+  --color-app-bg: var(--color-zinc-950);
+  --color-panel: var(--color-zinc-950);
+  --color-panel-raised: var(--color-zinc-900);
+  --color-control: var(--color-zinc-900);
+  --color-control-hover: var(--color-zinc-800);
+  --color-border: var(--color-zinc-800);
+  --color-border-strong: var(--color-zinc-700);
+  --color-text: var(--color-zinc-50);
+  --color-text-muted: var(--color-zinc-300);
+  --color-text-dim: var(--color-zinc-500);
   --color-accent: oklch(0.65 0.20 250);
   --color-accent-soft: oklch(0.65 0.20 250 / 0.20);
   --color-keyframe: oklch(0.70 0.20 250);
@@ -49,39 +51,62 @@
   --color-stagger-soft: oklch(0.78 0.16 75 / 0.18);
   --color-stagger-ring: oklch(0.58 0.12 75);
   --color-playhead: oklch(0.70 0.20 250);
+  /* Render fallback is intentionally theme-invariant: changing editor chrome
+     must never change a scene with no authored background. */
+  --color-canvas-fallback: #18181b;
 
-  --font-sans: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
-    "Consolas", "Liberation Mono", "Courier New", monospace;
-  --font-display: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
-    "Consolas", "Liberation Mono", "Courier New", monospace;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Menlo",
-    "Consolas", "Liberation Mono", "Courier New", monospace;
+  --font-sans: "Bricolage Grotesque", "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Bricolage Grotesque", "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
 
-  /* Spacing scale — Gestalt-proximity rad-spacing rule. Each parent
-     level ~1.4× its child, snapped to 4 / 8 px multiples. */
+  /* Inspector spacing comes directly from the branding reference. */
+  --space-label-control: 4px;
+  --space-control-gap: 6px;
   --space-tight: 8px;
-  --space-row: 12px;
+  --space-row: 10px;
   --space-group: 16px;
-  --space-panel: 20px;
+  --space-panel: 16px;
   --space-shell: 24px;
+
+  /* Shared editor geometry. The Properties panel is the canonical density:
+     28px controls, 40px tool bars, and a 48px sidebar header. */
+  --height-control: 28px;
+  --height-toolbar: 40px;
+  --height-sidebar-header: 48px;
 
   /* Native-feeling radii. macOS chrome uses ~10px on bars,
      ~12-14px on sheets/popovers, ~6-8px on small controls. */
-  --radius-control: 6px;
-  --radius-panel: 10px;
-  --radius-sheet: 14px;
+  --radius-control: 8px;
+  --radius-compact: 6px;
+  --radius-panel: 12px;
+  --radius-sheet: 16px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+
+  /* Interaction timing stays crisp across dense editor controls. */
+  --ease-ui-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-ui-move: cubic-bezier(0.77, 0, 0.175, 1);
+  --duration-ui-fast: 140ms;
 }
 
 :root,
 :root[data-theme='dark'] {
-  --color-app-bg: oklch(0.18 0.004 280);
-  --color-panel: oklch(0.22 0.005 280);
-  --color-panel-raised: oklch(0.26 0.006 280);
-  --color-border: oklch(0.30 0.006 280 / 0.6);
-  --color-border-strong: oklch(0.36 0.008 280 / 0.7);
-  --color-text: oklch(0.94 0.008 280);
-  --color-text-muted: oklch(0.70 0.008 280);
-  --color-text-dim: oklch(0.54 0.006 280);
+  /* Tailwind v4 Zinc is the sole neutral foundation. Functional accent
+     colors remain distinct so selection, keyframes, and warnings do not rely
+     on motion or shape alone. */
+  --color-app-bg: var(--color-zinc-950);
+  --color-panel: var(--color-zinc-950);
+  --color-panel-raised: var(--color-zinc-900);
+  --color-control: var(--color-zinc-900);
+  --color-control-hover: var(--color-zinc-800);
+  --color-border: var(--color-zinc-800);
+  --color-border-strong: var(--color-zinc-700);
+  --color-text: var(--color-zinc-50);
+  --color-text-muted: var(--color-zinc-300);
+  --color-text-dim: var(--color-zinc-500);
   --color-accent: oklch(0.65 0.20 250);
   --color-accent-soft: oklch(0.65 0.20 250 / 0.20);
   --color-keyframe: oklch(0.70 0.20 250);
@@ -105,21 +130,25 @@
      uses much lighter tints with broader spread to avoid landing as
      a dark blob on a white panel. */
   --shadow-dock: 0 2px 6px rgba(0, 0, 0, 0.28), 0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-control: 0 0 0 1px var(--color-zinc-800);
+  --shadow-control-hover: 0 0 0 1px var(--color-zinc-700);
+  --shadow-popover:
+    0 0 0 1px var(--color-zinc-700),
+    0 18px 42px -12px color-mix(in srgb, var(--color-zinc-950) 88%, transparent);
   color-scheme: dark;
 }
 
 :root[data-theme='light'] {
-  /* Light palette tuned to feel like macOS Tahoe / Big Sur native
-     panels — slightly warm whites, cool-gray dividers, and system
-     blue accents. */
-  --color-app-bg: oklch(0.98 0.003 280);
-  --color-panel: oklch(0.995 0.002 280);
-  --color-panel-raised: oklch(1.00 0 0);
-  --color-border: oklch(0.86 0.005 280 / 0.7);
-  --color-border-strong: oklch(0.78 0.006 280 / 0.8);
-  --color-text: oklch(0.18 0.008 280);
-  --color-text-muted: oklch(0.42 0.006 280);
-  --color-text-dim: oklch(0.60 0.005 280);
+  --color-app-bg: var(--color-zinc-100);
+  --color-panel: var(--color-zinc-50);
+  --color-panel-raised: var(--color-zinc-50);
+  --color-control: var(--color-zinc-100);
+  --color-control-hover: var(--color-zinc-200);
+  --color-border: var(--color-zinc-200);
+  --color-border-strong: var(--color-zinc-300);
+  --color-text: var(--color-zinc-950);
+  --color-text-muted: var(--color-zinc-700);
+  --color-text-dim: var(--color-zinc-500);
   /* macOS system blue (~ #007AFF). */
   --color-accent: oklch(0.62 0.21 250);
   --color-accent-soft: oklch(0.62 0.21 250 / 0.14);
@@ -140,25 +169,32 @@
   /* Light theme: three softer layers instead of two heavy ones.
      Tints are slightly cool to match the panel palette and avoid
      muddying — pure black at any opacity reads as smoky/dirty on a
-     near-white panel. Wider spread on the far layer fakes the
+     light panel. Wider spread on the far layer fakes the
      ambient occlusion you'd see from a real elevated surface. */
   --shadow-dock:
-    0 1px 2px rgba(15, 18, 28, 0.04),
-    0 4px 12px rgba(15, 18, 28, 0.05),
-    0 18px 40px -8px rgba(15, 18, 28, 0.10);
+    0 1px 2px color-mix(in srgb, var(--color-zinc-950) 4%, transparent),
+    0 4px 12px color-mix(in srgb, var(--color-zinc-950) 5%, transparent),
+    0 18px 40px -8px color-mix(in srgb, var(--color-zinc-950) 10%, transparent);
+  --shadow-control: 0 0 0 1px var(--color-zinc-200);
+  --shadow-control-hover: 0 0 0 1px var(--color-zinc-300);
+  --shadow-popover:
+    0 0 0 1px var(--color-zinc-200),
+    0 18px 42px -12px color-mix(in srgb, var(--color-zinc-950) 24%, transparent);
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --color-app-bg: oklch(0.98 0.003 280);
-    --color-panel: oklch(0.995 0.002 280);
-    --color-panel-raised: oklch(1.00 0 0);
-    --color-border: oklch(0.86 0.005 280 / 0.7);
-    --color-border-strong: oklch(0.78 0.006 280 / 0.8);
-    --color-text: oklch(0.18 0.008 280);
-    --color-text-muted: oklch(0.42 0.006 280);
-    --color-text-dim: oklch(0.60 0.005 280);
+    --color-app-bg: var(--color-zinc-100);
+    --color-panel: var(--color-zinc-50);
+    --color-panel-raised: var(--color-zinc-50);
+    --color-control: var(--color-zinc-100);
+    --color-control-hover: var(--color-zinc-200);
+    --color-border: var(--color-zinc-200);
+    --color-border-strong: var(--color-zinc-300);
+    --color-text: var(--color-zinc-950);
+    --color-text-muted: var(--color-zinc-700);
+    --color-text-dim: var(--color-zinc-500);
     --color-accent: oklch(0.62 0.21 250);
     --color-accent-soft: oklch(0.62 0.21 250 / 0.14);
     --color-keyframe: oklch(0.55 0.22 250);
@@ -176,9 +212,14 @@
     --color-playhead: oklch(0.55 0.22 250);
     --color-checker: rgba(0, 0, 0, 0.04);
     --shadow-dock:
-      0 1px 2px rgba(15, 18, 28, 0.04),
-      0 4px 12px rgba(15, 18, 28, 0.05),
-      0 18px 40px -8px rgba(15, 18, 28, 0.10);
+      0 1px 2px color-mix(in srgb, var(--color-zinc-950) 4%, transparent),
+      0 4px 12px color-mix(in srgb, var(--color-zinc-950) 5%, transparent),
+      0 18px 40px -8px color-mix(in srgb, var(--color-zinc-950) 10%, transparent);
+    --shadow-control: 0 0 0 1px var(--color-zinc-200);
+    --shadow-control-hover: 0 0 0 1px var(--color-zinc-300);
+    --shadow-popover:
+      0 0 0 1px var(--color-zinc-200),
+      0 18px 42px -12px color-mix(in srgb, var(--color-zinc-950) 24%, transparent);
     color-scheme: light;
   }
 }
@@ -194,17 +235,16 @@ body {
   background: var(--color-app-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
-  /* Tabular numerals + SF Pro stylistic sets at body level keep
-     timeline readouts and frame counters aligned during scrubbing,
-     and turn on the higher-contrast 1/4/6/9 glyph variants designers
-     prefer. */
+  /* Tabular numerals keep property values, timeline readouts, and frame
+     counters steady while they update. */
   font-feature-settings: 'tnum' on, 'cv11' on, 'ss01' on;
+  font-optical-sizing: auto;
+  font-variation-settings: 'opsz' 14, 'wdth' 100;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  text-transform: uppercase;
   letter-spacing: 0;
   overflow: hidden; /* the app owns the scrolling, not the page */
 }
@@ -220,7 +260,7 @@ body {
  * design.
  */
 body[data-hm-ui-density='compact'] {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 body[data-hm-ui-density='compact']
@@ -249,17 +289,17 @@ body[data-hm-ui-density='compact']
 
 body[data-hm-ui-density='compact']
   [class~='text-[13px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[12px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 body[data-hm-ui-density='compact']
   [class~='text-[11px]']:not([data-canvas-root], [data-canvas-root] *, [data-node-id], [data-node-id] *) {
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 /* Semantic editor type scale. Prefer these over adding more one-off pixel
@@ -271,7 +311,7 @@ body[data-hm-ui-density='compact']
 
 .hm-type-section,
 .hm-type-body {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
 }
 
@@ -283,11 +323,6 @@ body[data-hm-ui-density='compact']
 .hm-type-micro {
   font-size: 9px;
   line-height: 12px;
-}
-
-[data-hm-figma-plugin-modal],
-[data-hm-figma-plugin-modal] button {
-  text-transform: uppercase;
 }
 
 [data-canvas-root],
@@ -302,7 +337,309 @@ input,
 textarea,
 select {
   font-family: var(--font-sans);
-  text-transform: uppercase;
+}
+
+/* Shared inspector control surface. Form controls keep their structural
+   boundary and focus ring while elevated buttons/popovers use the stronger
+   shadow tokens above. Only the properties that change are transitioned. */
+.hm-control-surface {
+  border-radius: var(--radius-control);
+  background: var(--color-control);
+  box-shadow: var(--shadow-control);
+  transition:
+    box-shadow var(--duration-ui-fast) var(--ease-ui-out),
+    background-color var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-control-compact {
+  border-radius: var(--radius-compact);
+}
+
+/* Electron 33 does not support CSS `corner-shape`. Inspector controls use
+   the same fixed 60% continuous geometry as the branding reference through
+   a measured SVG path. The path is cached and only changes on layout resize;
+   high-frequency slider updates never recalculate it. */
+.hm-squircle-surface[data-squircle-ready='true'] {
+  position: relative;
+  isolation: isolate;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.hm-squircle-surface-svg {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hm-squircle-surface-shape {
+  fill: var(--hm-squircle-fill, var(--color-control));
+  stroke: var(--hm-squircle-stroke, var(--color-border));
+  stroke-width: 2px;
+  transition:
+    fill var(--duration-ui-fast) var(--ease-ui-out),
+    stroke var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-squircle-surface-focus {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 4px;
+  opacity: 0;
+  transition: opacity var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-control-surface.hm-squircle-surface:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+.hm-control-surface.hm-squircle-surface:hover .hm-squircle-surface-shape {
+  fill: var(--hm-squircle-fill-hover, var(--color-control-hover));
+  stroke: var(--color-border-strong);
+}
+
+.hm-squircle-surface:focus-visible .hm-squircle-surface-focus,
+.hm-squircle-surface:focus-within .hm-squircle-surface-focus {
+  opacity: 0.72;
+}
+
+.hm-squircle-surface:focus-visible,
+.hm-squircle-surface:focus-within {
+  outline: 2px solid color-mix(in oklch, var(--color-accent) 58%, transparent);
+  outline-offset: -2px;
+}
+
+.hm-squircle-surface[data-invalid='true'] .hm-squircle-surface-shape {
+  stroke: var(--color-red-500);
+}
+
+.hm-squircle-transparent {
+  --hm-squircle-fill: transparent;
+  --hm-squircle-fill-hover: transparent;
+  --hm-squircle-stroke: transparent;
+}
+
+.hm-keyframe-surface[data-keyframe-state='at']:not(.hm-squircle-transparent) {
+  --hm-squircle-stroke: color-mix(in srgb, var(--color-keyframe) 70%, transparent);
+}
+
+.hm-keyframe-surface[data-keyframe-state='partial']:not(.hm-squircle-transparent),
+.hm-keyframe-surface[data-keyframe-state='track']:not(.hm-squircle-transparent) {
+  --hm-squircle-stroke: color-mix(in srgb, var(--color-keyframe) 35%, transparent);
+}
+
+.hm-control-surface:hover {
+  background: var(--color-control-hover);
+  box-shadow: var(--shadow-control-hover);
+}
+
+.hm-control-surface:focus,
+.hm-control-surface:focus-within {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, var(--color-accent) 42%, transparent),
+    var(--shadow-control-hover);
+}
+
+/* One compact segmented-control grammar for the Inspector. The 28px outer
+   track matches NumberField / SelectField; the 2px inset keeps selected
+   segments concentric with the outer control. */
+.hm-inspector-segmented {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-compact);
+}
+
+.hm-inspector-segment {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0%;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: calc(var(--radius-control) - 2px);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    background-color var(--duration-ui-fast) var(--ease-ui-out),
+    color var(--duration-ui-fast) var(--ease-ui-out),
+    box-shadow var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-inspector-segment:hover {
+  color: var(--color-text);
+}
+
+.hm-inspector-segment[data-active='true'] {
+  background: var(--color-panel-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-control);
+}
+
+/* Bounded keyframe values use a quiet filled well. The fill updates directly
+   with the range input; it deliberately has no width transition so dragging
+   stays immediate and interruptible. */
+.hm-keyframe-slider-fill {
+  background: var(--color-border);
+  transform-origin: left center;
+}
+
+.hm-keyframe-slider-fill[data-active='true'] {
+  will-change: transform;
+}
+
+/* Shared editor-surface grammar. New surfaces should compose these tokens
+   instead of inventing another gray, radius, or elevation locally. */
+.hm-panel-surface {
+  background: var(--color-panel);
+  border-color: var(--color-border);
+}
+
+.hm-chrome-bar {
+  min-height: var(--height-toolbar);
+  background: var(--color-panel);
+  border-color: var(--color-border);
+}
+
+.hm-popover-surface {
+  border-radius: var(--radius-sheet);
+  background: var(--color-panel-raised);
+  box-shadow: var(--shadow-popover);
+}
+
+.hm-dialog-surface {
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sheet);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-popover);
+}
+
+.hm-menu-surface {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-panel-raised);
+  box-shadow: var(--shadow-popover);
+}
+
+.hm-section-heading {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 17.4px;
+}
+
+.hm-support-label {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.hm-secondary-action,
+.hm-primary-action {
+  display: inline-flex;
+  min-height: var(--height-control);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-control);
+  padding-inline: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    color var(--duration-ui-fast) var(--ease-ui-out),
+    background-color var(--duration-ui-fast) var(--ease-ui-out),
+    border-color var(--duration-ui-fast) var(--ease-ui-out),
+    scale var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-secondary-action {
+  border: 1px solid var(--color-border);
+  background: var(--color-control);
+  color: var(--color-text-muted);
+}
+
+.hm-secondary-action:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-control-hover);
+  color: var(--color-text);
+}
+
+.hm-primary-action {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 72%, transparent);
+  background: var(--color-accent);
+  color: white;
+}
+
+.hm-primary-action:hover {
+  filter: brightness(1.08);
+}
+
+.hm-secondary-action:active,
+.hm-primary-action:active {
+  scale: 0.98;
+}
+
+.hm-icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  transition:
+    color var(--duration-ui-fast) var(--ease-ui-out),
+    background-color var(--duration-ui-fast) var(--ease-ui-out),
+    scale var(--duration-ui-fast) var(--ease-ui-out);
+}
+
+.hm-icon-button:hover {
+  color: var(--color-text);
+  background: var(--color-control);
+}
+
+.hm-icon-button:active {
+  scale: 0.96;
+}
+
+/* Inspector geometry is shared by Properties and Animate. FieldRow owns
+   the label/value/action grid; these selectors only make direct scalar
+   controls consume the value column without stretching composite widgets. */
+.hm-inspector-value > .hm-control-surface,
+.hm-inspector-mixed-value > .hm-control-surface {
+  width: 100%;
+}
+
+/* The reference panel keeps a 16px optical inset on both sides. Reserve an
+   8px scrollbar lane plus 8px right padding so the usable field grid remains
+   248px inside the 280px Inspector instead of losing a full native gutter. */
+[data-inspector-scroll='1']::-webkit-scrollbar {
+  width: 8px;
+}
+
+[data-inspector-scroll='1']::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-inspector-scroll='1']::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-dim) 45%, transparent);
+  background-clip: padding-box;
 }
 
 [data-canvas-root] button,
@@ -772,5 +1109,16 @@ body[data-preview-mode='1'] [data-canvas-root] {
 @media (prefers-reduced-motion: reduce) {
   .hm-text-preview-letter {
     animation: none;
+  }
+}
+
+@keyframes hm-explainer-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
   }
 }

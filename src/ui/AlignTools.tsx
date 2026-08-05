@@ -2,6 +2,7 @@
 
 import type { Node } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
+import { AppIcon } from '@/ui/AppIcon'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 
 /**
@@ -86,83 +87,57 @@ export function AlignTools({
     <div
       title={inStack ? stackTitle : undefined}
       className={[
-        'flex w-full items-stretch gap-1 rounded-md bg-app-bg p-1',
+        'hm-control-surface flex h-7 w-full items-stretch gap-0.5 p-0.5',
         inStack ? 'pointer-events-none opacity-40' : '',
       ].join(' ')}
     >
       <AlignButton axis="left" title="Align left" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M3 2v12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="5" y="6" width="6" height="4" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-left" size={15} />
       </AlignButton>
       <AlignButton axis="centerH" title="Align horizontal centers" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M8 2v12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="5" y="6" width="6" height="4" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-center-x" size={15} />
       </AlignButton>
       <AlignButton axis="right" title="Align right" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M13 2v12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="5" y="6" width="6" height="4" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-right" size={15} />
       </AlignButton>
 
-      <span className="my-1 w-px shrink-0 self-stretch bg-border" />
+      <span className="my-0.5 w-px shrink-0 self-stretch bg-border" />
 
       <AlignButton axis="top" title="Align top" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M2 3h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="6" y="5" width="4" height="6" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-top" size={15} />
       </AlignButton>
       <AlignButton axis="middle" title="Align vertical centers" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M2 8h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="6" y="5" width="4" height="6" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-center-y" size={15} />
       </AlignButton>
       <AlignButton axis="bottom" title="Align bottom" onClick={apply}>
-        <svg {...iconProps()}>
-          <path d="M2 13h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <rect x="6" y="5" width="4" height="6" rx="1" fill="currentColor" />
-        </svg>
+        <AppIcon name="align-bottom" size={15} />
       </AlignButton>
 
-      <span className="my-1 w-px shrink-0 self-stretch bg-border" />
+      <span className="my-0.5 w-px shrink-0 self-stretch bg-border" />
 
       <AlignButton
         axis="distributeH"
         title={
           canDistribute
-            ? 'Distribute horizontally'
-            : 'Distribute horizontally — needs 3+ selected'
+            ? 'Distribute horizontal spacing'
+            : 'Distribute horizontal spacing — needs 3+ selected'
         }
         disabled={!canDistribute}
         onClick={apply}
       >
-        <svg {...iconProps()}>
-          <rect x="2" y="6" width="3" height="4" rx="0.8" fill="currentColor" />
-          <rect x="6.5" y="6" width="3" height="4" rx="0.8" fill="currentColor" />
-          <rect x="11" y="6" width="3" height="4" rx="0.8" fill="currentColor" />
-        </svg>
+        <AppIcon name="distribute-x" size={15} />
       </AlignButton>
       <AlignButton
         axis="distributeV"
         title={
           canDistribute
-            ? 'Distribute vertically'
-            : 'Distribute vertically — needs 3+ selected'
+            ? 'Distribute vertical spacing'
+            : 'Distribute vertical spacing — needs 3+ selected'
         }
         disabled={!canDistribute}
         onClick={apply}
       >
-        <svg {...iconProps()}>
-          <rect x="6" y="2" width="4" height="3" rx="0.8" fill="currentColor" />
-          <rect x="6" y="6.5" width="4" height="3" rx="0.8" fill="currentColor" />
-          <rect x="6" y="11" width="4" height="3" rx="0.8" fill="currentColor" />
-        </svg>
+        <AppIcon name="distribute-y" size={15} />
       </AlignButton>
     </div>
   )
@@ -189,7 +164,7 @@ function AlignButton({
       aria-label={title}
       disabled={disabled}
       className={[
-        'flex h-7 flex-1 items-center justify-center rounded-[5px] transition-colors',
+        'flex h-full flex-1 items-center justify-center rounded-[4px] transition-colors',
         disabled
           ? 'cursor-not-allowed text-text-dim opacity-40'
           : 'text-text-muted hover:bg-panel-raised hover:text-text',
@@ -198,17 +173,6 @@ function AlignButton({
       {children}
     </button>
   )
-}
-
-function iconProps() {
-  return {
-    width: 14,
-    height: 14,
-    viewBox: '0 0 16 16',
-    fill: 'none',
-    stroke: 'none',
-    'aria-hidden': true,
-  } as const
 }
 
 // ---------------------------------------------------------------------------

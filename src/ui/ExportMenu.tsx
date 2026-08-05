@@ -6,14 +6,17 @@ import {
   EXPORT_FORMATS,
   EXPORT_QUALITIES,
   exportScene,
+  useExportProgress,
   type ExportFormat,
   type ExportFormatId,
   type ExportQualityId,
   type ExportRange,
   resolveDimensions,
 } from '@/export'
-import { useSceneAPI } from '@/scene'
+import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
+import { useProjectAPI } from '@/project'
+import { parseTimeExpression } from '@/ui/fields/timeExpression'
 
 /**
  * Export popover (spec sheet layout).
@@ -47,6 +50,7 @@ import { useUI } from '@/state/ui'
 
 type FpsId = 24 | 30 | 60
 type RangeMode = 'full' | 'chapter' | 'work' | 'custom'
+type ExportScope = 'scene' | 'sequence'
 
 const PANEL_WIDTH = 480
 const LABEL_COL = 88
@@ -59,11 +63,34 @@ export function ExportMenu({
   onClose: () => void
 }) {
   const api = useSceneAPI()
+  const version = useSceneVersion()
+  const project = useProjectAPI()
   const isolatedRange = useUI((s) => s.isolatedRange)
   const workAreaRange = useUI((s) => s.workAreaRange)
+  const selectedSequenceItemId = useUI((s) => s.selectedSequenceItemId)
+  const exportPhase = useExportProgress((s) => s.phase)
+  const exportRunning =
+    exportPhase === 'rendering' || exportPhase === 'encoding'
 
-  const meta = useMemo(() => api.getMeta(), [api])
-  const sections = useMemo(() => api.getSections(), [api])
+  void version
+  const meta = api.getMeta()
+  const sections = api.getSections()
+  const sequenceMap = useMemo(
+    () => project.getSequenceTimeMap(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project, version],
+  )
+  const activeComposition = project.getActiveScene()
+  const hasSequence = sequenceMap.items.length > 1
+  const [exportScope, setExportScope] = useState<ExportScope>(() =>
+    hasSequence ? 'sequence' : 'scene',
+  )
+  const exportDuration =
+    exportScope === 'sequence' ? sequenceMap.duration : meta.duration
+  const exportName =
+    exportScope === 'scene'
+      ? activeComposition?.name ?? meta.name
+      : meta.name
 
   // Format. Default MP4 — share-ready, captures the most cases. Drives
   // the file extension downstream + which pipeline the orchestrator
@@ -111,7 +138,7 @@ export function ExportMenu({
     isolatedRange ? isolatedRange.start : 0,
   )
   const [customEnd, setCustomEnd] = useState<number>(
-    isolatedRange ? isolatedRange.end : meta.duration,
+    isolatedRange ? isolatedRange.end : exportDuration,
   )
 
   // Selected chapters in timeline order — derive once for both the
@@ -165,7 +192,8 @@ export function ExportMenu({
   }, [rangeMode, selectedChapters])
 
   const exportDisabled =
-    rangeMode === 'chapter' && selectedChapters.length === 0
+    exportRunning ||
+    (rangeMode === 'chapter' && selectedChapters.length === 0)
 
   // Range readout values. For segments, sum each span's duration; for
   // simple ranges, take the bounds directly. `frameCount` is what we
@@ -181,12 +209,12 @@ export function ExportMenu({
           : 0
   const rangeEnd =
     range.kind === 'full'
-      ? meta.duration
+      ? exportDuration
       : range.kind === 'time'
         ? range.endSec
         : range.kind === 'segments' && range.segments.length > 0
           ? range.segments[range.segments.length - 1].endSec
-          : meta.duration
+          : exportDuration
   const totalSelectedSec =
     range.kind === 'segments'
       ? range.segments.reduce((acc, s) => acc + (s.endSec - s.startSec), 0)
@@ -250,8 +278,13 @@ export function ExportMenu({
     onClose()
     void exportScene({
       api,
-      sceneName: meta.name,
-      durationSec: meta.duration,
+      sceneName: exportName,
+      durationSec: exportDuration,
+      scope: exportScope,
+      selectedSequenceItemId:
+        exportScope === 'scene'
+          ? selectedSequenceItemId ?? undefined
+          : undefined,
       frameRate: meta.frameRate,
       format,
       quality,
@@ -265,12 +298,14 @@ export function ExportMenu({
   }
 
   const fileName = useMemo(() => {
-    const base = (meta.name || 'export').replace(/[^a-zA-Z0-9-_ ]/g, '').trim()
+    const base = (exportName || 'export')
+      .replace(/[^a-zA-Z0-9-_ ]/g, '')
+      .trim()
     return `${base || 'export'}.${format.extension}`
-  }, [meta.name, format.extension])
+  }, [exportName, format.extension])
 
-  const totalFrames = Math.max(1, Math.round(meta.duration * fps))
-  const hasChapters = sections.length > 0
+  const totalFrames = Math.max(1, Math.round(exportDuration * fps))
+  const hasChapters = exportScope === 'scene' && sections.length > 0
 
   return createPortal(
     <div
@@ -284,18 +319,50 @@ export function ExportMenu({
         visibility: pos ? 'visible' : 'hidden',
         width: PANEL_WIDTH,
       }}
-      className="z-[100] overflow-hidden rounded-lg border border-border bg-panel-raised shadow-lg shadow-black/30"
+      className="hm-popover-surface z-[100] overflow-hidden border border-border"
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <span className="text-[12px] font-medium text-text">Export</span>
         <span className="font-mono text-[10px] tabular-nums text-text-dim">
-          {meta.duration.toFixed(2)}s · {totalFrames}f @ {fps}fps
+          {exportDuration.toFixed(2)}s · {totalFrames}f @ {fps}fps
         </span>
       </div>
 
       {/* Body — spec sheet rows */}
       <div className="px-4 py-3">
+        <FieldRow label="Output">
+          <Segments>
+            <SegmentBtn
+              active={exportScope === 'scene'}
+              onClick={() => {
+                setExportScope('scene')
+                setRangeMode('full')
+                setCustomStart(0)
+                setCustomEnd(meta.duration)
+              }}
+            >
+              Active scene
+            </SegmentBtn>
+            <SegmentBtn
+              active={exportScope === 'sequence'}
+              onClick={() => {
+                setExportScope('sequence')
+                setRangeMode('full')
+                setCustomStart(0)
+                setCustomEnd(sequenceMap.duration)
+              }}
+              title={
+                hasSequence
+                  ? 'Render every ordered scene as one movie'
+                  : 'The sequence currently contains one scene'
+              }
+            >
+              Full sequence
+            </SegmentBtn>
+          </Segments>
+        </FieldRow>
+
         <FieldRow label="Format">
           <Segments>
             {EXPORT_FORMATS.map((f) => (
@@ -363,7 +430,7 @@ export function ExportMenu({
                   Chapter
                 </SegmentBtn>
               )}
-              {workAreaRange && (
+              {exportScope === 'scene' && workAreaRange && (
                 <SegmentBtn
                   active={rangeMode === 'work'}
                   onClick={() => setRangeMode('work')}
@@ -422,7 +489,7 @@ export function ExportMenu({
                 start={customStart}
                 end={customEnd}
                 fps={fps}
-                duration={meta.duration}
+                duration={exportDuration}
                 onStart={setCustomStart}
                 onEnd={setCustomEnd}
                 frames={frameCount}
@@ -441,7 +508,7 @@ export function ExportMenu({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-border bg-transparent px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:text-text"
+            className="hm-secondary-action"
           >
             Cancel
           </button>
@@ -450,13 +517,13 @@ export function ExportMenu({
             onClick={onExport}
             disabled={exportDisabled}
             className={[
-              'rounded-md px-3.5 py-1.5 text-[12px] font-medium shadow-sm transition-opacity',
+              'hm-primary-action transition-opacity',
               exportDisabled
                 ? 'cursor-not-allowed bg-accent/40 text-white/70'
                 : 'bg-accent text-white hover:brightness-110',
             ].join(' ')}
           >
-            Export {format.label}
+            {exportRunning ? 'Export in progress' : `Export ${format.label}`}
           </button>
         </div>
       </div>
@@ -518,7 +585,7 @@ function FieldRow({
  */
 function Segments({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-9 w-full items-stretch gap-1 rounded-md bg-app-bg p-1">
+    <div className="hm-control-surface hm-inspector-segmented">
       {children}
     </div>
   )
@@ -540,12 +607,8 @@ function SegmentBtn({
       type="button"
       onClick={onClick}
       title={title}
-      className={[
-        'flex-1 rounded-[5px] text-[12px] font-medium transition-colors',
-        active
-          ? 'bg-panel-raised text-text shadow-sm'
-          : 'text-text-muted hover:text-text',
-      ].join(' ')}
+      data-active={active ? 'true' : 'false'}
+      className="hm-inspector-segment"
     >
       {children}
     </button>
@@ -657,7 +720,8 @@ function TimeInput({
   const parse = (raw: string): number | null => {
     const trimmed = raw.trim()
     if (!trimmed) return null
-    // Accept `mm:ss(.cc)?` OR a plain decimal in seconds.
+    // Keep conventional timecode entry, and also accept explicit duration
+    // units such as `10s`, `2m`, `1hr`, and `250ms`.
     const m = trimmed.match(/^(\d+):(\d+)(?:\.(\d+))?$/)
     if (m) {
       const min = Number(m[1])
@@ -665,13 +729,11 @@ function TimeInput({
       const cs = m[3] ? Number(`0.${m[3]}`) : 0
       return min * 60 + sec + cs
     }
-    const n = Number(trimmed)
-    return Number.isFinite(n) ? n : null
+    return parseTimeExpression(trimmed)
   }
   const [draft, setDraft] = useState(fmt(seconds))
-  useEffect(() => {
-    setDraft(fmt(seconds))
-  }, [seconds])
+  const [focused, setFocused] = useState(false)
+  const cancelBlurCommitRef = useRef(false)
   const commit = () => {
     const parsed = parse(draft)
     if (parsed === null) {
@@ -688,11 +750,29 @@ function TimeInput({
       <input
         type="text"
         inputMode="decimal"
-        value={draft}
+        value={focused ? draft : fmt(seconds)}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        onFocus={() => {
+          setDraft(fmt(seconds))
+          setFocused(true)
+          cancelBlurCommitRef.current = false
+        }}
+        onBlur={() => {
+          setFocused(false)
+          if (cancelBlurCommitRef.current) {
+            cancelBlurCommitRef.current = false
+          } else {
+            commit()
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            cancelBlurCommitRef.current = true
+            setDraft(fmt(seconds))
+            ;(e.target as HTMLInputElement).blur()
+          }
         }}
         className="w-[88px] rounded border border-border bg-panel px-2 py-1 text-center font-mono text-[11px] tabular-nums text-text outline-none focus:border-accent"
       />

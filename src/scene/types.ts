@@ -359,6 +359,8 @@ export type LayoutGuide =
  */
 export type Effect =
   | {
+      /** Stable row identity used by per-effect animation tracks. */
+      id?: string
       kind: 'shadow'
       color: Color
       offsetX: number
@@ -368,6 +370,8 @@ export type Effect =
       visible?: boolean
     }
   | {
+      /** Stable row identity used by per-effect animation tracks. */
+      id?: string
       kind: 'inner-shadow'
       color: Color
       offsetX: number
@@ -376,7 +380,13 @@ export type Effect =
       spread?: number
       visible?: boolean
     }
-  | { kind: 'blur'; amount: number; visible?: boolean }
+  | {
+      /** Stable row identity used by per-effect animation tracks. */
+      id?: string
+      kind: 'blur'
+      amount: number
+      visible?: boolean
+    }
 
 /**
  * Per-corner radii. Order is top-left, top-right, bottom-right,
@@ -407,6 +417,12 @@ export interface Appearance {
   cornerRadius: number
   /** Per-corner override of `cornerRadius`. See {@link CornerRadii}. */
   cornerRadii?: CornerRadii
+  /**
+   * Continuous-corner smoothing in the same normalized range used by Figma.
+   * `0` keeps circular arcs, while `1` applies the maximum smoothing. Missing
+   * values from legacy scenes are treated as `0`.
+   */
+  cornerSmoothing?: number
   /** CSS-compatible compositing mode for this layer. */
   blendMode?: BlendMode
   effects: Effect[]
@@ -516,9 +532,20 @@ export interface RectNode extends NodeBase {
   size: Size
 }
 
+/** Editable pie/donut geometry for an ellipse node. */
+export interface EllipseArc {
+  /** Degrees; 0 points right and positive values move clockwise. */
+  startAngle: number
+  /** Visible circumference as a normalized 0..1 ratio. */
+  sweep: number
+  /** Inner radius as a normalized 0..1 ratio. 0 is a pie, >0 a ring. */
+  innerRadius: number
+}
+
 export interface EllipseNode extends NodeBase {
   kind: 'ellipse'
   size: Size
+  arc: EllipseArc
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1215,9 @@ export interface Interaction {
  * registered in src/scene/props.ts so the anim engine and inspector
  * stay in sync.
  */
+export type EffectBlurPropertyId =
+  `appearance.effects.${string}.blur`
+
 export type PropertyId =
   // transform group — post-layout, cheap
   | 'transform.x'
@@ -1241,6 +1271,11 @@ export type PropertyId =
   | 'appearance.cornerRadius'
   | 'appearance.fill'
   | 'appearance.blendMode'
+  | EffectBlurPropertyId
+  // native ellipse geometry — post-layout, cheap
+  | 'shape.arcStart'
+  | 'shape.arcSweep'
+  | 'shape.arcInnerRadius'
   // text effect group — drives text-specific reveal effects
   | 'text.progress'
   // layout group — triggers relayout + FLIP
@@ -1378,6 +1413,21 @@ export interface Scene {
   tracks: Record<TrackId, Track>
   /** Named, length-bearing regions along the timeline. */
   sections: Record<string, Section>
+  /**
+   * Optional first-class project data.
+   *
+   * Legacy `.hype` JSON snapshots contain only the single-composition fields
+   * above. These optional records preserve ordered multi-scene projects while
+   * keeping those older payloads valid and unchanged.
+   */
+  compositionScenes?: Record<
+    string,
+    import('@/sequence/types').CompositionScene
+  >
+  sequenceItems?: Record<string, import('@/sequence/types').SequenceItem>
+  sequenceOrder?: string[]
+  activeCompositionId?: string
+  sequenceSchemaVersion?: number
   /**
    * User-uploaded fonts embedded in this scene. Each entry holds the
    * font's raw bytes alongside its CSS metadata. Embedded fonts travel

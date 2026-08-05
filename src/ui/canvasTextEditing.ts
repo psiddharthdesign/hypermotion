@@ -26,6 +26,7 @@ export function isRepeatedCanvasPress(
 export function canvasTextEditPresentation(
   webglAvailable: boolean,
   editingTextId: string | null,
+  geometryPreviewActive = false,
 ): {
   showDomScene: boolean
   hideWebglScene: boolean
@@ -33,15 +34,16 @@ export function canvasTextEditPresentation(
   applyDomCameraPostEffects: boolean
 } {
   const editing = editingTextId !== null
+  const domPreviewActive = editing || geometryPreviewActive
   return {
-    showDomScene: !webglAvailable || editing,
-    hideWebglScene: editing,
+    showDomScene: !webglAvailable || domPreviewActive,
+    hideWebglScene: domPreviewActive,
     // Keep the GPU renderer and its resources mounted for an instant resume,
     // but avoid drawing a scene that the editable DOM layer fully covers.
-    suspendWebglScene: editing,
+    suspendWebglScene: domPreviewActive,
     // SVG filters force Chromium to rerasterize the complete DOM scene. Keep
     // them for the true WebGL-failure fallback, but suspend them while the
     // contenteditable scene is live; the post effect returns on edit exit.
-    applyDomCameraPostEffects: !webglAvailable && !editing,
+    applyDomCameraPostEffects: !webglAvailable && !domPreviewActive,
   }
 }

@@ -24,11 +24,18 @@ const DATA_URL_SOFT_CEILING_MB = 25
 export const VIDEO_PLAYBACK_PROXY_WARNING =
   'Video was converted to a Hyper Motion WebM playback proxy for browser-safe playback.'
 
+export interface MediaImportOptions {
+  dropPos?: { x: number; y: number }
+  workspaceOnly?: boolean
+  /** Scene-local timeline time where imported audio should begin. */
+  startTime?: number
+}
+
 export async function importVideoFile(
   file: File,
   api: SceneAPI,
   parent: NodeId | null,
-  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
+  opts?: MediaImportOptions,
 ): Promise<NodeId> {
   const normalized = await normalizeVideoFileForBrowser(file)
   const dataUrl = await readMediaFileAsDataUrl(normalized.file)
@@ -96,8 +103,8 @@ export async function importVideoFile(
 export async function importAudioFile(
   file: File,
   api: SceneAPI,
-  _parent: NodeId | null,
-  _opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
+  parent: NodeId | null,
+  opts?: MediaImportOptions,
 ): Promise<NodeId> {
   const dataUrl = await readMediaFileAsDataUrl(file)
   const { duration } = await decodeAudioMeta(dataUrl)
@@ -118,9 +125,12 @@ export async function importAudioFile(
 
   warnIfLarge(file)
 
-  const id = api.createNode('audio', null, {
+  const target = resolveAudioImportTarget(parent)
+  const id = api.createNode('audio', target.parent, {
     name: file.name.replace(/\.[^.]+$/, '') || 'Audio',
     size: { width: 1, height: 1 },
+    // Scene audio is a timeline overlay, never a flex/grid participant.
+    position: 'absolute',
     transform,
     appearance: {
       opacity: 1,
@@ -135,13 +145,39 @@ export async function importAudioFile(
     volume: 1,
     playbackRate: 1,
     muted: false,
-    startTime: 0,
+    startTime: resolveMediaImportStartTime(opts?.startTime),
     trimStart: 0,
     loop: false,
-    workspaceOnly: true,
+    workspaceOnly: target.workspaceOnly,
   } as Parameters<SceneAPI['createNode']>[2])
 
   return id
+}
+
+/**
+ * Parent ownership is the audio routing contract:
+ *
+ * - parentless audio belongs to the project Master timeline;
+ * - audio under a scene root is a composition-local overlay.
+ *
+ * Master audio remains workspace-only so it can never be promoted to the
+ * legacy scene root. Parented overlays are ordinary scene-owned media even
+ * though the canvas renderer intentionally has no visual representation.
+ */
+export function resolveAudioImportTarget(parent: NodeId | null): {
+  parent: NodeId | null
+  workspaceOnly: boolean
+  ownership: 'master' | 'scene-overlay'
+} {
+  return parent === null
+    ? { parent: null, workspaceOnly: true, ownership: 'master' }
+    : { parent, workspaceOnly: false, ownership: 'scene-overlay' }
+}
+
+export function resolveMediaImportStartTime(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0
 }
 
 /**
@@ -153,7 +189,7 @@ export async function importMediaFiles(
   files: FileList | File[],
   api: SceneAPI,
   parent: NodeId | null,
-  opts?: { dropPos?: { x: number; y: number }; workspaceOnly?: boolean },
+  opts?: MediaImportOptions,
 ): Promise<NodeId[]> {
   const ids: NodeId[] = []
   for (const file of Array.from(files)) {

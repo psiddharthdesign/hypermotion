@@ -6,6 +6,7 @@ import type { NodeId, Track } from '@/scene'
 import { getAnimEngine } from '@/anim/engine'
 import { normalizeLayerMotionPath } from '@/anim/layerMotionPath'
 import { textAnimationDefaults } from '@/anim/textAnimations'
+import { effectBlurPropertyId } from '@/scene/props'
 
 function textProgressTrack(
   id: string,
@@ -78,6 +79,112 @@ afterEach(() => {
 })
 
 describe('animation engine track preview', () => {
+  it('publishes interpolated layout spacing and discrete direction overrides', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('frame', null)
+    const tracks = [
+      ['layout.gap', 8, 28],
+      ['layout.padding.top', 0, 20],
+      ['layout.padding.right', 2, 22],
+      ['layout.padding.bottom', 4, 24],
+      ['layout.padding.left', 6, 26],
+      ['layout.direction', 'row', 'column'],
+    ] as const
+
+    for (const [propertyId, start, end] of tracks) {
+      api.setTrack({
+        id: `${propertyId}-track`,
+        nodeId,
+        propertyId,
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: `${propertyId}-start`, time: 0, value: start },
+          { id: `${propertyId}-end`, time: 1, value: end },
+        ],
+      })
+    }
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[nodeId]).toMatchObject({
+      layoutGap: 18,
+      layoutPaddingTop: 10,
+      layoutPaddingRight: 12,
+      layoutPaddingBottom: 14,
+      layoutPaddingLeft: 16,
+      layoutDirection: 'row',
+    })
+
+    engine.seek(0.999)
+    expect(engine.getSnapshot()[nodeId]?.layoutDirection).toBe('row')
+    engine.seek(1)
+    expect(engine.getSnapshot()[nodeId]?.layoutDirection).toBe('column')
+  })
+
+  it('publishes numeric width and height for real resize tracks', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('rect', null, {
+      size: { width: 938, height: 1 },
+    })
+    for (const [propertyId, start, end] of [
+      ['size.width', 938, 0],
+      ['size.height', 1, 81],
+    ] as const) {
+      api.setTrack({
+        id: `${propertyId}-track`,
+        nodeId,
+        propertyId,
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: `${propertyId}-start`, time: 0, value: start },
+          { id: `${propertyId}-end`, time: 1, value: end },
+        ],
+      })
+    }
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[nodeId]).toMatchObject({
+      width: 469,
+      height: 41,
+    })
+  })
+
+  it('publishes editable ellipse arc geometry', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('ellipse', null)
+    for (const [propertyId, start, end] of [
+      ['shape.arcStart', -90, 0],
+      ['shape.arcSweep', 0, 1],
+      ['shape.arcInnerRadius', 0, 0.6],
+    ] as const) {
+      api.setTrack({
+        id: `${propertyId}-track`,
+        nodeId,
+        propertyId,
+        defaultEasing: 'linear',
+        keyframes: [
+          { id: `${propertyId}-start`, time: 0, value: start },
+          { id: `${propertyId}-end`, time: 1, value: end },
+        ],
+      })
+    }
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[nodeId]).toMatchObject({
+      arcStart: -45,
+      arcSweep: 0.5,
+      arcInnerRadius: 0.3,
+    })
+  })
+
   it('publishes intermediate opacity for a 0 to 1 fade track', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('frame', null)
@@ -128,6 +235,126 @@ describe('animation engine track preview', () => {
     expect(engine.getSnapshot()[nodeId]?.blendMode).toBe('normal')
     engine.seek(1)
     expect(engine.getSnapshot()[nodeId]?.blendMode).toBe('overlay')
+  })
+
+  it('interpolates solid fill color tracks in OKLCH space', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('rect', null)
+    api.setTrack({
+      id: 'fill-track',
+      nodeId,
+      propertyId: 'appearance.fill',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'fill-start', time: 0, value: 'oklch(0.2 0.1 20)' },
+        { id: 'fill-end', time: 1, value: 'oklch(0.8 0.3 100)' },
+      ],
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[nodeId]?.fill).toBe(
+      'oklch(0.5000 0.2000 60.00)',
+    )
+  })
+
+  it('interpolates an imported hex root fill through an OKLCH keyframe', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      appearance: {
+        opacity: 1,
+        fill: { kind: 'solid', color: '#f4f4f5' },
+        stroke: null,
+        cornerRadius: 0,
+        effects: [],
+      },
+    })
+    api.setTrack({
+      id: 'root-fill-track',
+      nodeId: rootId,
+      propertyId: 'appearance.fill',
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'fill-start', time: 0, value: '#f4f4f5' },
+        { id: 'fill-end', time: 1, value: 'oklch(0.628 0.258 29)' },
+      ],
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.25)
+    const quarter = engine.getSnapshot()[rootId]?.fill
+    engine.seek(0.5)
+    const midpoint = engine.getSnapshot()[rootId]?.fill
+    engine.seek(0.75)
+    const threeQuarter = engine.getSnapshot()[rootId]?.fill
+
+    expect(quarter).toMatch(/^oklch\(/)
+    expect(midpoint).toMatch(/^oklch\(/)
+    expect(threeQuarter).toMatch(/^oklch\(/)
+    expect(new Set([quarter, midpoint, threeQuarter])).toHaveLength(3)
+    expect(midpoint).not.toBe('#f4f4f5')
+    expect(midpoint).not.toBe('oklch(0.628 0.258 29)')
+  })
+
+  it('interpolates independent frame effect blur tracks by stable effect id', () => {
+    const api = createSceneAPI()
+    const shadowEffectId = 'effect-1'
+    const layerBlurEffectId = 'effect-2'
+    const nodeId = api.createNode('frame', null, {
+      appearance: {
+        opacity: 1,
+        fill: { kind: 'solid', color: '#2563eb' },
+        stroke: null,
+        cornerRadius: 0,
+        effects: [
+          {
+            id: shadowEffectId,
+            kind: 'shadow',
+            color: '#00000080',
+            offsetX: 0,
+            offsetY: 4,
+            blur: 4,
+          },
+          { id: layerBlurEffectId, kind: 'blur', amount: 6 },
+        ],
+      },
+    })
+    api.setTrack({
+      id: 'shadow-blur-track',
+      nodeId,
+      propertyId: effectBlurPropertyId(shadowEffectId),
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'shadow-start', time: 0, value: 4 },
+        { id: 'shadow-end', time: 1, value: 20 },
+      ],
+    })
+    api.setTrack({
+      id: 'layer-blur-track',
+      nodeId,
+      propertyId: effectBlurPropertyId(layerBlurEffectId),
+      defaultEasing: 'linear',
+      keyframes: [
+        { id: 'layer-start', time: 0, value: 6 },
+        { id: 'layer-end', time: 1, value: 30 },
+      ],
+    })
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(0.5)
+
+    expect(engine.getSnapshot()[nodeId]?.effectBlur).toEqual({
+      [shadowEffectId]: 12,
+      [layerBlurEffectId]: 18,
+    })
+    expect(api.getNode(nodeId)?.appearance.effects).toMatchObject([
+      { id: shadowEffectId, kind: 'shadow', blur: 4 },
+      { id: layerBlurEffectId, kind: 'blur', amount: 6 },
+    ])
   })
 
   it('evaluates transient keyframe timing without mutating the scene', () => {

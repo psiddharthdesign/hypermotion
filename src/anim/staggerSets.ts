@@ -324,14 +324,15 @@ export function inspectStaggerSetProperty(
     : dedupeIds(options.layerIds)
   const delay = set?.delay ?? normalizeDelay(options.delay)
   const order = set?.order ?? options.order ?? 'forward'
-  const valuesByNode = new Map(targets.map((target) => [target.nodeId, target]))
+  // `targets` describes the editor's *current* multi-selection.  A stagger
+  // relationship, however, is captured when S is enabled and must not shrink
+  // when the user later narrows that selection.  Keep the argument for this
+  // public helper's call shape, but inspect every captured member below.
+  void targets
   let trackCount = 0
   let memberAtPlayheadCount = 0
-  let targetCount = 0
 
   for (const nodeId of layerIds) {
-    if (!valuesByNode.has(nodeId)) continue
-    targetCount++
     const track = findTrack(api, nodeId, propertyId)
     if (track?.keyframes.length) trackCount++
     const expectedTime =
@@ -342,14 +343,19 @@ export function inspectStaggerSetProperty(
   }
 
   const state =
-    targetCount > 0 && memberAtPlayheadCount === targetCount
+    layerIds.length > 0 && memberAtPlayheadCount === layerIds.length
       ? 'at'
       : memberAtPlayheadCount > 0
         ? 'partial'
         : trackCount > 0
           ? 'track'
           : 'none'
-  return { targetCount, trackCount, memberAtPlayheadCount, state }
+  return {
+    targetCount: layerIds.length,
+    trackCount,
+    memberAtPlayheadCount,
+    state,
+  }
 }
 
 /**
@@ -368,9 +374,15 @@ export function toggleStaggerSetPropertyKeyframes(
   )
   const existing = api.getUiState().staggerSets[options.setId]
   const layerIds = existing?.layerIds.length
-    ? existing.layerIds.filter((nodeId) => targetMap.has(nodeId))
-    : dedupeIds(options.layerIds).filter((nodeId) => targetMap.has(nodeId))
-  if (layerIds.length === 0) {
+    ? existing.layerIds
+    : dedupeIds(options.layerIds)
+  const sourceNodeId = existing
+    ? resolveStaggerSetSourceNodeId(api, existing)
+    : layerIds[0]
+  const fallbackTarget =
+    (sourceNodeId ? targetMap.get(sourceNodeId) : undefined) ??
+    layerIds.map((nodeId) => targetMap.get(nodeId)).find(Boolean)
+  if (layerIds.length === 0 || !fallbackTarget) {
     return { action: 'added', trackIds: [], set: existing ?? null }
   }
   const set = existing
@@ -389,8 +401,11 @@ export function toggleStaggerSetPropertyKeyframes(
 
   api.doc.transact(() => {
     for (const nodeId of layerIds) {
-      const target = targetMap.get(nodeId)
-      if (!target) continue
+      // A narrowed selection may not include every captured member.  Preserve
+      // the set's full layer list and original offsets; use per-layer values
+      // where the current edit supplied them, otherwise stamp the visible
+      // source/current value as the deterministic fallback.
+      const target = targetMap.get(nodeId) ?? fallbackTarget
       const time = normalizeTime(
         baseTime +
           staggerLayerOffset(layerIds, nodeId, set.delay, set.order),
@@ -492,6 +507,37 @@ function adoptStaggerSetPropertyTrackFromMember(
 }
 
 /**
+ * Seed a fresh stagger relationship from whichever selected layer the user
+ * is currently editing. The clicked layer's visible time is treated as that
+ * member's time, then translated back to the shared base time before every
+ * layer receives its offset.
+ */
+export function toggleDraftStaggerSetPropertyFromMember(
+  api: SceneAPI,
+  options: StaggerAuthoringOptions,
+  memberNodeId: NodeId,
+  propertyId: PropertyId,
+  memberTime: number,
+  currentValue: KeyframeValue,
+): StaggerSetMutationResult | null {
+  const layerIds = [...new Set(options.layerIds)]
+  if (layerIds.length < 2 || !layerIds.includes(memberNodeId)) return null
+
+  const order = options.order ?? 'forward'
+  const baseTime = normalizeTime(
+    memberTime -
+      staggerLayerOffset(layerIds, memberNodeId, options.delay, order),
+  )
+  return toggleStaggerSetPropertyKeyframes(
+    api,
+    layerIds.map((nodeId) => ({ nodeId, currentValue })),
+    propertyId,
+    baseTime,
+    { ...options, layerIds, order },
+  )
+}
+
+/**
  * Author one property while an existing stagger set is in source-layer edit
  * mode. The visible member is the canonical animation template: its exact
  * value is stamped onto every member at that member's configured offset.
@@ -558,6 +604,36 @@ export function toggleStaggerSetPropertyFromMember(
     )
   }, UNDOABLE_GESTURE_ORIGIN)
   return result
+}
+
+/**
+ * Remove a deleted ordinary Inspector key from every stagger relationship
+ * that owns it.  Tracks intentionally stay shared between stagger and loose
+ * keys, so this only touches the exact keyframe id that was removed.
+ *
+ * Empty member/property bags are pruned, but the captured layer order stays
+ * intact while the relationship owns any keys. Removing a middle layer here
+ * would renumber follower offsets without retiming their surviving keys.
+ * Explicit layer-detach is the operation that removes/reflows layer slots.
+ */
+export function pruneStaggerMembershipForRemovedKeyframe(
+  api: SceneAPI,
+  nodeId: NodeId,
+  propertyId: PropertyId,
+  keyframeId: string,
+): void {
+  const affected = Object.entries(api.getUiState().staggerSets).filter(
+    ([, set]) => set.members[nodeId]?.[propertyId]?.includes(keyframeId),
+  )
+  if (affected.length === 0) return
+
+  api.doc.transact(() => {
+    for (const [setId, existing] of affected) {
+      const set = cloneSet(existing)
+      removeMember(set, nodeId, propertyId, keyframeId)
+      writeStaggerSet(api, setId, hasMembers(set) ? set : null)
+    }
+  }, UNDOABLE_GESTURE_ORIGIN)
 }
 
 /** Inspect the relationship-wide state for a source-layer property diamond. */
@@ -1412,7 +1488,7 @@ function dedupeIds(ids: readonly NodeId[]): NodeId[] {
   return [...new Set(ids)]
 }
 
-function staggerSetHasPropertyMembers(
+export function staggerSetHasPropertyMembers(
   set: StaggerPropertySet,
   propertyId: PropertyId,
 ): boolean {

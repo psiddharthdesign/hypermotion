@@ -86,8 +86,10 @@ export function figmaToLayout(node: FigmaCapturedFrame): Layout {
  * actual dimensions, while children inside keep their original FILL/HUG
  * because their parent (the imported frame) has Figma-style auto-layout.
  *
- * For non-frame nodes (rect/ellipse/text/vector), we don't have these
- * fields at all, so the size is always fixed = the captured width/height.
+ * Text nodes additionally have the legacy `textAutoResize` field. Modern
+ * layoutSizing values win when present; older captures map auto-width to
+ * HUG/HUG and auto-height to FIXED/HUG instead of freezing a content-sized
+ * text box at stale captured pixels.
  */
 export function figmaToSize(
   node: FigmaCapturedNode,
@@ -114,6 +116,24 @@ export function figmaToSize(
     )
     return { width: horiz, height: vert }
   }
+  if (node.type === 'TEXT') {
+    return {
+      width: sizeAxisFromText(
+        node.layoutSizingHorizontal,
+        node.textAutoResize,
+        'horizontal',
+        node.width,
+        forceFixed,
+      ),
+      height: sizeAxisFromText(
+        node.layoutSizingVertical,
+        node.textAutoResize,
+        'vertical',
+        node.height,
+        forceFixed,
+      ),
+    }
+  }
   // Payload v2 captures explicit sizing for every auto-layout child, not only
   // frames. This is particularly important for imported SVG icons: a FILL
   // vector must remain responsive and a HUG vector uses its intrinsic viewBox.
@@ -129,6 +149,20 @@ export function figmaToSize(
       forceFixed,
     ),
   }
+}
+
+function sizeAxisFromText(
+  modern: 'FIXED' | 'HUG' | 'FILL' | undefined,
+  legacy: 'NONE' | 'HEIGHT' | 'WIDTH_AND_HEIGHT',
+  axis: 'horizontal' | 'vertical',
+  px: number,
+  forceFixed: boolean,
+): SizeAxis {
+  if (forceFixed) return px
+  if (modern) return sizeAxisFromCapturedNode(modern, px, false)
+  if (legacy === 'WIDTH_AND_HEIGHT') return 'hug'
+  if (legacy === 'HEIGHT' && axis === 'vertical') return 'hug'
+  return px
 }
 
 function sizeAxisFromCapturedNode(
@@ -177,9 +211,18 @@ function sizeAxisFromFrame(
  */
 export function figmaToTransform(
   node: FigmaCapturedNode,
-  parentLayoutMode: 'NONE' | 'HORIZONTAL' | 'VERTICAL' | 'GRID' | null,
+  parentLayoutMode:
+    | 'NONE'
+    | 'HORIZONTAL'
+    | 'VERTICAL'
+    | 'GRID'
+    | null
+    | undefined,
 ): Transform {
-  const inAutoLayout = parentLayoutMode !== null && parentLayoutMode !== 'NONE'
+  const inAutoLayout =
+    parentLayoutMode === 'HORIZONTAL' ||
+    parentLayoutMode === 'VERTICAL' ||
+    parentLayoutMode === 'GRID'
   const absoluteInParent = node.layoutPositioning === 'ABSOLUTE'
   const capturedX = node.relativeTransform?.[0][2] ?? node.x
   const capturedY = node.relativeTransform?.[1][2] ?? node.y

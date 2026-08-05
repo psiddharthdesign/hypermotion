@@ -5,7 +5,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { RENDER_FORMATS, RENDER_QUALITIES } from '../renderOptions.js'
+import {
+  DEFAULT_RENDER_FPS,
+  RENDER_FORMATS,
+  RENDER_QUALITIES,
+} from '../renderOptions.js'
 import { withEnvVar } from '../testUtils/env.js'
 import { assertToolText } from '../testUtils/mcp.js'
 import { handleRenderScene, renderSceneTool } from './tools/renderScene.js'
@@ -27,6 +31,7 @@ test('render_scene input schema exposes fps bounds', () => {
   assert.equal(fpsProperty?.type, 'integer')
   assert.equal(fpsProperty?.minimum, 1)
   assert.equal(fpsProperty?.maximum, 120)
+  assert.match(String(fpsProperty?.description), /Default: 60\./)
 })
 
 test('render_scene input schema documents relative output paths', () => {
@@ -325,6 +330,7 @@ test('render_scene creates missing output directories before rendering', async (
   const outDir = path.join(dir, 'exports', 'nested')
   const outputPath = path.join(outDir, 'out.gif')
   let renderedOutputPath: string | null = null
+  let renderedFps: number | null = null
 
   try {
     const result = await handleRenderScene(
@@ -335,6 +341,7 @@ test('render_scene creates missing output directories before rendering', async (
         locateApp: async () => '/tmp/hyper-motion',
         render: async (req) => {
           renderedOutputPath = req.outputPath
+          renderedFps = req.fps
         },
       }),
     )
@@ -342,9 +349,11 @@ test('render_scene creates missing output directories before rendering', async (
     assert.equal(result.isError, undefined)
     assert.equal(fs.statSync(outDir).isDirectory(), true)
     assert.equal(renderedOutputPath, outputPath)
+    assert.equal(DEFAULT_RENDER_FPS, 60)
+    assert.equal(renderedFps, DEFAULT_RENDER_FPS)
     assert.equal(
       assertToolText(result),
-      `Rendered current desktop scene → ${outputPath} (gif · comp · 30fps)`,
+      `Rendered current desktop scene → ${outputPath} (gif · comp · 60fps)`,
     )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -384,7 +393,7 @@ test('render_scene normalizes padded format and quality values', async () => {
     assert.equal(result.isError, undefined)
     assert.equal(
       assertToolText(result),
-      `Rendered current desktop scene → ${outputPath} (webm · 4k · 30fps)`,
+      `Rendered current desktop scene → ${outputPath} (webm · 4k · 60fps)`,
     )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -420,7 +429,7 @@ test('render_scene normalizes padded output paths', async () => {
     assert.equal(result.isError, undefined)
     assert.equal(
       assertToolText(result),
-      `Rendered current desktop scene → ${outputPath} (mp4 · comp · 30fps)`,
+      `Rendered current desktop scene → ${outputPath} (mp4 · comp · 60fps)`,
     )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -453,7 +462,7 @@ test('render_scene normalizes padded scene paths', async () => {
     assert.equal(renderedScenePath, scenePath)
     assert.equal(
       assertToolText(result),
-      `Rendered ${scenePath} → ${outputPath} (mp4 · comp · 30fps)`,
+      `Rendered ${scenePath} → ${outputPath} (mp4 · comp · 60fps)`,
     )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })

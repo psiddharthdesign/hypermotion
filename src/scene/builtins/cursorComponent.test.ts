@@ -8,6 +8,7 @@ import {
   applyInstanceVariantTransition,
   instantiateComponent,
 } from '@/ui/actions'
+import { toggleInspectorPropertyKeyframe } from '@/ui/fields/keyframeAuthoring'
 import { getAnimEngine } from '@/anim'
 import { normalizeLayerMotionPath } from '@/anim/layerMotionPath'
 import {
@@ -706,6 +707,83 @@ describe('cursor built-in component', () => {
       { State: 'Pointer' },
       { State: 'Click' },
     ])
+  })
+
+  it('reuses the Inspector-authored State track when the cursor variant changes later', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Artboard',
+      size: { width: 960, height: 540 },
+    })
+    const componentId = ensureCursorComponent(api)
+    const instanceId = instantiateComponent(api, componentId, rootId, {
+      absolute: true,
+      alwaysOnTop: true,
+      position: { x: 120, y: 80 },
+    })
+    if (!instanceId) throw new Error('Expected cursor instance')
+
+    const firstKey = toggleInspectorPropertyKeyframe(
+      api,
+      {
+        staggerOn: false,
+        activeStaggerSetId: null,
+        staggerDraftLayerIds: [],
+        staggerDelay: 0.1,
+      },
+      instanceId,
+      'variant',
+      0,
+      { State: 'Default' },
+    )
+    expect(firstKey).toMatchObject({ action: 'added', staggered: false })
+
+    const inspectorTrack = api
+      .getTracksForNode(instanceId)
+      .find((track) => track.propertyId === 'variant')
+    if (!inspectorTrack) throw new Error('Expected Inspector-authored State track')
+
+    applyInstanceVariantTransition(api, instanceId, { State: 'Pointer' }, {
+      playhead: 1,
+      keyframe: false,
+    })
+
+    const stateTrack = api
+      .getTracksForNode(instanceId)
+      .find((track) => track.propertyId === 'variant')
+    if (!stateTrack) throw new Error('Expected reused State track')
+    expect(stateTrack.id).toBe(inspectorTrack.id)
+    expect(stateTrack.keyframes.map(({ time, value }) => ({ time, value })))
+      .toEqual([
+        { time: 0, value: { State: 'Default' } },
+        { time: 1, value: { State: 'Pointer' } },
+      ])
+    expect(api.getAllTracks()).toHaveLength(1)
+
+    const stateNodes = cursorStateNodes(api, instanceId)
+    const engine = getAnimEngine()
+    engine.attach(api)
+
+    engine.seek(0.999)
+    expect(engine.getSnapshot()[instanceId]?.variant).toEqual({
+      State: 'Default',
+    })
+    expect(engine.getSnapshot()[stateNodes.get('Default')!.id]?.opacity).toBe(1)
+    expect(engine.getSnapshot()[stateNodes.get('Pointer')!.id]?.opacity).toBe(0)
+
+    engine.seek(1)
+    expect(engine.getSnapshot()[instanceId]?.variant).toEqual({
+      State: 'Pointer',
+    })
+    expect(engine.getSnapshot()[stateNodes.get('Default')!.id]?.opacity).toBe(0)
+    expect(engine.getSnapshot()[stateNodes.get('Pointer')!.id]?.opacity).toBe(1)
+
+    engine.seek(0)
+    expect(engine.getSnapshot()[instanceId]?.variant).toEqual({
+      State: 'Default',
+    })
+    expect(engine.getSnapshot()[stateNodes.get('Default')!.id]?.opacity).toBe(1)
+    expect(engine.getSnapshot()[stateNodes.get('Pointer')!.id]?.opacity).toBe(0)
   })
 
   it('keeps legacy child-opacity cursor tracks playable', () => {

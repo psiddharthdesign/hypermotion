@@ -20,7 +20,6 @@ export function activateStaggerSetForEditing(
   ui.setSelectedTrackIds([])
   ui.setSelectedTrackId(null)
   ui.setSelectedKeyframes([])
-  ui.setInspectorMode('animate')
   return sourceNodeId
 }
 

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { SquircleSurface } from './SquircleSurface'
+
 /**
  * Native <select> styled to match the rest of the Inspector.
  *
@@ -25,7 +27,7 @@ export function SelectField<T extends string>({
   options,
   groups,
   onCommit,
-  width = 'w-24',
+  width = 'w-full',
   ariaLabel,
 }: {
   value: T
@@ -41,35 +43,36 @@ export function SelectField<T extends string>({
 }) {
   // Framer-style: solid dark fill, no border, accent ring on focus.
   // Native chevron from the OS still sits at the right edge.
-  const className = [
-    width,
-    'cursor-pointer h-7 rounded-md bg-app-bg pl-2 pr-1 text-[12px] text-text outline-none',
-    'ring-1 ring-transparent transition-shadow',
-    'hover:ring-border focus:ring-2 focus:ring-accent/45',
-  ].join(' ')
+  const className = [width, 'hm-control-surface hm-control-compact h-7'].join(' ')
   return (
-    <select
-      value={value}
-      onChange={(e) => onCommit(e.target.value as T)}
+    <SquircleSurface
+      as="label"
+      radius={6}
       className={className}
-      aria-label={ariaLabel}
     >
-      {options
-        ? normalize(options).map((o) => (
-            <option key={o.value} value={o.value} className="bg-panel text-text">
-              {o.label}
-            </option>
-          ))
-        : (groups ?? []).map((g) => (
-            <optgroup key={g.label} label={g.label}>
-              {g.options.map((o) => (
-                <option key={o.value} value={o.value} className="bg-panel text-text">
-                  {o.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-    </select>
+      <select
+        value={value}
+        onChange={(e) => onCommit(e.target.value as T)}
+        className="h-full w-full cursor-pointer bg-transparent pl-3 pr-2 text-[12px] text-text outline-none"
+        aria-label={ariaLabel}
+      >
+        {options
+          ? normalize(options).map((o) => (
+              <option key={o.value} value={o.value} className="bg-panel text-text">
+                {o.label}
+              </option>
+            ))
+          : (groups ?? []).map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map((o) => (
+                  <option key={o.value} value={o.value} className="bg-panel text-text">
+                    {o.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+      </select>
+    </SquircleSurface>
   )
 }
 

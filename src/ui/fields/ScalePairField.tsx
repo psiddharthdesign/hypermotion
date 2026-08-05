@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { NodeId } from '@/scene'
 import { useUI } from '@/state/ui'
 import { KeyframeButton } from './KeyframeButton'
+import { KeyframeSliderRow } from './KeyframeSliderRow'
+import { SquircleSurface } from './SquircleSurface'
 import {
   commitScaleAxisEdit,
+  previewScaleAxisEdit,
+  resolveScaleAxisEdit,
   type ScaleAxis,
   type ScalePair,
 } from './scalePairEdit'
+import {
+  formatNumericDisplayValue,
+  formatNumericValue,
+  parseNumericExpression,
+  stabilizeNumericValue,
+} from './numericExpression'
 
 /**
  * Scale editor — two percentage fields with leading "X" / "Y" labels,
- * sitting side-by-side, with a link toggle anchored on the right.
+ * with the link toggle placed between the two channels.
  *
  * Storage stays as a pair of floats on `transform` (1 = 100%); the UI
  * exclusively shows percentages, what users coming from Figma, AE, or
@@ -20,9 +30,9 @@ import {
  *
  * Layout (left → right):
  *
- *   ┌─────────────┐  ◇  ┌─────────────┐  ◇   🔗
- *   │ X 100    %  │     │ Y 100    %  │
- *   └─────────────┘     └─────────────┘
+ *   ┌─────────────┐  ◇  🔗  ┌─────────────┐  ◇
+ *   │ X 100    %  │         │ Y 100    %  │
+ *   └─────────────┘         └─────────────┘
  *
  * Each field is its own pill with the axis letter inside on the left,
  * the number in the middle, and the % suffix on the right. The
@@ -32,19 +42,10 @@ import {
  *
  * Link state lives in UI state (`scaleLinked`) so it survives selection
  * changes. Default OFF — surprise mirroring on type was disorienting.
- * Click the chain icon on the right to preserve the current X:Y proportion
+ * Click the chain icon between the channels to preserve the X:Y proportion
  * while either axis is edited.
  */
-export function ScalePairField({
-  scaleX,
-  scaleY,
-  onCommitX,
-  onCommitY,
-  onCommitPair,
-  mixedX = false,
-  mixedY = false,
-  nodeId,
-}: {
+export interface ScalePairFieldProps {
   scaleX: number
   scaleY: number
   onCommitX: (next: number) => void
@@ -54,6 +55,23 @@ export function ScalePairField({
    * per-axis callbacks so the owner can commit one transaction.
    */
   onCommitPair?: (next: ScalePair) => void
+  /**
+   * Lightweight transient Scale writers. Values use scene storage units
+   * (1 = 100%), matching the durable callbacks. When supplied, pointer scrub
+   * packets avoid `onCommit*` until the gesture finishes.
+   */
+  onScrubPreviewX?: (next: number) => void
+  onScrubPreviewY?: (next: number) => void
+  onScrubPreviewPair?: (next: ScalePair) => void
+  /**
+   * Optional final scrub writers. Missing handlers fall back to the matching
+   * durable `onCommit*` callback, like NumberField's scrub lifecycle.
+   */
+  onScrubCommitX?: (next: number) => void
+  onScrubCommitY?: (next: number) => void
+  onScrubCommitPair?: (next: ScalePair) => void
+  /** Called after a deferred scrub is cancelled or interrupted. */
+  onScrubCancel?: () => void
   mixedX?: boolean
   mixedY?: boolean
   /**
@@ -62,7 +80,30 @@ export function ScalePairField({
    * track per selected node.
    */
   nodeId?: NodeId
-}) {
+  /** Multi-selection supplies its own aggregate actions. */
+  keyframeX?: ReactNode
+  keyframeY?: ReactNode
+}
+
+export function ScalePairField({
+  scaleX,
+  scaleY,
+  onCommitX,
+  onCommitY,
+  onCommitPair,
+  onScrubPreviewX,
+  onScrubPreviewY,
+  onScrubPreviewPair,
+  onScrubCommitX,
+  onScrubCommitY,
+  onScrubCommitPair,
+  onScrubCancel,
+  mixedX = false,
+  mixedY = false,
+  nodeId,
+  keyframeX,
+  keyframeY,
+}: ScalePairFieldProps) {
   const scaleLinked = useUI((s) => s.scaleLinked)
   const toggleScaleLinked = useUI((s) => s.toggleScaleLinked)
 
@@ -70,6 +111,7 @@ export function ScalePairField({
   const editRef = useRef<{
     axis: ScaleAxis
     baseline: ScalePair
+    source: 'field' | 'scrub'
   } | null>(null)
 
   // External changes (selection, timeline seeks, undo/redo) become the next
@@ -83,11 +125,17 @@ export function ScalePairField({
     editRef.current = {
       axis,
       baseline: { ...currentPairRef.current },
+      source: 'field',
     }
   }
 
   const endEdit = (axis: ScaleAxis) => {
-    if (editRef.current?.axis === axis) editRef.current = null
+    if (
+      editRef.current?.axis === axis &&
+      editRef.current.source === 'field'
+    ) {
+      editRef.current = null
+    }
   }
 
   const commit = (axis: ScaleAxis, percent: number) => {
@@ -108,8 +156,173 @@ export function ScalePairField({
     })
   }
 
+  const beginScrubEdit = (axis: ScaleAxis) => {
+    const activeEdit = editRef.current
+    if (activeEdit?.axis === axis && activeEdit.source === 'scrub') {
+      return activeEdit
+    }
+    const nextEdit = {
+      axis,
+      baseline: { ...currentPairRef.current },
+      source: 'scrub' as const,
+    }
+    editRef.current = nextEdit
+    return nextEdit
+  }
+
+  const previewScrub = (axis: ScaleAxis, percent: number) => {
+    const edit = beginScrubEdit(axis)
+    currentPairRef.current = previewScaleAxisEdit({
+      baseline: edit.baseline,
+      current: currentPairRef.current,
+      axis,
+      next: percent / 100,
+      linked: scaleLinked,
+      onPreviewX: onScrubPreviewX,
+      onPreviewY: onScrubPreviewY,
+      onPreviewPair: onScrubPreviewPair,
+    })
+  }
+
+  const commitScrub = (axis: ScaleAxis, percent: number) => {
+    const edit =
+      editRef.current?.axis === axis && editRef.current.source === 'scrub'
+        ? editRef.current
+        : beginScrubEdit(axis)
+    const nextPair = resolveScaleAxisEdit(
+      edit.baseline,
+      axis,
+      percent / 100,
+      scaleLinked,
+    )
+    const changedX = nextPair.scaleX !== edit.baseline.scaleX
+    const changedY = nextPair.scaleY !== edit.baseline.scaleY
+    const hasExplicitScrubCommit = Boolean(
+      onScrubCommitX || onScrubCommitY || onScrubCommitPair,
+    )
+
+    if (!hasExplicitScrubCommit) {
+      commitScaleAxisEdit({
+        baseline: edit.baseline,
+        current: edit.baseline,
+        axis,
+        next: percent / 100,
+        linked: scaleLinked,
+        onCommitX,
+        onCommitY,
+        onCommitPair,
+      })
+    } else if (onScrubCommitPair) {
+      // A pair callback owns the complete transient-to-durable handoff for
+      // both linked and unlinked scrubs.
+      onScrubCommitPair(nextPair)
+    } else {
+      let emitted = false
+      if (changedX) {
+        ;(onScrubCommitX ?? onCommitX)(nextPair.scaleX)
+        emitted = true
+      }
+      if (changedY) {
+        ;(onScrubCommitY ?? onCommitY)(nextPair.scaleY)
+        emitted = true
+      }
+      // NumberField finishes every deferred gesture, even when it returns to
+      // its starting value. Preserve that cleanup opportunity for preview
+      // stores by notifying the driving axis once.
+      if (!emitted) {
+        if (axis === 'x') {
+          ;(onScrubCommitX ?? onCommitX)(nextPair.scaleX)
+        } else {
+          ;(onScrubCommitY ?? onCommitY)(nextPair.scaleY)
+        }
+      }
+    }
+
+    currentPairRef.current = nextPair
+    editRef.current = null
+  }
+
+  const cancelScrub = () => {
+    const activeEdit = editRef.current
+    if (activeEdit?.source === 'scrub') {
+      currentPairRef.current = { ...activeEdit.baseline }
+      editRef.current = null
+    }
+    onScrubCancel?.()
+  }
+
+  const canPreviewX = Boolean(
+    onScrubPreviewPair ||
+      onScrubPreviewX ||
+      (scaleLinked && onScrubPreviewY),
+  )
+  const canPreviewY = Boolean(
+    onScrubPreviewPair ||
+      onScrubPreviewY ||
+      (scaleLinked && onScrubPreviewX),
+  )
+
+  const resolvedKeyframeX =
+    keyframeX ??
+    (nodeId ? (
+      <KeyframeButton
+        nodeId={nodeId}
+        propertyId="transform.scaleX"
+        currentValue={scaleX}
+      />
+    ) : null)
+  const resolvedKeyframeY =
+    keyframeY ??
+    (nodeId ? (
+      <KeyframeButton
+        nodeId={nodeId}
+        propertyId="transform.scaleY"
+        currentValue={scaleY}
+      />
+    ) : null)
+
+  if (resolvedKeyframeX || resolvedKeyframeY) {
+    return (
+      <div className="space-y-1.5">
+        <KeyframeSliderRow
+          label="Scale X"
+          value={toPercent(scaleX)}
+          onCommit={(percent) => commit('x', percent)}
+          onScrubPreview={
+            canPreviewX ? (percent) => previewScrub('x', percent) : undefined
+          }
+          onScrubCommit={(percent) => commitScrub('x', percent)}
+          onScrubCancel={cancelScrub}
+          step={1}
+          adaptiveSpan={400}
+          suffix="%"
+          mixed={mixedX}
+          labelAccessory={
+            <LinkToggle linked={scaleLinked} onToggle={toggleScaleLinked} />
+          }
+          keyframe={resolvedKeyframeX}
+        />
+        <KeyframeSliderRow
+          label="Scale Y"
+          value={toPercent(scaleY)}
+          onCommit={(percent) => commit('y', percent)}
+          onScrubPreview={
+            canPreviewY ? (percent) => previewScrub('y', percent) : undefined
+          }
+          onScrubCommit={(percent) => commitScrub('y', percent)}
+          onScrubCancel={cancelScrub}
+          step={1}
+          adaptiveSpan={400}
+          suffix="%"
+          mixed={mixedY}
+          keyframe={resolvedKeyframeY}
+        />
+      </div>
+    )
+  }
+
   return (
-    <div className="flex w-full items-center gap-1">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_16px_minmax(0,1fr)] items-center gap-1">
       <PercentField
         axis="X"
         value={scaleX}
@@ -118,13 +331,7 @@ export function ScalePairField({
         onEditStart={() => beginEdit('x')}
         onEditEnd={() => endEdit('x')}
       />
-      {nodeId ? (
-        <KeyframeButton
-          nodeId={nodeId}
-          propertyId="transform.scaleX"
-          currentValue={scaleX}
-        />
-      ) : null}
+      <LinkToggle linked={scaleLinked} onToggle={toggleScaleLinked} />
       <PercentField
         axis="Y"
         value={scaleY}
@@ -133,14 +340,6 @@ export function ScalePairField({
         onEditStart={() => beginEdit('y')}
         onEditEnd={() => endEdit('y')}
       />
-      {nodeId ? (
-        <KeyframeButton
-          nodeId={nodeId}
-          propertyId="transform.scaleY"
-          currentValue={scaleY}
-        />
-      ) : null}
-      <LinkToggle linked={scaleLinked} onToggle={toggleScaleLinked} />
     </div>
   )
 }
@@ -171,33 +370,29 @@ function PercentField({
 }) {
   if (mixed) {
     return (
-      <div
+      <SquircleSurface
+        radius={6}
         title="Values differ across the selection"
-        className="flex h-6 flex-1 items-center justify-center rounded text-xs italic"
-        style={{
-          background: 'var(--color-panel-raised)',
-          color: 'var(--color-text-dim)',
-          border: '1px solid var(--color-border)',
-        }}
+        className="hm-control-surface hm-control-compact flex h-7 flex-1 items-center justify-center text-[11px] italic text-text-dim"
       >
         Mixed
-      </div>
+      </SquircleSurface>
     )
   }
   return (
-    <label
+    <SquircleSurface
+      as="label"
+      radius={6}
       title={`Scale ${axis}`}
       className={[
         // min-w-[56px] floor: enough room for the axis letter, "100", and
         // the % suffix even when the sidebar is narrow. flex-1 still lets
         // it grow when there's headroom.
-        'inline-flex h-6 min-w-[56px] flex-1 items-center rounded',
-        'border border-transparent hover:border-border',
-        'focus-within:border-border-strong focus-within:bg-app-bg',
+        'hm-control-surface hm-control-compact inline-flex h-7 min-w-0 items-center',
       ].join(' ')}
     >
       <span
-        className="select-none pl-1.5 pr-1 text-[11px] font-medium leading-none"
+        className="select-none pl-1 pr-0.5 text-[11px] font-medium leading-none"
         style={{ color: 'var(--color-text-muted)' }}
         aria-hidden="true"
       >
@@ -210,13 +405,13 @@ function PercentField({
         onEditEnd={onEditEnd}
       />
       <span
-        className="pointer-events-none select-none pr-1.5 pl-0.5 text-[11px]"
+        className="pointer-events-none select-none pr-1 text-[11px]"
         style={{ color: 'var(--color-text-dim)' }}
         aria-hidden="true"
       >
         %
       </span>
-    </label>
+    </SquircleSurface>
   )
 }
 
@@ -252,7 +447,11 @@ function PercentInput({
   }
 
   const commitDraft = () => {
-    const parsed = Number.parseFloat(draft)
+    const parsed = parseNumericExpression(draft)
+    if (parsed == null) {
+      setDraft(formatPercent(value))
+      return
+    }
     if (!emit(parsed)) {
       setDraft(formatPercent(value))
       return
@@ -264,7 +463,7 @@ function PercentInput({
     <input
       type="text"
       inputMode="decimal"
-      value={focused ? draft : formatPercent(value)}
+      value={focused ? draft : formatNumericDisplayValue(toPercent(value))}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={(e) => {
         setDraft(formatPercent(value))
@@ -294,8 +493,10 @@ function PercentInput({
           e.currentTarget.blur()
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault()
-          const delta = (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)
-          const next = (Number.parseFloat(draft) || 0) + delta
+          const multiplier = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+          const delta = (e.key === 'ArrowUp' ? 1 : -1) * multiplier
+          const current = parseNumericExpression(draft) ?? toPercent(value)
+          const next = stabilizeNumericValue(current + delta)
           setDraft(formatPercentNumber(next))
           emit(next)
         }
@@ -306,11 +507,11 @@ function PercentInput({
 }
 
 /**
- * Convert a stored scale (1 = 100%) into a tidy percentage for display.
- * Rounds to 2 decimals so `1.3333...` doesn't leak into the field.
+ * Convert a stored scale (1 = 100%) into a stable percentage without
+ * discarding authored decimal precision.
  */
 function toPercent(n: number): number {
-  return Math.round(n * 10000) / 100
+  return stabilizeNumericValue(n * 100)
 }
 
 function formatPercent(n: number): string {
@@ -318,11 +519,7 @@ function formatPercent(n: number): string {
 }
 
 function formatPercentNumber(p: number): string {
-  // Defensive: agent-built scenes may land here with undefined scale
-  // values — a single undefined.toFixed crashes the whole Inspector.
-  if (p == null || !Number.isFinite(p)) return ''
-  if (Number.isInteger(p)) return String(p)
-  return p.toFixed(2).replace(/\.?0+$/, '')
+  return formatNumericValue(p)
 }
 
 function LinkToggle({
@@ -340,7 +537,7 @@ function LinkToggle({
       aria-label={linked ? 'Unlink scale axes' : 'Link scale axes'}
       aria-pressed={linked}
       className={[
-        'flex h-6 w-6 shrink-0 items-center justify-center rounded transition-colors',
+        'flex h-7 w-4 shrink-0 items-center justify-center rounded transition-colors',
         linked
           ? 'text-accent hover:bg-accent-soft'
           : 'text-text-dim hover:bg-panel-raised hover:text-text',
@@ -351,8 +548,8 @@ function LinkToggle({
           looked like a smudge. */}
       <svg
         viewBox="0 0 24 24"
-        width="14"
-        height="14"
+        width="12"
+        height="12"
         aria-hidden="true"
         fill="none"
         stroke="currentColor"

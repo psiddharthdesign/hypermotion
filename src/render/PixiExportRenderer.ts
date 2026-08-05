@@ -35,6 +35,7 @@ import {
   Container,
   type Filter,
   Graphics,
+  GraphicsPath,
   Sprite,
   Text,
   Texture,
@@ -54,7 +55,7 @@ import type {
   TextNode,
   VectorNode,
 } from '@/scene'
-import { displayedText } from '@/scene'
+import { clampLayerBlurAmount, displayedText } from '@/scene'
 import {
   paintVectorNodeToCanvas,
   vectorTrimState,
@@ -64,6 +65,11 @@ import {
   alwaysOnTopRootsInPaintOrder,
   isAlwaysOnTopNode,
 } from '@/render/layerCompositing'
+import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
+import {
+  ellipseArcSvgPath,
+  resolveEllipseArc,
+} from '@/render/ellipseShape'
 
 interface VectorRasterEntry {
   canvas: HTMLCanvasElement
@@ -258,7 +264,7 @@ export class PixiExportRenderer {
         const tex = Texture.from(img)
         this.imageTextures.set(src, tex)
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.warn(
           '[PixiExportRenderer] failed to load image',
           src.slice(0, 80) + (src.length > 80 ? '…' : ''),
@@ -285,7 +291,7 @@ export class PixiExportRenderer {
           document.fonts.load(`600 16px "${family}"`),
         ])
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.warn('[PixiExportRenderer] failed to load font', family, err)
       }
     })
@@ -419,7 +425,7 @@ export class PixiExportRenderer {
       })
       canary.position.set(20, 20)
       this.root.addChild(canary)
-      // eslint-disable-next-line no-console
+
       console.log('[PixiExport] canary bbox=', {
         w: canary.width,
         h: canary.height,
@@ -433,7 +439,7 @@ export class PixiExportRenderer {
     // Diagnostic summary — first frame only so a 300-frame export
     // doesn't flood the console.
     if (this.frameCount === 0) {
-      // eslint-disable-next-line no-console
+
       console.log('[PixiExport] frame summary', this.debugStats, {
         preloadedImages: this.imageTextures.size,
         preloadedFonts: Array.from(this.fontsLoaded),
@@ -528,7 +534,7 @@ export class PixiExportRenderer {
     // attach to the container's filter chain so they apply to the
     // shape and any later children of this container.
     if (rect) {
-      this.applyEffects(node, rect, container)
+      this.applyEffects(node, rect, container, animated)
     }
 
     // Recurse into children. Children's rects are already in scene
@@ -578,7 +584,7 @@ export class PixiExportRenderer {
       // Loud about size-zero text/image — these are the most likely
       // missing-content sources, easy to track down once we know.
       if (node.kind === 'text' || node.kind === 'image' || node.kind === 'vector') {
-        // eslint-disable-next-line no-console
+
         console.warn(
           '[PixiExport] skipped 0-size node',
           node.kind,
@@ -816,7 +822,7 @@ export class PixiExportRenderer {
         },
       })
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.warn(
         '[PixiExportRenderer] Text construction failed',
         { text: renderedText, fontFamily: node.fontFamily, fontWeight },
@@ -833,7 +839,7 @@ export class PixiExportRenderer {
       // wordWrapWidth interaction. Knowing this is the smoking-gun
       // signal we need.
       const bbox = { w: text.width, h: text.height }
-      // eslint-disable-next-line no-console
+
       console.log(
         '[PixiExport] text',
         node.id,
@@ -896,7 +902,7 @@ export class PixiExportRenderer {
     const tex = this.imageTextures.get(node.src)
     if (!tex) {
       this.debugStats.imagesPlaceholder++
-      // eslint-disable-next-line no-console
+
       console.warn(
         '[PixiExport] image texture missing — using placeholder',
         node.id,
@@ -1015,9 +1021,10 @@ export class PixiExportRenderer {
     node: EllipseNode,
     animated: AnimatedValue,
   ): void {
-    const cx = x + w / 2
-    const cy = y + h / 2
-    g.ellipse(cx, cy, w / 2, h / 2)
+    const arc = resolveEllipseArc(node.arc, animated)
+    const path = ellipseArcSvgPath(w, h, arc, x, y)
+    if (!path) return
+    g.path(new GraphicsPath(path, true))
     const fill = resolveFill(node.appearance.fill, animated)
     if (fill) {
       g.fill({ color: fill.color, alpha: fill.alpha })
@@ -1051,8 +1058,16 @@ export class PixiExportRenderer {
    * `addChildAt(0)` ensures the first effect paints in front of the
    * second, and so on.
    */
-  private applyEffects(node: Node, rect: Rect, container: Container): void {
-    const effects = node.appearance.effects
+  private applyEffects(
+    node: Node,
+    rect: Rect,
+    container: Container,
+    animated: AnimatedValue,
+  ): void {
+    const effects = resolveAnimatedLayerEffects(
+      node.appearance.effects,
+      animated.effectBlur,
+    )
     if (!effects || effects.length === 0) return
 
     const blurFilters: Filter[] = []
@@ -1062,12 +1077,14 @@ export class PixiExportRenderer {
       // for legacy rows that lack the explicit `visible` flag.
       if (e.visible === false) continue
       if (e.kind === 'shadow') {
-        this.appendDropShadow(e, node, rect, container)
+        this.appendDropShadow(e, node, rect, container, animated)
       } else if (e.kind === 'blur') {
         // Pixi v8 BlurFilter strength is roughly 1px ≈ 1 unit but
         // perceptually softer than CSS blur. Halving brings it closer
         // to what users sketched in the editor's CSS-blur preview.
-        blurFilters.push(new BlurFilter({ strength: e.amount / 2 }))
+        blurFilters.push(
+          new BlurFilter({ strength: clampLayerBlurAmount(e.amount) / 2 }),
+        )
       }
       // 'inner-shadow' is intentionally skipped — see method header.
     }
@@ -1107,6 +1124,7 @@ export class PixiExportRenderer {
     node: Node,
     rect: Rect,
     container: Container,
+    animated: AnimatedValue,
   ): void {
     const shadowColor = parseColor(effect.color)
     const spread = effect.spread ?? 0
@@ -1121,9 +1139,36 @@ export class PixiExportRenderer {
     const x = ox - spread
     const y = oy - spread
 
+    if (node.kind === 'vector') {
+      const source = container.children.find(
+        (child): child is Sprite => child instanceof Sprite,
+      )
+      if (source) {
+        const shadow = new Sprite(source.texture)
+        shadow.position.set(x, y)
+        shadow.width = w
+        shadow.height = h
+        shadow.tint = shadowColor.color
+        shadow.alpha = shadowColor.alpha
+        if (effect.blur > 0) {
+          shadow.filters = [new BlurFilter({ strength: effect.blur / 2 })]
+        }
+        container.addChildAt(shadow, 0)
+        return
+      }
+    }
+
     const g = new Graphics()
     if (node.kind === 'ellipse') {
-      g.ellipse(x + w / 2, y + h / 2, w / 2, h / 2)
+      const path = ellipseArcSvgPath(
+        w,
+        h,
+        resolveEllipseArc(node.arc, animated),
+        x,
+        y,
+      )
+      if (!path) return
+      g.path(new GraphicsPath(path, true))
     } else if (
       (node.kind === 'frame' || node.kind === 'rect') &&
       (node.appearance.cornerRadius > 0 || node.appearance.cornerRadii)

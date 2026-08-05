@@ -18,6 +18,7 @@ import fs from 'node:fs'
 import { locateDesktopApp } from '../../electron/locator.js'
 import { driveHeadlessRender } from '../../electron/driver.js'
 import {
+  DEFAULT_RENDER_FPS,
   RENDER_FORMATS,
   RENDER_QUALITIES,
   inferRenderFormatFromPath,
@@ -44,7 +45,13 @@ const RenderInput = z.object({
     .preprocess(normalizeStringOption, z.enum(RENDER_QUALITIES))
     .optional()
     .describe('Output resolution preset. `comp` matches the scene canvas size (fastest). Default: comp.'),
-  fps: z.number().int().positive().max(120).optional().describe('Frame rate. Default: 30.'),
+  fps: z
+    .number()
+    .int()
+    .positive()
+    .max(120)
+    .optional()
+    .describe(`Frame rate. Default: ${DEFAULT_RENDER_FPS}.`),
   scene: z
     .string()
     .trim()
@@ -98,7 +105,7 @@ const FPS_PROPERTY: IntegerSchemaProperty = {
   type: 'integer',
   minimum: 1,
   maximum: 120,
-  description: 'Frame rate (1–120). Default: 30.',
+  description: `Frame rate (1–120). Default: ${DEFAULT_RENDER_FPS}.`,
 }
 
 const SCENE_PATH_PROPERTY: StringSchemaProperty = {
@@ -156,7 +163,7 @@ export async function handleRenderScene(
   const scenePath = sceneInput ? path.resolve(sceneInput) : undefined
   const format = input.format ?? inferRenderFormatFromPath(outputPath)
   const quality = input.quality ?? 'comp'
-  const fps = input.fps ?? 30
+  const fps = input.fps ?? DEFAULT_RENDER_FPS
 
   if (scenePath && !deps.existsSync(scenePath)) {
     return {

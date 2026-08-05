@@ -14,35 +14,99 @@
  * detect/reject mismatched plugin builds.
  */
 
+import { readFirstTextStyle } from './textStyle'
+
 const FIGMA_PAYLOAD_FORMAT = 'hyper-motion/figma'
-const FIGMA_PAYLOAD_VERSION = 2
+const FIGMA_PAYLOAD_VERSION = 3
+const VECTOR_EXPORT_TIMEOUT_MS = 1_000
+const IMAGE_BYTES_TIMEOUT_MS = 2_000
+const PROGRESS_YIELD_INTERVAL = 10
+
+// Initialize the capture revision before starting the first capture. The
+// plugin bundle targets older JavaScript and lowers this `let` to `var`; if
+// prepareSelection runs first, ++undefined becomes NaN and the revision guard
+// silently discards the initial progress and payload forever.
+let selectionRevision = 0
 
 figma.showUI(__html__, { width: 280, height: 220, themeColors: true })
 
-postSelectionCount()
-figma.on('selectionchange', postSelectionCount)
+prepareSelection()
+figma.on('selectionchange', prepareSelection)
 
-figma.ui.onmessage = async (msg: { kind: string }) => {
-  if (msg.kind === 'copy') {
-    try {
-      const payload = await buildPayload(figma.currentPage.selection)
-      const json = JSON.stringify(payload)
-      figma.ui.postMessage({ kind: 'payload', json })
-    } catch (err) {
-      figma.ui.postMessage({
-        kind: 'error',
-        message: err instanceof Error ? err.message : String(err),
-      })
-    }
-  }
+figma.ui.onmessage = (msg: { kind: string }) => {
   if (msg.kind === 'close') {
     figma.closePlugin()
   }
 }
 
-function postSelectionCount() {
-  const sel = figma.currentPage.selection
-  figma.ui.postMessage({ kind: 'selection', count: sel.length })
+// Payloads are prepared before the user clicks Copy. This keeps the actual
+// clipboard operation synchronous with the click, which is required by
+// browsers that deny async clipboard access to Figma's plugin iframe.
+//
+// Captures can overlap when the user changes selection quickly. Only the most
+// recent revision may update the UI, preventing a slower old capture from
+// replacing the payload for the current selection.
+function prepareSelection(): void {
+  const revision = ++selectionRevision
+  const selection = [...figma.currentPage.selection]
+  const totalNodes = countSceneNodes(selection)
+
+  figma.ui.postMessage({
+    kind: 'selection',
+    count: selection.length,
+    totalNodes,
+  })
+  if (selection.length === 0) return
+
+  const progress: CaptureProgress = {
+    totalNodes,
+    processedNodes: 0,
+    currentNode: '',
+    lastReportedAt: 0,
+    lastYieldedAt: 0,
+    report(snapshot) {
+      if (revision !== selectionRevision) return
+      figma.ui.postMessage({ kind: 'progress', ...snapshot })
+    },
+  }
+
+  void buildPayload(selection, progress)
+    .then((payload) => {
+      if (revision !== selectionRevision) return
+      figma.ui.postMessage({ kind: 'payload', json: JSON.stringify(payload) })
+    })
+    .catch((err: unknown) => {
+      if (revision !== selectionRevision) return
+      figma.ui.postMessage({
+        kind: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    })
+}
+
+function countSceneNodes(nodes: readonly SceneNode[]): number {
+  let count = 0
+  for (const node of nodes) {
+    count += 1
+    if ('children' in node) {
+      count += countSceneNodes(node.children)
+    }
+  }
+  return count
+}
+
+function reportCaptureProgress(
+  progress: CaptureProgress,
+  force = false,
+): void {
+  const now = Date.now()
+  if (!force && now - progress.lastReportedAt < 100) return
+  progress.lastReportedAt = now
+  progress.report({
+    processedNodes: progress.processedNodes,
+    totalNodes: progress.totalNodes,
+    currentNode: progress.currentNode,
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +118,19 @@ interface Payload {
   version: typeof FIGMA_PAYLOAD_VERSION
   nodes: CapturedNode[]
   assets: Record<string, string>
+}
+
+interface CaptureProgress {
+  totalNodes: number
+  processedNodes: number
+  currentNode: string
+  lastReportedAt: number
+  lastYieldedAt: number
+  report: (snapshot: {
+    processedNodes: number
+    totalNodes: number
+    currentNode: string
+  }) => void
 }
 
 type CapturedNode =
@@ -83,6 +160,7 @@ interface CapturedNodeBase {
   minHeight?: number | null
   maxHeight?: number | null
   cornerRadius: [number, number, number, number]
+  cornerSmoothing?: number
   fills: CapturedFill[]
   strokes: CapturedFill[]
   strokeWeight: number
@@ -135,6 +213,11 @@ interface CapturedRect extends CapturedNodeBase {
 
 interface CapturedEllipse extends CapturedNodeBase {
   type: 'ELLIPSE'
+  arcData?: {
+    startingAngle: number
+    endingAngle: number
+    innerRadius: number
+  }
 }
 
 interface CapturedText extends CapturedNodeBase {
@@ -309,7 +392,10 @@ interface ImageFill {
   filters?: ImageFilters
 }
 
-async function buildPayload(selection: readonly SceneNode[]): Promise<Payload> {
+async function buildPayload(
+  selection: readonly SceneNode[],
+  progress: CaptureProgress,
+): Promise<Payload> {
   if (selection.length === 0) throw new Error('Nothing selected')
   const assets: Record<string, string> = {}
   const nodes: CapturedNode[] = []
@@ -317,7 +403,7 @@ async function buildPayload(selection: readonly SceneNode[]): Promise<Payload> {
     // Selection roots deliberately keep Figma's container-relative transform.
     // Descendants receive an explicit captured parent below so groups and
     // boolean operations can be converted to true direct-parent coordinates.
-    const captured = await captureNode(node, assets, null)
+    const captured = await captureNode(node, assets, null, progress)
     if (captured) nodes.push(captured)
   }
   return {
@@ -332,33 +418,61 @@ async function captureNode(
   node: SceneNode,
   assets: Record<string, string>,
   capturedParent: SceneNode | null,
+  progress: CaptureProgress,
 ): Promise<CapturedNode | null> {
+  progress.processedNodes += 1
+  progress.currentNode = node.name
+  reportCaptureProgress(progress, true)
+  if (
+    progress.processedNodes === 1 ||
+    progress.processedNodes - progress.lastYieldedAt >= PROGRESS_YIELD_INTERVAL
+  ) {
+    progress.lastYieldedAt = progress.processedNodes
+    await yieldToEventLoop()
+  }
+
+  let captured: CapturedNode | null
   switch (node.type) {
     case 'FRAME':
     case 'GROUP':
     case 'COMPONENT':
     case 'INSTANCE':
-      return captureFrame(node as FrameNode, assets, capturedParent)
+      captured = await captureFrame(
+        node as FrameNode,
+        assets,
+        capturedParent,
+        progress,
+      )
+      break
     case 'RECTANGLE':
-      return captureRect(node as RectangleNode, assets, capturedParent)
+      captured = await captureRect(node as RectangleNode, assets, capturedParent)
+      break
     case 'ELLIPSE':
-      return isFullEllipse(node as EllipseNode)
-        ? captureEllipse(node as EllipseNode, assets, capturedParent)
-        : captureVector(node, assets, capturedParent)
+      captured = await captureEllipse(
+        node as EllipseNode,
+        assets,
+        capturedParent,
+      )
+      break
     case 'TEXT':
-      return captureText(node as TextNode, assets, capturedParent)
+      captured = await captureText(node as TextNode, assets, capturedParent)
+      break
     case 'VECTOR':
     case 'STAR':
     case 'POLYGON':
     case 'BOOLEAN_OPERATION':
     case 'LINE':
-      return captureVector(node, assets, capturedParent)
+      captured = await captureVector(node, assets, capturedParent)
+      break
     default:
       console.warn(
         `[hyper-motion] Skipping unsupported node type: ${node.type}`,
       )
-      return null
+      captured = null
+      break
   }
+
+  return captured
 }
 
 // ---------------------------------------------------------------------------
@@ -369,11 +483,21 @@ async function captureFrame(
   node: FrameNode,
   assets: Record<string, string>,
   capturedParent: SceneNode | null,
+  progress: CaptureProgress,
 ): Promise<CapturedFrame> {
   const base = await captureBase(node, assets, capturedParent)
+  // GroupNode does not expose auto-layout properties. It reaches this helper
+  // through the shared container path, so normalize it (and any older/missing
+  // capture) to free positioning before serializing children.
+  const layoutMode =
+    node.layoutMode === 'HORIZONTAL' ||
+    node.layoutMode === 'VERTICAL' ||
+    node.layoutMode === 'GRID'
+      ? node.layoutMode
+      : 'NONE'
   const children: CapturedNode[] = []
   for (const child of node.children) {
-    const c = await captureNode(child, assets, node)
+    const c = await captureNode(child, assets, node, progress)
     if (c) children.push(c)
   }
   // Cast guards: the typed Figma API returns specific union members per
@@ -381,8 +505,8 @@ async function captureFrame(
   return {
     ...base,
     type: nodeTypeAsFrame(node.type),
-    layoutMode: node.layoutMode as CapturedFrame['layoutMode'],
-    ...(node.layoutMode === 'GRID'
+    layoutMode,
+    ...(layoutMode === 'GRID'
       ? {
           gridRowCount: node.gridRowCount,
           gridColumnCount: node.gridColumnCount,
@@ -418,7 +542,7 @@ async function captureFrame(
     paddingBottom: node.paddingBottom ?? 0,
     layoutWrap:
       (node.layoutWrap as CapturedFrame['layoutWrap']) ?? 'NO_WRAP',
-    clipsContent: node.clipsContent,
+    clipsContent: node.clipsContent ?? false,
     children,
   }
 }
@@ -449,13 +573,12 @@ async function captureEllipse(
   return {
     ...(await captureBase(node, assets, capturedParent)),
     type: 'ELLIPSE',
+    arcData: {
+      startingAngle: node.arcData.startingAngle,
+      endingAngle: node.arcData.endingAngle,
+      innerRadius: node.arcData.innerRadius,
+    },
   }
-}
-
-function isFullEllipse(node: EllipseNode): boolean {
-  const { startingAngle, endingAngle, innerRadius } = node.arcData
-  const sweep = Math.abs(endingAngle - startingAngle)
-  return innerRadius === 0 && Math.abs(sweep - Math.PI * 2) < 0.0001
 }
 
 async function captureText(
@@ -464,13 +587,10 @@ async function captureText(
   capturedParent: SceneNode | null,
 ): Promise<CapturedText> {
   const base = await captureBase(node, assets, capturedParent)
-  // Mixed font/size across runs in a single text node returns
-  // figma.mixed (a Symbol). For MVP we read the first run by passing
-  // index 0; richer per-run capture is a follow-up.
-  const fontName = node.getRangeFontName(0, 1) as FontName
-  const fontSize = node.getRangeFontSize(0, 1) as number
-  const lineHeight = node.getRangeLineHeight(0, 1) as LineHeight
-  const letterSpacing = node.getRangeLetterSpacing(0, 1) as LetterSpacing
+  // Mixed text runs use the first character. Empty text has no valid range,
+  // so the helper falls back to the node-level style instead.
+  const { fontName, fontSize, lineHeight, letterSpacing } =
+    readFirstTextStyle(node)
   return {
     ...base,
     type: 'TEXT',
@@ -478,7 +598,7 @@ async function captureText(
     fontFamily: fontName?.family ?? 'Inter',
     fontWeight: weightFromStyle(fontName?.style ?? 'Regular'),
     fontStyle: /Italic/i.test(fontName?.style ?? '') ? 'italic' : 'normal',
-    fontSize: typeof fontSize === 'number' ? fontSize : 14,
+    fontSize,
     lineHeightPx: lineHeightToPx(lineHeight, fontSize),
     letterSpacingPx: letterSpacingToPx(letterSpacing, fontSize),
     textCase: firstTextCase(node),
@@ -506,44 +626,75 @@ async function captureVector(
     assets,
     capturedParent,
   )
-  let svg = ''
-  try {
-    svg = await (
-      node as unknown as {
-        exportAsync: (s: ExportSettingsSVGString) => Promise<string>
-      }
-    ).exportAsync({
-      format: 'SVG_STRING',
-      svgOutlineText: true,
-      svgIdAttribute: true,
-      // Preserve inside/outside strokes with Figma's precise mask form.
-      svgSimplifyStroke: false,
-    })
-    svg = sanitizeSvgForTransport(svg)
-  } catch (err) {
-    console.warn('[hyper-motion] SVG export failed', err)
-  }
-
   const geometry = node as unknown as GeometryMixin
   const vectorPaths = readVectorPaths(node)
-  const vectorNetwork = await readVectorNetwork(node, assets)
   const fillGeometry = cloneVectorPaths(geometry.fillGeometry)
   const strokeGeometry = cloneVectorPaths(geometry.strokeGeometry)
   const primitive = captureVectorPrimitive(node)
+  // Most Figma vectors expose the same shape through vectorPaths and
+  // fill/stroke geometry. Reading vectorNetwork as well can be extremely
+  // expensive on imported icon sets, so only request it when the cheaper
+  // native representations are absent.
+  const hasDirectGeometry =
+    vectorPaths.length > 0 ||
+    fillGeometry.length > 0 ||
+    strokeGeometry.length > 0
+  const vectorNetwork = hasDirectGeometry
+    ? undefined
+    : await readVectorNetwork(node, assets)
+  const advancedStroke = readAdvancedStrokeMetadata(node)
+  const hasEditableGeometry =
+    vectorPaths.length > 0 ||
+    fillGeometry.length > 0 ||
+    strokeGeometry.length > 0 ||
+    !!vectorNetwork
+
+  // Primitive metadata describes how Figma authored the layer but is not a
+  // renderable path in Hyper Motion. Unsupported native features are likewise
+  // only partially representable. Export SVG for either case while retaining
+  // the native data for future editing support.
+  const unsupportedBeforeSvg = detectUnsupportedVectorFeatures(
+    node,
+    base,
+    '',
+    vectorNetwork,
+  )
+  const needsSvgFallback =
+    !hasEditableGeometry || unsupportedBeforeSvg.length > 0
+  let svg = ''
+  let reason = rasterReason
+  if (needsSvgFallback) {
+    try {
+      svg = await withTimeout(
+        (
+          node as unknown as {
+            exportAsync: (s: ExportSettingsSVGString) => Promise<string>
+          }
+        ).exportAsync({
+          format: 'SVG_STRING',
+          svgOutlineText: true,
+          svgIdAttribute: true,
+          // Preserve inside/outside strokes with Figma's precise mask form.
+          svgSimplifyStroke: false,
+        }),
+        VECTOR_EXPORT_TIMEOUT_MS,
+        `SVG export for "${node.name}"`,
+      )
+      svg = sanitizeSvgForTransport(svg)
+    } catch (err) {
+      console.warn('[hyper-motion] SVG export failed', err)
+      reason =
+        reason ??
+        `Figma's SVG fallback did not finish within ${VECTOR_EXPORT_TIMEOUT_MS / 1000}s. Hyper Motion will try a PNG fallback.`
+    }
+  }
+
   const unsupported = detectUnsupportedVectorFeatures(
     node,
     base,
     svg,
     vectorNetwork,
   )
-  const advancedStroke = readAdvancedStrokeMetadata(node)
-  const hasEditableGeometry =
-    vectorPaths.length > 0 ||
-    fillGeometry.length > 0 ||
-    strokeGeometry.length > 0 ||
-    !!vectorNetwork ||
-    !!primitive
-
   const fidelity: CapturedVector['fidelity'] = !hasEditableGeometry
     ? 'preserved'
     : unsupported.length > 0
@@ -554,15 +705,19 @@ async function captureVector(
   // collapsed bounds. Normal vectors now remain native/editable and avoid
   // the large raster payload paid by every v1 capture.
   let rasterPng = ''
-  let reason = rasterReason
-  const requiresRaster = !svg.trim() || base.width < 1 || base.height < 1
+  const requiresRaster =
+    (needsSvgFallback && !svg.trim()) || base.width < 1 || base.height < 1
   if (requiresRaster) {
     try {
-      const bytes = await (
-        node as unknown as {
-          exportAsync: (s: ExportSettingsImage) => Promise<Uint8Array>
-        }
-      ).exportAsync({ format: 'PNG' })
+      const bytes = await withTimeout(
+        (
+          node as unknown as {
+            exportAsync: (s: ExportSettingsImage) => Promise<Uint8Array>
+          }
+        ).exportAsync({ format: 'PNG' }),
+        VECTOR_EXPORT_TIMEOUT_MS,
+        `PNG export for "${node.name}"`,
+      )
       rasterPng = bytesToBase64(bytes)
     } catch (err) {
       console.warn('[hyper-motion] PNG vector fallback export failed', err)
@@ -571,7 +726,7 @@ async function captureVector(
         'Figma could not export this vector as a fallback image. The SVG may not match exactly.'
     }
   }
-  if (!svg.trim()) {
+  if (!svg.trim() && needsSvgFallback) {
     reason =
       reason ??
       'Figma returned an empty SVG for this vector. Hyper Motion used a PNG fallback to preserve the visual result.'
@@ -580,13 +735,18 @@ async function captureVector(
       reason ??
       'Figma reported collapsed bounds for this stroked vector. Hyper Motion used a PNG fallback to preserve the visual result.'
   }
-  const viewBox = readSvgViewBox(svg)
+  const viewBox = readSvgViewBox(svg) ?? {
+    x: 0,
+    y: 0,
+    width: Math.max(1, base.width),
+    height: Math.max(1, base.height),
+  }
   return {
     ...base,
     type: 'VECTOR',
     sourceKind: node.type as CapturedVector['sourceKind'],
     svg,
-    ...(viewBox ? { viewBox } : {}),
+    viewBox,
     ...(vectorPaths.length > 0 ? { vectorPaths } : {}),
     ...(vectorNetwork ? { vectorNetwork } : {}),
     ...(fillGeometry.length > 0 ? { fillGeometry } : {}),
@@ -823,6 +983,7 @@ async function captureBase(
     strokeLeftWeight?: number
     dashPattern?: ReadonlyArray<number>
     cornerRadius?: number | symbol
+    cornerSmoothing?: number
     topLeftRadius?: number
     topRightRadius?: number
     bottomLeftRadius?: number
@@ -892,6 +1053,10 @@ async function captureBase(
     minHeight: geo.minHeight,
     maxHeight: geo.maxHeight,
     cornerRadius: cornerRadiiOf(geo),
+    ...(typeof geo.cornerSmoothing === 'number' &&
+    Number.isFinite(geo.cornerSmoothing)
+      ? { cornerSmoothing: Math.min(1, Math.max(0, geo.cornerSmoothing)) }
+      : {}),
     fills,
     strokes,
     strokeWeight,
@@ -1055,7 +1220,11 @@ async function capturePaint(
       try {
         const image = figma.getImageByHash(paint.imageHash)
         if (image) {
-          const bytes = await image.getBytesAsync()
+          const bytes = await withTimeout(
+            image.getBytesAsync(),
+            IMAGE_BYTES_TIMEOUT_MS,
+            `Image read for ${paint.imageHash}`,
+          )
           assets[paint.imageHash] = bytesToDataUrl(bytes)
         }
       } catch (err) {
@@ -1145,6 +1314,32 @@ function normalizedTransformValue(value: number): number {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operation: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${operation} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 function weightFromStyle(style: string): number {
   // Figma style names → numeric CSS font-weight.

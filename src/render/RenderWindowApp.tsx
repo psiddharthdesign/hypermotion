@@ -13,14 +13,19 @@ import { useAnim } from '@/ui/hooks/useAnim'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { ScenePostProcessLayer } from '@/ui/Canvas'
 import {
-  ScenePostProcessLayer,
   composeInheritedAnim,
   computeCameraDepthOfField,
   fillBackgroundStyle,
   resolveCameraFocusTargetPoint,
-} from '@/ui/Canvas'
+} from '@/ui/canvasRenderHelpers'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import {
+  collectRender3dImageSources,
+  preloadRender3dImageSources,
+  waitForCachedRender3dImages,
+} from '@/render3d/imageTextureCache'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
 import {
@@ -49,6 +54,12 @@ import {
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { registerFont } from '@/fonts'
 import { useUI } from '@/state/ui'
+import {
+  getProjectAPI,
+  useProjectAPI,
+  type ProjectAPI,
+} from '@/project'
+import { resolveMasterTime, resolveProgramCamera } from '@/sequence'
 import {
   buildApertureBokehPlan,
   resolveDofRenderQuality,
@@ -100,6 +111,8 @@ interface RenderJob {
   quality: 'comp' | '720p' | '2k' | '4k'
   sceneName: string
   durationSec: number
+  scope?: 'scene' | 'sequence'
+  selectedSequenceItemId?: string
   frameRate: number
   exportFps: number
   outputWidth: number
@@ -156,55 +169,55 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
   useEagerLoadSceneFonts()
 
   const [job, setJob] = useState<RenderJob | null>(null)
-  const [seedApplied, setSeedApplied] = useState(false)
   const [fontsReady, setFontsReady] = useState(false)
   const exportStartedRef = useRef(false)
 
-  // Step 1: claim our render job from main.
+  // Step 1: fetch our render job from main and seed the document before
+  // publishing the job to React. Treating that pair as one async operation
+  // avoids an intermediate render where the job exists but the scene does not.
   useEffect(() => {
     const bridge = getBridge()
     if (!bridge) {
       reportError(requestId, 'Render window has no Electron bridge.')
       return
     }
+    let cancelled = false
     void (async () => {
+      let fetched: RenderJob | null
       try {
-        const fetched = (await bridge.invoke(
+        fetched = (await bridge.invoke(
           'export:fetch-render-job',
           requestId,
         )) as RenderJob | null
-        if (!fetched) {
-          reportError(requestId, 'Render job not found. The export may have been cancelled.')
-          return
-        }
-        setJob(fetched)
       } catch (e) {
         reportError(
           requestId,
           `Failed to fetch render job: ${e instanceof Error ? e.message : String(e)}`,
         )
+        return
+      }
+      if (cancelled) return
+      if (!fetched) {
+        reportError(requestId, 'Render job not found. The export may have been cancelled.')
+        return
+      }
+      try {
+        loadSceneIntoDoc(api.doc, fetched.seedBytes)
+        getProjectAPI(api).ensureInitialized()
+        if (!cancelled) setJob(fetched)
+      } catch (e) {
+        reportError(
+          requestId,
+          `Failed to apply scene seed: ${e instanceof Error ? e.message : String(e)}`,
+        )
       }
     })()
-  }, [requestId])
-
-  // Step 2: apply the editor's seed bytes onto our empty doc.
-  // `loadSceneIntoDoc` mutates the existing sub-maps in place, which is
-  // important because SceneContext's value closes over the API created
-  // from this doc — swapping maps would orphan that reference.
-  useEffect(() => {
-    if (!job) return
-    try {
-      loadSceneIntoDoc(api.doc, job.seedBytes)
-      setSeedApplied(true)
-    } catch (e) {
-      reportError(
-        requestId,
-        `Failed to apply scene seed: ${e instanceof Error ? e.message : String(e)}`,
-      )
+    return () => {
+      cancelled = true
     }
-  }, [job, api, requestId])
+  }, [api, requestId])
 
-  // Step 3: BEFORE mounting RenderCanvas, walk the seeded scene and
+  // Step 2: BEFORE mounting RenderCanvas, walk the seeded scene and
   // make every referenced Google Font actually loaded. The first time
   // RenderCanvas paints, useLayout's measureText must see the correct
   // font metrics — otherwise text containers get sized to fallback
@@ -216,7 +229,7 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
   // already have captured frames against the bad layout. Gating mount
   // on fontsReady eliminates the race entirely.
   useEffect(() => {
-    if (!seedApplied) return
+    if (!job) return
     let cancelled = false
     void (async () => {
       try {
@@ -234,9 +247,9 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
     return () => {
       cancelled = true
     }
-  }, [seedApplied, api])
+  }, [job, api])
 
-  // Step 4: once fonts are ready, kick off the export. Guarded with a
+  // Step 3: once fonts are ready, kick off the export. Guarded with a
   // ref so React's double-invoke in StrictMode doesn't start two
   // parallel exports.
   useEffect(() => {
@@ -245,7 +258,7 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
     void runExportLoop(api, job, requestId)
   }, [fontsReady, job, api, requestId])
 
-  if (!job || !seedApplied || !fontsReady) {
+  if (!job || !fontsReady) {
     // Black surface while we boot. Hidden window so the user never sees
     // this, but matching the artboard's background avoids a one-frame
     // white flash if the window briefly becomes visible.
@@ -284,6 +297,7 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
 function RenderCanvas({ job }: { job: RenderJob }) {
   const api = useSceneAPI()
   const version = useSceneVersion()
+  const project = useProjectAPI()
   const playhead = useUI((s) => s.playhead)
   const playing = useUI((s) => s.playing)
   const meta = api.getMeta()
@@ -292,22 +306,20 @@ function RenderCanvas({ job }: { job: RenderJob }) {
   const rootId = api.getRoot() || null
   const rootNode = rootId ? api.getNode(rootId) : null
   const rootVisible = rootNode?.visible !== false
-  const sceneFill = rootVisible
+  const staticSceneFill = rootVisible
     ? fillToCss(rootNode?.appearance.fill ?? null) ?? null
     : null
   const sceneCorner = rootVisible ? rootNode?.appearance.cornerRadius ?? 0 : 0
 
   // Layout solve — same hook the editor uses.
-  const container = useMemo(
-    () => ({ width: canvasWidth, height: canvasHeight }),
-    [canvasWidth, canvasHeight],
-  )
+  const container = { width: canvasWidth, height: canvasHeight }
   const solved = useLayout(rootId, container)
   useEffect(() => {
     setLastSolvedLayout(solved)
   }, [solved])
 
   const renderOrder = useMemo<NodeId[]>(() => {
+    void version
     if (!rootId) return []
     const out: NodeId[] = []
     const visit = (id: NodeId) => {
@@ -318,18 +330,35 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     return out
   }, [api, rootId, version])
 
-  const cameraId = api.getActiveCameraId()
+  const activeComposition = project.getActiveScene()
+  const cameraId = activeComposition
+    ? resolveProgramCamera({
+        scene: activeComposition,
+        localTime: playhead,
+        frameRate: meta.frameRate,
+        cameras: activeComposition.cameraIds
+          .map((id) => api.getNode(id))
+          .filter(
+            (node): node is CameraNode => node?.kind === 'camera',
+          )
+          .map((camera) => ({ id: camera.id, enabled: camera.enabled })),
+        fallbackCameraId: api.getActiveCameraId(),
+      }).cameraId
+    : api.getActiveCameraId()
   const cameraAnimationIds = useMemo(
     () => (cameraId ? [cameraId] : []),
     [cameraId],
   )
   const animated = useAnimatedValues(renderOrder)
+  const sceneFill =
+    rootId && animated[rootId]?.fill !== undefined
+      ? animated[rootId]!.fill!
+      : staticSceneFill
   const cameraAnimated = useAnimatedValues(cameraAnimationIds)
-  const inherited = useMemo(
-    () => composeInheritedAnim(api, rootId, animated, solved),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, rootId, animated, solved, version],
-  )
+  const inherited = useMemo(() => {
+    void version
+    return composeInheritedAnim(api, rootId, animated, solved)
+  }, [api, rootId, animated, solved, version])
 
   // Camera composition — match the editor's behavior bit-for-bit.
   const camera = useMemo(
@@ -470,7 +499,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
           transform: scale !== 1 ? `scale(${scale})` : undefined,
           transformOrigin: '0 0',
           overflow: 'hidden',
-          background: 'var(--color-panel)',
+          background: 'var(--color-canvas-fallback)',
           borderRadius: Math.max(0, sceneCorner),
           perspective: cameraFocalLength,
           perspectiveOrigin: 'center center',
@@ -543,6 +572,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               renderPixelRatio={Math.max(scaleX, scaleY)}
               playing={playing}
               playhead={playhead}
+              sceneVersion={version}
               onAvailabilityChange={setThreeCameraAvailable}
             />
           </div>
@@ -610,11 +640,43 @@ async function runExportLoop(
   }
 
   const engine = getAnimEngine()
+  const project = getProjectAPI(api)
+  project.ensureInitialized()
+  const sequenceMap = project.getSequenceTimeMap()
+  const sequenceScope =
+    job.scope === 'sequence' ||
+    (job.scope === undefined && project.getSequenceItems().length > 1)
 
   // Wait for the canvas to actually paint. SceneProvider + RenderCanvas
   // both committed by the time this function fires, but the browser needs
   // a few frames to compose before the first capture is meaningful.
   await waitForFrames(8)
+
+  // Plane images decode asynchronously. Preload every authored bitmap across
+  // the complete project before capture so switching composition scenes cannot
+  // bake ThreeSceneViewport's placeholder into the exported video.
+  try {
+    const renderImageRoots = project
+      .getScenes()
+      .flatMap((composition) => [
+        composition.rootNodeId,
+        ...composition.cameraIds,
+      ])
+    await preloadRender3dImageSources(
+      collectRender3dImageSources(api, renderImageRoots),
+    )
+  } catch (error) {
+    reportError(
+      requestId,
+      `An image could not be prepared for export: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    return
+  }
+  // Image load events invalidate plane textures through React state. Let that
+  // texture revision commit before the first capture is created.
+  await waitForFrames(3)
 
   // Fonts are guaranteed loaded by the time we get here — RenderRunner
   // gates the mount of RenderCanvas on `fontsReady`. We don't need to
@@ -662,6 +724,13 @@ async function runExportLoop(
           api,
           segments,
           fps: job.exportFps,
+          scope: sequenceScope ? 'sequence' : 'scene',
+          sequenceTimeMap: sequenceMap,
+          selectedSequenceItemId: job.selectedSequenceItemId,
+          activeSceneId: project.getActiveSceneId() ?? undefined,
+          ...(sequenceScope
+            ? {}
+            : { activeRootNodeId: api.getRoot() }),
         })
       : null
   const firstFrame = segments[0]?.firstFrame ?? 0
@@ -678,6 +747,7 @@ async function runExportLoop(
   const ui = useUI.getState()
   const originalPlayhead = ui.playhead
   const originalPlaying = ui.playing
+  const originalSceneId = project.getActiveSceneId()
   ui.setPlaying(false)
 
   let capture: Awaited<ReturnType<typeof createElectronCapture>>
@@ -710,44 +780,86 @@ async function runExportLoop(
       for (let f = seg.firstFrame; f <= seg.lastFrame; f++) {
         const frameStart = performance.now()
         const t = f / job.exportFps
-        engine.seek(t)
-        useUI.getState().setPlayhead(t)
-        // Multiple rAFs to let React commit + Chromium re-rasterize the
-        // new playhead before CDP captures the surface. Same heuristic
-        // the editor's orchestrator uses — proven against React 19
-        // concurrent renderer's late-commit behavior.
-        await waitForFrames(isFirstFrameOverall ? 5 : 3)
-        await waitForRender3dVideosReady()
-        isFirstFrameOverall = false
+        const layers = sequenceScope
+          ? resolveMasterTime(sequenceMap, t, {
+              clamp: true,
+              // The time map's boundaries are already frame-aligned to the
+              // authored project rate. Keep per-frame evaluation continuous
+              // here so a 24fps project exported at 60fps is genuinely
+              // resampled at 60fps, matching scene export and Master preview.
+              quantize: 'none',
+            }).layers
+          : []
+        const captureLayers =
+          layers.length > 0
+            ? layers
+            : [
+                {
+                  localTime: t,
+                  weight: 1,
+                  item: null,
+                },
+              ]
+        const captured: Array<{
+          canvas: HTMLCanvasElement
+          weight: number
+        }> = []
 
-        let canvasEl: HTMLCanvasElement
-        try {
-          canvasEl = await capture.capture()
-        } catch (e) {
-          throw new Error(
-            `Failed to capture frame ${outputIndex + 1}/${totalFrames}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
-          )
-        }
-        // ThreeSceneViewport already resolves depth-of-field in its final
-        // render pass. Applying the canvas aperture pass on that capture would
-        // double-blur it. Keep the deterministic canvas bokeh as a graceful
-        // fallback for DOM rendering or machines where WebGL is unavailable.
-        const cameraBackend = document.querySelector<HTMLElement>(
-          '[data-canvas-root]',
-        )?.dataset.renderCameraBackend
-        if (cameraBackend !== 'webgl') {
-          const focusEffect = resolveRenderWindowFocusEffect(
-            api,
-            engine.getSnapshot(),
-            sceneCanvas,
-            { width: canvasEl.width, height: canvasEl.height },
-          )
-          if (focusEffect) {
-            canvasEl = applyCanvasFocusBlur(canvasEl, focusEffect)
+        for (const layer of captureLayers) {
+          const targetSceneId = layer.item?.scene.id ?? null
+          const changedScene =
+            targetSceneId !== null &&
+            project.getActiveSceneId() !== targetSceneId
+          if (targetSceneId && changedScene) {
+            project.activateScene(targetSceneId)
           }
+          engine.seek(layer.localTime)
+          useUI.getState().setPlayhead(layer.localTime)
+          // Multiple rAFs let React commit the new composition + local
+          // playhead before CDP captures. A transition captures both scenes at
+          // their own local times, then composites the two canvases below.
+          await waitForFrames(isFirstFrameOverall || changedScene ? 5 : 3)
+          if (changedScene) await waitForPaperShadersReady()
+          await waitForRender3dVideosReady()
+          await waitForCachedRender3dImages()
+          isFirstFrameOverall = false
+
+          let layerCanvas: HTMLCanvasElement
+          try {
+            layerCanvas = await capture.capture()
+          } catch (e) {
+            throw new Error(
+              `Failed to capture frame ${outputIndex + 1}/${totalFrames}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            )
+          }
+          // ThreeSceneViewport already resolves depth-of-field in its final
+          // render pass. Applying the canvas aperture pass on that capture
+          // would double-blur it. Keep deterministic canvas bokeh for the DOM
+          // fallback, resolving the authored program camera at this local time.
+          const cameraBackend = document.querySelector<HTMLElement>(
+            '[data-canvas-root]',
+          )?.dataset.renderCameraBackend
+          if (cameraBackend !== 'webgl') {
+            const focusEffect = resolveRenderWindowFocusEffect(
+              api,
+              engine.getSnapshot(),
+              sceneCanvas,
+              { width: layerCanvas.width, height: layerCanvas.height },
+              resolveRenderProgramCameraId(api, project, layer.localTime),
+            )
+            if (focusEffect) {
+              layerCanvas = applyCanvasFocusBlur(layerCanvas, focusEffect)
+            }
+          }
+          captured.push({
+            canvas: layerCanvas,
+            weight: clamp01(layer.weight),
+          })
         }
+
+        const canvasEl = compositeSequenceLayers(captured)
 
         if (!encoder) {
           try {
@@ -846,6 +958,9 @@ async function runExportLoop(
     const latestUi = useUI.getState()
     latestUi.setPlayhead(originalPlayhead)
     latestUi.setPlaying(originalPlaying)
+    if (originalSceneId && project.getScene(originalSceneId)) {
+      project.activateScene(originalSceneId)
+    }
     engine.seek(originalPlayhead)
     if (originalPlaying) engine.play()
   }
@@ -869,11 +984,62 @@ function reportProgress(
 function reportError(requestId: string, message: string): void {
   const bridge = getBridge()
   if (!bridge) {
-    // eslint-disable-next-line no-console
     console.error('[render-window]', message)
     return
   }
   void bridge.invoke('export:render-window-error', { requestId, message })
+}
+
+/**
+ * Blend the two scene captures produced during a crossfade.
+ *
+ * The outgoing capture is an opaque full frame, so drawing it once and then
+ * source-over compositing the incoming capture at its resolved weight yields
+ * `outgoing * (1 - progress) + incoming * progress`. Sequence normalization
+ * guarantees no more than two active layers.
+ */
+function compositeSequenceLayers(
+  layers: readonly { canvas: HTMLCanvasElement; weight: number }[],
+): HTMLCanvasElement {
+  const first = layers[0]
+  if (!first) throw new Error('No scene surface was captured for this frame.')
+  if (layers.length === 1) return first.canvas
+  const output = document.createElement('canvas')
+  output.width = first.canvas.width
+  output.height = first.canvas.height
+  const context = output.getContext('2d')
+  if (!context) throw new Error('Unable to create sequence compositor.')
+  context.globalAlpha = 1
+  context.drawImage(first.canvas, 0, 0, output.width, output.height)
+  for (const layer of layers.slice(1)) {
+    context.globalAlpha = clamp01(layer.weight)
+    context.drawImage(layer.canvas, 0, 0, output.width, output.height)
+  }
+  context.globalAlpha = 1
+  return output
+}
+
+function resolveRenderProgramCameraId(
+  api: ReturnType<typeof useSceneAPI>,
+  project: ProjectAPI,
+  localTime: number,
+): NodeId | null {
+  const composition = project.getActiveScene()
+  if (!composition) return api.getActiveCameraId()
+  return resolveProgramCamera({
+    scene: composition,
+    localTime,
+    frameRate: api.getMeta().frameRate,
+    cameras: composition.cameraIds
+      .map((id) => api.getNode(id))
+      .filter((node): node is CameraNode => node?.kind === 'camera')
+      .map((camera) => ({ id: camera.id, enabled: camera.enabled })),
+    fallbackCameraId: api.getActiveCameraId(),
+  }).cameraId
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
 }
 
 function lookupFormat(id: 'mp4' | 'webm' | 'gif'): ExportFormat {
@@ -920,8 +1086,9 @@ function resolveRenderWindowFocusEffect(
   animated: ReturnType<ReturnType<typeof getAnimEngine>['getSnapshot']>,
   sceneCanvas: { width: number; height: number },
   outputCanvas: { width: number; height: number },
+  resolvedCameraId?: NodeId | null,
 ): ExportFocusEffect | null {
-  const cameraId = api.getActiveCameraId()
+  const cameraId = resolvedCameraId ?? api.getActiveCameraId()
   const camera = cameraId ? api.getNode(cameraId) : null
   if (!camera || camera.kind !== 'camera' || !camera.depthOfField) return null
   const cameraAnim = animated[camera.id]
@@ -1242,8 +1409,15 @@ async function waitForFontsReadyApi(
   // ends up sized for fallback metrics; real font overflows at paint.
   const pairs = new Set<string>() // "family|weight"
   const families = new Set<string>()
-  const rootId = api.getRoot()
-  if (rootId) {
+  const fontProject = getProjectAPI(api)
+  fontProject.ensureInitialized()
+  const rootIds = Array.from(
+    new Set(
+      fontProject.getScenes().map((composition) => composition.rootNodeId),
+    ),
+  )
+  if (rootIds.length === 0 && api.getRoot()) rootIds.push(api.getRoot())
+  for (const rootId of rootIds) {
     const visit = (id: string): void => {
       const node = api.getNode(id)
       if (!node) return

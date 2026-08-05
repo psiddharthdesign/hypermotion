@@ -43,6 +43,7 @@ export {
   type TextPresetTargetPlan,
 } from './presets'
 export {
+  keyframeValuesForPatch,
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
 } from './recordKeyframes'
@@ -137,6 +138,7 @@ export {
   createTextMotionRailWorkspace,
   refreshTextMotionRailWorkspace,
   resolveTextMotionRailOffsets,
+  textMotionPathUsesSharedRail,
   type TextMotionRailPoint,
   type TextMotionRailSegment,
   type TextMotionRailWorkspace,

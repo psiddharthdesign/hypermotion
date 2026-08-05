@@ -29,12 +29,18 @@ import {
   exportScene,
   getExportFormat,
   getExportQuality,
+  useExportProgress,
   type ExportFormatId,
   type ExportQualityId,
 } from '@/export'
 import { apiReady } from '@/scene'
 import { sceneDoc } from '@/scene/internals'
-import { loadSceneIntoDoc } from '@/scene/file'
+import {
+  loadSceneIntoDoc,
+  readScene,
+} from '@/scene/file'
+import { getProjectAPI } from '@/project'
+import { isRenderWindowSupported } from '@/export/renderWindowClient'
 
 // Renderer-side ambient type. Mirrors the bridge surface in
 // `electron/preload.ts` — re-declared locally because preload's
@@ -43,6 +49,8 @@ declare global {
   interface Window {
     hypermotion?: {
       clipboard?: {
+        readTextSync?: () => string
+        writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
         readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
@@ -141,40 +149,53 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   }
   inFlight = true
 
-  // eslint-disable-next-line no-console
   console.log('[headless] export requested:', req)
 
+  let transientSceneDoc: ReturnType<typeof readScene>['doc'] | null = null
   try {
-    const api = await apiReady
+    let api: ReturnType<typeof readScene>['api']
     if (req.scenePath) {
-      await loadScenePathIntoEditor(req.scenePath)
-      await waitForFrames(2)
+      if (!isRenderWindowSupported()) {
+        throw new Error(
+          'Rendering a saved scene requires the isolated render-window pipeline in this desktop build.',
+        )
+      }
+      const loaded = readScene(await readScenePathBytes(req.scenePath))
+      transientSceneDoc = loaded.doc
+      api = loaded.api
+    } else {
+      api = await apiReady
     }
     const meta = api.getMeta()
+    const project = getProjectAPI(api)
+    project.ensureInitialized()
+    const sequenceMap = project.getSequenceTimeMap()
+    const renderSequence = project.getSequenceItems().length > 1
+    const durationSec = renderSequence ? sequenceMap.duration : meta.duration
 
-    // eslint-disable-next-line no-console
     console.log(
       `[headless] scene "${meta.name}" — ${meta.canvas.width}×${meta.canvas.height} · ` +
-        `${meta.duration.toFixed(2)}s @ ${meta.frameRate}fps`,
+        `${durationSec.toFixed(2)}s @ ${meta.frameRate}fps` +
+        (renderSequence ? ` · ${sequenceMap.items.length} scenes` : ''),
     )
 
     // Let one or two frames settle so the editor DOM reflects the
     // current playhead before capturePage runs.
     await waitForFrames(3)
 
+    let delivered = false
     await exportScene({
       api,
       sceneName: meta.name,
-      durationSec: meta.duration,
+      durationSec,
+      scope: renderSequence ? 'sequence' : 'scene',
       frameRate: meta.frameRate,
       format: getExportFormat(req.format),
       quality: getExportQuality(req.quality),
       exportFps: req.fps,
-      pipeline: 'native',
       onBlob: async (blob) => {
         const buf = await blob.arrayBuffer()
         const bytes = new Uint8Array(buf)
-        // eslint-disable-next-line no-console
         console.log(
           `[headless] ✓ rendered ${bytes.byteLength} bytes — shipping to main`,
         )
@@ -182,11 +203,18 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
           bytes,
           outputPath: req.outputPath,
         })
+        delivered = true
       },
     })
+    if (!delivered) {
+      const progress = useExportProgress.getState()
+      throw new Error(
+        progress.error ??
+          `The ${req.format.toUpperCase()} renderer finished without producing output bytes.`,
+      )
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    // eslint-disable-next-line no-console
     console.error('[headless] export failed:', message)
     try {
       await bridge.invoke('export:headless-error', message)
@@ -194,20 +222,27 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
       /* bridge torn down — best effort */
     }
   } finally {
+    transientSceneDoc?.destroy()
     inFlight = false
   }
 }
 
 async function loadScenePathIntoEditor(scenePath: string): Promise<void> {
+  loadSceneIntoDoc(sceneDoc, await readScenePathBytes(scenePath))
+}
+
+async function readScenePathBytes(scenePath: string): Promise<Uint8Array> {
   const bridge = window.hypermotion
-  if (!bridge) return
+  if (!bridge) {
+    throw new Error('Desktop bridge unavailable while reading a scene file.')
+  }
   const bytes = (await bridge.invoke('file:read', scenePath)) as
     | Uint8Array
     | null
   if (!bytes) {
     throw new Error(`Failed to read scene file: ${scenePath}`)
   }
-  loadSceneIntoDoc(sceneDoc, new Uint8Array(bytes))
+  return new Uint8Array(bytes)
 }
 
 function waitForFrames(n: number): Promise<void> {

@@ -4,10 +4,18 @@ import { useCallback, useRef } from 'react'
 import { useSceneAPI } from '@/scene'
 import type { NodeId } from '@/scene'
 import { useUI } from '@/state/ui'
+import { canMoveChildOnCanvas } from '@/ui/canvasMove'
 import {
+  getAnimEngine,
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
 } from '@/anim'
+import {
+  commitNodeTransformPreviews,
+  nodeTransformDragOrigin,
+  nodeTransformPreviewStore,
+  type NodeTransformPreview,
+} from '@/ui/nodeTransformPreviewStore'
 
 /**
  * Pointer-driven drag-to-move for a single scene node.
@@ -46,6 +54,11 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
     startY: number
     tx0: number
     ty0: number
+    staticOffsetX: number
+    staticOffsetY: number
+    authorOffsetX: number
+    authorOffsetY: number
+    latest: NodeTransformPreview
     moved: boolean
   } | null>(null)
 
@@ -85,14 +98,23 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
       const parent = node.parent ? api.getNode(node.parent) : null
       const parentMode =
         parent && 'layout' in parent ? parent.layout.mode : 'none'
-      const moveAllowed = node.position === 'absolute' || parentMode === 'none'
+      const moveAllowed = canMoveChildOnCanvas(node.position, parentMode)
+      const engineValue = getAnimEngine().getSnapshot()[nodeId]
+      const origin = nodeTransformDragOrigin(node, engineValue)
+      const tx0 = origin.display.x
+      const ty0 = origin.display.y
 
       dragRef.current = {
         pointerId: e.pointerId,
         startX: e.clientX,
         startY: e.clientY,
-        tx0: node.transform.x,
-        ty0: node.transform.y,
+        tx0,
+        ty0,
+        staticOffsetX: origin.static.x - origin.display.x,
+        staticOffsetY: origin.static.y - origin.display.y,
+        authorOffsetX: origin.author.x - origin.display.x,
+        authorOffsetY: origin.author.y - origin.display.y,
+        latest: { x: tx0, y: ty0 },
         moved: false,
       }
       const el = e.currentTarget as HTMLElement
@@ -107,13 +129,11 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
         const dy = (ev.clientY - d.startY) / zoom
         if (!d.moved && Math.hypot(dx, dy) < 2) return
         d.moved = true
-        const current = api.getNode(nodeId)
-        if (!current) return
-        api.setNodeProperty(nodeId, 'transform', {
-          ...current.transform,
+        d.latest = {
           x: d.tx0 + dx,
           y: d.ty0 + dy,
-        })
+        }
+        nodeTransformPreviewStore.preview({ [nodeId]: d.latest })
       }
 
       const onUp = (ev: PointerEvent) => {
@@ -125,35 +145,46 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
         // every move tick) — matches how AE's stopwatch treats a drag.
         if (d.moved) {
           const ui = useUI.getState()
-          const current = api.getNode(nodeId)
-          if (current) {
-            const patch = {
-              x: current.transform.x,
-              y: current.transform.y,
-            }
-            if (ui.recording) {
-              // Record mode — stamp regardless of existing tracks.
-              recordKeyframesForPatch(
-                api,
-                nodeId,
-                ui.playhead,
-                'transform',
-                patch,
-              )
-            } else {
-              // Otherwise, follow whichever transform.x/y tracks the user
-              // already authored. Without this, dragging a layer with an
-              // active position track silently fails — the static value
-              // updates but the track stomps it on the next frame.
-              stampToActiveTracksForPatch(
-                api,
-                nodeId,
-                ui.playhead,
-                'transform',
-                patch,
-              )
-            }
-          }
+          commitNodeTransformPreviews(
+            api,
+            {
+              [nodeId]: {
+                x: d.latest.x + d.staticOffsetX,
+                y: d.latest.y + d.staticOffsetY,
+              },
+            },
+            (committedNodeId) => {
+              const authorPatch = {
+                x: d.latest.x + d.authorOffsetX,
+                y: d.latest.y + d.authorOffsetY,
+              }
+              if (ui.recording) {
+                // Record mode — stamp regardless of existing tracks.
+                recordKeyframesForPatch(
+                  api,
+                  committedNodeId,
+                  ui.playhead,
+                  'transform',
+                  authorPatch,
+                )
+              } else {
+                // Otherwise, follow whichever transform.x/y tracks the user
+                // already authored. Without this, dragging a layer with an
+                // active position track silently fails — the static value
+                // updates but the track stomps it on the next frame.
+                stampToActiveTracksForPatch(
+                  api,
+                  committedNodeId,
+                  ui.playhead,
+                  'transform',
+                  authorPatch,
+                )
+              }
+            },
+          )
+          nodeTransformPreviewStore.finish()
+        } else {
+          nodeTransformPreviewStore.clear()
         }
         dragRef.current = null
         window.removeEventListener('pointermove', onMove)

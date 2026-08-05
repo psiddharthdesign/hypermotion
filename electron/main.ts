@@ -35,6 +35,7 @@ import {
   prepareFigmaPlugin,
   type FigmaPluginStatus,
 } from './figmaPlugin'
+import { isRenderWindowLeaseStale } from './renderWindowLease'
 
 // Hyper Motion is a desktop editor: pressing Play in our own timeline should
 // always be allowed to start timeline audio, even if React applies the state
@@ -96,6 +97,8 @@ interface HeadlessRequest {
   fps: number
 }
 
+const DEFAULT_HEADLESS_RENDER_FPS = 60
+
 function parseHeadlessArgs(argv: string[]): HeadlessRequest | null {
   // `--render` is the trigger. Accept both bare (`--render`) and
   // `=true` (`--render=true`) for forward-compat with the
@@ -133,14 +136,14 @@ function parseHeadlessArgs(argv: string[]): HeadlessRequest | null {
   const scenePath = flag('--scene')
   const format = (flag('--format') ?? inferFormat(outputPath)) as HeadlessRequest['format']
   const quality = (flag('--quality') ?? 'comp') as HeadlessRequest['quality']
-  const fps = Number(flag('--fps') ?? '30')
+  const fps = Number(flag('--fps') ?? String(DEFAULT_HEADLESS_RENDER_FPS))
 
   return {
     scenePath: scenePath ? path.resolve(scenePath) : undefined,
     outputPath: path.resolve(outputPath),
     format,
     quality,
-    fps: Number.isFinite(fps) && fps > 0 ? fps : 30,
+    fps: Number.isFinite(fps) && fps > 0 ? fps : DEFAULT_HEADLESS_RENDER_FPS,
   }
 }
 
@@ -253,7 +256,7 @@ function saveRecentProjects(): void {
       JSON.stringify(recentProjects, null, 2),
     )
   } catch (err) {
-    // eslint-disable-next-line no-console
+
     console.error(
       `[recent] write failed: ${err instanceof Error ? err.message : err}`,
     )
@@ -364,7 +367,7 @@ async function checkForUpdates(): Promise<AppUpdateInfo | null> {
     return lastUpdateInfo
   } catch (err) {
     // Update checks should never interrupt launch or editing.
-    // eslint-disable-next-line no-console
+
     console.warn(
       `[updates] check failed: ${err instanceof Error ? err.message : err}`,
     )
@@ -570,7 +573,9 @@ function createMainWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: '#1a1a1f',
+    // Tailwind v4 zinc-950 keeps the native window from flashing a mismatched
+    // cool-gray surface before the renderer theme is ready.
+    backgroundColor: '#09090b',
     // MVP keeps the OS-default titlebar so the renderer (which carries
     // its own TopBar) doesn't have to reserve room for traffic lights or
     // window-controls overlay. We can switch to `hiddenInset` + a CSS
@@ -650,7 +655,7 @@ function createMainWindow() {
           callback({})
         }
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.error('[main] desktopCapturer.getSources failed:', err)
         callback({})
       }
@@ -668,7 +673,7 @@ function createMainWindow() {
       message.includes('NotAllowedError') ||
       message.includes('NotSupportedError')
     ) {
-      // eslint-disable-next-line no-console
+
       console.log(`${prefix} ${message} (${sourceId}:${line})`)
     }
   })
@@ -751,6 +756,17 @@ function flushPendingOpenScene(): void {
 // resolves with empty when called outside a fresh user-activation gesture
 // even with the permission granted. The main process has unrestricted
 // access via Electron's `clipboard` module, so we proxy through IPC.
+ipcMain.on('clipboard:readTextSync', (event) => {
+  event.returnValue = clipboard.readText()
+})
+ipcMain.on('clipboard:writeTextSync', (event, text: unknown) => {
+  if (typeof text !== 'string') {
+    event.returnValue = false
+    return
+  }
+  clipboard.writeText(text)
+  event.returnValue = true
+})
 ipcMain.handle('clipboard:readText', () => clipboard.readText())
 ipcMain.handle('clipboard:writeText', (_e, text: string) => {
   clipboard.writeText(text)
@@ -1329,6 +1345,8 @@ interface RenderJob {
     quality: 'comp' | '720p' | '2k' | '4k'
     sceneName: string
     durationSec: number
+    scope?: 'scene' | 'sequence'
+    selectedSequenceItemId?: string
     frameRate: number
     exportFps: number
     // Output dimensions in CSS pixels. The render window is sized to
@@ -1353,6 +1371,8 @@ interface RenderJob {
   /** WebContents id of the editor window. Used to route progress + done
    *  events back to the right window when multiple are open. */
   editorWebContentsId: number
+  lastActivityAt: number
+  phase?: string
 }
 
 const renderJobs = new Map<string, RenderJob>()
@@ -1369,6 +1389,33 @@ const expectedRenderWindowClosures = new Set<string>()
 // leaves ample room for font boot and a very expensive first 4K frame.
 const RENDER_WINDOW_STALL_TIMEOUT_MS = 120_000
 const RENDER_WINDOW_ENCODING_TIMEOUT_MS = 300_000
+
+function pruneStaleRenderWindowsForEditor(editorWebContentsId: number): void {
+  const now = Date.now()
+  for (const [requestId, job] of [...renderJobs]) {
+    if (job.editorWebContentsId !== editorWebContentsId) continue
+    const win = renderWindows.get(requestId)
+    const windowDestroyed = win?.isDestroyed() ?? false
+    const webContentsDestroyed =
+      !!win && !windowDestroyed ? win.webContents.isDestroyed() : windowDestroyed
+    if (
+      isRenderWindowLeaseStale(
+        {
+          hasWindow: !!win,
+          windowDestroyed,
+          webContentsDestroyed,
+          lastActivityAt: job.lastActivityAt,
+          phase: job.phase,
+        },
+        now,
+        RENDER_WINDOW_STALL_TIMEOUT_MS,
+        RENDER_WINDOW_ENCODING_TIMEOUT_MS,
+      )
+    ) {
+      closeRenderWindow(requestId)
+    }
+  }
+}
 
 function clearRenderWindowWatchdog(requestId: string): void {
   const timeout = renderWindowWatchdogs.get(requestId)
@@ -1436,12 +1483,20 @@ ipcMain.handle(
   async (
     e,
     payload: {
+      requestId?: string
       params: RenderJob['params']
       seedBytes: Uint8Array
     },
   ): Promise<{ requestId: string }> => {
-    const requestId = makeRequestId()
+    const requestId =
+      typeof payload.requestId === 'string' && payload.requestId.length > 0
+        ? payload.requestId
+        : makeRequestId()
     const editorWebContentsId = e.sender.id
+    pruneStaleRenderWindowsForEditor(editorWebContentsId)
+    if (renderJobs.has(requestId)) {
+      throw new Error('This export request is already running.')
+    }
     const existingRender = [...renderJobs.entries()].find(
       ([, job]) => job.editorWebContentsId === editorWebContentsId,
     )
@@ -1454,6 +1509,7 @@ ipcMain.handle(
       params: payload.params,
       seedBytes: payload.seedBytes,
       editorWebContentsId,
+      lastActivityAt: Date.now(),
     })
 
     // Size to EXACTLY the output dimensions. No margin, no chrome — the
@@ -1565,6 +1621,7 @@ ipcMain.handle(
   (_e, requestId: string): RenderJob['params'] & { seedBytes: Uint8Array } | null => {
     const job = renderJobs.get(requestId)
     if (!job) return null
+    job.lastActivityAt = Date.now()
     // Return params + seedBytes inline so the render window has
     // everything to bootstrap in one round-trip.
     return { ...job.params, seedBytes: job.seedBytes }
@@ -1603,6 +1660,11 @@ ipcMain.handle(
       perFrameMs?: number
     },
   ) => {
+    const job = renderJobs.get(payload.requestId)
+    if (job) {
+      job.lastActivityAt = Date.now()
+      job.phase = payload.phase
+    }
     forwardToEditor(payload.requestId, 'export:render-window-progress', payload)
     armRenderWindowWatchdog(
       payload.requestId,
@@ -1703,7 +1765,7 @@ ipcMain.handle(
       // Buffer → Uint8Array marshals across IPC.
       return { path: filePath, bytes: new Uint8Array(bytes) }
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.error(`[file] read failed: ${err instanceof Error ? err.message : err}`)
       return null
     }
@@ -1718,7 +1780,7 @@ ipcMain.handle(
       addRecentProject(payload.path)
       return true
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.error(
         `[file] write failed: ${err instanceof Error ? err.message : err}`,
       )
@@ -1735,7 +1797,7 @@ ipcMain.handle(
       addRecentProject(filePath)
       return new Uint8Array(bytes)
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.error(
         `[file] read failed: ${err instanceof Error ? err.message : err}`,
       )
@@ -1776,7 +1838,7 @@ ipcMain.handle(
         sentinel,
         JSON.stringify({ ts: Date.now(), bytes: payload.bytes.length }),
       )
-      // eslint-disable-next-line no-console
+
       console.log(`[headless] wrote ${payload.outputPath}`)
       if (isHeadlessOnly) {
         app.exit(0)
@@ -1786,7 +1848,7 @@ ipcMain.handle(
         headlessRequest = null
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.error(
         `[headless] failed to write output: ${err instanceof Error ? err.message : err}`,
       )
@@ -1797,7 +1859,7 @@ ipcMain.handle(
 )
 
 ipcMain.handle('export:headless-error', (_e, message: string) => {
-  // eslint-disable-next-line no-console
+
   console.error(`[headless] renderer reported error: ${message}`)
   // Drop an error sentinel at `<output>.error` so the CLI driver
   // doesn't poll forever waiting for `<output>.done`. Without this,
@@ -1838,7 +1900,7 @@ app.whenReady().then(() => {
   if (parsed) {
     isHeadlessOnly = true
     headlessRequest = parsed
-    // eslint-disable-next-line no-console
+
     console.log(
       `[headless] rendering ${parsed.scenePath ?? 'current scene'} → ${parsed.outputPath} ` +
         `(${parsed.format} · ${parsed.quality} · ${parsed.fps}fps)`,
@@ -1872,7 +1934,7 @@ app.whenReady().then(() => {
 app.on('second-instance', (_event, argv) => {
   const req = parseHeadlessArgs(argv)
   if (req) {
-    // eslint-disable-next-line no-console
+
     console.log(
       `[main] received second-instance render request → ${req.outputPath} ` +
         `(${req.format} · ${req.quality} · ${req.fps}fps)`,

@@ -5,8 +5,30 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { driveHeadlessRender } from './driver.js'
+import {
+  DEFAULT_RENDER_TIMEOUT_MS,
+  driveHeadlessRender,
+  resolveRenderTimeoutMs,
+} from './driver.js'
 import { withEnvVar } from '../testUtils/env.js'
+
+test('render watchdog defaults to thirty minutes', () => {
+  assert.equal(DEFAULT_RENDER_TIMEOUT_MS, 30 * 60 * 1000)
+  assert.equal(resolveRenderTimeoutMs(undefined), 30 * 60 * 1000)
+  assert.equal(resolveRenderTimeoutMs(''), 30 * 60 * 1000)
+  assert.equal(resolveRenderTimeoutMs('   '), 30 * 60 * 1000)
+})
+
+test('render watchdog accepts configurable millisecond limits', () => {
+  assert.equal(resolveRenderTimeoutMs('3600000'), 60 * 60 * 1000)
+  assert.equal(resolveRenderTimeoutMs('3600000.9'), 3_600_000)
+})
+
+test('render watchdog rejects invalid or dangerously small limits', () => {
+  for (const value of ['nope', 'Infinity', '-1', '0', '999']) {
+    assert.equal(resolveRenderTimeoutMs(value), DEFAULT_RENDER_TIMEOUT_MS)
+  }
+})
 
 test('driveHeadlessRender passes saved scene paths and clears stale files', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-driver-'))

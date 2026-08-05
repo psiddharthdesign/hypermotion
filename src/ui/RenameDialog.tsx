@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSceneAPI } from '@/scene'
 import { useUI } from '@/state/ui'
+import { NumberField } from '@/ui/fields'
 
 /**
  * Multi-select rename modal.
@@ -36,6 +37,12 @@ export function RenameDialog() {
   const [template, setTemplate] = useState('')
   const [startFrom, setStartFrom] = useState(1)
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const close = useCallback(() => {
+    setMatch('')
+    setTemplate('')
+    setStartFrom(1)
+    setOpen(false)
+  }, [setOpen])
 
   // Capture the names at open time. Selection ids are stable across
   // dialog use, but the names need to be live (the user might have just
@@ -48,17 +55,36 @@ export function RenameDialog() {
         return n ? { id, name: n.name } : null
       })
       .filter((x): x is { id: string; name: string } => x !== null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selection, api])
 
-  // Reset form on open, focus the rename input.
+  const previews = useMemo(
+    () => computePreviews({ targets, match, template, startFrom }),
+    [targets, match, template, startFrom],
+  )
+
+  const apply = useCallback(() => {
+    if (targets.length === 0) {
+      close()
+      return
+    }
+    api.doc.transact(() => {
+      previews.forEach((p, i) => {
+        const t = targets[i]
+        if (!t) return
+        if (p.newName !== t.name) {
+          api.setNodeProperty(t.id, 'name', p.newName)
+        }
+      })
+    })
+    close()
+  }, [api, close, previews, targets])
+
+  // Focus the rename input after the dialog mounts. Form state is reset by
+  // every close path, so reopening never inherits the previous operation.
   useEffect(() => {
     if (!open) return
-    setMatch('')
-    setTemplate('')
-    setStartFrom(1)
-    // Focus on next tick so the autofocus lands after the input mounts.
-    requestAnimationFrame(() => renameInputRef.current?.focus())
+    const frame = requestAnimationFrame(() => renameInputRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
   }, [open])
 
   // Esc closes; Enter applies.
@@ -67,7 +93,7 @@ export function RenameDialog() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        setOpen(false)
+        close()
       }
       if (e.key === 'Enter') {
         // Only apply when focus isn't in a control that handles Enter
@@ -81,29 +107,9 @@ export function RenameDialog() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, match, template, startFrom, targets])
+  }, [apply, close, open])
 
   if (!open) return null
-
-  const previews = computePreviews({ targets, match, template, startFrom })
-
-  const apply = () => {
-    if (targets.length === 0) {
-      setOpen(false)
-      return
-    }
-    api.doc.transact(() => {
-      previews.forEach((p, i) => {
-        const t = targets[i]
-        if (!t) return
-        if (p.newName !== t.name) {
-          api.setNodeProperty(t.id, 'name', p.newName)
-        }
-      })
-    })
-    setOpen(false)
-  }
 
   const insertToken = (token: string) => {
     const el = renameInputRef.current
@@ -127,14 +133,14 @@ export function RenameDialog() {
     <div
       // Backdrop captures clicks outside the dialog body to close.
       onPointerDown={(e) => {
-        if (e.target === e.currentTarget) setOpen(false)
+        if (e.target === e.currentTarget) close()
       }}
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-label={`Rename ${targets.length} layers`}
     >
-      <div className="w-[520px] overflow-hidden rounded-md border border-border-strong bg-panel-raised shadow-2xl">
+      <div className="hm-dialog-surface w-[520px]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-[13px] font-medium text-text">
@@ -142,7 +148,7 @@ export function RenameDialog() {
           </h2>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={close}
             aria-label="Close"
             className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-panel hover:text-text"
           >
@@ -153,7 +159,7 @@ export function RenameDialog() {
         {/* Body */}
         <div className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-3 px-4 py-4">
           {/* Preview list */}
-          <div className="text-[11px] font-medium tracking-wider text-text-dim uppercase">
+          <div className="hm-support-label font-medium">
             Preview
           </div>
           <div className="flex max-h-40 min-h-[80px] flex-col gap-1 overflow-auto rounded border border-border bg-panel px-3 py-2 font-mono text-[12px] text-text">
@@ -190,7 +196,7 @@ export function RenameDialog() {
             value={match}
             onChange={(e) => setMatch(e.target.value)}
             placeholder="e.g. Frame"
-            className="h-9 rounded border border-border bg-panel px-3 text-[12px] text-text outline-none focus:border-accent"
+            className="hm-control-surface h-8 px-3 text-[12px] text-text outline-none"
           />
 
           {/* Rename input */}
@@ -205,7 +211,7 @@ export function RenameDialog() {
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
               placeholder="Type a name, click chips to insert tokens"
-              className="h-9 rounded border border-accent bg-panel px-3 text-[12px] text-text outline-none ring-2 ring-accent/30"
+              className="hm-control-surface h-8 px-3 text-[12px] text-text outline-none ring-1 ring-accent/50"
             />
             <div className="flex flex-wrap gap-1.5">
               <TokenChip
@@ -232,14 +238,12 @@ export function RenameDialog() {
             <span className="text-[12px] text-text-muted">
               Start ascending from
             </span>
-            <input
-              type="number"
+            <NumberField
               value={startFrom}
-              onChange={(e) => {
-                const n = Number(e.target.value)
-                if (Number.isFinite(n)) setStartFrom(n)
-              }}
-              className="h-7 w-16 rounded border border-border bg-panel px-2 text-right text-[12px] tabular-nums text-text outline-none focus:border-accent"
+              onCommit={setStartFrom}
+              step={1}
+              ariaLabel="Start ascending from"
+              width="w-20"
             />
           </div>
         </div>
@@ -248,15 +252,15 @@ export function RenameDialog() {
         <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
           <button
             type="button"
-            onClick={() => setOpen(false)}
-            className="h-8 rounded border border-border bg-panel px-3 text-[12px] text-text hover:border-border-strong"
+            onClick={close}
+            className="hm-secondary-action"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={apply}
-            className="h-8 rounded bg-accent px-3 text-[12px] font-medium text-white hover:brightness-110"
+            className="hm-primary-action"
           >
             Rename
           </button>
@@ -280,7 +284,7 @@ function TokenChip({
       type="button"
       onClick={onClick}
       title={title}
-      className="rounded border border-border bg-panel px-2 py-1 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
+      className="hm-secondary-action min-h-7 px-2 font-medium"
     >
       {label}
     </button>

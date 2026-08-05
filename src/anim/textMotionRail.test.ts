@@ -6,6 +6,7 @@ import {
   createTextMotionRailWorkspace,
   refreshTextMotionRailWorkspace,
   resolveTextMotionRailOffsets,
+  textMotionPathUsesSharedRail,
   type TextMotionRailSegment,
 } from './textMotionRail'
 
@@ -63,6 +64,13 @@ function absolutePosition(
 }
 
 describe('shared text motion rail', () => {
+  it('supports both letter and word segments', () => {
+    expect(textMotionPathUsesSharedRail('letters')).toBe(true)
+    expect(textMotionPathUsesSharedRail('words')).toBe(true)
+    expect(textMotionPathUsesSharedRail('lines')).toBe(false)
+    expect(textMotionPathUsesSharedRail('layer')).toBe(false)
+  })
+
   it('lands on the authored baseline bit-exactly', () => {
     const segments = [
       segment(0, 0, 0),

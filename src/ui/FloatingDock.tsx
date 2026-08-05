@@ -173,12 +173,12 @@ export function FloatingDock() {
       onPointerDown={(e) => e.stopPropagation()}
       className={[
         'pointer-events-auto absolute bottom-4 left-1/2 z-20 -translate-x-1/2',
-        'flex items-center gap-0.5 rounded-[13px] p-[5px]',
+        'hm-popover-surface flex items-center gap-0.5 p-[5px]',
         // The 92% mix + heavy backdrop-blur gives the same "frosted
         // glass" feel as macOS native floaters (Spotlight, Control
         // Center). Soft inner highlight + drop shadow lift it off the
         // canvas without looking heavy.
-        'border border-border-strong bg-panel-raised/95 backdrop-blur-xl',
+        'border border-border-strong backdrop-blur-xl',
         // Drop shadow lives in a CSS var so dark / light themes can
         // each carry their own tint and falloff. Dark = heavy two-
         // layer; light = three soft layers with cool tints — see
@@ -202,10 +202,10 @@ export function FloatingDock() {
               title={`${t.hint} — ${t.shortcut}`}
               onClick={() => setTool(t.id)}
               className={[
-                'group relative flex h-[34px] w-[34px] items-center justify-center rounded-lg transition-colors',
+                'group relative flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] transition-colors',
                 active
                   ? 'bg-accent text-white shadow-sm'
-                  : 'text-text-muted hover:bg-white/[0.07] hover:text-text',
+                  : 'text-text-muted hover:bg-control hover:text-text',
               ].join(' ')}
             >
               {t.icon}
@@ -228,7 +228,7 @@ export function FloatingDock() {
         type="button"
         title="Insert cursor component"
         onClick={insertCursorComponent}
-        className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
+        className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] text-text-muted transition-colors hover:bg-control hover:text-text"
       >
         <MousePointerClick size={18} />
       </button>
@@ -242,10 +242,10 @@ export function FloatingDock() {
           setShaderPickerAnchor((current) => (current ? null : button))
         }}
         className={[
-          'flex h-[34px] w-[34px] items-center justify-center rounded-lg transition-colors',
+          'flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] transition-colors',
           shaderPickerAnchor
             ? 'bg-accent text-white shadow-sm'
-            : 'text-text-muted hover:bg-white/[0.07] hover:text-text',
+            : 'text-text-muted hover:bg-control hover:text-text',
         ].join(' ')}
       >
         <Sparkles size={18} />
@@ -261,7 +261,7 @@ export function FloatingDock() {
         type="button"
         title="Place image…"
         onClick={() => imageInputRef.current?.click()}
-        className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
+        className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] text-text-muted transition-colors hover:bg-control hover:text-text"
       >
         <ImageIcon size={18} />
       </button>
@@ -280,7 +280,7 @@ export function FloatingDock() {
         type="button"
         title="Place video or audio…"
         onClick={() => mediaInputRef.current?.click()}
-        className="flex h-[34px] w-[34px] items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.07] hover:text-text"
+        className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-control)] text-text-muted transition-colors hover:bg-control hover:text-text"
       >
         <Video size={18} />
       </button>

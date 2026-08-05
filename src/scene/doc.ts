@@ -48,6 +48,8 @@ import {
 import { emptyVectorDocument } from '@/scene/vector/model'
 import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
 import { migrateCursorComponents } from '@/scene/builtins/migrateCursorComponent'
+import { normalizeLayerEffects } from '@/scene/effects'
+import { normalizeEllipseArc } from '@/scene/ellipseArc'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -138,6 +140,15 @@ export interface SceneAPI {
   getActiveCamera(): CameraNode | null
   /** Switches which camera is active. The id must exist and be a camera node. */
   setActiveCameraId(id: NodeId): void
+  /** All scene-level cameras, in document insertion order. */
+  getAllCameras(): CameraNode[]
+  /**
+   * Program-camera default used before the first authored camera cut.
+   * These aliases retain activeCameraId compatibility while separating
+   * the long-term authored default from editor-only camera viewing.
+   */
+  getDefaultCameraId(): NodeId | null
+  setDefaultCameraId(id: NodeId): void
   getNode(id: NodeId): Node | null
   /** Ordered list of child nodes. Returns [] for nonexistent ids. */
   getChildren(id: NodeId): Node[]
@@ -216,10 +227,14 @@ export interface SceneAPI {
 /** A mutable view of node fields that may be set via setNodeProperty. */
 export interface NodeBaseMutable {
   name: string
+  componentSourceId: NodeId | null
+  componentId: NodeId
   transform: Transform
   appearance: Appearance
   layout: Layout
   size: Size
+  clipsContent: boolean
+  arc: import('@/scene/types').EllipseArc
   alwaysOnTop: boolean
   visible: boolean
   locked: boolean
@@ -239,6 +254,16 @@ export interface NodeBaseMutable {
   textDecoration: import('@/scene/types').TextDecoration
   color: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
+  // component / instance fields
+  variants: import('@/scene/types').VariantAxis[]
+  defaultSelection: import('@/scene/types').VariantSelection
+  variantOverrides: import('@/scene/types').VariantOverride[]
+  variantPositions: Record<string, { x: number; y: number }> | undefined
+  componentProperties: import('@/scene/types').ComponentPropertyDefinition[]
+  variantTransition: import('@/scene/types').VariantTransition
+  interactions: import('@/scene/types').Interaction[]
+  selection: import('@/scene/types').VariantSelection
+  overrides: Record<NodeId, Record<string, unknown>>
   // image-kind fields — settable via Inspector on ImageNode. The scene
   // API doesn't (yet) enforce that these keys only land on an image
   // node, so callers should only pass them through when they know
@@ -359,6 +384,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   fill: { kind: 'solid', color: 'oklch(0.62 0.21 250)' },
   stroke: null,
   cornerRadius: 0,
+  cornerSmoothing: 0,
   blendMode: 'normal',
   effects: [],
 }
@@ -377,6 +403,7 @@ const TEXT_DEFAULT_APPEARANCE: Appearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  cornerSmoothing: 0,
   blendMode: 'normal',
   effects: [],
 }
@@ -386,6 +413,7 @@ const MEDIA_DEFAULT_APPEARANCE: Appearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  cornerSmoothing: 0,
   blendMode: 'normal',
   effects: [],
 }
@@ -395,6 +423,7 @@ const VECTOR_DEFAULT_APPEARANCE: Appearance = {
   fill: null,
   stroke: null,
   cornerRadius: 0,
+  cornerSmoothing: 0,
   blendMode: 'normal',
   effects: [],
 }
@@ -410,8 +439,9 @@ function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
   const appearance = (raw as Appearance | undefined) ?? defaultAppearanceForKind(kind)
   const normalized: Appearance = {
     ...appearance,
+    cornerSmoothing: normalizeCornerSmoothing(appearance.cornerSmoothing),
     blendMode: normalizeBlendMode(appearance.blendMode),
-    effects: appearance.effects ?? [],
+    effects: normalizeLayerEffects(appearance.effects),
   }
   if (
     kind === 'video' ||
@@ -424,6 +454,14 @@ function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
       stroke: null,
     }
   }
+  if (kind === 'ellipse') {
+    return {
+      ...normalized,
+      cornerRadius: 0,
+      cornerRadii: undefined,
+      cornerSmoothing: 0,
+    }
+  }
   if (kind === 'text') {
     return {
       ...normalized,
@@ -431,9 +469,16 @@ function normalizeAppearanceForKind(kind: NodeKind, raw: unknown): Appearance {
       stroke: null,
       cornerRadius: 0,
       cornerRadii: undefined,
+      cornerSmoothing: 0,
     }
   }
   return normalized
+}
+
+function normalizeCornerSmoothing(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0
 }
 
 function normalizeBlendMode(value: unknown): BlendMode {
@@ -636,6 +681,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           ...base,
           kind,
           size: (y.get('size') as Size) ?? DEFAULT_SIZE,
+          ...(kind === 'ellipse'
+            ? { arc: normalizeEllipseArc(y.get('arc')) }
+            : {}),
           ...(kind === 'image'
             ? {
                 src: (y.get('src') as string) ?? '',
@@ -996,6 +1044,33 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       }
       doc.transact(() => {
         scene.set('activeCameraId', id)
+        syncActiveCompositionDefaultCamera(scene, id)
+      })
+    },
+
+    getAllCameras: () => {
+      const out: CameraNode[] = []
+      nodes.forEach((y) => {
+        if ((y.get('kind') as NodeKind | undefined) !== 'camera') return
+        const node = yNodeToNode(y)
+        if (node.kind === 'camera') out.push(node)
+      })
+      return out
+    },
+
+    getDefaultCameraId: () =>
+      (scene.get('activeCameraId') as NodeId | undefined) ?? null,
+
+    setDefaultCameraId: (id) => {
+      const y = nodes.get(id)
+      if (!y) throw new Error(`Camera not found: ${id}`)
+      const kind = y.get('kind') as NodeKind
+      if (kind !== 'camera') {
+        throw new Error(`Node ${id} is not a camera (kind=${kind})`)
+      }
+      doc.transact(() => {
+        scene.set('activeCameraId', id)
+        syncActiveCompositionDefaultCamera(scene, id)
       })
     },
 
@@ -1042,6 +1117,24 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setMeta: (patch) => {
       doc.transact(() => {
         for (const [k, v] of Object.entries(patch)) meta.set(k, v)
+        if (patch.duration !== undefined) {
+          const compositions = scene.get('compositionScenes')
+          const activeId = scene.get('activeCompositionId')
+          if (
+            compositions instanceof Y.Map &&
+            typeof activeId === 'string'
+          ) {
+            const current = compositions.get(activeId) as
+              | { duration?: number }
+              | undefined
+            if (current) {
+              compositions.set(activeId, {
+                ...current,
+                duration: patch.duration,
+              })
+            }
+          }
+        }
       })
     },
 
@@ -1070,7 +1163,16 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         // Text and media paint through their own content, not through a
         // colored wrapper box. Any caller-supplied appearance wins.
         const defaultAppearance = defaultAppearanceForKind(kind)
-        y.set('appearance', (props as Partial<FrameNode>)?.appearance ?? defaultAppearance)
+        const requestedAppearance =
+          (props as Partial<FrameNode>)?.appearance ?? defaultAppearance
+        y.set('appearance', {
+          ...requestedAppearance,
+          effects: normalizeLayerEffects(requestedAppearance.effects),
+          cornerSmoothing:
+            kind === 'text'
+              ? 0
+              : normalizeCornerSmoothing(requestedAppearance.cornerSmoothing),
+        })
         y.set('visible', props?.visible ?? true)
         y.set('locked', props?.locked ?? false)
         // Default to 'flow' so new nodes participate in their parent's
@@ -1115,6 +1217,15 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         }
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
+        }
+        if (kind === 'ellipse') {
+          y.set(
+            'arc',
+            normalizeEllipseArc(
+              (props as Partial<import('@/scene/types').EllipseNode> | undefined)
+                ?.arc,
+            ),
+          )
         }
         if (kind === 'shader') {
           const sp = props as Partial<ShaderNode> | undefined
@@ -1391,16 +1502,61 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         const kids = y.get('children') as Y.Array<NodeId> | undefined
         const kidIds = kids ? [...kids.toArray()] : []
         for (const k of kidIds) api.deleteNode(k)
+        // A deleted node cannot keep animation tracks alive. Besides leaking
+        // data, orphan tracks make validation fail and can accidentally bind
+        // to a future node if an imported scene reuses the id.
+        for (const [trackId, track] of tracks.entries()) {
+          if ((track.get('nodeId') as NodeId | undefined) === id) {
+            tracks.delete(trackId)
+          }
+        }
         nodes.delete(id)
         if (scene.get('root') === id) scene.set('root', '')
+        if (scene.get('activeCameraId') === id) {
+          let replacement: NodeId | null = null
+          for (const [candidateId, candidate] of nodes.entries()) {
+            if ((candidate.get('kind') as NodeKind | undefined) === 'camera') {
+              replacement = candidateId
+              break
+            }
+          }
+          scene.set('activeCameraId', replacement)
+        }
       })
     },
 
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (key === 'appearance') {
+          const appearance = value as Appearance
+          const kind = y.get('kind') as NodeKind | undefined
+          y.set('appearance', {
+            ...appearance,
+            effects: normalizeLayerEffects(appearance.effects),
+            ...(kind === 'ellipse'
+              ? {
+                  cornerRadius: 0,
+                  cornerRadii: undefined,
+                  cornerSmoothing: 0,
+                }
+              : {
+                  cornerSmoothing:
+                    kind === 'text'
+                      ? 0
+                      : normalizeCornerSmoothing(
+                          appearance.cornerSmoothing,
+                        ),
+                }),
+          })
+          return
+        }
         if (key === 'motionPath') {
           y.set('motionPath', normalizeLayerMotionPath(value))
+          return
+        }
+        if (key === 'arc' && y.get('kind') === 'ellipse') {
+          y.set('arc', normalizeEllipseArc(value))
           return
         }
         if (y.get('kind') === 'shader') {
@@ -1733,6 +1889,32 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
 // Utilities
 // ---------------------------------------------------------------------------
 
+function syncActiveCompositionDefaultCamera(
+  scene: Y.Map<unknown>,
+  cameraId: NodeId,
+): void {
+  const compositions = scene.get('compositionScenes')
+  const activeId = scene.get('activeCompositionId')
+  if (!(compositions instanceof Y.Map) || typeof activeId !== 'string') {
+    return
+  }
+  const current = compositions.get(activeId) as
+    | {
+        cameraIds?: readonly NodeId[]
+        defaultCameraId?: NodeId | null
+      }
+    | undefined
+  if (!current) return
+  const cameraIds = current.cameraIds?.includes(cameraId)
+    ? [...current.cameraIds]
+    : [...(current.cameraIds ?? []), cameraId]
+  compositions.set(activeId, {
+    ...current,
+    cameraIds,
+    defaultCameraId: cameraId,
+  })
+}
+
 function ensureMap(parent: Y.Map<unknown>, key: string): Y.Map<unknown> {
   let m = parent.get(key) as Y.Map<unknown> | undefined
   if (!m) {
@@ -1809,6 +1991,50 @@ export function snapshotScene(api: SceneAPI): Scene {
   for (const f of api.getAllCustomFonts()) customFonts[f.id] = f
   const tracks: Record<TrackId, Track> = {}
   for (const t of api.getAllTracks()) tracks[t.id] = t
+  const sceneMap = api.doc.getMap<unknown>('scene')
+  const cloneProjectValue = <T>(value: T): T => {
+    if (typeof structuredClone === 'function') return structuredClone(value)
+    return JSON.parse(JSON.stringify(value)) as T
+  }
+  let compositionScenes: Scene['compositionScenes']
+  const compositionMap = sceneMap.get('compositionScenes')
+  if (compositionMap instanceof Y.Map && compositionMap.size > 0) {
+    compositionScenes = {}
+    for (const [id, composition] of compositionMap.entries()) {
+      compositionScenes[id] = cloneProjectValue(
+        composition as import('@/sequence/types').CompositionScene,
+      )
+    }
+  }
+  let sequenceItems: Scene['sequenceItems']
+  const sequenceItemMap = sceneMap.get('sequenceItems')
+  if (sequenceItemMap instanceof Y.Map && sequenceItemMap.size > 0) {
+    sequenceItems = {}
+    for (const [id, item] of sequenceItemMap.entries()) {
+      sequenceItems[id] = cloneProjectValue(
+        item as import('@/sequence/types').SequenceItem,
+      )
+    }
+  }
+  let sequenceOrder: string[] | undefined
+  const sequenceOrderArray = sceneMap.get('sequenceOrder')
+  if (
+    sequenceOrderArray instanceof Y.Array &&
+    sequenceOrderArray.length > 0
+  ) {
+    sequenceOrder = sequenceOrderArray
+      .toArray()
+      .filter((id): id is string => typeof id === 'string')
+  }
+  const activeComposition = sceneMap.get('activeCompositionId')
+  const activeCompositionId = typeof activeComposition === 'string'
+    ? activeComposition
+    : undefined
+  const rawSchemaVersion = sceneMap.get('sequenceSchemaVersion')
+  const sequenceSchemaVersion =
+    typeof rawSchemaVersion === 'number' && Number.isFinite(rawSchemaVersion)
+      ? rawSchemaVersion
+      : undefined
   return {
     meta: api.getMeta(),
     root: api.getRoot(),
@@ -1817,5 +2043,12 @@ export function snapshotScene(api: SceneAPI): Scene {
     tracks,
     sections,
     customFonts,
+    ...(compositionScenes === undefined ? {} : { compositionScenes }),
+    ...(sequenceItems === undefined ? {} : { sequenceItems }),
+    ...(sequenceOrder === undefined ? {} : { sequenceOrder }),
+    ...(activeCompositionId === undefined ? {} : { activeCompositionId }),
+    ...(sequenceSchemaVersion === undefined
+      ? {}
+      : { sequenceSchemaVersion }),
   }
 }

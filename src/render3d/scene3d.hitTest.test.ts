@@ -79,6 +79,205 @@ describe('direct nested-layer hit testing', () => {
   })
 })
 
+describe('clipped overflow planes', () => {
+  it('retains offscreen descendants so moving the inner content reveals them', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const viewportId = api.createNode('frame', rootId, {
+      name: 'Viewport',
+      size: { width: 200, height: 160 },
+      clipsContent: true,
+    })
+    const contentId = api.createNode('frame', viewportId, {
+      name: 'Scrollable content',
+      size: { width: 200, height: 160 },
+      clipsContent: false,
+    })
+    for (const id of [viewportId, contentId]) {
+      const node = api.getNode(id)
+      if (!node) throw new Error('Expected the clipping test frame')
+      api.setNodeProperty(id, 'transform', {
+        ...node.transform,
+        renderMode: 'plane',
+      })
+    }
+    const childIds = Array.from({ length: 100 }, (_, index) =>
+      api.createNode('rect', contentId, {
+        name: `Item ${index + 1}`,
+        size: { width: 40, height: 40 },
+      }),
+    )
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [viewportId]: { x: 100, y: 80, width: 200, height: 160 },
+      [contentId]: { x: 100, y: 80, width: 200, height: 160 },
+    }
+    childIds.forEach((childId, index) => {
+      layout[childId] = {
+        x: 100 + index * 10,
+        y: 120,
+        width: 40,
+        height: 40,
+      }
+    })
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const resolvedCamera = resolveCamera3D(camera, undefined, {
+      width: 960,
+      height: 540,
+    })
+    const atRest = buildWorldPlanes(api, layout, {}, resolvedCamera)
+    const moved = buildWorldPlanes(
+      api,
+      layout,
+      { [contentId]: { x: -750 } },
+      resolvedCamera,
+    )
+    const offscreenId = childIds[80]!
+    const restChild = atRest.find((plane) => plane.nodeId === offscreenId)
+    const movedChild = moved.find((plane) => plane.nodeId === offscreenId)
+    const restViewport = atRest.find((plane) => plane.nodeId === viewportId)
+    const movedViewport = moved.find((plane) => plane.nodeId === viewportId)
+
+    const restContent = atRest.find((plane) => plane.nodeId === contentId)
+    const movedContent = moved.find((plane) => plane.nodeId === contentId)
+
+    expect(atRest).toHaveLength(2)
+    expect(restViewport?.contentMode).toBe('subtree')
+    expect(restViewport?.textureRect).toBeUndefined()
+    expect(restContent?.contentMode).toBe('subtree')
+    expect(restContent?.clips).toHaveLength(1)
+    expect(restContent?.rect).toEqual(layout[contentId])
+    expect(restContent?.textureRect).toEqual({
+      x: 100,
+      y: 80,
+      width: 1030,
+      height: 160,
+    })
+    expect(restChild).toBeUndefined()
+    expect(movedChild).toBeUndefined()
+    expect(movedContent!.center.x).toBe(restContent!.center.x - 750)
+    expect(movedContent!.textureCenter!.x).toBe(
+      restContent!.textureCenter!.x - 750,
+    )
+    expect(movedContent?.clips).toEqual(restContent?.clips)
+    expect(movedViewport?.center).toEqual(restViewport?.center)
+  })
+
+  it('keeps nested clipping wrappers in the original plane composition', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const outerId = api.createNode('frame', rootId, {
+      name: 'Transcript',
+      size: { width: 600, height: 400 },
+      clipsContent: true,
+    })
+    const flatWrapperId = api.createNode('frame', outerId, {
+      name: 'Flat wrapper',
+      size: { width: 560, height: 360 },
+      clipsContent: true,
+    })
+    const innerId = api.createNode('frame', flatWrapperId, {
+      name: 'Inner viewport',
+      size: { width: 520, height: 240 },
+      clipsContent: true,
+    })
+    const contentId = api.createNode('frame', innerId, {
+      name: 'Scrollable content',
+      size: { width: 520, height: 900 },
+    })
+    for (const id of [outerId, innerId, contentId]) {
+      const node = api.getNode(id)
+      if (!node) throw new Error('Expected the nested clipping test frame')
+      api.setNodeProperty(id, 'transform', {
+        ...node.transform,
+        renderMode: 'plane',
+      })
+    }
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [outerId]: { x: 100, y: 60, width: 600, height: 400 },
+      [flatWrapperId]: { x: 120, y: 80, width: 560, height: 360 },
+      [innerId]: { x: 140, y: 100, width: 520, height: 240 },
+      [contentId]: { x: 140, y: 100, width: 520, height: 900 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+
+    const planes = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+
+    expect(planes.map((plane) => plane.nodeId)).toEqual([
+      outerId,
+      innerId,
+      contentId,
+    ])
+    expect(
+      planes.find((plane) => plane.nodeId === flatWrapperId),
+    ).toBeUndefined()
+    expect(planes.find((plane) => plane.nodeId === contentId)?.clips).toHaveLength(3)
+  })
+
+  it('includes transformed flattened descendants in backing-texture bounds', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const contentId = api.createNode('frame', rootId, {
+      name: 'Content plane',
+      size: { width: 200, height: 160 },
+    })
+    const childId = api.createNode('rect', contentId, {
+      name: 'Translated child',
+      size: { width: 40, height: 40 },
+    })
+    const content = api.getNode(contentId)
+    const child = api.getNode(childId)
+    if (!content || !child) throw new Error('Expected texture-bounds nodes')
+    api.setNodeProperty(contentId, 'transform', {
+      ...content.transform,
+      renderMode: 'plane',
+    })
+    api.setNodeProperty(childId, 'transform', {
+      ...child.transform,
+      x: 300,
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [contentId]: { x: 100, y: 80, width: 200, height: 160 },
+      [childId]: { x: 100, y: 100, width: 40, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+
+    const [plane] = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+
+    expect(plane?.nodeId).toBe(contentId)
+    expect(plane?.textureRect).toEqual({
+      x: 100,
+      y: 80,
+      width: 340,
+      height: 160,
+    })
+  })
+})
+
 describe('always-on-top instance planes', () => {
   it('wins hit testing even when a later normal plane has the same depth', () => {
     const api = createSceneAPI()

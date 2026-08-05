@@ -9,7 +9,7 @@ import type {
   Node,
   Position,
   SizeAxis,
-} from '@/scene'
+} from '@/scene/types'
 import { makeTextMeasure } from '@/layout/textMeasure'
 import { makeVectorMeasure } from '@/layout/vectorMeasure'
 
@@ -70,10 +70,8 @@ export function applySize(yNode: YogaNode, axis: 'width' | 'height', value: Size
  * Leaves (rect, ellipse, image, shader, text) just get size. Containers (frame,
  * component) branch on `layout.mode`:
  *
- *   - 'none' — padding + align/justify still honored (so a plain frame
- *     can center a single child) but children are set to
- *     positionType=absolute in the PARENT's applyChildLayoutInside so
- *     transform.x/y reads straight through.
+ *   - 'none' — children are absolutely positioned and their transform.x/y
+ *     reads straight through. Stored flow padding is intentionally ignored.
  *   - 'flex' — canonical flex container. direction + justify + align +
  *     gap + padding + wrap.
  *   - 'grid' — flex-row with wrap=true, gap split into rowGap/columnGap,
@@ -106,12 +104,17 @@ export function applyNodeStyle(y: Yoga, yNode: YogaNode, node: Node): void {
 }
 
 function applyContainerLayout(y: Yoga, yNode: YogaNode, l: Layout): void {
-  // Padding is honored in every mode — it's a property of the
-  // container, not of how the children are laid out.
-  yNode.setPadding(y.EDGE_TOP, l.padding.top)
-  yNode.setPadding(y.EDGE_RIGHT, l.padding.right)
-  yNode.setPadding(y.EDGE_BOTTOM, l.padding.bottom)
-  yNode.setPadding(y.EDGE_LEFT, l.padding.left)
+  // Padding is a flow-layout property. Keep its authored values in the scene
+  // when switching to None, but do not let them offset or shrink freely
+  // positioned children.
+  const padding =
+    l.mode === 'none'
+      ? { top: 0, right: 0, bottom: 0, left: 0 }
+      : l.padding
+  yNode.setPadding(y.EDGE_TOP, padding.top)
+  yNode.setPadding(y.EDGE_RIGHT, padding.right)
+  yNode.setPadding(y.EDGE_BOTTOM, padding.bottom)
+  yNode.setPadding(y.EDGE_LEFT, padding.left)
 
   if (l.mode === 'flex') {
     yNode.setFlexDirection(toYogaFlexDirection(y, l.direction))
@@ -147,8 +150,7 @@ function applyContainerLayout(y: Yoga, yNode: YogaNode, l: Layout): void {
   }
 
   // mode === 'none' — children are positioned absolutely inside, see
-  // applyChildLayoutForParent. The container itself still has padding
-  // but no flex rules to interfere.
+  // applyChildLayoutForParent. No flow spacing interferes with transforms.
   yNode.setFlexDirection(y.FLEX_DIRECTION_ROW)
   yNode.setJustifyContent(y.JUSTIFY_FLEX_START)
   yNode.setAlignItems(y.ALIGN_FLEX_START)

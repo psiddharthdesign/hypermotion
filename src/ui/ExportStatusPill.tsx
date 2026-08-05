@@ -40,7 +40,7 @@ export function ExportStatusPill() {
   const reset = useExportProgress((s) => s.reset)
 
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
 
   // Auto-dismiss successful exports after 4s — long enough to register,
   // short enough not to clutter. Errors and cancels stick around until
@@ -70,13 +70,15 @@ export function ExportStatusPill() {
   return (
     <>
       <button
-        ref={triggerRef}
         type="button"
         // data-export-hide so the captured stream doesn't include the
         // pill itself (the pill IS visible in the TopBar but the
         // recording-mode CSS hides it).
         data-export-hide="1"
-        onClick={() => setPopoverOpen((v) => !v)}
+        onClick={(event) => {
+          setAnchor(event.currentTarget)
+          setPopoverOpen((v) => !v)
+        }}
         title={label}
         aria-haspopup="dialog"
         aria-expanded={popoverOpen}
@@ -89,9 +91,9 @@ export function ExportStatusPill() {
         <span className="whitespace-nowrap">{label}</span>
       </button>
 
-      {popoverOpen && triggerRef.current && (
+      {popoverOpen && anchor && (
         <PillPopover
-          anchor={triggerRef.current}
+          anchor={anchor}
           onClose={() => setPopoverOpen(false)}
           phase={phase}
           format={format}

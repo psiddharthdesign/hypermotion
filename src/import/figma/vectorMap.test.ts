@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
+import { createSceneAPI } from '@/scene/doc'
 
 vi.mock('@/ui/fonts/googleFonts', () => ({
   isGoogleFont: () => true,
 }))
-import { parseFigmaPayload } from './walk'
+import { importFigmaPayload, parseFigmaPayload } from './walk'
 import type { FigmaCapturedVector, FigmaPayload } from './types'
 import {
   FIGMA_PAYLOAD_FORMAT,
+  FIGMA_PAYLOAD_VECTOR_VERSION,
   FIGMA_PAYLOAD_VERSION,
 } from './types'
 import { figmaToVectorDocument, sanitizeFigmaSvg } from './vectorMap'
@@ -43,8 +45,12 @@ function capturedVector(
 }
 
 describe('Figma vector payload v2', () => {
-  it('accepts both legacy and current payload versions', () => {
-    for (const version of [1, FIGMA_PAYLOAD_VERSION] as const) {
+  it('accepts legacy, vector, and current payload versions', () => {
+    for (const version of [
+      1,
+      FIGMA_PAYLOAD_VECTOR_VERSION,
+      FIGMA_PAYLOAD_VERSION,
+    ] as const) {
       const payload: FigmaPayload = {
         format: FIGMA_PAYLOAD_FORMAT,
         version,
@@ -53,6 +59,37 @@ describe('Figma vector payload v2', () => {
       }
       expect(parseFigmaPayload(JSON.stringify(payload))?.version).toBe(version)
     }
+  })
+
+  it('promotes an editable v2 ellipse primitive to the native arc model', () => {
+    const api = createSceneAPI()
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VECTOR_VERSION,
+      nodes: [
+        capturedVector({
+          sourceKind: 'ELLIPSE',
+          primitive: {
+            kind: 'ellipse',
+            startAngle: -Math.PI / 2,
+            endAngle: Math.PI / 2,
+            innerRadius: 0.4,
+          },
+          fidelity: 'editable',
+        }),
+      ],
+      assets: {},
+    }
+
+    const [createdId] = importFigmaPayload(payload, api, api.getRoot())
+    const created = api.getNode(createdId)
+
+    expect(created?.kind).toBe('ellipse')
+    expect(created && created.kind === 'ellipse' ? created.arc : null).toEqual({
+      startAngle: -90,
+      sweep: 0.5,
+      innerRadius: 0.4,
+    })
   })
 
   it('preserves Figma network vertices and absolute cubic controls', () => {
@@ -290,5 +327,31 @@ describe('Figma vector payload v2', () => {
 
     // null tells the walker to create a sanitized inline-SVG image fallback.
     expect(mapped).toBeNull()
+  })
+
+  it('imports a partial vector through its SVG fidelity fallback', () => {
+    const api = createSceneAPI()
+    const vector = capturedVector({
+      fidelity: 'partial',
+      unsupported: ['non-center-stroke'],
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80"><path d="M0 0h100v80H0z"/></svg>',
+      vectorPaths: [
+        { windingRule: 'NONZERO', data: 'M 0 0 H 100 V 80 H 0 Z' },
+      ],
+    })
+    const payload: FigmaPayload = {
+      format: FIGMA_PAYLOAD_FORMAT,
+      version: FIGMA_PAYLOAD_VERSION,
+      nodes: [vector],
+      assets: {},
+    }
+
+    const [createdId] = importFigmaPayload(payload, api, api.getRoot())
+    const created = api.getNode(createdId)
+
+    expect(created?.kind).toBe('image')
+    expect(created && 'src' in created ? created.src : '').toContain(
+      'data:image/svg+xml',
+    )
   })
 })

@@ -87,6 +87,73 @@ function sampleScene(): SceneJson {
   }
 }
 
+function sequenceScene(): SceneJson {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  if (!scene.meta) throw new Error('missing sample meta')
+  delete scene.meta.duration
+  scene.nodes = {
+    ...scene.nodes,
+    detailRoot: {
+      id: 'detailRoot',
+      kind: 'frame',
+      parent: null,
+      children: [],
+      size: { width: 1280, height: 720 },
+      layout: { mode: 'none' },
+    },
+    detailCamera: {
+      ...camera,
+      id: 'detailCamera',
+      name: 'Detail Camera',
+    },
+  }
+  scene.compositionScenes = {
+    intro: {
+      id: 'intro',
+      name: 'Intro',
+      rootNodeId: 'root',
+      duration: 2.5,
+      workArea: { start: 0.25, end: 2.25 },
+      cameraIds: ['camera'],
+      defaultCameraId: 'camera',
+      cameraCuts: {},
+    },
+    detail: {
+      id: 'detail',
+      name: 'Detail',
+      rootNodeId: 'detailRoot',
+      duration: 3,
+      cameraIds: ['detailCamera'],
+      defaultCameraId: 'detailCamera',
+      cameraCuts: {
+        closeup: {
+          id: 'closeup',
+          cameraId: 'detailCamera',
+          time: 1,
+        },
+      },
+    },
+  }
+  scene.sequenceItems = {
+    introItem: {
+      id: 'introItem',
+      sceneId: 'intro',
+      transitionOut: { kind: 'crossfade', duration: 0.5 },
+    },
+    detailItem: {
+      id: 'detailItem',
+      sceneId: 'detail',
+      masterAudioMuted: true,
+      transitionOut: { kind: 'cut', duration: 0 },
+    },
+  }
+  scene.sequenceOrder = ['introItem', 'detailItem']
+  scene.activeCompositionId = 'detail'
+  return scene
+}
+
 test('buildSceneBytes creates a readable .hype summary', () => {
   const bytes = buildSceneBytes(sampleScene())
   const summary = readSceneSummary(bytes)
@@ -100,6 +167,237 @@ test('buildSceneBytes creates a readable .hype summary', () => {
   assert.equal(summary.trackCount, 1)
   assert.equal(summary.sectionCount, 1)
   assert.equal(summary.keyframeCount, 2)
+  assert.equal(summary.activeCompositionId, null)
+  assert.equal(summary.sequenceSchemaVersion, null)
+  assert.equal(summary.compositionSceneCount, 0)
+  assert.equal(summary.sequenceItemCount, 0)
+})
+
+test('buildSceneBytes preserves authored ellipse arcs and their keyframes', () => {
+  const scene = sampleScene()
+  const root = scene.nodes?.root
+  if (!root) throw new Error('missing sample root')
+  root.children = [...(root.children ?? []), 'chartArc']
+  scene.nodes = {
+    ...scene.nodes,
+    chartArc: {
+      id: 'chartArc',
+      kind: 'ellipse',
+      parent: 'root',
+      size: { width: 184, height: 184 },
+      arc: {
+        startAngle: -90,
+        sweep: 0.804,
+        innerRadius: 0.55,
+      },
+    },
+  }
+  scene.tracks = {
+    arcStart: {
+      id: 'arcStart',
+      nodeId: 'chartArc',
+      propertyId: 'shape.arcStart',
+      keyframes: [
+        { id: 'start-a', time: 0, value: -90 },
+        { id: 'start-b', time: 1, value: 0 },
+      ],
+    },
+    arcSweep: {
+      id: 'arcSweep',
+      nodeId: 'chartArc',
+      propertyId: 'shape.arcSweep',
+      keyframes: [
+        { id: 'sweep-a', time: 0, value: 0 },
+        { id: 'sweep-b', time: 1, value: 0.804 },
+      ],
+    },
+    arcInnerRadius: {
+      id: 'arcInnerRadius',
+      nodeId: 'chartArc',
+      propertyId: 'shape.arcInnerRadius',
+      keyframes: [
+        { id: 'inner-a', time: 0, value: 0 },
+        { id: 'inner-b', time: 1, value: 0.55 },
+      ],
+    },
+  }
+
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const nodes = data.nodes as PlainSceneMap
+  const tracks = data.tracks as PlainSceneMap
+
+  assert.deepEqual(nodes.chartArc.arc, {
+    startAngle: -90,
+    sweep: 0.804,
+    innerRadius: 0.55,
+  })
+  assert.equal(tracks.arcStart.propertyId, 'shape.arcStart')
+  assert.equal(tracks.arcSweep.propertyId, 'shape.arcSweep')
+  assert.equal(tracks.arcInnerRadius.propertyId, 'shape.arcInnerRadius')
+  assert.equal(readSceneSummary(bytes).keyframeCount, 6)
+  assert.equal(validateScene(bytes).ok, true)
+})
+
+test('buildSceneBytes persists a multi-scene sequence and active legacy projection', () => {
+  const scene = sequenceScene()
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const summary = readSceneSummary(bytes)
+  const result = validateScene(bytes)
+
+  assert.deepEqual(data.compositionScenes, scene.compositionScenes)
+  assert.deepEqual(data.sequenceItems, scene.sequenceItems)
+  assert.deepEqual(data.sequenceOrder, ['introItem', 'detailItem'])
+  assert.equal(data.sequenceSchemaVersion, 2)
+  assert.equal(data.activeCompositionId, 'detail')
+  assert.equal(data.root, 'detailRoot')
+  assert.equal(data.activeCameraId, 'detailCamera')
+  assert.equal((data.meta as PlainSceneObject).duration, 3)
+  assert.equal(summary.activeCompositionId, 'detail')
+  assert.equal(summary.sequenceSchemaVersion, 2)
+  assert.equal(summary.compositionSceneCount, 2)
+  assert.equal(summary.sequenceItemCount, 2)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
+test('validateScene rejects composition work areas outside their duration', () => {
+  const scene = sequenceScene()
+  const intro = scene.compositionScenes?.intro
+  if (!intro) throw new Error('missing intro composition')
+  intro.workArea = { start: 2, end: 3 }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.ok(
+    result.errors.includes(
+      'composition scene intro workArea.end must not exceed composition duration 2.5',
+    ),
+  )
+})
+
+test('validateScene rejects a non-boolean occurrence Master audio mute', () => {
+  const scene = sequenceScene()
+  const detailItem = scene.sequenceItems?.detailItem
+  if (!detailItem) throw new Error('missing detail sequence item')
+  const rawDetailItem = detailItem as unknown as Record<string, unknown>
+  rawDetailItem.masterAudioMuted = 'yes'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.ok(
+    result.errors.includes(
+      'sequence item detailItem masterAudioMuted must be a boolean when provided',
+    ),
+  )
+})
+
+test('validateScene accepts composition-owned workspace assets', () => {
+  const scene = sequenceScene()
+  scene.nodes = {
+    ...scene.nodes,
+    formComponent: {
+      id: 'formComponent',
+      kind: 'component',
+      parent: null,
+      workspaceOnly: true,
+      children: [],
+    },
+  }
+  const intro = scene.compositionScenes?.intro
+  if (!intro) throw new Error('missing intro composition')
+  intro.workspaceNodeIds = ['formComponent']
+
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const result = validateScene(bytes)
+
+  assert.deepEqual(
+    (data.compositionScenes as PlainSceneMap).intro?.workspaceNodeIds,
+    ['formComponent'],
+  )
+  assert.equal(result.ok, true)
+})
+
+test('validateScene rejects invalid composition workspace ownership', () => {
+  const scene = sequenceScene()
+  const intro = scene.compositionScenes?.intro
+  if (!intro) throw new Error('missing intro composition')
+  intro.workspaceNodeIds = ['root', 'missing', 'root']
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.ok(
+    result.errors.includes(
+      'composition scene intro workspace node root must set workspaceOnly: true',
+    ),
+  )
+  assert.ok(
+    result.errors.includes(
+      'composition scene intro workspaceNodeIds points to missing node: missing',
+    ),
+  )
+  assert.ok(
+    result.errors.includes(
+      'composition scene intro contains duplicate workspace node id: root',
+    ),
+  )
+})
+
+test('validateScene rejects inconsistent sequence ownership, order, and projection', () => {
+  const scene = sequenceScene()
+  const detail = scene.compositionScenes?.detail
+  const detailItem = scene.sequenceItems?.detailItem
+  if (!detail || !detailItem) throw new Error('missing sequence fixture')
+  detail.cameraIds = ['camera']
+  detail.cameraCuts.closeup = {
+    id: 'closeup',
+    cameraId: 'detailCamera',
+    time: 3,
+  }
+  detailItem.sceneId = 'missing'
+  detailItem.transitionOut = { kind: 'crossfade', duration: 1 }
+  scene.sequenceOrder = ['introItem', 'introItem']
+  scene.root = 'root'
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('camera node camera is owned by composition scenes intro and detail'),
+    ),
+  )
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('camera cut closeup targets an unowned camera'),
+    ),
+  )
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('sequence item detailItem points to missing composition'),
+    ),
+  )
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('sequenceOrder contains duplicate item id'),
+    ),
+  )
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('final sequence item detailItem cannot have a non-zero crossfade'),
+    ),
+  )
+  assert.ok(
+    result.errors.some((error) =>
+      error.includes('scene.root must mirror active composition detail rootNodeId'),
+    ),
+  )
 })
 
 test('buildSceneBytes preserves text animation track config', () => {
@@ -908,6 +1206,47 @@ test('buildSceneBytes infers root and active camera when omitted', () => {
   assert.equal(summary.activeCameraId, 'camera')
 })
 
+test('buildSceneBytes preserves multi-camera ownership, defaults, and timed cuts', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  scene.nodes = {
+    ...scene.nodes,
+    cameraB: {
+      ...camera,
+      id: 'cameraB',
+      name: 'Detail Camera',
+    },
+  }
+  scene.cameraIds = ['camera', 'cameraB']
+  scene.defaultCameraId = 'cameraB'
+  scene.cameraCuts = {
+    opening: {
+      id: 'opening',
+      cameraId: 'camera',
+      time: 0.5,
+    },
+    detail: {
+      id: 'detail',
+      cameraId: 'cameraB',
+      time: 1.5,
+    },
+  }
+  delete scene.activeCameraId
+
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const result = validateScene(bytes)
+
+  assert.deepEqual(data.cameraIds, ['camera', 'cameraB'])
+  assert.equal(data.defaultCameraId, 'cameraB')
+  assert.deepEqual(data.cameraCuts, scene.cameraCuts)
+  assert.equal(data.activeCameraId, 'cameraB')
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
 test('buildSceneBytes preserves an explicitly cleared active camera', () => {
   const scene = sampleScene()
   scene.activeCameraId = null
@@ -1588,6 +1927,29 @@ test('validateScene rejects unsupported node kinds', () => {
   assert.deepEqual(result.errors, ['node title has unsupported kind: shape'])
 })
 
+test('validateScene accepts app-native vector nodes used by built-in components', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  const nodes = scene.get('nodes') as Y.Map<Y.Map<unknown>>
+  nodes.get('title')?.set('kind', 'vector')
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+})
+
+test('JSON authoring rejects vector nodes until preserved payloads are supported', () => {
+  const scene = sampleScene()
+  scene.nodes!.title!.kind = 'vector' as never
+
+  assert.throws(
+    () => buildSceneBytes(scene),
+    /node title has unsupported kind: vector/,
+  )
+})
+
 test('validateScene rejects malformed Mesh Gradient shader fields', () => {
   const scene = sampleScene()
   const root = scene.nodes?.root
@@ -1762,7 +2124,7 @@ test('validateScene rejects cameras nested under scene nodes', () => {
   ])
 })
 
-test('validateScene rejects multiple camera nodes', () => {
+test('validateScene accepts multiple scene-level camera nodes with legacy inference', () => {
   const scene = sampleScene()
   const camera = scene.nodes?.camera
   if (!camera) throw new Error('missing sample camera')
@@ -1777,9 +2139,145 @@ test('validateScene rejects multiple camera nodes', () => {
 
   const result = validateScene(buildSceneBytes(scene))
 
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+  assert.deepEqual(result.warnings, [])
+})
+
+test('validateScene rejects invalid explicit camera ownership and defaults', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  scene.nodes = {
+    ...scene.nodes,
+    cameraB: {
+      ...camera,
+      id: 'cameraB',
+      name: 'Unowned Camera',
+    },
+  }
+  scene.cameraIds = ['camera', 'camera', 'title', 'missing-camera']
+  scene.activeCameraId = 'cameraB'
+  scene.defaultCameraId = 'cameraB'
+
+  const result = validateScene(buildSceneBytes(scene))
+
   assert.equal(result.ok, false)
   assert.deepEqual(result.errors, [
-    'scene has multiple camera nodes: camera, cameraB',
+    'scene.cameraIds contains duplicate camera id: camera',
+    'scene.cameraIds includes non-camera node: title',
+    'scene.cameraIds points to missing node: missing-camera',
+    'camera node cameraB is not owned by scene.cameraIds',
+    'scene.activeCameraId is not owned by this scene: cameraB',
+    'scene.defaultCameraId is not owned by this scene: cameraB',
+  ])
+})
+
+test('validateScene rejects malformed camera defaults', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  doc.getMap<unknown>('scene').set('defaultCameraId', 42)
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.defaultCameraId must be a non-empty string or null',
+  ])
+})
+
+test('validateScene rejects disabled default and cut cameras', () => {
+  const scene = sampleScene()
+  const camera = scene.nodes?.camera
+  if (!camera) throw new Error('missing sample camera')
+  scene.nodes = {
+    ...scene.nodes,
+    cameraB: {
+      ...camera,
+      id: 'cameraB',
+      name: 'Disabled Camera',
+      enabled: false,
+    },
+  }
+  scene.cameraIds = ['camera', 'cameraB']
+  scene.activeCameraId = 'camera'
+  scene.defaultCameraId = 'cameraB'
+  scene.cameraCuts = {
+    disabled: {
+      id: 'disabled',
+      cameraId: 'cameraB',
+      time: 1,
+    },
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.defaultCameraId points to a disabled camera: cameraB',
+    'camera cut disabled points to disabled camera: cameraB',
+  ])
+})
+
+test('validateScene rejects invalid camera cuts', () => {
+  const scene = sampleScene()
+  scene.cameraIds = ['camera']
+  scene.defaultCameraId = 'camera'
+  scene.cameraCuts = {
+    missing: {
+      id: 'missing',
+      cameraId: 'missing-camera',
+      time: -0.25,
+    },
+    wrongKind: {
+      id: 'wrongKind',
+      cameraId: 'title',
+      time: 2.5,
+    },
+    first: {
+      id: 'first',
+      cameraId: 'camera',
+      time: 1,
+    },
+    duplicate: {
+      id: 'duplicate',
+      cameraId: 'camera',
+      time: 1,
+    },
+  }
+
+  const result = validateScene(buildSceneBytes(scene))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'camera cut missing points to missing camera node: missing-camera',
+    'camera cut missing time must be greater than or equal to 0',
+    'camera cut wrongKind points to non-camera node: title',
+    'camera cut wrongKind time must be less than scene duration 2.5',
+  ])
+})
+
+test('validateScene rejects malformed camera cut collections and entries', () => {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, buildSceneBytes(sampleScene()))
+  const scene = doc.getMap<unknown>('scene')
+  scene.set('cameraIds', 'camera')
+  scene.set('cameraCuts', {
+    cut: {
+      id: 'different',
+      cameraId: '',
+      time: Number.NaN,
+    },
+  })
+
+  const result = validateScene(Y.encodeStateAsUpdate(doc))
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.errors, [
+    'scene.cameraIds must be an array',
+    'camera cut map key cut does not match camera cut id: different',
+    'camera cut cut cameraId must be a non-empty string',
+    'camera cut cut time must be a finite number',
   ])
 })
 

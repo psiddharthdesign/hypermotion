@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Yoga, MeasureFunction } from 'yoga-layout/load'
-import { displayedText, type TextNode } from '@/scene'
+import { displayedText } from '@/scene/text'
+import type { TextNode } from '@/scene/types'
 
 /**
  * Text intrinsic measurement for Yoga.
@@ -107,49 +108,75 @@ export function makeTextMeasure(yoga: Yoga, node: TextNode): MeasureFunction {
   return (width, widthMode, _height, _heightMode) => {
     void _height
     void _heightMode
-    const ctx = getCtx()
-    const text = displayedText(node)
-    if (!ctx) {
-      // No canvas available — fall back to a rough estimate so we don't
-      // collapse to 0. 0.6em per glyph is a reasonable average for
-      // proportional fonts.
-      const charW = node.fontSize * 0.6 + Math.max(0, node.letterSpacing)
-      const lines = text.split('\n').length || 1
-      return {
-        width: Math.max(1, text.length * charW),
-        height: Math.max(1, lines * node.fontSize * node.lineHeight),
-      }
-    }
-    ctx.font = fontString(node)
+    return measureTextNodeSize(
+      node,
+      widthMode === yoga.MEASURE_MODE_UNDEFINED ? undefined : Math.max(1, width),
+    )
+  }
+}
 
-    let lines: string[]
-    if (widthMode === yoga.MEASURE_MODE_UNDEFINED) {
-      // Natural single-line measurement per source line. No wrap.
-      lines = text.split('\n')
-    } else {
-      // Exactly + AtMost both wrap to the given width budget. The
-      // difference matters for Yoga's internal sizing decisions, not
-      // for what we report back.
-      const budget = Math.max(1, width)
-      lines = wrapToWidthWithTracking(ctx, text, budget, node.letterSpacing)
-    }
-
-    const lineCount = Math.max(1, lines.length)
-    const measuredWidth = widestLineWidthWithTracking(ctx, lines, node.letterSpacing)
-    // CRITICAL: ceil + 1px safety margin.
-    //
-    // `measureText` returns a fractional width (e.g. 127.34px). If we
-    // hand that back to Yoga, the renderer's `rect.width` floors to
-    // 127px while CSS still tries to lay out the full 127.34px of text
-    // inside that box — the last word overflows by 0.34px and CSS
-    // breaks it onto a new line. The visible result is "I set hug
-    // width and the text still wrapped." Ceiling alone closes the gap
-    // for most cases; the extra +1 is insurance against font-hinting
-    // rounding that can still nudge sub-pixel widths in either tree.
+/**
+ * Measure one text node without constructing a Yoga tree.
+ *
+ * The selected-text resize preview uses this to update only its lightweight
+ * DOM proxy while the authored scene layout stays frozen. Keeping this math
+ * shared with Yoga prevents the proxy from snapping to a different wrap on
+ * release.
+ */
+export function measureTextNodeSize(
+  node: TextNode,
+  widthBudget?: number,
+): { width: number; height: number } {
+  const ctx = getCtx()
+  const text = displayedText(node)
+  if (!ctx) {
+    // No canvas available — fall back to a rough estimate so we don't
+    // collapse to 0. 0.6em per glyph is a reasonable average for
+    // proportional fonts.
+    const charW = node.fontSize * 0.6 + Math.max(0, node.letterSpacing)
+    const naturalWidth = Math.max(1, text.length * charW)
+    const effectiveWidth = Math.max(1, widthBudget ?? naturalWidth)
+    const estimatedLines = widthBudget
+      ? Math.max(1, Math.ceil(naturalWidth / effectiveWidth))
+      : Math.max(1, text.split('\n').length)
     return {
-      width: Math.max(1, Math.ceil(measuredWidth) + 1),
-      height: Math.max(1, Math.ceil(lineCount * node.fontSize * node.lineHeight)),
+      width: widthBudget ? effectiveWidth : naturalWidth,
+      height: Math.max(
+        1,
+        Math.ceil(estimatedLines * node.fontSize * node.lineHeight),
+      ),
     }
+  }
+  ctx.font = fontString(node)
+  const lines =
+    widthBudget === undefined
+      ? text.split('\n')
+      : wrapToWidthWithTracking(
+          ctx,
+          text,
+          Math.max(1, widthBudget),
+          node.letterSpacing,
+        )
+  const lineCount = Math.max(1, lines.length)
+  const measuredWidth = widestLineWidthWithTracking(
+    ctx,
+    lines,
+    node.letterSpacing,
+  )
+  // CRITICAL: ceil + 1px safety margin.
+  //
+  // `measureText` returns a fractional width (e.g. 127.34px). If we
+  // hand that back to Yoga, the renderer's `rect.width` floors to
+  // 127px while CSS still tries to lay out the full 127.34px of text
+  // inside that box — the last word overflows by 0.34px and CSS
+  // breaks it onto a new line. The extra pixel also keeps the isolated
+  // live preview aligned with the released Yoga result.
+  return {
+    width: Math.max(1, Math.ceil(measuredWidth) + 1),
+    height: Math.max(
+      1,
+      Math.ceil(lineCount * node.fontSize * node.lineHeight),
+    ),
   }
 }
 

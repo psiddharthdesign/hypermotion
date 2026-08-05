@@ -21,6 +21,8 @@ export const MCP_TOOLS = [
   'get_layer',
   'list_tracks',
   'list_cameras',
+  'list_scenes',
+  'get_sequence',
   'open_scene',
   'render_scene',
   'list_keyframeable_properties',
@@ -34,6 +36,8 @@ export const QUERY_TOOLS = [
   'get_layer',
   'list_tracks',
   'list_cameras',
+  'list_scenes',
+  'get_sequence',
 ] as const satisfies readonly McpToolName[]
 export type QueryToolName = (typeof QUERY_TOOLS)[number]
 
@@ -44,6 +48,28 @@ type CapabilitiesPayload = {
   readonly patchOperations: typeof PATCH_OPERATION_TYPES
   readonly validation: {
     readonly structuralSceneValidation: boolean
+  }
+  readonly cameraSupport: {
+    readonly multipleCameras: boolean
+    readonly explicitOwnership: boolean
+    readonly defaultCamera: boolean
+    readonly timedHardCuts: boolean
+  }
+  readonly sequenceSupport: {
+    readonly schemaVersion: 2
+    readonly multipleScenes: boolean
+    readonly reusableSceneOccurrences: boolean
+    readonly compositionWorkAreas: boolean
+    readonly occurrenceTrimming: boolean
+    readonly occurrenceMasterAudioMute: boolean
+    readonly transitionWeightedMasterAudioMute: boolean
+    readonly masterOwnedSoundtracks: boolean
+    readonly sceneAudioOverlays: boolean
+    readonly translatedSceneMasterAudio: boolean
+    readonly sceneExportMasterAudioParity: boolean
+    readonly projectedSceneBeatGuides: boolean
+    readonly transitions: readonly ['cut', 'crossfade']
+    readonly frameAlignedMasterTimeline: boolean
   }
   readonly validationTools: typeof VALIDATION_TOOLS
   readonly queryTools: typeof QUERY_TOOLS
@@ -62,7 +88,7 @@ type CapabilityToolPayload = CapabilitiesPayload | KeyframeablePropertiesPayload
 export const getCapabilitiesTool: Tool = {
   name: 'get_capabilities',
   description:
-    'Return supported scene node kinds, patch operations, render formats/qualities, saved-scene render support, validation/query tools, and keyframeable properties.',
+    'Return supported scene node kinds, multi-camera/cut features, multi-scene sequence features, patch operations, render formats/qualities, saved-scene render support, validation/query tools, and keyframeable properties.',
   inputSchema: EMPTY_OBJECT_INPUT_SCHEMA,
 }
 
@@ -83,6 +109,28 @@ export async function handleGetCapabilities(args: McpToolArgs = {}): Promise<Cal
     patchOperations: PATCH_OPERATION_TYPES,
     validation: {
       structuralSceneValidation: true,
+    },
+    cameraSupport: {
+      multipleCameras: true,
+      explicitOwnership: true,
+      defaultCamera: true,
+      timedHardCuts: true,
+    },
+    sequenceSupport: {
+      schemaVersion: 2,
+      multipleScenes: true,
+      reusableSceneOccurrences: true,
+      compositionWorkAreas: true,
+      occurrenceTrimming: true,
+      occurrenceMasterAudioMute: true,
+      transitionWeightedMasterAudioMute: true,
+      masterOwnedSoundtracks: true,
+      sceneAudioOverlays: true,
+      translatedSceneMasterAudio: true,
+      sceneExportMasterAudioParity: true,
+      projectedSceneBeatGuides: true,
+      transitions: ['cut', 'crossfade'],
+      frameAlignedMasterTimeline: true,
     },
     validationTools: VALIDATION_TOOLS,
     queryTools: QUERY_TOOLS,

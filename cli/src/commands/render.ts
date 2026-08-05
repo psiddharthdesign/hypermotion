@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import { locateDesktopApp } from '../electron/locator.js'
 import { driveHeadlessRender, type HeadlessRenderRequest } from '../electron/driver.js'
 import {
+  DEFAULT_RENDER_FPS,
   RENDER_FORMATS,
   RENDER_QUALITIES,
   inferRenderFormatFromPath,
@@ -75,7 +76,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       'Quality: comp (match scene canvas) | 720p | 2k | 4k',
       'comp',
     )
-    .option('--fps <n>', 'Frame rate', '30')
+    .option('--fps <n>', 'Frame rate', String(DEFAULT_RENDER_FPS))
     .option(
       '--scene <path>',
       'Path to a .hype scene file to forward to the desktop app',
@@ -107,7 +108,7 @@ export function renderCommand(deps: RenderCommandDeps = {}): Command {
       }
       const quality: RenderQuality = requestedQuality
 
-      const fpsInput = opts.fps?.trim() ?? '30'
+      const fpsInput = opts.fps?.trim() ?? String(DEFAULT_RENDER_FPS)
       const fps = Number(fpsInput)
       if (!FPS_INPUT_RE.test(fpsInput) || fps <= 0 || fps > 120) {
         console.error(`[render] invalid fps: ${fpsInput}`)

@@ -3,7 +3,11 @@
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
-import { useSceneAPI } from '@/scene'
+import {
+  effectIdFromBlurPropertyId,
+  effectStableId,
+  useSceneAPI,
+} from '@/scene'
 import type {
   EasingKind,
   KeyframeEasingPreset,
@@ -17,9 +21,16 @@ import { useUI, type Tool } from '@/state/ui'
 import {
   createComponentFromSelection,
   instantiateComponent,
+  ungroupFrame,
   wrapInAutoLayout,
+  wrapInGroup,
 } from '@/ui/actions'
-import { addKeyframe, removeTrack, type TextAnimationConfig } from '@/anim'
+import {
+  addKeyframe,
+  getAnimEngine,
+  removeTrack,
+  type TextAnimationConfig,
+} from '@/anim'
 import { deleteStaggerSet } from '@/anim/staggerSets'
 import { deleteAnimationTracks } from '@/state/groupActions'
 import {
@@ -27,8 +38,29 @@ import {
   readElectronClipboardFiles,
 } from '@/ui/importClipboardFiles'
 import { toggleStaggerSetEditing } from '@/ui/staggerEditing'
-import { FIGMA_PAYLOAD_FORMAT } from '@/import/figma'
 import { FIGMA_PASTE_TEXT_EVENT } from '@/ui/hooks/useFigmaPaste'
+import {
+  createInternalWorkspaceClipboardMarker,
+  hasInternalWorkspaceClipboard,
+  type InternalWorkspaceClipboardKind,
+  isFigmaClipboardText,
+  routeWorkspacePaste,
+} from '@/ui/hooks/workspacePasteRouting'
+import {
+  deleteCameraSafely,
+  duplicateCamera,
+} from '@/ui/cameraActions'
+import { useProjectAPI } from '@/project'
+import {
+  resolveTransportSpacePatch,
+  shouldNativeControlOwnTransportSpace,
+} from '@/ui/transportShortcut'
+import {
+  commitCameraCutUpsert,
+  planRedundantCameraCutCleanup,
+} from '@/ui/CameraCutBar.helpers'
+import { planCameraCutShortcut } from '@/ui/cameraCutShortcut'
+import { cameraCutDeleteKeyGuard } from '@/ui/cameraCutKeyboard'
 
 /**
  * Global keyboard shortcuts.
@@ -49,6 +81,7 @@ import { FIGMA_PASTE_TEXT_EVENT } from '@/ui/hooks/useFigmaPaste'
  */
 export function useKeyboardShortcuts() {
   const api = useSceneAPI()
+  const project = useProjectAPI()
   const setTool = useUI((s) => s.setTool)
   const setSelection = useUI((s) => s.setSelection)
   const clearSelection = useUI((s) => s.clearSelection)
@@ -113,18 +146,63 @@ export function useKeyboardShortcuts() {
       // use arrows and Delete for control points, never scene layers/tracks.
       if (e.defaultPrevented) return
       const target = e.target as HTMLElement | null
+      const meta = e.metaKey || e.ctrlKey
+      const isPlainPaste =
+        meta &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'v'
+
+      // Electron can inspect its OS clipboard synchronously at the shortcut
+      // boundary. Do that before focus/curve-editor guards so a distinctive
+      // Figma payload cannot be swallowed by a stale field focus or an
+      // in-app animation clipboard. Ordinary text keeps native field paste.
+      if (isPlainPaste) {
+        const externalText =
+          window.hypermotion?.clipboard?.readTextSync?.() ?? ''
+        if (isFigmaClipboardText(externalText)) {
+          e.preventDefault()
+          window.dispatchEvent(
+            new CustomEvent<string>(FIGMA_PASTE_TEXT_EVENT, {
+              detail: externalText,
+            }),
+          )
+          return
+        }
+      }
+      if (
+        cameraCutDeleteKeyGuard.shouldReserve(
+          e.key,
+          !!target?.closest('[data-camera-cut-marker]'),
+        )
+      ) {
+        e.preventDefault()
+        return
+      }
       const inCurveEditor = !!target?.closest('[data-curve-editor]')
       const isSpace = e.key === ' ' || e.code === 'Space'
-      // A focused native button dispatches its click after Space keydown. If
-      // the global handler also acts, it runs twice. Ordinary controls own
-      // Space; the transport button is the deliberate exception so this
-      // handler prevents its native click and toggles exactly once. SVG curve
-      // anchors/handles also fall through to the global transport.
-      const nativeControl = target?.closest(
-        'button, input, textarea, select, [contenteditable="true"]',
+      // A focused native button dispatches its click after Space keydown. In
+      // Scene scope it keeps that accessible behavior. Master scope instead
+      // reserves Space for sequence playback, even after a toolbar button was
+      // clicked; editable controls continue to own typed spaces everywhere.
+      const isEditableControl = !!target?.closest(
+        'input, textarea, select, [contenteditable="true"]',
       )
-      const transportControl = target?.closest('[data-transport-toggle]')
-      if (isSpace && nativeControl && !transportControl) return
+      const isNativeButton = !!target?.closest('button')
+      const isTransportControl = !!target?.closest(
+        '[data-transport-toggle]',
+      )
+      if (
+        isSpace &&
+        shouldNativeControlOwnTransportSpace({
+          timelineScope: useUI.getState().timelineScope,
+          isEditableControl,
+          isNativeButton,
+          isTransportControl,
+        })
+      ) {
+        return
+      }
       if (inCurveEditor && !isSpace) return
       const inField =
         !!target &&
@@ -144,8 +222,6 @@ export function useKeyboardShortcuts() {
       }
 
       if (inField) return
-
-      const meta = e.metaKey || e.ctrlKey
 
       // Undo / redo. Read the ref instead of a closed-over variable so
       // the manager's identity can swap (when `api` changes) without
@@ -188,6 +264,86 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // Camera cut — Cmd/Ctrl+B. Scene-only because cut time is authored in
+      // composition-local coordinates. It always advances after current
+      // Program output, so two-camera scenes behave as a simple toggle.
+      if (
+        meta &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'b'
+      ) {
+        e.preventDefault()
+        if (e.repeat) return
+        const ui = useUI.getState()
+        const activeScene = project.getActiveScene()
+        const authorTime = ui.playing
+          ? getAnimEngine().getPlayhead()
+          : ui.playhead
+        const cameras = activeScene
+          ? activeScene.cameraIds
+              .map((cameraId) => api.getNode(cameraId))
+              .filter(
+                (
+                  node,
+                ): node is Extract<SceneNode, { kind: 'camera' }> =>
+                  node?.kind === 'camera' && node.parent === null,
+              )
+              .map((camera) => ({
+                id: camera.id,
+                enabled: camera.enabled,
+              }))
+          : []
+        const plan = planCameraCutShortcut({
+          timelineScope: ui.timelineScope,
+          scene: activeScene,
+          playhead: authorTime,
+          frameRate: api.getMeta().frameRate,
+          cameras,
+          fallbackCameraId: api.getActiveCameraId(),
+          createId: createKeyboardCameraCutId,
+        })
+        if (!plan) return
+        if (!activeScene) return
+        const simpleTwoCameraMode =
+          cameras.filter((camera) => camera.enabled !== false).length === 2
+        const plannedCuts = Object.fromEntries(
+          [
+            ...Object.values(activeScene.cameraCuts).filter(
+              (cut) =>
+                cut.id !== plan.cut.id &&
+                !plan.removeCutIds.includes(cut.id),
+            ),
+            plan.cut,
+          ].map((cut) => [cut.id, cut]),
+        )
+        const cleanup = simpleTwoCameraMode
+          ? planRedundantCameraCutCleanup({
+              scene: { ...activeScene, cameraCuts: plannedCuts },
+              frameRate: api.getMeta().frameRate,
+              cameras,
+              fallbackCameraId: api.getActiveCameraId(),
+            })
+          : { removeCutIds: [], changed: false }
+        api.doc.transact(
+          () => {
+            commitCameraCutUpsert(plan, {
+              removeCut: (cutId) =>
+                project.removeCameraCut(activeScene.id, cutId),
+              upsertCut: (cut) =>
+                project.upsertCameraCut(activeScene.id, cut),
+              revealProgramOutput: () =>
+                ui.setCameraView(activeScene.id, { mode: 'program' }),
+            })
+            for (const cutId of cleanup.removeCutIds) {
+              project.removeCameraCut(activeScene.id, cutId)
+            }
+          },
+          UNDOABLE_GESTURE_ORIGIN,
+        )
+        return
+      }
+
       // Rename — Cmd/Ctrl + R opens the multi-select rename dialog.
       // Single selection still benefits because the dialog supports
       // pattern-based renames (Match + tokens) that the inline rename
@@ -206,7 +362,11 @@ export function useKeyboardShortcuts() {
         const sel = useUI.getState().selection
         if (sel.length === 0) return
         const duplicates = sel
-          .map((id) => duplicateNode(api, id))
+          .map((id) =>
+            api.getNode(id)?.kind === 'camera'
+              ? duplicateCamera(api, id)
+              : duplicateNode(api, id),
+          )
           .filter(Boolean) as NodeId[]
         if (duplicates.length > 0) setSelection(duplicates)
         return
@@ -229,10 +389,12 @@ export function useKeyboardShortcuts() {
       // inputs are already filtered out earlier in the handler).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c') {
         if (copySelectedTextAnimations(api)) {
+          claimSystemClipboard('text-animations')
           e.preventDefault()
           return
         }
         if (copySelectedKeyframes(api)) {
+          claimSystemClipboard('keyframes')
           e.preventDefault()
           return
         }
@@ -244,6 +406,7 @@ export function useKeyboardShortcuts() {
           .filter((x): x is ClipboardNode => x !== null)
         keyframeClipboard = []
         textAnimationClipboard = []
+        if (clipboard.length > 0) claimSystemClipboard('layers')
         return
       }
 
@@ -252,10 +415,12 @@ export function useKeyboardShortcuts() {
       // (under root by default, see paste below).
       if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
         if (cutSelectedTextAnimations(api)) {
+          claimSystemClipboard('text-animations')
           e.preventDefault()
           return
         }
         if (copySelectedKeyframes(api)) {
+          claimSystemClipboard('keyframes')
           e.preventDefault()
           return
         }
@@ -267,6 +432,7 @@ export function useKeyboardShortcuts() {
           .filter((x): x is ClipboardNode => x !== null)
         keyframeClipboard = []
         textAnimationClipboard = []
+        if (clipboard.length > 0) claimSystemClipboard('layers')
         for (const id of sel) {
           // Skip root + camera — deleting the artboard or active
           // camera mid-cut leaves the scene in a bad state.
@@ -285,65 +451,71 @@ export function useKeyboardShortcuts() {
       //     (paste inside the selected container — matches Figma when
       //     you have a frame selected and hit Cmd+V).
       //   - Otherwise the scene root (paste at the top level).
-      if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
-        if (pasteTextAnimationsAtPlayhead(api)) {
-          e.preventDefault()
-          return
+      if (isPlainPaste) {
+        const internalClipboard = {
+          textAnimations: textAnimationClipboard.length > 0,
+          keyframes: keyframeClipboard.length > 0,
+          layers: clipboard.length > 0,
         }
-        if (pasteKeyframesAtPlayhead(api)) {
-          e.preventDefault()
-          return
-        }
-        // If Hyper Motion's in-app clipboard is empty, do not consume
-        // Cmd+V. Let the browser/Electron paste event fire so external
-        // payloads from the Figma plugin can be read by useFigmaPaste().
-        if (clipboard.length === 0) return
+        // With no cached Hyper Motion content, leave Cmd+V alone so the
+        // native paste event can deliver Figma text or image/media files.
+        if (!hasInternalWorkspaceClipboard(internalClipboard)) return
+
+        // Cached animation/layer data must not outrank a newer system copy.
+        // Intercept once, inspect the OS clipboard first, then fall back to
+        // the previous internal order if it is not a Figma payload or file.
         e.preventDefault()
-        void (async () => {
-          const externalFiles = await readElectronClipboardFiles().catch((err) => {
-            console.warn('[clipboard-file-paste] failed:', err)
-            return []
-          })
-          if (externalFiles.length > 0) {
+        void routeWorkspacePaste({
+          readExternalText: async () => {
+            const bridge = window.hypermotion?.clipboard
+            if (bridge) return bridge.readText()
+            const readText = navigator.clipboard?.readText
+            return readText ? readText.call(navigator.clipboard) : ''
+          },
+          importExternalFiles: async () => {
+            const externalFiles = await readElectronClipboardFiles()
+            if (externalFiles.length === 0) return false
             const ids = await importClipboardFiles(externalFiles, api, api.getRoot() || null, {
               workspaceOnly: false,
             })
             if (ids.length > 0) {
               setSelection(ids)
-              return
+              return true
             }
-          }
-
-          // An in-app layer copy can still be populated while the user copies
-          // a fresh selection from Figma. Prefer the newest system payload so
-          // Cmd+V imports Figma instead of replaying stale internal layers.
-          const clipboardBridge = window.hypermotion?.clipboard
-          const externalText = clipboardBridge
-            ? await clipboardBridge.readText().catch(() => '')
-            : ''
-          if (externalText.includes(FIGMA_PAYLOAD_FORMAT)) {
+            return false
+          },
+          pasteFigma: (externalText) => {
             window.dispatchEvent(
               new CustomEvent<string>(FIGMA_PASTE_TEXT_EVENT, {
                 detail: externalText,
               }),
             )
-            return
-          }
-
-          const sel = useUI.getState().selection
-          const root = api.getRoot()
-          let targetParent: NodeId | null = root || null
-          if (sel.length === 1) {
-            const only = api.getNode(sel[0]!)
-            if (only && (only.kind === 'frame' || only.kind === 'component')) {
-              targetParent = only.id
+          },
+          pasteTextAnimations: () => pasteTextAnimationsAtPlayhead(api),
+          pasteKeyframes: () => pasteKeyframesAtPlayhead(api),
+          pasteLayers: () => {
+            const sel = useUI.getState().selection
+            const root = api.getRoot()
+            let targetParent: NodeId | null = root || null
+            if (sel.length === 1) {
+              const only = api.getNode(sel[0]!)
+              if (
+                only &&
+                (only.kind === 'frame' || only.kind === 'component')
+              ) {
+                targetParent = only.id
+              }
             }
-          }
-          const newIds = clipboard
-            .map((item) => pasteClipboardItem(api, item, targetParent))
-            .filter((id): id is NodeId => id !== null)
-          if (newIds.length > 0) setSelection(newIds)
-        })()
+            const newIds = clipboard
+              .map((item) => pasteClipboardItem(api, item, targetParent))
+              .filter((id): id is NodeId => id !== null)
+            if (newIds.length > 0) setSelection(newIds)
+            return newIds.length > 0
+          },
+          onExternalError: (source, error) => {
+            console.warn(`[clipboard-${source}-paste] failed:`, error)
+          },
+        })
         return
       }
 
@@ -411,47 +583,19 @@ export function useKeyboardShortcuts() {
 
       // Group / ungroup
       if (meta && e.key.toLowerCase() === 'g') {
-        e.preventDefault()
         const sel = useUI.getState().selection
         if (sel.length === 0) return
+        e.preventDefault()
         if (e.shiftKey) {
-          // Ungroup: if selection is a single frame, reparent its
-          // children to the frame's parent in-order, then delete the
-          // frame. Anything else: no-op (simpler for MVP).
           const onlyId = sel[0]!
           const node = api.getNode(onlyId)
           if (sel.length === 1 && node && node.kind === 'frame' && node.parent) {
-            const kids = api.getChildren(onlyId).map((c) => c.id)
-            for (const k of kids) api.appendChild(node.parent, k)
-            api.deleteNode(onlyId)
+            const kids = ungroupFrame(api, onlyId)
             setSelection(kids)
           }
         } else {
-          // Group: create a new frame under the common parent and
-          // reparent the selection into it. Kept simple: use the first
-          // selected node's parent as the target parent.
-          const first = api.getNode(sel[0]!)
-          if (!first || !first.parent) return
-          const frameId = api.createNode('frame', first.parent, {
-            name: 'Group',
-            size: { width: 'hug', height: 'hug' },
-            layout: {
-              // Plain group — children keep their own transform.x/y;
-              // no flex / grid math.
-              mode: 'none',
-              direction: 'row',
-              justify: 'start',
-              align: 'start',
-              gap: 0,
-              padding: { top: 0, right: 0, bottom: 0, left: 0 },
-              wrap: false,
-              columns: 3,
-              rowGap: 0,
-              columnGap: 0,
-            },
-          })
-          for (const id of sel) api.appendChild(frameId, id)
-          setSelection([frameId])
+          const groupId = wrapInGroup(api, sel)
+          if (groupId) setSelection([groupId])
         }
         return
       }
@@ -629,14 +773,26 @@ export function useKeyboardShortcuts() {
           ui.setSelectedTrackId(null)
           return
         }
+        let fallbackCameraId: NodeId | null = null
+        let retainedCameraId: NodeId | null = null
         for (const id of ui.selection) {
           const n = api.getNode(id)
           if (!n) continue
           if (id === api.getRoot()) continue // never delete the scene root
-          if (n.kind === 'camera') continue
+          if (n.kind === 'camera') {
+            const result = deleteCameraSafely(api, id)
+            if (result.deleted) {
+              fallbackCameraId = result.activeCameraId
+            } else {
+              retainedCameraId = id
+            }
+            continue
+          }
           if (n.parent || n.workspaceOnly) api.deleteNode(id)
         }
-        clearSelection()
+        if (fallbackCameraId) setSelection([fallbackCameraId])
+        else if (retainedCameraId) setSelection([retainedCameraId])
+        else clearSelection()
         return
       }
 
@@ -676,7 +832,14 @@ export function useKeyboardShortcuts() {
         // otherwise flips play/pause several times per second and makes the
         // canvas look as if playback itself is dropping frames.
         if (e.repeat) return
-        useUI.setState((s) => ({ playing: !s.playing }))
+        const ui = useUI.getState()
+        const sequenceDuration =
+          ui.timelineScope === 'sequence'
+            ? project.getSequenceTimeMap().duration
+            : 0
+        useUI.setState(
+          resolveTransportSpacePatch(ui, sequenceDuration),
+        )
         return
       }
 
@@ -696,14 +859,32 @@ export function useKeyboardShortcuts() {
         useUI.setState({ playhead: next, playing: false })
       }
     }
+    const onKeyUp = (e: KeyboardEvent) => {
+      cameraCutDeleteKeyGuard.release(e.key)
+    }
+    const onBlur = () => cameraCutDeleteKeyGuard.reset()
+    cameraCutDeleteKeyGuard.reset()
     window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp, true)
+    window.addEventListener('blur', onBlur)
     return () => {
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('blur', onBlur)
+      cameraCutDeleteKeyGuard.reset()
       // UndoManager teardown lives in its own effect — don't reference
       // it here. Mixing the two cleanup paths used to wipe undo
       // history on every zoom (see the dedicated effect above).
     }
-  }, [api, setTool, setSelection, clearSelection, resetView, zoomAt])
+  }, [
+    api,
+    project,
+    setTool,
+    setSelection,
+    clearSelection,
+    resetView,
+    zoomAt,
+  ])
 }
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -713,6 +894,13 @@ const TOOL_KEYS: Record<string, Tool> = {
   o: 'ellipse',
   t: 'text',
   h: 'hand',
+}
+
+function createKeyboardCameraCutId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `cut_${crypto.randomUUID()}`
+  }
+  return `cut_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 /**
@@ -857,6 +1045,33 @@ interface ClipboardTextAnimation {
 }
 
 let textAnimationClipboard: ClipboardTextAnimation[] = []
+
+function claimSystemClipboard(kind: InternalWorkspaceClipboardKind): void {
+  const marker = createInternalWorkspaceClipboardMarker(kind)
+  const bridge = window.hypermotion?.clipboard
+  try {
+    if (bridge?.writeTextSync) {
+      bridge.writeTextSync(marker)
+      return
+    }
+  } catch (error) {
+    console.warn('[clipboard-internal-copy] synchronous write failed:', error)
+  }
+
+  if (bridge) {
+    void bridge.writeText(marker).catch((error) => {
+      console.warn('[clipboard-internal-copy] bridge write failed:', error)
+    })
+    return
+  }
+
+  const writeText = navigator.clipboard?.writeText
+  if (writeText) {
+    void writeText.call(navigator.clipboard, marker).catch((error) => {
+      console.warn('[clipboard-internal-copy] browser write failed:', error)
+    })
+  }
+}
 
 function serializeSubtree(
   api: ReturnType<typeof useSceneAPI>,
@@ -1146,6 +1361,7 @@ function copySelectedKeyframes(api: ReturnType<typeof useSceneAPI>): boolean {
       ...(entry.presetOrigin ? { presetOrigin: entry.presetOrigin } : {}),
     }))
   textAnimationClipboard = []
+  clipboard = []
   return true
 }
 
@@ -1214,6 +1430,12 @@ function resolveKeyframePasteTargets(
 }
 
 function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolean {
+  const effectId = effectIdFromBlurPropertyId(propertyId)
+  if (effectId) {
+    return node.appearance.effects.some(
+      (effect, index) => effectStableId(effect, index) === effectId,
+    )
+  }
   if (propertyId.startsWith('camera.')) return node.kind === 'camera'
   if (propertyId === 'text.progress') return node.kind === 'text'
   if (propertyId === 'variant') return node.kind === 'instance'

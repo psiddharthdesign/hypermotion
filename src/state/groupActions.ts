@@ -190,20 +190,39 @@ export function renameTrackGroup(
 
 /** Bundle the given keyframe keys into a new kf group. Auto-collapsed. */
 export function groupKeyframes(api: SceneAPI, keys: string[]): void {
-  if (keys.length < 2) return
+  // Timeline selection is intentionally local React state, so it can briefly
+  // retain a key after another command deletes its track/keyframe. Never
+  // persist those stale keys: a collapsed group with only one live member
+  // hides that diamond while `Timeline` correctly declines to render a group
+  // row for fewer than two members.
+  const liveKeys = [...new Set(keys)].filter((key) => {
+    const separator = key.indexOf(':')
+    if (separator <= 0 || separator === key.length - 1) return false
+    const track = api.getTrack(key.slice(0, separator))
+    const keyframeId = key.slice(separator + 1)
+    return !!track?.keyframes.some((keyframe) => keyframe.id === keyframeId)
+  })
+  if (liveKeys.length < 2) return
   const ui = api.getUiState()
-  const set = new Set(keys)
+  const set = new Set(liveKeys)
   const next: typeof ui.kfGroups = {}
+  const nextCollapsed: typeof ui.kfGroupCollapsed = {}
   for (const [gid, members] of Object.entries(ui.kfGroups)) {
     const filtered = members.filter((k) => !set.has(k))
-    if (filtered.length >= 2) next[gid] = filtered
+    if (filtered.length >= 2) {
+      next[gid] = filtered
+      if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
+    }
   }
   const newId = `g_${Math.random().toString(36).slice(2, 9)}`
-  next[newId] = [...keys]
-  api.setUiState({
-    kfGroups: next,
-    kfGroupCollapsed: { ...ui.kfGroupCollapsed, [newId]: true },
-  })
+  next[newId] = liveKeys
+  nextCollapsed[newId] = true
+  api.doc.transact(() => {
+    api.setUiState({
+      kfGroups: next,
+      kfGroupCollapsed: nextCollapsed,
+    })
+  }, UNDOABLE_GESTURE_ORIGIN)
 }
 
 /** Dissolve every kf group that contains any of these keys. */
@@ -219,10 +238,12 @@ export function ungroupKeyframes(api: SceneAPI, keys: string[]): void {
       if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
     }
   }
-  api.setUiState({
-    kfGroups: nextGroups,
-    kfGroupCollapsed: nextCollapsed,
-  })
+  api.doc.transact(() => {
+    api.setUiState({
+      kfGroups: nextGroups,
+      kfGroupCollapsed: nextCollapsed,
+    })
+  }, UNDOABLE_GESTURE_ORIGIN)
 }
 
 /** Dissolve keyframe groups by id. Useful when the UI is rendering the
@@ -240,10 +261,12 @@ export function ungroupKeyframeGroups(
     nextGroups[gid] = members
     if (ui.kfGroupCollapsed[gid]) nextCollapsed[gid] = true
   }
-  api.setUiState({
-    kfGroups: nextGroups,
-    kfGroupCollapsed: nextCollapsed,
-  })
+  api.doc.transact(() => {
+    api.setUiState({
+      kfGroups: nextGroups,
+      kfGroupCollapsed: nextCollapsed,
+    })
+  }, UNDOABLE_GESTURE_ORIGIN)
 }
 
 /** Flip a keyframe group's collapsed flag. */

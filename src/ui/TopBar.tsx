@@ -4,7 +4,10 @@ import { useUI, type PanelKey, type ThemePreference } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { ExportMenu } from '@/ui/ExportMenu'
 import { ExportStatusPill } from '@/ui/ExportStatusPill'
+import { ExplainerStudio } from '@/ui/ExplainerStudio'
 import { FigmaPluginSetupButton } from '@/ui/FigmaPluginSetup'
+import { useExportProgress } from '@/export'
+import { Sparkles } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -39,6 +42,9 @@ export function TopBar() {
   const zoomAt = useUI((s) => s.zoomAt)
   const setView = useUI((s) => s.setView)
   const resetView = useUI((s) => s.resetView)
+  const exportPhase = useExportProgress((s) => s.phase)
+  const exportRunning =
+    exportPhase === 'rendering' || exportPhase === 'encoding'
   const api = useSceneAPI()
   // Subscribe to scene version so the displayed project name re-renders
   // after `setMeta({ name })`. Without this, renaming the project
@@ -101,6 +107,7 @@ export function TopBar() {
   // relative to where the user clicked. Null = closed.
   const exportBtnRef = useRef<HTMLButtonElement>(null)
   const [exportAnchor, setExportAnchor] = useState<DOMRect | null>(null)
+  const [explainerOpen, setExplainerOpen] = useState(false)
 
   const renameProject = () => {
     const next = window.prompt('Project name', projectName)
@@ -110,7 +117,7 @@ export function TopBar() {
   }
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-panel/85 px-3 backdrop-blur-md">
+    <header className="hm-chrome-bar flex h-12 shrink-0 items-center gap-3 border-b px-3">
       {/* ============================================================
           LEFT ZONE — identity
           ============================================================ */}
@@ -118,9 +125,9 @@ export function TopBar() {
         <button
           type="button"
           title="Workspace"
-          className="flex h-8 items-center gap-2 rounded-md px-2 text-text hover:bg-panel-raised"
+          className="flex h-8 items-center gap-2 rounded-md px-2 text-text hover:bg-control"
         >
-          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] bg-gradient-to-br from-accent to-[oklch(0.55_0.18_290)] text-white">
+          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] bg-accent text-white">
             <BrandGlyph />
           </span>
           <span className="text-[13px] font-semibold tracking-tight">
@@ -132,7 +139,7 @@ export function TopBar() {
           type="button"
           onClick={renameProject}
           title="Click to rename"
-          className="flex h-7 items-center gap-2 rounded-md px-2 text-[12px] text-text hover:bg-panel-raised"
+          className="flex h-7 items-center gap-2 rounded-md px-2 text-[12px] text-text hover:bg-control"
         >
           <span className="font-medium">{displayName}</span>
         </button>
@@ -147,7 +154,7 @@ export function TopBar() {
           ============================================================ */}
       <div className="flex shrink-0 items-center gap-1">
         {/* Zoom — segmented control. Compact, single shape. */}
-        <div className="flex h-[30px] items-center overflow-hidden rounded-md border border-border bg-panel-raised">
+        <div className="hm-control-surface flex h-[30px] items-center overflow-hidden">
           <button
             title="Zoom out (Cmd −)"
             onClick={() => centerZoom(zoom / 1.25)}
@@ -183,6 +190,22 @@ export function TopBar() {
 
         <ThemeToggle />
         <PreviewButton />
+        <button
+          type="button"
+          title="Build a feature explainer"
+          aria-haspopup="dialog"
+          aria-expanded={explainerOpen}
+          onClick={() => setExplainerOpen((open) => !open)}
+          className={[
+            'flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors motion-reduce:transition-none',
+            explainerOpen
+              ? 'bg-accent/12 text-accent'
+              : 'text-text-muted hover:bg-panel-raised hover:text-text',
+          ].join(' ')}
+        >
+          <Sparkles size={13} />
+          Explainer
+        </button>
         <FigmaPluginSetupButton />
         <PanelTogglePopover panels={panels} togglePanel={togglePanel} />
 
@@ -198,10 +221,11 @@ export function TopBar() {
         <button
           ref={exportBtnRef}
           type="button"
-          title="Export"
+          title={exportRunning ? 'An export is already running' : 'Export'}
           aria-haspopup="menu"
           aria-expanded={exportAnchor !== null}
           onClick={() => {
+            if (exportRunning) return
             // Toggle: re-clicking the trigger while the menu is open
             // closes it, matching native menu behavior.
             if (exportAnchor) {
@@ -211,7 +235,13 @@ export function TopBar() {
             const rect = exportBtnRef.current?.getBoundingClientRect()
             if (rect) setExportAnchor(rect)
           }}
-          className="flex h-[30px] items-center rounded-md bg-accent px-3 text-[12px] font-medium text-white shadow-sm hover:brightness-110"
+          disabled={exportRunning}
+          className={[
+            'flex h-[30px] items-center rounded-md bg-accent px-3 text-[12px] font-medium text-white shadow-sm',
+            exportRunning
+              ? 'cursor-not-allowed opacity-50'
+              : 'hover:brightness-110',
+          ].join(' ')}
         >
           Export
         </button>
@@ -222,6 +252,9 @@ export function TopBar() {
           onClose={() => setExportAnchor(null)}
         />
       )}
+      {explainerOpen ? (
+        <ExplainerStudio onClose={() => setExplainerOpen(false)} />
+      ) : null}
     </header>
   )
 }
@@ -286,8 +319,8 @@ function formatRelativeTime(epochMs: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Panel-toggle popover — collapses three text labels (Layers / Inspector
-// / Timeline) into a single icon button that opens a popover with
+// Panel-toggle popover — collapses the editor panel labels into a single
+// icon button that opens a popover with
 // checkbox rows. Cuts ~3 slots off the right side of the bar without
 // losing functionality.
 // ---------------------------------------------------------------------------
@@ -333,10 +366,7 @@ function PanelTogglePopover({
   // Reposition the popover under the trigger after open. useLayoutEffect
   // so we measure before paint and the popover never flashes at (0,0).
   useLayoutEffect(() => {
-    if (!open) {
-      setPos(null)
-      return
-    }
+    if (!open) return
     const btn = buttonRef.current
     const pop = popoverRef.current
     if (!btn || !pop) return
@@ -384,15 +414,15 @@ function PanelTogglePopover({
               top: pos?.top ?? -9999,
               visibility: pos ? 'visible' : 'hidden',
             }}
-            className="z-[100] min-w-[180px] rounded-md border border-border bg-panel-raised p-1 shadow-lg backdrop-blur"
+            className="hm-menu-surface z-[100] min-w-[180px] p-1"
           >
-          {(['layers', 'inspector', 'timeline'] as const).map((key) => (
+          {(['scenes', 'layers', 'inspector', 'timeline'] as const).map((key) => (
             <button
               key={key}
               role="menuitemcheckbox"
               aria-checked={panels[key]}
               onClick={() => togglePanel(key)}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-text hover:bg-panel"
+              className="flex min-h-7 w-full items-center gap-2 rounded-[calc(var(--radius-control)_-_2px)] px-2 text-left text-[11px] text-text hover:bg-control-hover"
             >
               <span
                 className={[
