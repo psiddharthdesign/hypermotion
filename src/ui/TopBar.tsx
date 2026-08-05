@@ -4,10 +4,8 @@ import { useUI, type PanelKey, type ThemePreference } from '@/state/ui'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { ExportMenu } from '@/ui/ExportMenu'
 import { ExportStatusPill } from '@/ui/ExportStatusPill'
-import { ExplainerStudio } from '@/ui/ExplainerStudio'
 import { FigmaPluginSetupButton } from '@/ui/FigmaPluginSetup'
 import { useExportProgress } from '@/export'
-import { Sparkles } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -107,7 +105,6 @@ export function TopBar() {
   // relative to where the user clicked. Null = closed.
   const exportBtnRef = useRef<HTMLButtonElement>(null)
   const [exportAnchor, setExportAnchor] = useState<DOMRect | null>(null)
-  const [explainerOpen, setExplainerOpen] = useState(false)
 
   const renameProject = () => {
     const next = window.prompt('Project name', projectName)
@@ -190,22 +187,6 @@ export function TopBar() {
 
         <ThemeToggle />
         <PreviewButton />
-        <button
-          type="button"
-          title="Build a feature explainer"
-          aria-haspopup="dialog"
-          aria-expanded={explainerOpen}
-          onClick={() => setExplainerOpen((open) => !open)}
-          className={[
-            'flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors motion-reduce:transition-none',
-            explainerOpen
-              ? 'bg-accent/12 text-accent'
-              : 'text-text-muted hover:bg-panel-raised hover:text-text',
-          ].join(' ')}
-        >
-          <Sparkles size={13} />
-          Explainer
-        </button>
         <FigmaPluginSetupButton />
         <PanelTogglePopover panels={panels} togglePanel={togglePanel} />
 
@@ -252,9 +233,6 @@ export function TopBar() {
           onClose={() => setExportAnchor(null)}
         />
       )}
-      {explainerOpen ? (
-        <ExplainerStudio onClose={() => setExplainerOpen(false)} />
-      ) : null}
     </header>
   )
 }
