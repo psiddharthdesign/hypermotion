@@ -7,6 +7,7 @@ import {
   useState,
   type DragEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { Download, Upload } from 'lucide-react'
 import {
   exportCompositionToHypeBytes,
@@ -379,6 +380,12 @@ export function SceneNavigator() {
           }}
         />
 
+        <div
+          aria-hidden="true"
+          data-scene-transfer-divider="1"
+          className="mx-0.5 h-8 w-px shrink-0 bg-border"
+        />
+
         <button
           type="button"
           onClick={exportSelectedScene}
@@ -387,7 +394,7 @@ export function SceneNavigator() {
           aria-label="Export selected scene as .hype"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
         >
-          <Download size={16} strokeWidth={1.75} />
+          <Upload size={16} strokeWidth={1.75} />
         </button>
 
         <button
@@ -398,7 +405,7 @@ export function SceneNavigator() {
           aria-label="Import scenes from .hype"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
         >
-          <Upload size={16} strokeWidth={1.75} />
+          <Download size={16} strokeWidth={1.75} />
         </button>
 
         <button
@@ -447,13 +454,40 @@ function SceneCard({
   onDragLeave: () => void
   onDrop: (event: DragEvent) => void
 }) {
+  const cardRef = useRef<HTMLElement>(null)
+  const [tooltipPosition, setTooltipPosition] = useState<{
+    left: number
+    top: number
+  } | null>(null)
+  const tooltipId = `scene-name-tooltip-${item.id}`
+
+  const showSceneName = () => {
+    const bounds = cardRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    setTooltipPosition({
+      left: bounds.left + bounds.width / 2,
+      top: bounds.bottom + 8,
+    })
+  }
+
   return (
     <article
+      ref={cardRef}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onMouseEnter={showSceneName}
+      onMouseLeave={() => setTooltipPosition(null)}
+      onFocusCapture={showSceneName}
+      onBlurCapture={(event) => {
+        if (
+          !event.currentTarget.contains(event.relatedTarget as Node | null)
+        ) {
+          setTooltipPosition(null)
+        }
+      }}
       data-sequence-item={item.id}
       aria-current={selected ? 'true' : undefined}
       className={[
@@ -469,7 +503,7 @@ function SceneCard({
         type="button"
         onClick={onSelect}
         aria-label={`Edit scene ${index + 1}: ${scene.name}`}
-        title={`${scene.name} · ${scene.duration.toFixed(1)}s · ${scene.cameraIds.length} camera${scene.cameraIds.length === 1 ? '' : 's'}`}
+        aria-describedby={tooltipPosition ? tooltipId : undefined}
         className="relative h-full w-full overflow-hidden rounded-[calc(var(--radius-panel)_-_2px)] bg-panel-raised outline-none focus-visible:ring-2 focus-visible:ring-accent"
         style={{ background: rootBackground }}
       >
@@ -513,6 +547,21 @@ function SceneCard({
           <AppIcon name="trash" size={9} />
         </button>
       </div>
+
+      {tooltipPosition && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              id={tooltipId}
+              role="tooltip"
+              data-scene-name-tooltip="1"
+              className="pointer-events-none fixed z-[120] max-w-[min(280px,calc(100vw-24px))] -translate-x-1/2 rounded-md border border-border bg-panel-raised px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-text shadow-[var(--shadow-popover)]"
+              style={tooltipPosition}
+            >
+              {scene.name}
+            </div>,
+            document.body,
+          )
+        : null}
     </article>
   )
 }
