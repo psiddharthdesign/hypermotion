@@ -227,6 +227,7 @@ export interface SceneAPI {
 /** A mutable view of node fields that may be set via setNodeProperty. */
 export interface NodeBaseMutable {
   name: string
+  workspaceOnly: boolean
   componentSourceId: NodeId | null
   componentId: NodeId
   transform: Transform
@@ -261,6 +262,10 @@ export interface NodeBaseMutable {
   variantPositions: Record<string, { x: number; y: number }> | undefined
   componentProperties: import('@/scene/types').ComponentPropertyDefinition[]
   variantTransition: import('@/scene/types').VariantTransition
+  timelines: Record<
+    import('@/scene/types').ComponentTimelineId,
+    import('@/scene/types').ComponentTimeline
+  >
   interactions: import('@/scene/types').Interaction[]
   selection: import('@/scene/types').VariantSelection
   overrides: Record<NodeId, Record<string, unknown>>

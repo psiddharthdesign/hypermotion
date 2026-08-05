@@ -3,14 +3,21 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
 } from 'react'
-import { useProjectAPI } from '@/project'
+import { Download, Upload } from 'lucide-react'
+import {
+  exportCompositionToHypeBytes,
+  importScenesFromHypeBytes,
+  useProjectAPI,
+} from '@/project'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
 import type { CompositionScene, SequenceItem } from '@/sequence'
 import { AppIcon } from '@/ui/AppIcon'
+import { useToast } from '@/ui/toastStore'
 
 const SCENE_ITEM_DRAG_TYPE = 'application/x-hypermotion-sequence-item'
 
@@ -40,7 +47,10 @@ export function SceneNavigator() {
   const timelineScope = useUI((state) => state.timelineScope)
   const setTimelineScope = useUI((state) => state.setTimelineScope)
   const setPreviewScope = useUI((state) => state.setPreviewScope)
+  const showToast = useToast((state) => state.show)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [transferBusy, setTransferBusy] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const scenes = useMemo(
     () => project.getScenes(),
@@ -110,6 +120,131 @@ export function SceneNavigator() {
       setPreviewScope('scene')
       setPlayhead(0)
     }
+  }
+
+  const selectTransferredScene = (itemId: string, sceneId: string) => {
+    setPlaying(false)
+    setSelectedSequenceItem(itemId, sceneId)
+    setTimelineScope('scene')
+    setPreviewScope('scene')
+    setPlayhead(0)
+  }
+
+  const importBytes = async (bytes: Uint8Array) => {
+    setTransferBusy(true)
+    showToast({ tone: 'loading', title: 'Importing scenes…' })
+    try {
+      // Paint the progress state before decoding and cloning a large Yjs file.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      )
+      const result = importScenesFromHypeBytes(project, bytes)
+      const first = result.scenes[0]
+      if (first) {
+        selectTransferredScene(first.sequenceItemId, first.sceneId)
+      }
+      const count = result.scenes.length
+      const compatibilityNote = result.warnings.join(' ')
+      showToast({
+        tone: 'success',
+        title: 'Scenes imported',
+        description: `${count} scene${count === 1 ? ' was' : 's were'} added to the end of the sequence.${compatibilityNote ? ` ${compatibilityNote}` : ''}`,
+      })
+    } catch (error) {
+      console.error('[scene-import] failed', error)
+      showToast({
+        tone: 'error',
+        title: "Couldn't import scenes",
+        description:
+          error instanceof Error
+            ? error.message
+            : 'The .hype file could not be read.',
+      })
+    } finally {
+      setTransferBusy(false)
+    }
+  }
+
+  const importScenes = () => {
+    if (transferBusy) return
+    const bridge = window.hypermotion
+    if (!bridge) {
+      importInputRef.current?.click()
+      return
+    }
+    void (async () => {
+      try {
+        const result = (await bridge.invoke('file:show-open-dialog', {
+          title: 'Import scenes from .hype',
+          trackRecent: false,
+        })) as { path: string; bytes: Uint8Array } | null
+        if (!result) return
+        await importBytes(new Uint8Array(result.bytes))
+      } catch (error) {
+        console.error('[scene-import] dialog failed', error)
+        showToast({
+          tone: 'error',
+          title: "Couldn't import scenes",
+          description:
+            error instanceof Error
+              ? error.message
+              : 'The .hype file could not be read.',
+        })
+      }
+    })()
+  }
+
+  const exportSelectedScene = () => {
+    if (transferBusy) return
+    const item =
+      items.find((candidate) => candidate.id === selectedItemId) ??
+      items.find((candidate) => candidate.sceneId === activeCompositionId)
+    if (!item) return
+    const composition = sceneById.get(item.sceneId)
+    if (!composition) return
+
+    void (async () => {
+      setTransferBusy(true)
+      try {
+        const bytes = exportCompositionToHypeBytes(project, composition.id)
+        const suggestedName = `${safeFilename(composition.name)}.hype`
+        const bridge = window.hypermotion
+        if (bridge) {
+          const path = (await bridge.invoke('file:show-save-dialog', {
+            title: 'Export scene as .hype',
+            suggestedName,
+          })) as string | null
+          if (!path) return
+          const written = (await bridge.invoke('file:write', {
+            path,
+            bytes,
+            trackRecent: false,
+          })) as boolean
+          if (!written) {
+            throw new Error('The scene file could not be written.')
+          }
+        } else {
+          downloadHypeFile(bytes, suggestedName)
+        }
+        showToast({
+          tone: 'success',
+          title: 'Scene exported',
+          description: `${composition.name} was saved as a portable .hype file.`,
+        })
+      } catch (error) {
+        console.error('[scene-export] failed', error)
+        showToast({
+          tone: 'error',
+          title: "Couldn't export scene",
+          description:
+            error instanceof Error
+              ? error.message
+              : 'The scene could not be exported.',
+        })
+      } finally {
+        setTransferBusy(false)
+      }
+    })()
   }
 
   const duplicate = (item: SequenceItem, index: number) => {
@@ -229,12 +364,50 @@ export function SceneNavigator() {
           </div>
         </div>
 
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".hype,application/x-hypermotion"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (!file) return
+            void file
+              .arrayBuffer()
+              .then((buffer) => importBytes(new Uint8Array(buffer)))
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={exportSelectedScene}
+          disabled={transferBusy || items.length === 0}
+          title="Export selected scene as .hype"
+          aria-label="Export selected scene as .hype"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+        >
+          <Download size={16} strokeWidth={1.75} />
+        </button>
+
+        <button
+          type="button"
+          onClick={importScenes}
+          disabled={transferBusy}
+          title="Import scenes from .hype"
+          aria-label="Import scenes from .hype"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+        >
+          <Upload size={16} strokeWidth={1.75} />
+        </button>
+
         <button
           type="button"
           onClick={addScene}
+          disabled={transferBusy}
           title="Add scene"
           aria-label="Add scene"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96]"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
         >
           <AppIcon name="plus" size={16} />
         </button>
@@ -393,4 +566,25 @@ function rootBackground(
     return `radial-gradient(circle, ${stops})`
   }
   return 'var(--color-canvas-fallback)'
+}
+
+function downloadHypeFile(bytes: Uint8Array, filename: string): void {
+  const copy = new Uint8Array(bytes)
+  const buffer = copy.buffer.slice(
+    copy.byteOffset,
+    copy.byteOffset + copy.byteLength,
+  )
+  const blob = new Blob([buffer], { type: 'application/x-hypermotion' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function safeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'Scene'
 }

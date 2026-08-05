@@ -9,3 +9,10 @@ export {
   type ProjectAPI,
 } from './doc'
 export { useProjectAPI } from './hooks'
+export {
+  exportCompositionToHypeBytes,
+  importScenesFromHypeBytes,
+  transferCompositionScenes,
+  type SceneTransferResult,
+  type TransferredScene,
+} from './sceneTransfer'

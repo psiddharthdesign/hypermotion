@@ -58,6 +58,15 @@ export interface ProjectAPI {
   activateScene(id: string): void
   createScene(input?: CreateCompositionInput): CompositionScene
   duplicateScene(id: string, insertAt?: number): CompositionScene | null
+  /**
+   * Register a composition whose nodes have already been cloned into this
+   * document. This narrow entry point is used by cross-file scene transfer;
+   * callers must never write the project Yjs collections directly.
+   */
+  registerTransferredScene(
+    composition: CompositionScene,
+    insertAt?: number,
+  ): SequenceItem
   deleteScene(id: string): DeleteCompositionResult
   updateScene(
     id: string,
@@ -517,6 +526,71 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
       projectApi.addSequenceItem(newId, insertAt)
       projectApi.activateScene(newId)
       return copied
+    },
+
+    registerTransferredScene: (composition, insertAt) => {
+      if (compositions.has(composition.id)) {
+        throw new Error(`Scene already exists: ${composition.id}`)
+      }
+      const root = api.getNode(composition.rootNodeId)
+      if (!root || root.kind !== 'frame' || root.parent !== null) {
+        throw new Error(
+          `Transferred scene has an invalid root: ${composition.rootNodeId}`,
+        )
+      }
+      for (const cameraId of composition.cameraIds) {
+        const camera = api.getNode(cameraId)
+        if (!camera || camera.kind !== 'camera' || camera.parent !== null) {
+          throw new Error(
+            `Transferred scene has an invalid camera: ${cameraId}`,
+          )
+        }
+      }
+      for (const workspaceNodeId of composition.workspaceNodeIds ?? []) {
+        const workspaceNode = api.getNode(workspaceNodeId)
+        if (
+          !workspaceNode ||
+          workspaceNode.parent !== null ||
+          !workspaceNode.workspaceOnly
+        ) {
+          throw new Error(
+            `Transferred scene has an invalid workspace node: ${workspaceNodeId}`,
+          )
+        }
+      }
+      if (
+        composition.defaultCameraId !== null &&
+        !composition.cameraIds.includes(composition.defaultCameraId)
+      ) {
+        throw new Error(
+          `Transferred scene default camera is not owned: ${composition.defaultCameraId}`,
+        )
+      }
+      for (const cut of Object.values(composition.cameraCuts)) {
+        if (!composition.cameraIds.includes(cut.cameraId)) {
+          throw new Error(
+            `Transferred scene camera cut is not owned: ${cut.id}`,
+          )
+        }
+      }
+
+      const item: SequenceItem = {
+        id: uniqueId('item'),
+        sceneId: composition.id,
+        trimStart: 0,
+        transitionOut: { kind: 'cut', duration: 0 },
+      }
+      api.doc.transact(() => {
+        compositions.set(composition.id, cloneValue(composition))
+        sequenceItems.set(item.id, item)
+        const index = clampIndex(
+          insertAt ?? sequenceOrder.length,
+          sequenceOrder.length,
+        )
+        sequenceOrder.insert(index, [item.id])
+        scene.set('sequenceSchemaVersion', SCHEMA_VERSION)
+      }, 'scene-transfer-register')
+      return item
     },
 
     deleteScene: (id) => {

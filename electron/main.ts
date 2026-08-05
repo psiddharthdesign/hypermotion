@@ -1736,12 +1736,12 @@ ipcMain.handle(
   'file:show-save-dialog',
   async (
     _e,
-    opts?: { defaultPath?: string; suggestedName?: string },
+    opts?: { defaultPath?: string; suggestedName?: string; title?: string },
   ): Promise<string | null> => {
     if (!mainWindow) return null
     const suggested = opts?.suggestedName ?? 'Untitled.hype'
     const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Save scene',
+      title: opts?.title ?? 'Save scene',
       defaultPath: opts?.defaultPath ?? suggested,
       filters: [{ name: 'hyper-motion scene', extensions: ['hype'] }],
     })
@@ -1751,10 +1751,13 @@ ipcMain.handle(
 
 ipcMain.handle(
   'file:show-open-dialog',
-  async (): Promise<{ path: string; bytes: Uint8Array } | null> => {
+  async (
+    _e,
+    opts?: { title?: string; trackRecent?: boolean },
+  ): Promise<{ path: string; bytes: Uint8Array } | null> => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Open scene',
+      title: opts?.title ?? 'Open scene',
       filters: [{ name: 'hyper-motion scene', extensions: ['hype'] }],
       properties: ['openFile'],
     })
@@ -1762,12 +1765,15 @@ ipcMain.handle(
     const filePath = result.filePaths[0]
     try {
       const bytes = fs.readFileSync(filePath)
-      addRecentProject(filePath)
+      if (opts?.trackRecent !== false) addRecentProject(filePath)
       // Buffer → Uint8Array marshals across IPC.
       return { path: filePath, bytes: new Uint8Array(bytes) }
     } catch (err) {
-
-      console.error(`[file] read failed: ${err instanceof Error ? err.message : err}`)
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[file] read failed: ${message}`)
+      if (opts?.trackRecent === false) {
+        throw new Error(`The selected .hype file could not be read: ${message}`)
+      }
       return null
     }
   },
@@ -1775,10 +1781,17 @@ ipcMain.handle(
 
 ipcMain.handle(
   'file:write',
-  (_e, payload: { path: string; bytes: Uint8Array }): boolean => {
+  (
+    _e,
+    payload: {
+      path: string
+      bytes: Uint8Array
+      trackRecent?: boolean
+    },
+  ): boolean => {
     try {
       fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
-      addRecentProject(payload.path)
+      if (payload.trackRecent !== false) addRecentProject(payload.path)
       return true
     } catch (err) {
 
