@@ -143,8 +143,8 @@ export async function driveHeadlessRender(req: HeadlessRenderRequest): Promise<v
       return
     }
     if (fs.existsSync(errorPath)) {
-      // Renderer reported an error. Surface it and bail — no point
-      // continuing to poll, the render isn't going to finish.
+      // Surface complete error sentinels immediately. Partial or malformed
+      // writes are retried until they become readable or the exit grace ends.
       const message = readRenderErrorMessage(errorPath)
       if (message) {
         cleanFile(errorPath)
