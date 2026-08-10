@@ -194,6 +194,42 @@ process.env.VITE_PUBLIC = app.isPackaged
 
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
+/**
+ * Trust boundary for renderer content.
+ *
+ * Only our own bundle (file:// under DIST_RENDERER) or the Vite dev
+ * server counts as app content. Anything else — a link the user
+ * clicked, a redirect, an injected frame — is remote content that must
+ * never inherit the preload bridge or the auto-granted permissions.
+ */
+function isAppUrl(rawUrl: string): boolean {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return false
+  }
+  if (VITE_DEV_SERVER_URL) {
+    try {
+      if (url.origin === new URL(VITE_DEV_SERVER_URL).origin) return true
+    } catch {
+      // Malformed dev-server URL — fall through to the file:// check.
+    }
+  }
+  if (url.protocol !== 'file:') return false
+  const rendererRoot = path.resolve(process.env.DIST_RENDERER!)
+  const target = path.resolve(decodeURIComponent(url.pathname))
+  return target === rendererRoot || target.startsWith(rendererRoot + path.sep)
+}
+
+/** Scene files are the only paths the renderer may read or write. */
+function resolveSceneFilePath(candidate: unknown): string | null {
+  if (typeof candidate !== 'string' || candidate.trim() === '') return null
+  const resolved = path.resolve(candidate)
+  if (path.extname(resolved).toLowerCase() !== '.hype') return null
+  return resolved
+}
+
 let mainWindow: BrowserWindow | null = null
 let previewWindow: BrowserWindow | null = null
 const RECENT_PROJECTS_LIMIT = 10
@@ -607,7 +643,13 @@ function createMainWindow() {
   // the export pipeline) silently fail under Electron's default
   // permission policy.
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (_wc, permission, callback) => {
+    (wc, permission, callback) => {
+      // Remote content that somehow ends up in a webContents on this
+      // session gets nothing — capture and clipboard stay app-only.
+      if (!isAppUrl(wc.getURL())) {
+        callback(false)
+        return
+      }
       const allowed: Set<string> = new Set([
         'clipboard-read',
         'clipboard-sanitized-write',
@@ -723,15 +765,6 @@ function createMainWindow() {
       mainWindow.webContents.id,
       'Export cancelled because the editor renderer restarted.',
     )
-  })
-
-  // External links (export docs, font CDN, etc.) open in the OS browser
-  // rather than hijacking the editor window.
-  mainWindow.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
-    if (url.startsWith('http:') || url.startsWith('https:')) {
-      shell.openExternal(url)
-    }
-    return { action: 'deny' as const }
   })
 
   mainWindow.on('closed', () => {
@@ -1744,7 +1777,13 @@ ipcMain.handle(
       defaultPath: opts?.defaultPath ?? suggested,
       filters: [{ name: 'hyper-motion scene', extensions: ['hype'] }],
     })
-    return result.canceled || !result.filePath ? null : result.filePath
+    if (result.canceled || !result.filePath) return null
+    // `file:write` only accepts `.hype` paths; platforms that don't
+    // auto-append the filter extension would otherwise produce a path
+    // the write handler rejects.
+    return path.extname(result.filePath).toLowerCase() === '.hype'
+      ? result.filePath
+      : `${result.filePath}.hype`
   },
 )
 
@@ -1775,9 +1814,14 @@ ipcMain.handle(
 ipcMain.handle(
   'file:write',
   (_e, payload: { path: string; bytes: Uint8Array }): boolean => {
+    const target = resolveSceneFilePath(payload?.path)
+    if (!target) {
+      console.error('[file] write rejected: not a .hype scene path')
+      return false
+    }
     try {
-      fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
-      addRecentProject(payload.path)
+      fs.writeFileSync(target, Buffer.from(payload.bytes))
+      addRecentProject(target)
       return true
     } catch (err) {
 
@@ -1792,16 +1836,21 @@ ipcMain.handle(
 ipcMain.handle(
   'file:read',
   (_e, filePath: string): Uint8Array | null => {
+    const target = resolveSceneFilePath(filePath)
+    if (!target) {
+      console.error('[file] read rejected: not a .hype scene path')
+      return null
+    }
     try {
-      const bytes = fs.readFileSync(filePath)
-      addRecentProject(filePath)
+      const bytes = fs.readFileSync(target)
+      addRecentProject(target)
       return new Uint8Array(bytes)
     } catch (err) {
 
       console.error(
         `[file] read failed: ${err instanceof Error ? err.message : err}`,
       )
-      removeRecentProject(filePath)
+      removeRecentProject(target)
       return null
     }
   },
@@ -1809,7 +1858,8 @@ ipcMain.handle(
 
 ipcMain.handle('scene:load-path', (_e, scenePath: string): boolean => {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) return false
-  const resolved = path.resolve(scenePath)
+  const resolved = resolveSceneFilePath(scenePath)
+  if (!resolved) return false
   mainWindow.webContents.send('scene:load-path', resolved)
   mainWindow.webContents.send('file:open-path', resolved)
   return true
@@ -1956,6 +2006,37 @@ app.on('second-instance', (_event, argv) => {
     pendingOpenScenePath = openPath
     flushPendingOpenScene()
   }
+})
+
+/**
+ * Renderer navigation lockdown.
+ *
+ * Every window in this app is a privileged renderer: it carries the
+ * preload bridge and the auto-granted capture/clipboard permissions. If
+ * remote content ever loaded into one of those webContents it would
+ * inherit that privilege, so top-level navigation away from our own
+ * bundle is blocked outright, popups are denied (http/https links go to
+ * the OS browser instead), and webviews may not attach.
+ */
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    if (isAppUrl(url)) return
+    event.preventDefault()
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      void shell.openExternal(url)
+    }
+  })
+
+  contents.setWindowOpenHandler(({ url }: { url: string }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' as const }
+  })
+
+  contents.on('will-attach-webview', (event) => {
+    event.preventDefault()
+  })
 })
 
 app.on('window-all-closed', () => {

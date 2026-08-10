@@ -1,8 +1,53 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import electron from 'vite-plugin-electron'
+
+/**
+ * Content-Security-Policy for the packaged renderer.
+ *
+ * The renderer imports untrusted content (scene files, SVG, media,
+ * Google Fonts CSS), so the shipped build pins what it may execute and
+ * where it may talk to: our own bundle plus the two font hosts and the
+ * pinned ffmpeg-core CDN that `src/export/transcodeMp4.ts` fetches.
+ * `blob:` covers the ffmpeg worker and WebCodecs output URLs;
+ * `wasm-unsafe-eval` covers the ffmpeg / yoga WASM modules.
+ *
+ * Injected at build time only — the Vite dev server needs inline
+ * scripts and a websocket for HMR.
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self' file:",
+  "script-src 'self' file: blob: 'wasm-unsafe-eval'",
+  "style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' file: data: https://fonts.gstatic.com",
+  "img-src 'self' file: data: blob:",
+  "media-src 'self' file: data: blob:",
+  "connect-src 'self' file: data: blob: https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com",
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join('; ')
+
+function contentSecurityPolicy(): Plugin {
+  return {
+    name: 'hyper-motion-csp',
+    apply: 'build',
+    transformIndexHtml: () => [
+      {
+        tag: 'meta',
+        attrs: {
+          'http-equiv': 'Content-Security-Policy',
+          content: CONTENT_SECURITY_POLICY,
+        },
+        injectTo: 'head-prepend',
+      },
+    ],
+  }
+}
 
 /**
  * Vite config — same renderer setup as the web build, with Electron
@@ -28,6 +73,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    contentSecurityPolicy(),
     electron([
       {
         entry: 'electron/main.ts',
