@@ -156,7 +156,7 @@ function Shell() {
   //
   // The new render-window pipeline (electron/main.ts → render-window
   // BrowserWindow → src/render/RenderWindowApp.tsx) runs the export
-  // in a separate, hidden process at the exact output dimensions.
+  // in a separate, hidden BrowserWindow at the exact output dimensions.
   // No editor chrome is ever present in the captured frames because
   // the render window only mounts the canvas. The editor stays
   // fully interactive throughout — pan, zoom, edit anything you
