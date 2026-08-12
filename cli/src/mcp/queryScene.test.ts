@@ -371,6 +371,7 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
           name: 'Title',
           kind: 'text',
           parent: 'root',
+          zIndex: 4,
           text: 'Queryable',
           fontFamily: 'Inter',
           fontSize: 24,
@@ -436,7 +437,13 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
     const layersPayload = JSON.parse(assertToolText(layersResult)) as {
       root: string
       activeCameraId: string
-      layers: Array<{ id: string; name?: string; kind: string; children: string[] }>
+      layers: Array<{
+        id: string
+        name?: string
+        kind: string
+        children: string[]
+        zIndex: number
+      }>
     }
 
     assert.equal(layersPayload.root, 'root')
@@ -449,11 +456,20 @@ test('query scene MCP handlers return layers, tracks, and cameras', async () => 
       layersPayload.layers.find((layer) => layer.id === 'root')?.children,
       ['title', 'title.*'],
     )
+    assert.equal(
+      layersPayload.layers.find((layer) => layer.id === 'title')?.zIndex,
+      4,
+    )
 
     const layerResult = await handleGetLayer({ scene: scenePath, nodeId: 'title' })
-    const layerPayload = JSON.parse(assertToolText(layerResult)) as { id: string; text: string }
+    const layerPayload = JSON.parse(assertToolText(layerResult)) as {
+      id: string
+      text: string
+      zIndex: number
+    }
     assert.equal(layerPayload.id, 'title')
     assert.equal(layerPayload.text, 'Queryable')
+    assert.equal(layerPayload.zIndex, 4)
 
     const paddedLayerResult = await handleGetLayer({ scene: scenePath, nodeId: ' title ' })
     const paddedLayerPayload = JSON.parse(assertToolText(paddedLayerResult)) as {

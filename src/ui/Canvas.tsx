@@ -82,7 +82,7 @@ import {
 } from '@/render/vectorPaint'
 import { getPreservedVectorSource } from '@/render/vectorSource'
 import {
-  moveAlwaysOnTopSubtreesLast,
+  flattenSceneInPaintOrder,
   partitionAlwaysOnTopSubtrees,
 } from '@/render/layerCompositing'
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
@@ -128,6 +128,11 @@ import {
   textSegmentLinearProgress,
 } from '@/anim/textSegmentEnvelope'
 import { textColorFadePaint } from '@/anim/textColorFade'
+import {
+  numberFlowTextAtProgress,
+  numberFlowVisualFrameAtProgress,
+  numberFlowVisualOptionsFromConfig,
+} from '@/anim/numberFlow'
 import { scrambleTextForSegment } from '@/anim/textScramble'
 import {
   cameraPreviewStore,
@@ -671,16 +676,7 @@ export function Canvas() {
   const renderOrder = useMemo<NodeId[]>(() => {
     void version
     if (!rootId) return []
-    const out: NodeId[] = []
-    const visit = (id: NodeId) => {
-      out.push(id)
-      const children = api.getChildren(id)
-      for (let i = children.length - 1; i >= 0; i--) {
-        visit(children[i]!.id)
-      }
-    }
-    visit(rootId)
-    return moveAlwaysOnTopSubtreesLast(api, out)
+    return flattenSceneInPaintOrder(api, rootId)
   }, [api, rootId, version])
 
   const workspaceOrder = useMemo<NodeId[]>(() => {
@@ -5501,6 +5497,7 @@ function TextGlyphs({
               playhead,
               textAnimationContainerStyle,
               anim?.textProgress,
+              anim?.textTimelineProgress,
             )
           : node.text}
       </span>
@@ -5514,6 +5511,7 @@ function renderTextAnimationSegments(
   playhead: number,
   sharedStyle: CSSProperties,
   progress?: number,
+  timelineProgress?: number,
 ) {
   if (config.applyTo === 'letters') {
     return renderLetterTextAnimationSegments(
@@ -5522,6 +5520,7 @@ function renderTextAnimationSegments(
       playhead,
       sharedStyle,
       progress,
+      timelineProgress,
     )
   }
   const segments = splitDomTextAnimationSegments(text, config.applyTo)
@@ -5565,6 +5564,7 @@ function renderTextAnimationSegments(
             config,
             playhead,
             progress,
+            timelineProgress,
             orderIndex,
             orderedCount,
           )}
@@ -5588,6 +5588,7 @@ function renderLetterTextAnimationSegments(
   playhead: number,
   sharedStyle: CSSProperties,
   progress?: number,
+  timelineProgress?: number,
 ) {
   const animatedCount = Math.max(
     1,
@@ -5644,6 +5645,7 @@ function renderLetterTextAnimationSegments(
                 config,
                 playhead,
                 progress,
+                timelineProgress,
                 orderIndex,
                 animatedCount,
               )}
@@ -5880,6 +5882,30 @@ function displayTextForSegment(
   orderIndex: number,
   count: number,
 ): string {
+  if (config.id === 'number-flow') {
+    const linearProgress =
+      progress === undefined
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              (playhead - config.startTime) /
+                Math.max(0.05, config.duration),
+            ),
+          )
+        : progress
+    const flowProgress =
+      progress === undefined
+        ? easeTextAnimationProgress(linearProgress, config.acceleration)
+        : linearProgress
+    return numberFlowTextAtProgress(
+      text,
+      config.numberFrom,
+      config.mode,
+      flowProgress,
+      config.numberFlowContinuous,
+    )
+  }
   if (config.id === 'typewriter' && config.applyTo === 'layer') {
     const typewriterProgress =
       progress === undefined
@@ -5909,6 +5935,7 @@ function renderTextSegmentContent(
   config: TextAnimationConfig,
   playhead: number,
   progress: number | undefined,
+  timelineProgress: number | undefined,
   orderIndex: number,
   count: number,
 ) {
@@ -5920,6 +5947,99 @@ function renderTextSegmentContent(
     orderIndex,
     count,
   )
+  if (config.id === 'number-flow') {
+    const fallbackTimelineProgress = Math.max(
+      0,
+      Math.min(
+        1,
+        (playhead - config.startTime) / Math.max(0.05, config.duration),
+      ),
+    )
+    const flowProgress =
+      progress === undefined
+        ? easeTextAnimationProgress(
+            fallbackTimelineProgress,
+            config.acceleration,
+          )
+        : progress
+    const flowTimelineProgress =
+      timelineProgress ?? fallbackTimelineProgress
+    const frame = numberFlowVisualFrameAtProgress(
+      text,
+      config.numberFrom,
+      config.mode,
+      flowProgress,
+      numberFlowVisualOptionsFromConfig(config),
+      flowTimelineProgress,
+    )
+    const edgeMask =
+      frame.maskHeightEm > 0
+        ? `linear-gradient(to bottom, transparent 0, #000 ${frame.maskHeightEm}em, #000 calc(100% - ${frame.maskHeightEm}em), transparent 100%)`
+        : undefined
+    const sideMask =
+      frame.maskWidthEm > 0
+        ? `linear-gradient(to right, transparent 0, #000 ${frame.maskWidthEm}em, #000 calc(100% - ${frame.maskWidthEm}em), transparent 100%)`
+        : undefined
+    const layerStyle = (
+      offsetEm: number,
+      opacity: number,
+    ): CSSProperties => ({
+      position: 'absolute',
+      inset: 0,
+      width: '100%',
+      transform: `translateY(${offsetEm}em)`,
+      opacity,
+      filter:
+        frame.blurRadius > 0.01
+          ? `blur(${frame.blurRadius}px)`
+          : undefined,
+      pointerEvents: 'none',
+      whiteSpace: 'inherit',
+      textAlign: 'inherit',
+      willChange: 'transform, opacity, filter',
+    })
+    return (
+      <span
+        style={{
+          position: 'relative',
+          display: 'block',
+          width: '100%',
+          WebkitMaskImage: sideMask,
+          maskImage: sideMask,
+        }}
+      >
+        <span
+          style={{
+            position: 'relative',
+            display: 'block',
+            width: '100%',
+            WebkitMaskImage: edgeMask,
+            maskImage: edgeMask,
+          }}
+        >
+          <span style={{ visibility: 'hidden' }}>{frame.settledText}</span>
+          <span
+            aria-hidden
+            style={layerStyle(
+              frame.outgoingOffsetEm,
+              frame.outgoingOpacity,
+            )}
+          >
+            {frame.outgoingText}
+          </span>
+          <span
+            aria-hidden
+            style={layerStyle(
+              frame.incomingOffsetEm,
+              frame.incomingOpacity,
+            )}
+          >
+            {frame.incomingText}
+          </span>
+        </span>
+      </span>
+    )
+  }
   if (config.id !== 'scramble') return displayed
   return (
     <>

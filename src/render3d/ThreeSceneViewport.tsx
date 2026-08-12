@@ -21,6 +21,10 @@ import {
   scrambleTextForSegment,
 } from '@/anim/textScramble'
 import {
+  numberFlowVisualFrameAtProgress,
+  numberFlowVisualOptionsFromConfig,
+} from '@/anim/numberFlow'
+import {
   resolveTextMotionRailAmount,
   resolveTextSegmentMotion,
 } from '@/anim/textSegmentMotion'
@@ -128,7 +132,10 @@ import {
   paintVectorNodeToCanvas,
   vectorTrimState,
 } from '@/render/vectorPaint'
-import { layerRenderOrder } from '@/render/layerCompositing'
+import {
+  layerRenderOrder,
+  nodesInBackToFrontPaintOrder,
+} from '@/render/layerCompositing'
 import {
   getPaperShaderSourceCanvas,
   paperShaderSourceEventName,
@@ -1066,6 +1073,7 @@ const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
   'arcSweep',
   'arcInnerRadius',
   'textProgress',
+  'textTimelineProgress',
 ])
 
 /**
@@ -1444,7 +1452,11 @@ function syncPlanes(
     }
     applyPlaneTextureTransform(record.mesh, plane)
     applyPlaneTransform(record.outline, plane)
-    record.mesh.renderOrder = layerRenderOrder(plane.node, plane.paintOrder)
+    record.mesh.renderOrder = layerRenderOrder(
+      plane.node,
+      plane.paintOrder,
+      plane.alwaysOnTop,
+    )
     record.outline.renderOrder = 100000 + plane.paintOrder
     const blendMode =
       animated[plane.nodeId]?.blendMode ??
@@ -1582,7 +1594,9 @@ function syncTextSegmentPlane({
     extraAwayDepth,
   })
   const effectBlur =
-    config?.id === 'blur' || config?.id === 'blur-slide'
+    config?.id === 'blur' ||
+    config?.id === 'blur-slide' ||
+    config?.id === 'number-flow'
       ? config.blurRadius
       : 0
   const requestedBlurPadding = textSegmentAtlasBlurPadding(
@@ -1746,6 +1760,7 @@ function syncTextSegmentPlane({
     plane,
     config,
     anim?.textProgress,
+    anim?.textTimelineProgress,
     playhead,
     camera,
     apertureStrength,
@@ -1819,7 +1834,11 @@ function syncTextSegmentPlane({
     }
   }
   applyPlaneTransform(record.outline, plane)
-  record.mesh.renderOrder = layerRenderOrder(plane.node, plane.paintOrder)
+  record.mesh.renderOrder = layerRenderOrder(
+    plane.node,
+    plane.paintOrder,
+    plane.alwaysOnTop,
+  )
   record.outline.renderOrder = 100000 + plane.paintOrder
   applyMaterialBlendMode(
     record.mesh.material,
@@ -1958,6 +1977,7 @@ function resolveTextSegmentGeometryStates(
   plane: Plane3D,
   config: TextAnimationConfig | null,
   timelineProgress: number | undefined,
+  rawTimelineProgress: number | undefined,
   playhead: number,
   camera: ResolvedCamera3D,
   apertureStrength: number,
@@ -2097,11 +2117,32 @@ function resolveTextSegmentGeometryStates(
         config.id === 'mask-up' ||
         config.id === 'mask-down' ||
         config.id === 'gradient-reveal'
+      const numberFlowFrame =
+        config.id === 'number-flow' && plane.node.kind === 'text'
+          ? numberFlowVisualFrameAtProgress(
+              entry.text,
+              config.numberFrom,
+              config.mode,
+              numberFlowAnimationProgress(
+                config,
+                timelineProgress,
+                playhead,
+              ),
+              numberFlowVisualOptionsFromConfig(config),
+              numberFlowTimelineProgress(
+                config,
+                rawTimelineProgress,
+                playhead,
+              ),
+            )
+          : null
       const atlasDrivenLayerReveal =
         config.applyTo === 'layer' &&
-        (config.id === 'typewriter' || config.id === 'scramble')
+        (config.id === 'typewriter' ||
+          config.id === 'scramble' ||
+          config.id === 'number-flow')
       state.opacity = atlasDrivenLayerReveal ? 1 : visual.opacity
-      state.effectBlur = visual.blur
+      state.effectBlur = numberFlowFrame?.blurRadius ?? visual.blur
       state.scale = visual.scale
       state.skew = visual.skew
       state.rotationX =
@@ -2402,7 +2443,7 @@ function textSegmentTextureSignature(
     anim,
     config,
   )
-  let dynamicFrame: number | null = null
+  let dynamicFrame: unknown = null
   if (config?.id === 'scramble' && !staticLetterScramble) {
     // Scramble changes glyph content, so it is the only segment effect that
     // needs frequent atlas uploads. Thirty texture updates per second keeps
@@ -2427,6 +2468,32 @@ function textSegmentTextureSignature(
     )
     const visibleProgress = config.mode === 'out' ? 1 - progress : progress
     dynamicFrame = Math.ceil(Array.from(text).length * visibleProgress)
+  } else if (config?.id === 'number-flow') {
+    const frame = numberFlowVisualFrameAtProgress(
+      text,
+      config.numberFrom,
+      config.mode,
+      numberFlowAnimationProgress(config, anim?.textProgress, playhead),
+      numberFlowVisualOptionsFromConfig(config),
+      numberFlowTimelineProgress(
+        config,
+        anim?.textTimelineProgress,
+        playhead,
+      ),
+    )
+    dynamicFrame = {
+      outgoing: frame.outgoingText,
+      incoming: frame.incomingText,
+      phase: Number(frame.phase.toFixed(4)),
+      outgoingOffset: Number(frame.outgoingOffsetEm.toFixed(4)),
+      incomingOffset: Number(frame.incomingOffsetEm.toFixed(4)),
+      outgoingOpacity: Number(frame.outgoingOpacity.toFixed(4)),
+      incomingOpacity: Number(frame.incomingOpacity.toFixed(4)),
+      maskHeight: frame.maskHeightEm,
+      maskWidth: frame.maskWidthEm,
+      spinDistance: config.numberFlowSpinDistance,
+      blurRadius: config.blurRadius,
+    }
   } else if (config?.id === 'tracking' && config.applyTo !== 'letters') {
     dynamicFrame = Math.round(
       textAnimationProgress(config, anim?.textProgress, playhead) * 4096,
@@ -2548,6 +2615,12 @@ function renderTextSegmentAtlas(
         padding:
           padding +
           trackingPadding +
+          (config?.id === 'number-flow'
+            ? Math.ceil(
+                lineHeightPx * config.numberFlowSpinDistance +
+                  config.blurRadius,
+              )
+            : 0) +
           (config?.id === 'scramble'
             ? Math.max(
                 scrambleWrappedHeightOverflowPadding(
@@ -2980,13 +3053,34 @@ function paintTextSegmentAtlasCell(
       authoredTracking +
       (config?.id === 'tracking' ? state?.extraTracking ?? 0 : 0)
     let renderedText = entry.text
+    let numberFlowFrame: ReturnType<
+      typeof numberFlowVisualFrameAtProgress
+    > | null = null
     if (config?.applyTo === 'layer') {
       const progress = textAnimationProgress(
         config,
         anim?.textProgress,
         playhead,
       )
-      if (config.id === 'typewriter') {
+      if (config.id === 'number-flow') {
+        numberFlowFrame = numberFlowVisualFrameAtProgress(
+          entry.text,
+          config.numberFrom,
+          config.mode,
+          numberFlowAnimationProgress(
+            config,
+            anim?.textProgress,
+            playhead,
+          ),
+          numberFlowVisualOptionsFromConfig(config),
+          numberFlowTimelineProgress(
+            config,
+            anim?.textTimelineProgress,
+            playhead,
+          ),
+        )
+        renderedText = numberFlowFrame.settledText
+      } else if (config.id === 'typewriter') {
         renderedText = typewriterTextAtProgress(
           entry.text,
           config.mode,
@@ -3011,18 +3105,53 @@ function paintTextSegmentAtlasCell(
           : node.textAlignVertical === 'bottom'
             ? Math.max(0, rect.height - textHeight)
             : 0
-      paintText(
-        ctx,
-        renderedText,
-        entry.padding,
-        entry.padding + alignedY,
-        rect.width,
-        fontSize,
-        lineHeight,
-        tracking,
-        node.textAlign ?? 'start',
-        node.textDecoration ?? 'none',
-      )
+      if (numberFlowFrame) {
+        const paintNumberLayer = (
+          layerText: string,
+          offsetEm: number,
+          opacity: number,
+        ) => {
+          if (opacity <= 0.001) return
+          ctx.save()
+          ctx.globalAlpha *= opacity
+          paintText(
+            ctx,
+            layerText,
+            entry.padding,
+            entry.padding + alignedY + offsetEm * lineHeightPx,
+            rect.width,
+            fontSize,
+            lineHeight,
+            tracking,
+            node.textAlign ?? 'start',
+            node.textDecoration ?? 'none',
+          )
+          ctx.restore()
+        }
+        paintNumberLayer(
+          numberFlowFrame.outgoingText,
+          numberFlowFrame.outgoingOffsetEm,
+          numberFlowFrame.outgoingOpacity,
+        )
+        paintNumberLayer(
+          numberFlowFrame.incomingText,
+          numberFlowFrame.incomingOffsetEm,
+          numberFlowFrame.incomingOpacity,
+        )
+      } else {
+        paintText(
+          ctx,
+          renderedText,
+          entry.padding,
+          entry.padding + alignedY,
+          rect.width,
+          fontSize,
+          lineHeight,
+          tracking,
+          node.textAlign ?? 'start',
+          node.textDecoration ?? 'none',
+        )
+      }
     } else {
       if (config?.id === 'scramble' && !entry.scrambleRole) {
         renderedText = scrambleTextForSegment(
@@ -3102,6 +3231,40 @@ function paintTextSegmentAtlasCell(
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
     ctx.restore()
+    if (numberFlowFrame && numberFlowFrame.maskHeightEm > 0) {
+      const maskHeight = Math.min(
+        rect.height / 2,
+        numberFlowFrame.maskHeightEm * fontSize,
+      )
+      const maskTop = entry.padding
+      const maskBottom = entry.padding + rect.height
+      const mask = ctx.createLinearGradient(0, maskTop, 0, maskBottom)
+      const fade = Math.min(0.5, maskHeight / Math.max(1, rect.height))
+      mask.addColorStop(0, 'rgba(0,0,0,0)')
+      mask.addColorStop(fade, 'rgba(0,0,0,1)')
+      mask.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+      mask.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalCompositeOperation = 'destination-in'
+      ctx.fillStyle = mask
+      ctx.fillRect(entry.padding, maskTop, rect.width, rect.height)
+    }
+    if (numberFlowFrame && numberFlowFrame.maskWidthEm > 0) {
+      const maskWidth = Math.min(
+        rect.width / 2,
+        numberFlowFrame.maskWidthEm * fontSize,
+      )
+      const maskLeft = entry.padding
+      const maskRight = entry.padding + rect.width
+      const mask = ctx.createLinearGradient(maskLeft, 0, maskRight, 0)
+      const fade = Math.min(0.5, maskWidth / Math.max(1, rect.width))
+      mask.addColorStop(0, 'rgba(0,0,0,0)')
+      mask.addColorStop(fade, 'rgba(0,0,0,1)')
+      mask.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+      mask.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalCompositeOperation = 'destination-in'
+      ctx.fillStyle = mask
+      ctx.fillRect(maskLeft, entry.padding, rect.width, rect.height)
+    }
     ctx.globalCompositeOperation = 'source-over'
   }
 
@@ -3610,12 +3773,26 @@ function renderSubtreeTexture(
           applyOwnTransform,
           inherited,
           () => {
-            for (const child of node.children) paint(layer, child, childContext)
+            const children = nodesInBackToFrontPaintOrder(
+              node.children
+                .map((childId) => api.getNode(childId))
+                .filter((child): child is Node => !!child),
+            )
+            for (const child of children) {
+              paint(layer, child.id, childContext)
+            }
           },
         )
         return
       }
-      for (const child of node.children) paint(layer, child, childContext)
+      const children = nodesInBackToFrontPaintOrder(
+        node.children
+          .map((childId) => api.getNode(childId))
+          .filter((child): child is Node => !!child),
+      )
+      for (const child of children) {
+        paint(layer, child.id, childContext)
+      }
     }
 
     if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
@@ -4445,6 +4622,122 @@ function paintAnimatedTextNode(
     )
     return
   }
+  if (config.id === 'number-flow') {
+    const frame = numberFlowVisualFrameAtProgress(
+      text,
+      config.numberFrom,
+      config.mode,
+      numberFlowAnimationProgress(config, anim?.textProgress, playhead),
+      numberFlowVisualOptionsFromConfig(config),
+      numberFlowTimelineProgress(
+        config,
+        anim?.textTimelineProgress,
+        playhead,
+      ),
+    )
+    const transform = ctx.getTransform()
+    const scratchScale = Math.max(
+      0.25,
+      Math.min(
+        4,
+        Math.max(
+          Math.hypot(transform.a, transform.b),
+          Math.hypot(transform.c, transform.d),
+          1,
+        ),
+      ),
+    )
+    const scratch = ctx.canvas.ownerDocument.createElement('canvas')
+    scratch.width = Math.max(1, Math.ceil(maxWidth * scratchScale))
+    scratch.height = Math.max(1, Math.ceil(maxHeight * scratchScale))
+    const scratchCtx = scratch.getContext('2d')
+    scratchCtx?.scale(scratchScale, scratchScale)
+    const targetCtx = scratchCtx ?? ctx
+    const targetX = scratchCtx ? 0 : x
+    const targetY = scratchCtx ? alignedY - y : alignedY
+    targetCtx.fillStyle = anim?.fill ?? node.color ?? '#111111'
+    configureCanvasTextContext(targetCtx, node)
+    const paintNumberLayer = (
+      layerText: string,
+      offsetEm: number,
+      opacity: number,
+    ) => {
+      if (opacity <= 0.001) return
+      targetCtx.save()
+      targetCtx.globalAlpha *= opacity
+      if (frame.blurRadius > 0.01) {
+        targetCtx.filter = `blur(${frame.blurRadius}px)`
+      }
+      targetCtx.translate(0, offsetEm * Math.max(1, fontSize * lineHeight))
+      paintText(
+        targetCtx,
+        layerText,
+        targetX,
+        targetY,
+        maxWidth,
+        fontSize,
+        lineHeight,
+        authoredTracking,
+        node.textAlign ?? 'start',
+        node.textDecoration ?? 'none',
+      )
+      targetCtx.restore()
+    }
+    targetCtx.save()
+    targetCtx.beginPath()
+    targetCtx.rect(scratchCtx ? 0 : x, scratchCtx ? 0 : y, maxWidth, maxHeight)
+    targetCtx.clip()
+    paintNumberLayer(
+      frame.outgoingText,
+      frame.outgoingOffsetEm,
+      frame.outgoingOpacity,
+    )
+    paintNumberLayer(
+      frame.incomingText,
+      frame.incomingOffsetEm,
+      frame.incomingOpacity,
+    )
+    targetCtx.restore()
+    if (scratchCtx) {
+      if (frame.maskHeightEm > 0) {
+        const maskHeight = Math.min(
+          maxHeight / 2,
+          frame.maskHeightEm * fontSize,
+        )
+        const fade = Math.min(0.5, maskHeight / Math.max(1, maxHeight))
+        const mask = scratchCtx.createLinearGradient(0, 0, 0, maxHeight)
+        mask.addColorStop(0, 'rgba(0,0,0,0)')
+        mask.addColorStop(fade, 'rgba(0,0,0,1)')
+        mask.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+        mask.addColorStop(1, 'rgba(0,0,0,0)')
+        scratchCtx.globalCompositeOperation = 'destination-in'
+        scratchCtx.fillStyle = mask
+        scratchCtx.fillRect(0, 0, maxWidth, maxHeight)
+      }
+      if (frame.maskWidthEm > 0) {
+        const maskWidth = Math.min(
+          maxWidth / 2,
+          frame.maskWidthEm * fontSize,
+        )
+        const fade = Math.min(0.5, maskWidth / Math.max(1, maxWidth))
+        const mask = scratchCtx.createLinearGradient(0, 0, maxWidth, 0)
+        mask.addColorStop(0, 'rgba(0,0,0,0)')
+        mask.addColorStop(fade, 'rgba(0,0,0,1)')
+        mask.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+        mask.addColorStop(1, 'rgba(0,0,0,0)')
+        scratchCtx.globalCompositeOperation = 'destination-in'
+        scratchCtx.fillStyle = mask
+        scratchCtx.fillRect(0, 0, maxWidth, maxHeight)
+      }
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(x, y, maxWidth, maxHeight)
+      ctx.clip()
+      ctx.drawImage(scratch, x, y, maxWidth, maxHeight)
+      ctx.restore()
+    }
+    return
+  }
   if (config.id === 'typewriter') {
     paintText(
       ctx,
@@ -4970,6 +5263,26 @@ function textAnimationProgress(
   if (progress !== undefined) return Math.max(0, Math.min(1, progress))
   const elapsed = playhead - config.startTime
   return Math.max(0, Math.min(1, elapsed / Math.max(0.05, config.duration)))
+}
+
+/** Number Flow keeps eased overshoot, unlike ordinary text effects. */
+function numberFlowAnimationProgress(
+  config: TextAnimationConfig,
+  progress: number | undefined,
+  playhead: number,
+): number {
+  if (progress !== undefined && Number.isFinite(progress)) return progress
+  const timelineProgress = textAnimationProgress(config, undefined, playhead)
+  return easeTextAnimationProgress(timelineProgress, config.acceleration)
+}
+
+/** True keyframe position used only to decide authored Number Flow endpoints. */
+function numberFlowTimelineProgress(
+  config: TextAnimationConfig,
+  progress: number | undefined,
+  playhead: number,
+): number {
+  return textAnimationProgress(config, progress, playhead)
 }
 
 function textAnimationSegmentCount(

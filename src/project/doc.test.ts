@@ -295,6 +295,30 @@ describe('ProjectAPI', () => {
     expect(project.getSequenceItems()[0]!.masterAudioMuted).toBeUndefined()
   })
 
+  it('persists an occurrence hold without changing authored scene duration', () => {
+    const { api } = legacyDocument()
+    const project = createProjectAPI(api)
+    project.ensureInitialized()
+    const composition = project.getScenes()[0]!
+    const item = project.getSequenceItems()[0]!
+
+    project.updateSequenceItem(item.id, { holdDuration: 3.25 })
+
+    expect(project.getScene(composition.id)?.duration).toBe(
+      composition.duration,
+    )
+    expect(project.getSequenceItems()[0]?.holdDuration).toBe(3.25)
+    expect(project.getSequenceTimeMap().items[0]).toMatchObject({
+      sourceDuration: composition.duration,
+      holdDuration: 3.25,
+      duration: composition.duration + 3.25,
+    })
+
+    project.updateSequenceItem(item.id, { holdDuration: 0 })
+    expect(project.getSequenceItems()[0]?.holdDuration).toBeUndefined()
+    expect(project.getSequenceTimeMap().duration).toBe(composition.duration)
+  })
+
   it('reconciles newly-created cameras and drops stale cuts', () => {
     const { api } = legacyDocument()
     const project = createProjectAPI(api)

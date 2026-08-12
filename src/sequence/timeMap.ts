@@ -24,6 +24,9 @@ interface ItemTiming {
   sequenceIndex: number
   sourceStartFrame: number
   sourceEndFrame: number
+  sourceDurationFrames: number
+  holdDurationFrames: number
+  /** Total Master occurrence span, including the trailing hold. */
   durationFrames: number
 }
 
@@ -164,7 +167,7 @@ export function buildSequenceTimeMap(
       continue
     }
 
-    const workAreaFrames = resolveWorkAreaFrames(
+    const workAreaFrames = resolveCompositionWorkAreaFrames(
       scene,
       sceneDurationFrames,
       frameRate,
@@ -241,6 +244,11 @@ export function buildSequenceTimeMap(
       continue
     }
 
+    const sourceDurationFrames = intersectedEndFrame - intersectedStartFrame
+    const holdDurationFrames = resolveItemHoldDurationFrames(
+      item.holdDuration,
+      frameRate,
+    )
     timings.push({
       item,
       scene,
@@ -248,7 +256,9 @@ export function buildSequenceTimeMap(
       sequenceIndex: timings.length,
       sourceStartFrame: intersectedStartFrame,
       sourceEndFrame: intersectedEndFrame,
-      durationFrames: intersectedEndFrame - intersectedStartFrame,
+      sourceDurationFrames,
+      holdDurationFrames,
+      durationFrames: sourceDurationFrames + holdDurationFrames,
     })
   }
 
@@ -276,9 +286,16 @@ export function buildSequenceTimeMap(
       sequenceIndex: timing.sequenceIndex,
       sourceStartFrame: timing.sourceStartFrame,
       sourceEndFrame: timing.sourceEndFrame,
+      sourceDurationFrames: timing.sourceDurationFrames,
+      holdDurationFrames: timing.holdDurationFrames,
       durationFrames: timing.durationFrames,
       sourceStart: framesToSeconds(timing.sourceStartFrame, frameRate),
       sourceEnd: framesToSeconds(timing.sourceEndFrame, frameRate),
+      sourceDuration: framesToSeconds(
+        timing.sourceDurationFrames,
+        frameRate,
+      ),
+      holdDuration: framesToSeconds(timing.holdDurationFrames, frameRate),
       duration: framesToSeconds(timing.durationFrames, frameRate),
       masterStartFrame,
       masterEndFrame,
@@ -321,11 +338,11 @@ export function buildSequenceTimeMap(
   }
 }
 
-function resolveWorkAreaFrames(
+export function resolveCompositionWorkAreaFrames(
   scene: CompositionScene,
   sceneDurationFrames: number,
   frameRate: number,
-  issues: SequenceTimeMapIssue[],
+  issues: SequenceTimeMapIssue[] = [],
 ): { start: number; end: number } {
   const raw = scene.workArea
   if (!raw) return { start: 0, end: sceneDurationFrames }
@@ -685,6 +702,20 @@ function resolveItemDurationFrames(
     frames,
     clamped: frames !== requestedFrames,
   }
+}
+
+function resolveItemHoldDurationFrames(
+  requestedDuration: number | undefined,
+  frameRate: number,
+): number {
+  if (
+    requestedDuration === undefined ||
+    !Number.isFinite(requestedDuration) ||
+    requestedDuration <= 0
+  ) {
+    return 0
+  }
+  return Math.max(0, secondsToFrames(requestedDuration, frameRate))
 }
 
 function resolveTransitionFrames(

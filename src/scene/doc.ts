@@ -50,6 +50,7 @@ import { removeLegacy3DObjects } from '@/scene/removeLegacy3DObjects'
 import { migrateCursorComponents } from '@/scene/builtins/migrateCursorComponent'
 import { normalizeLayerEffects } from '@/scene/effects'
 import { normalizeEllipseArc } from '@/scene/ellipseArc'
+import { normalizeLayerZIndex } from '@/scene/zIndex'
 
 /**
  * Persistent, undoable UI state — track groups, keyframe groups,
@@ -227,6 +228,7 @@ export interface SceneAPI {
 /** A mutable view of node fields that may be set via setNodeProperty. */
 export interface NodeBaseMutable {
   name: string
+  workspaceOnly: boolean
   componentSourceId: NodeId | null
   componentId: NodeId
   transform: Transform
@@ -239,6 +241,7 @@ export interface NodeBaseMutable {
   visible: boolean
   locked: boolean
   position: import('@/scene/types').Position
+  zIndex: number
   isMask: boolean
   motionPath: LayerMotionPath | null
   text: string
@@ -261,6 +264,10 @@ export interface NodeBaseMutable {
   variantPositions: Record<string, { x: number; y: number }> | undefined
   componentProperties: import('@/scene/types').ComponentPropertyDefinition[]
   variantTransition: import('@/scene/types').VariantTransition
+  timelines: Record<
+    import('@/scene/types').ComponentTimelineId,
+    import('@/scene/types').ComponentTimeline
+  >
   interactions: import('@/scene/types').Interaction[]
   selection: import('@/scene/types').VariantSelection
   overrides: Record<NodeId, Record<string, unknown>>
@@ -652,6 +659,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       // Default to 'flow' for legacy documents predating the field. New
       // nodes write the value explicitly in createNode below.
       position: ((y.get('position') as 'flow' | 'absolute') ?? 'flow'),
+      // z-index controls sibling paint order only. Legacy documents predate
+      // the field, so missing or malformed values resolve to the normal
+      // stacking level without changing layout or world-space depth.
+      zIndex: normalizeLayerZIndex(y.get('zIndex')),
       // `isMask` defaults to false on legacy docs that predate the
       // mask feature. createNode writes false explicitly so newly-
       // created nodes are also non-masks until the user opts in.
@@ -1180,6 +1191,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         // a flex parent might want 'absolute' so the user's drop point
         // is honored — see Step 3.66 follow-up).
         y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? 'flow')
+        y.set(
+          'zIndex',
+          normalizeLayerZIndex((props as { zIndex?: number })?.zIndex),
+        )
         // Mask flag — see NodeBase.isMask for semantics. Default false.
         y.set('isMask', (props as { isMask?: boolean })?.isMask ?? false)
         y.set(
@@ -1553,6 +1568,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         }
         if (key === 'motionPath') {
           y.set('motionPath', normalizeLayerMotionPath(value))
+          return
+        }
+        if (key === 'zIndex') {
+          y.set('zIndex', normalizeLayerZIndex(value))
           return
         }
         if (key === 'arc' && y.get('kind') === 'ellipse') {

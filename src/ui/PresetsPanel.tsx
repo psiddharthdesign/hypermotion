@@ -41,6 +41,7 @@ import type {
   TextAnimationDirection,
   TextAnimationId,
   TextAnimationMotionVector,
+  NumberFlowTrend,
   TextAnimationOrder,
   TextAnimationSmoothing,
   TextStaggerCurve,
@@ -54,6 +55,11 @@ import {
   SquircleSurface,
   TimeField,
 } from '@/ui/fields'
+import {
+  formatNumericDisplayValue,
+  formatNumericValue,
+  parseNumericExpression,
+} from '@/ui/fields/numericExpression'
 import {
   resolveCursorVariantKeyframeSelection,
   setSelectedCursorVariantKeyframeState,
@@ -81,6 +87,11 @@ import {
   retimeStaggerSet,
   staggerLayerOffset,
 } from '@/anim/staggerSets'
+import {
+  normalizeNumberFlowIncrementForTargets,
+  numberFlowDisplayUnit,
+  parseNumberFlowText,
+} from '@/anim/numberFlow'
 
 const TEXT_EASING_PRESETS = [
   'smooth',
@@ -670,6 +681,18 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
   const primary =
     selectedTextSources.find((node) => targetTextIds.has(node.id)) ??
     selectedTextNodes[0]
+  const numberFlowTargets = selectedTextNodes.map((node) =>
+    parseNumberFlowText(node.text),
+  )
+  const numberFlowEligible =
+    numberFlowTargets.length > 0 &&
+    numberFlowTargets.every((target) => target !== null)
+  const primaryNumberFlowTarget = primary
+    ? parseNumberFlowText(primary.text)
+    : null
+  const numberFlowIncrementUnit = Math.max(
+    ...numberFlowTargets.map(numberFlowDisplayUnit),
+  )
   const primarySelectedTimelineTrack = primary
     ? findSelectedTimelineTrack(api, primary.id, selectedTextTrackFilter)
     : null
@@ -900,6 +923,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
     }
   }
   const pickPreset = (id: TextAnimationId) => {
+    if (id === 'number-flow' && !numberFlowEligible) return
     const authorTime = currentAnimationAuthorTime()
     const freshTextStaggerStartTimes =
       freshTextStaggerStartTimesAt(authorTime)
@@ -965,7 +989,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
         if (!textTrack && selectedTimelineTrack) {
           const previous = normalizeTextAnimation(node.textAnimation)
           const defaults = textAnimationDefaults(id)
-          const next: TextAnimationConfig = {
+          const next = normalizeTextAnimation({
             ...defaults,
             ...(previous
               ? {
@@ -983,7 +1007,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
                 }
               : {}),
             startTime,
-          }
+          }) ?? { ...defaults, startTime }
           const timedConfig = {
             ...(deriveTextAnimationTiming(
               next,
@@ -1077,7 +1101,13 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             </button>
           </div>
         </div>
-        {showPicker ? <TextPresetPicker current={null} onPick={pickPreset} /> : null}
+        {showPicker ? (
+          <TextPresetPicker
+            current={null}
+            numberFlowEligible={numberFlowEligible}
+            onPick={pickPreset}
+          />
+        ) : null}
         <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
           <StaggerControls
             on={staggerOn}
@@ -1096,6 +1126,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
   const currentPreset =
     textPresetForConfig(current) ??
     TEXT_ANIMATION_PRESETS[0]!
+  const isNumberFlow = current.id === 'number-flow'
 
   return (
     <div className="space-y-3" data-timeline-selection-surface="1">
@@ -1144,7 +1175,13 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
         </div>
       </div>
 
-      {showPicker ? <TextPresetPicker current={current.id} onPick={pickPreset} /> : null}
+      {showPicker ? (
+        <TextPresetPicker
+          current={current.id}
+          numberFlowEligible={numberFlowEligible}
+          onPick={pickPreset}
+        />
+      ) : null}
       <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
         <StaggerControls
           on={staggerOn}
@@ -1156,6 +1193,188 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           onOrderChange={updateStaggerOrder}
         />
       </div>
+
+      {isNumberFlow ? (
+        <ControlCard title="Numbers">
+          <ParamRow label="From">
+            <NumberField
+              value={current.numberFrom}
+              onCommit={(numberFrom) => patch({ numberFrom })}
+              ariaLabel="Number flow start value"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="To">
+            <input
+              aria-label="Number flow target value from Properties text"
+              readOnly
+              value={formatNumberFlowTarget(primaryNumberFlowTarget)}
+              className="hm-control-surface h-7 w-24 px-2 text-right text-[12px] tabular-nums text-text-muted outline-none"
+              title="Edit the primary layer's text in Properties to change this value"
+            />
+          </ParamRow>
+          <ParamRow label="Roll direction">
+            <SelectField<NumberFlowTrend>
+              value={current.numberFlowTrend}
+              options={[
+                ['auto', 'Auto'],
+                ['up', 'Up'],
+                ['down', 'Down'],
+                ['individual', 'Shortest roll'],
+              ]}
+              onChange={(numberFlowTrend) => patch({ numberFlowTrend })}
+              ariaLabel="Number flow roll direction"
+            />
+          </ParamRow>
+          <ParamRow label="Continuous">
+            <CompactSwitch
+              checked={current.numberFlowContinuous}
+              onChange={(numberFlowContinuous) =>
+                patch({ numberFlowContinuous })
+              }
+              ariaLabel="Pass through intermediate numbers"
+            />
+          </ParamRow>
+          {current.numberFlowContinuous ? (
+            <ParamRow label="Count by">
+              <NumberField
+                value={
+                  normalizeNumberFlowIncrementForTargets(
+                    current.numberFlowIncrement,
+                    numberFlowTargets,
+                  ) ?? 0
+                }
+                onCommit={(value) =>
+                  patch({
+                    numberFlowIncrement:
+                      normalizeNumberFlowIncrementForTargets(
+                        value,
+                        numberFlowTargets,
+                      ),
+                  })
+                }
+                min={0}
+                max={1_000_000_000_000_000}
+                step={numberFlowIncrementUnit}
+                ariaLabel="Number flow count increment"
+                width="w-24"
+                parseValue={parseNumberFlowIncrement}
+                formatValue={formatNumberFlowIncrementEdit}
+                formatDisplayValue={formatNumberFlowIncrementDisplay}
+              />
+            </ParamRow>
+          ) : null}
+          <p className="px-0.5 text-[10px] leading-4 text-text-dim">
+            To and its formatting come from Properties. Auto counts by the
+            smallest visible unit; set Count by to skip intermediate values.
+          </p>
+        </ControlCard>
+      ) : null}
+
+      {isNumberFlow ? (
+        <ControlCard title="Number motion">
+          <ParamRow label="Spin distance">
+            <NumberField
+              value={Math.round(current.numberFlowSpinDistance * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowSpinDistance: value / 100 })
+              }
+              min={25}
+              max={200}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Digit fade">
+            <NumberField
+              value={Math.round(current.numberFlowFadeAmount * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowFadeAmount: value / 100 })
+              }
+              min={0}
+              max={100}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Motion blur">
+            <NumberField
+              value={current.blurRadius}
+              onCommit={(blurRadius) => patch({ blurRadius })}
+              min={0}
+              max={32}
+              suffix="px"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Edge mask">
+            <NumberField
+              value={Math.round(current.numberFlowMaskHeight * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowMaskHeight: value / 100 })
+              }
+              min={0}
+              max={100}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Side mask">
+            <NumberField
+              value={Math.round(current.numberFlowMaskWidth * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowMaskWidth: value / 100 })
+              }
+              min={0}
+              max={200}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <div className="my-2 border-t border-border" />
+          <ParamRow label="Transform timing">
+            <NumberField
+              value={Math.round(
+                current.numberFlowTransformTimingRatio * 100,
+              )}
+              onCommit={(value) =>
+                patch({ numberFlowTransformTimingRatio: value / 100 })
+              }
+              min={5}
+              max={100}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Spin timing">
+            <NumberField
+              value={Math.round(current.numberFlowSpinTimingRatio * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowSpinTimingRatio: value / 100 })
+              }
+              min={5}
+              max={100}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <ParamRow label="Fade timing">
+            <NumberField
+              value={Math.round(current.numberFlowOpacityTimingRatio * 100)}
+              onCommit={(value) =>
+                patch({ numberFlowOpacityTimingRatio: value / 100 })
+              }
+              min={5}
+              max={100}
+              suffix="%"
+              width="w-24"
+            />
+          </ParamRow>
+          <p className="px-0.5 text-[10px] leading-4 text-text-dim">
+            Timing values set how much of the segment each channel uses.
+          </p>
+        </ControlCard>
+      ) : null}
 
       <ControlCard title="Effect">
         {(current.id === 'blur' || current.id === 'blur-slide') ? (
@@ -1169,6 +1388,8 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             />
           </ParamRow>
         ) : null}
+        {!isNumberFlow ? (
+          <>
         {!current.motionPath ? (
           <ParamRow label="Motion">
             <TextMotionModeToggle
@@ -1327,6 +1548,8 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             onChange={(motionVector) => patch({ motionVector })}
           />
         ) : null}
+          </>
+        ) : null}
         <ParamRow label="Segment duration">
           <TimeField
             value={Math.round(current.duration * 1000)}
@@ -1416,7 +1639,8 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
         ) : null}
       </ControlCard>
 
-      <ControlCard title="Text">
+      {!isNumberFlow ? (
+        <ControlCard title="Text">
         <ParamRow label="Apply effect to">
           <SelectField<TextAnimationApplyTo>
             ariaLabel="Apply text animation to"
@@ -1538,16 +1762,19 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             ) : null}
           </>
         ) : null}
-      </ControlCard>
+        </ControlCard>
+      ) : null}
     </div>
   )
 }
 
 function TextPresetPicker({
   current,
+  numberFlowEligible,
   onPick,
 }: {
   current: TextAnimationId | null
+  numberFlowEligible: boolean
   onPick: (id: TextAnimationId) => void
 }) {
   const categories = Array.from(new Set(TEXT_ANIMATION_PRESETS.map((p) => p.category)))
@@ -1557,17 +1784,38 @@ function TextPresetPicker({
         <div key={category} className="mb-5 last:mb-0">
           <div className="mb-2 text-[15px] font-bold text-text">{category}</div>
           <div className="grid grid-cols-2 gap-2">
-            {TEXT_ANIMATION_PRESETS.filter((p) => p.category === category).map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                data-preview-on="1"
-                onClick={() => onPick(preset.id)}
-                className="group flex flex-col gap-1.5 rounded-md border border-border-strong/60 bg-panel-raised p-1.5 text-left transition-colors hover:border-border-strong hover:bg-panel"
-              >
-                <TextAnimationCardPreview preset={preset} selected={current === preset.id} />
-              </button>
-            ))}
+            {TEXT_ANIMATION_PRESETS.filter((p) => p.category === category).map(
+              (preset) => {
+                const unavailable =
+                  preset.id === 'number-flow' && !numberFlowEligible
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    disabled={unavailable}
+                    data-preview-on={unavailable ? undefined : '1'}
+                    onClick={() => onPick(preset.id)}
+                    className={[
+                      'group flex flex-col gap-1.5 rounded-md border border-border-strong/60 bg-panel-raised p-1.5 text-left transition-colors',
+                      unavailable
+                        ? 'cursor-not-allowed opacity-45'
+                        : 'hover:border-border-strong hover:bg-panel',
+                    ].join(' ')}
+                    title={
+                      unavailable
+                        ? 'Number Flow requires exactly one number in every selected text layer.'
+                        : `Apply ${preset.label}`
+                    }
+                  >
+                    <TextAnimationCardPreview
+                      preset={preset}
+                      selected={current === preset.id}
+                      unavailable={unavailable}
+                    />
+                  </button>
+                )
+              },
+            )}
           </div>
         </div>
       ))}
@@ -1578,9 +1826,11 @@ function TextPresetPicker({
 function TextAnimationCardPreview({
   preset,
   selected = false,
+  unavailable = false,
 }: {
   preset: (typeof TEXT_ANIMATION_PRESETS)[number]
   selected?: boolean
+  unavailable?: boolean
 }) {
   return (
     <>
@@ -1590,17 +1840,30 @@ function TextAnimationCardPreview({
           selected ? 'ring-1 ring-accent/65' : '',
         ].join(' ')}
       >
-        <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
-          {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
-            <span
-              key={`${preset.id}-${index}`}
-              className="hm-text-preview-letter"
-              style={{ '--i': index } as CSSProperties}
-            >
-              {char}
-            </span>
-          ))}
-        </span>
+        {preset.id === 'number-flow' ? (
+          <span className="flex items-baseline gap-1.5 text-[18px] font-semibold tabular-nums text-text">
+            <span className="text-text-dim">0</span>
+            <span className="text-[10px] font-medium text-text-dim">→</span>
+            <span>128</span>
+          </span>
+        ) : (
+          <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
+            {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
+              <span
+                key={`${preset.id}-${index}`}
+                className="hm-text-preview-letter"
+                style={{ '--i': index } as CSSProperties}
+              >
+                {char}
+              </span>
+            ))}
+          </span>
+        )}
+        {unavailable ? (
+          <span className="absolute bottom-1 rounded bg-panel-raised/90 px-1.5 py-0.5 text-[8px] font-medium text-text-dim">
+            One number per layer
+          </span>
+        ) : null}
       </div>
       <span className="block px-1 pt-1 pb-0.5 text-[11px] text-text">
         {preset.label}
@@ -1623,19 +1886,52 @@ function TextAnimationThumb({
         active ? 'ring-1 ring-accent/55' : '',
       ].join(' ')}
     >
-      <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
-        {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
-          <span
-            key={`${preset.id}-thumb-${index}`}
-            className="hm-text-preview-letter"
-            style={{ '--i': index } as CSSProperties}
-          >
-            {char}
-          </span>
-        ))}
-      </span>
+      {preset.id === 'number-flow' ? (
+        <span className="flex items-baseline gap-1 text-[16px] font-semibold tabular-nums text-text">
+          <span className="text-text-dim">0</span>
+          <span className="text-[9px] font-medium text-text-dim">→</span>
+          <span>128</span>
+        </span>
+      ) : (
+        <span className={`hm-text-preset-subject hm-text-preset-${preset.id}`}>
+          {Array.from(TEXT_ANIMATION_PREVIEW_WORD).map((char, index) => (
+            <span
+              key={`${preset.id}-thumb-${index}`}
+              className="hm-text-preview-letter"
+              style={{ '--i': index } as CSSProperties}
+            >
+              {char}
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   )
+}
+
+function formatNumberFlowTarget(
+  target: ReturnType<typeof parseNumberFlowText>,
+): string {
+  if (!target) return '—'
+  return new Intl.NumberFormat('en-US', {
+    useGrouping: target.useGrouping,
+    minimumFractionDigits: target.decimals,
+    maximumFractionDigits: target.decimals,
+  }).format(target.value)
+}
+
+function parseNumberFlowIncrement(draft: string): number | null {
+  const trimmed = draft.trim()
+  if (trimmed === '' || trimmed.toLowerCase() === 'auto') return 0
+  return parseNumericExpression(draft)
+}
+
+function formatNumberFlowIncrementEdit(value: number): string {
+  return value <= 0 ? '' : formatNumericValue(value)
+}
+
+function formatNumberFlowIncrementDisplay(value: number): string {
+  return value <= 0 ? 'Auto' : formatNumericDisplayValue(value)
 }
 
 function textApplyLabel(value: TextAnimationApplyTo): string {
@@ -1714,6 +2010,39 @@ function SelectField<T extends string>({
         </option>
       ))}
     </select>
+  )
+}
+
+function CompactSwitch({
+  checked,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  ariaLabel: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-label={ariaLabel}
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={[
+        'relative h-5 w-9 shrink-0 rounded-full border transition-colors',
+        checked
+          ? 'border-accent bg-accent'
+          : 'border-border-strong bg-panel',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left]',
+          checked ? 'left-[18px]' : 'left-[2px]',
+        ].join(' ')}
+      />
+    </button>
   )
 }
 

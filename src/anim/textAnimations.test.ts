@@ -14,6 +14,7 @@ import {
   normalizeTextAnimation,
   stampTextAnimationKeyframes,
   type TextAnimationConfig,
+  textAnimationDefaults,
   typewriterTextAtProgress,
   updateTextAnimationTrackMetadata,
 } from './textAnimations'
@@ -76,6 +77,93 @@ describe('text animation track reconciliation', () => {
     ).toBeNull()
   })
 
+  it('defines Number Flow as a constrained whole-layer numeric preset', () => {
+    expect(
+      TEXT_ANIMATION_PRESETS.find((preset) => preset.id === 'number-flow'),
+    ).toMatchObject({
+      label: 'Number Flow',
+      category: 'Numbers',
+    })
+    expect(textAnimationDefaults('number-flow')).toMatchObject({
+      id: 'number-flow',
+      applyTo: 'layer',
+      delay: 0,
+      duration: 0.8,
+      numberFrom: 0,
+      travelDistance: 0,
+      motionVector: null,
+      motionPath: null,
+      blurRadius: 8,
+      numberFlowTrend: 'auto',
+      numberFlowContinuous: true,
+      numberFlowIncrement: null,
+      numberFlowSpinDistance: 1,
+      numberFlowFadeAmount: 1,
+      numberFlowMaskHeight: 0.25,
+      numberFlowMaskWidth: 0.5,
+      numberFlowTransformTimingRatio: 1,
+      numberFlowSpinTimingRatio: 1,
+      numberFlowOpacityTimingRatio: 0.5,
+    })
+  })
+
+  it('normalizes Number Flow values and enforces its layer-only constraints', () => {
+    const path = defaultTextMotionPath()
+    expect(
+      normalizeTextAnimation({
+        id: 'number-flow',
+        applyTo: 'letters',
+        delay: 0.2,
+        numberFrom: -42.5,
+        travelDistance: 2,
+        motionVector: { x: 1, y: 2, z: 3 },
+        motionPath: path,
+        blurRadius: 16,
+        numberFlowTrend: 'down',
+        numberFlowContinuous: false,
+        numberFlowIncrement: 1_000_000_000_000_001,
+        numberFlowSpinDistance: 5,
+        numberFlowFadeAmount: -1,
+        numberFlowMaskHeight: 4,
+        numberFlowMaskWidth: 4,
+        numberFlowTransformTimingRatio: 0,
+        numberFlowSpinTimingRatio: 3,
+        numberFlowOpacityTimingRatio: 0.25,
+      }),
+    ).toMatchObject({
+      id: 'number-flow',
+      applyTo: 'layer',
+      delay: 0,
+      numberFrom: -42.5,
+      travelDistance: 0,
+      motionVector: null,
+      motionPath: null,
+      blurRadius: 16,
+      numberFlowTrend: 'down',
+      numberFlowContinuous: false,
+      numberFlowIncrement: 1_000_000_000_000_000,
+      numberFlowSpinDistance: 2,
+      numberFlowFadeAmount: 0,
+      numberFlowMaskHeight: 1,
+      numberFlowMaskWidth: 2,
+      numberFlowTransformTimingRatio: 0.05,
+      numberFlowSpinTimingRatio: 1,
+      numberFlowOpacityTimingRatio: 0.25,
+    })
+    expect(
+      normalizeTextAnimation({
+        id: 'number-flow',
+        numberFrom: Number.POSITIVE_INFINITY,
+      })?.numberFrom,
+    ).toBe(0)
+    expect(
+      normalizeTextAnimation({
+        id: 'number-flow',
+        numberFlowIncrement: 0,
+      })?.numberFlowIncrement,
+    ).toBeNull()
+  })
+
   it('installs Curve Drop motion and preserves a customized path across presets', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('text', null, { text: 'Curve' })
@@ -120,7 +208,9 @@ describe('text animation track reconciliation', () => {
       motionPath: path,
     }
 
-    for (const preset of TEXT_ANIMATION_PRESETS) {
+    for (const preset of TEXT_ANIMATION_PRESETS.filter(
+      ({ id }) => id !== 'number-flow',
+    )) {
       current = applyTextAnimation(
         api,
         nodeId,
@@ -136,6 +226,76 @@ describe('text animation track reconciliation', () => {
         path,
       )
     }
+  })
+
+  it('applies Number Flow without replacing its track keys or inherited motion', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('text', null, { text: '$1,234.50' })
+    const initial = applyTextAnimation(api, nodeId, 'curve-drop', 1)
+    const track = api.getTracksForNode(nodeId)[0]!
+    const keyframeIds = track.keyframes.map((keyframe) => keyframe.id)
+
+    const next = applyTextAnimation(
+      api,
+      nodeId,
+      'number-flow',
+      1,
+      {
+        ...initial,
+        applyTo: 'letters',
+        delay: 0.2,
+        numberFrom: 25,
+        numberFlowIncrement: 10,
+        motionVector: { x: 1, y: 2, z: 3 },
+      },
+      { trackId: track.id },
+    )
+
+    expect(next).toMatchObject({
+      id: 'number-flow',
+      applyTo: 'layer',
+      delay: 0,
+      numberFrom: 25,
+      numberFlowIncrement: 10,
+      travelDistance: 0,
+      motionVector: null,
+      motionPath: null,
+      blurRadius: 8,
+    })
+    expect(api.getTrack(track.id)?.keyframes.map(({ id }) => id)).toEqual(
+      keyframeIds,
+    )
+    expect(api.getTrack(track.id)?.keyframes.map(({ time }) => time)).toEqual([
+      1,
+      1.8,
+    ])
+  })
+
+  it('leaves existing animation data untouched when Number Flow text is invalid', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('text', null, { text: 'Revenue' })
+    const initial = applyTextAnimation(api, nodeId, 'fade', 1)
+    const track = structuredClone(api.getTracksForNode(nodeId)[0]!)
+    const nodeBefore = api.getNode(nodeId)
+    const nodeAnimation = structuredClone(
+      nodeBefore?.kind === 'text' ? nodeBefore.textAnimation : null,
+    )
+
+    const returned = applyTextAnimation(
+      api,
+      nodeId,
+      'number-flow',
+      1,
+      initial,
+      { trackId: track.id },
+    )
+
+    expect(returned).toEqual(initial)
+    expect(api.getTrack(track.id)).toEqual(track)
+    const nodeAfter = api.getNode(nodeId)
+    expect(nodeAfter?.kind === 'text' ? nodeAfter.textAnimation : null).toEqual(
+      nodeAnimation,
+    )
   })
 
   it('preserves XYZ motion when the text animation preset changes', () => {

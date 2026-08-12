@@ -478,6 +478,12 @@ interface NodeBase {
   /** Layout participation; 'flow' by default. See {@link Position}. */
   position: Position
   /**
+   * Paint order among siblings. Larger values render in front; ties retain
+   * the parent's `children` order. This is independent of world-space
+   * `transform.z` and never participates in auto layout.
+   */
+  zIndex: number
+  /**
    * For materialized component instances, this points at the node inside
    * the master component that this rendered copy mirrors. Null/undefined
    * means the node is authored directly in the scene.

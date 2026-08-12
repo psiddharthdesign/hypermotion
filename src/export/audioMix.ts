@@ -12,6 +12,8 @@ import {
   resolveMasterAudioGain,
 } from '@/audio/masterAudio'
 
+const TIME_EPSILON = 1e-9
+
 interface FrameSegment {
   firstFrame: number
   lastFrame: number
@@ -325,6 +327,14 @@ export function resolveMediaTimelineSamples(input: {
     quantize: 'none',
   }).layers
     .filter((layer) => layer.item.scene.id === input.ownerSceneId)
+    .filter(
+      (layer) =>
+        layer.item.holdDuration <= TIME_EPSILON ||
+        masterTime <
+          layer.item.masterStart +
+            layer.item.sourceDuration -
+            TIME_EPSILON,
+    )
     .map((layer) => ({
       time: layer.localTime,
       weight: layer.weight,

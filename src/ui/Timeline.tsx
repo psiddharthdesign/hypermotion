@@ -112,6 +112,7 @@ import {
 } from '@/audio/masterAudio'
 import { importAudioFile, importMediaFiles } from '@/ui/importMedia'
 import { TimelineInspectorPortal } from '@/ui/TimelineInspectorPortal'
+import { TimelineDurationControl } from '@/ui/TimelineDurationControl'
 import {
   projectMasterBeatSourcesToScene,
   projectedMasterBeatMarkers,
@@ -3077,9 +3078,10 @@ export function Timeline() {
           <span className="text-[11px] text-text-dim">
             Duration
           </span>
-          <DurationControl
+          <TimelineDurationControl
             duration={duration}
             onChange={(next) => api.setMeta({ duration: Math.max(0.1, next) })}
+            ariaLabel="Scene duration"
           />
         </div>
       </div>
@@ -9481,55 +9483,6 @@ function snapTime(
 // Transport icons. Inline SVG so we don't pull in an icon package for four
 // glyphs. Sized to fit a 7×7 button (h-7 w-7) at 16px, currentColor fill.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Duration control — lets the user set the total scene duration without
-// leaving the timeline. Mirrors Jitter / After Effects: the total comp
-// length is scene-level metadata, but it's edited right where the ruler
-// that depends on it lives. Step buttons bump by one second; the text
-// field accepts a direct number, committing on blur / Enter.
-// ---------------------------------------------------------------------------
-
-function DurationControl({
-  duration,
-  onChange,
-}: {
-  duration: number
-  onChange: (next: number) => void
-}) {
-  const nudge = (delta: number) => onChange(Math.max(0.1, duration + delta))
-  return (
-    // Compact duration control — sits next to the playhead readout
-    // in the unified time group. No wrapping label ("Duration") here:
-    // the slash separator + playhead-time-on-the-left already say
-    // "this is the comp's total length." The -/+ buttons stay for
-    // quick nudging without grabbing the field.
-    <div className="flex items-center gap-1">
-      <button
-        onClick={() => nudge(-1)}
-        className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-panel hover:text-text"
-        title="−1 second"
-      >
-        −
-      </button>
-      <TimeField
-        value={duration}
-        onCommit={onChange}
-        min={0.1}
-        step={0.5}
-        ariaLabel="Scene duration"
-        width="w-24"
-      />
-      <button
-        onClick={() => nudge(1)}
-        className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-panel hover:text-text"
-        title="+1 second"
-      >
-        +
-      </button>
-    </div>
-  )
-}
 
 function TransportIcon({ kind }: { kind: 'start' | 'play' | 'pause' | 'end' }) {
   const common = {

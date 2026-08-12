@@ -32,6 +32,7 @@ import {
   resolveCameraRowIndicators,
 } from '@/ui/cameraRowIndicators'
 import { AppIcon, type AppIconName } from '@/ui/AppIcon'
+import { NumberReadout } from '@/ui/fields/NumberReadout'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { createProgramCameraPreviewSnapshot } from '@/ui/programCameraPreview'
 import {
@@ -241,7 +242,7 @@ export function LayersPanel() {
             <div className="mt-3 border-t border-border pt-2">
               <div className="flex items-center justify-between gap-2 px-3 pb-1">
                 <div className="text-[11px] font-medium text-text-muted">
-                  Workspace · {pasteboardNodes.length}
+                  Workspace · <NumberReadout value={pasteboardNodes.length} />
                 </div>
                 <button
                   type="button"
@@ -579,7 +580,7 @@ function CamerasSection({
           Cameras
         </span>
         <span className="ml-1.5 rounded bg-panel-raised px-1 text-[9px] tabular-nums text-text-dim">
-          {cameras.length}
+          <NumberReadout value={cameras.length} />
         </span>
       </div>
       {cameras.map((camera) => (

@@ -41,6 +41,7 @@ import {
 } from '@/scene/file'
 import { getProjectAPI } from '@/project'
 import { isRenderWindowSupported } from '@/export/renderWindowClient'
+import { shouldRenderHeadlessSequence } from '@/headlessExportScope'
 
 // Renderer-side ambient type. Mirrors the bridge surface in
 // `electron/preload.ts` — re-declared locally because preload's
@@ -169,8 +170,12 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
     const meta = api.getMeta()
     const project = getProjectAPI(api)
     project.ensureInitialized()
+    const sequenceItems = project.getSequenceItems()
     const sequenceMap = project.getSequenceTimeMap()
-    const renderSequence = project.getSequenceItems().length > 1
+    const renderSequence = shouldRenderHeadlessSequence(
+      sequenceItems,
+      project.getScenes(),
+    )
     const durationSec = renderSequence ? sequenceMap.duration : meta.duration
 
     console.log(

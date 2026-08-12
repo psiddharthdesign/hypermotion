@@ -263,6 +263,40 @@ test('buildSceneBytes persists a multi-scene sequence and active legacy projecti
   assert.deepEqual(result.warnings, [])
 })
 
+test('buildSceneBytes preserves a trailing sequence hold duration', () => {
+  const scene = sequenceScene()
+  const detailItem = scene.sequenceItems?.detailItem
+  if (!detailItem) throw new Error('missing detail sequence item')
+  detailItem.holdDuration = 1.25
+
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const sequenceItems = data.sequenceItems as PlainSceneMap
+  const result = validateScene(bytes)
+
+  assert.equal(sequenceItems.detailItem?.holdDuration, 1.25)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+})
+
+test('validateScene rejects invalid sequence hold durations', () => {
+  for (const value of [-1, Number.POSITIVE_INFINITY, Number.NaN, '1']) {
+    const scene = sequenceScene()
+    const detailItem = scene.sequenceItems?.detailItem
+    if (!detailItem) throw new Error('missing detail sequence item')
+    ;(detailItem as unknown as Record<string, unknown>).holdDuration = value
+
+    const result = validateScene(buildSceneBytes(scene))
+
+    assert.equal(result.ok, false)
+    assert.ok(
+      result.errors.includes(
+        'sequence item detailItem holdDuration must be a finite number greater than or equal to 0',
+      ),
+    )
+  }
+})
+
 test('validateScene rejects composition work areas outside their duration', () => {
   const scene = sequenceScene()
   const intro = scene.compositionScenes?.intro
@@ -1520,6 +1554,7 @@ test('applyScenePatch fills shader defaults and accepts shader property edits', 
     visible: true,
     locked: false,
     position: 'flow',
+    zIndex: 0,
     isMask: false,
     componentSourceId: null,
     workspaceOnly: false,
@@ -2830,6 +2865,7 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     visible: true,
     locked: false,
     position: 'flow',
+    zIndex: 0,
     isMask: false,
     componentSourceId: null,
     workspaceOnly: false,

@@ -28,6 +28,7 @@ import {
 } from '@/render3d/imageTextureCache'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
+import { flattenSceneInPaintOrder } from '@/render/layerCompositing'
 import {
   PaperShaderRenderQualityProvider,
   PaperShaderSourceLayer,
@@ -112,6 +113,7 @@ interface RenderJob {
   sceneName: string
   durationSec: number
   scope?: 'scene' | 'sequence'
+  compositionSceneId?: string
   selectedSequenceItemId?: string
   frameRate: number
   exportFps: number
@@ -203,7 +205,14 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
       }
       try {
         loadSceneIntoDoc(api.doc, fetched.seedBytes)
-        getProjectAPI(api).ensureInitialized()
+        const seededProject = getProjectAPI(api)
+        seededProject.ensureInitialized()
+        if (fetched.scope === 'scene' && fetched.compositionSceneId) {
+          if (!seededProject.getScene(fetched.compositionSceneId)) {
+            throw new Error('The selected scene is no longer available.')
+          }
+          seededProject.activateScene(fetched.compositionSceneId)
+        }
         if (!cancelled) setJob(fetched)
       } catch (e) {
         reportError(
@@ -321,13 +330,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
   const renderOrder = useMemo<NodeId[]>(() => {
     void version
     if (!rootId) return []
-    const out: NodeId[] = []
-    const visit = (id: NodeId) => {
-      out.push(id)
-      for (const c of api.getChildren(id)) visit(c.id)
-    }
-    visit(rootId)
-    return out
+    return flattenSceneInPaintOrder(api, rootId)
   }, [api, rootId, version])
 
   const activeComposition = project.getActiveScene()

@@ -45,6 +45,7 @@ interface NormalizedSequenceItem {
   masterAudioMuted?: boolean
   trimStart?: number
   duration?: number
+  holdDuration?: number
   transitionOut?: NormalizedTransition
   sourceIndex: number
 }
@@ -73,6 +74,8 @@ interface ResolvedItem {
   sequenceIndex: number
   sourceStartFrame: number
   sourceEndFrame: number
+  sourceDurationFrames: number
+  holdDurationFrames: number
   durationFrames: number
   masterStartFrame: number
   masterEndFrame: number
@@ -177,6 +180,16 @@ export async function handleGetSequence(
         resolved.frameRate,
       ),
       sourceEnd: framesToSeconds(entry.sourceEndFrame, resolved.frameRate),
+      sourceDuration: framesToSeconds(
+        entry.sourceDurationFrames,
+        resolved.frameRate,
+      ),
+      sourceDurationFrames: entry.sourceDurationFrames,
+      holdDuration: framesToSeconds(
+        entry.holdDurationFrames,
+        resolved.frameRate,
+      ),
+      holdDurationFrames: entry.holdDurationFrames,
       duration: framesToSeconds(entry.durationFrames, resolved.frameRate),
       durationFrames: entry.durationFrames,
       masterStart: framesToSeconds(
@@ -505,6 +518,8 @@ function normalizeSequenceItem(
     trimStart:
       typeof raw.trimStart === 'number' ? raw.trimStart : undefined,
     duration: typeof raw.duration === 'number' ? raw.duration : undefined,
+    holdDuration:
+      typeof raw.holdDuration === 'number' ? raw.holdDuration : undefined,
     transitionOut,
     sourceIndex,
   }
@@ -550,6 +565,8 @@ function resolveSequence(project: NormalizedProject): ResolvedSequence {
     durationFrames: number
     sourceStartFrame: number
     sourceEndFrame: number
+    sourceDurationFrames: number
+    holdDurationFrames: number
   }> = []
 
   for (const item of project.items) {
@@ -661,12 +678,28 @@ function resolveSequence(project: NormalizedProject): ResolvedSequence {
       })
       continue
     }
+    const sourceDurationFrames = intersectedEndFrame - intersectedStartFrame
+    const holdResolution = resolveHoldDurationFrames(
+      item.holdDuration,
+      project.frameRate,
+    )
+    if (holdResolution.clamped) {
+      issues.push({
+        code: 'hold-duration-clamped',
+        severity: 'warning',
+        itemId: item.id,
+        sceneId: scene.id,
+        message: `Sequence item "${item.id}" hold duration was clamped.`,
+      })
+    }
     timings.push({
       item,
       scene,
-      durationFrames: intersectedEndFrame - intersectedStartFrame,
+      durationFrames: sourceDurationFrames + holdResolution.frames,
       sourceStartFrame: intersectedStartFrame,
       sourceEndFrame: intersectedEndFrame,
+      sourceDurationFrames,
+      holdDurationFrames: holdResolution.frames,
     })
   }
 
@@ -766,6 +799,22 @@ function resolveDurationFrames(
   )
   const frames = Math.min(requestedFrames, availableFrames)
   return { frames, clamped: frames !== requestedFrames }
+}
+
+function resolveHoldDurationFrames(
+  requestedDuration: number | undefined,
+  frameRate: number,
+): { frames: number; clamped: boolean } {
+  if (requestedDuration === undefined || requestedDuration === 0) {
+    return { frames: 0, clamped: false }
+  }
+  if (!Number.isFinite(requestedDuration) || requestedDuration < 0) {
+    return { frames: 0, clamped: true }
+  }
+  return {
+    frames: Math.max(0, secondsToFrames(requestedDuration, frameRate)),
+    clamped: false,
+  }
 }
 
 function readScene(

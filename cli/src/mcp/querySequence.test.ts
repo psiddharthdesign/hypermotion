@@ -263,6 +263,10 @@ test('get_sequence resolves crossfades and master duration on frame boundaries',
         sequenceIndex: 0,
         sourceStart: 0.5,
         sourceEnd: 3.5,
+        sourceDuration: 3,
+        sourceDurationFrames: 180,
+        holdDuration: 0,
+        holdDurationFrames: 0,
         duration: 3,
         durationFrames: 180,
         masterStart: 0,
@@ -282,6 +286,10 @@ test('get_sequence resolves crossfades and master duration on frame boundaries',
         sequenceIndex: 1,
         sourceStart: 0,
         sourceEnd: 3,
+        sourceDuration: 3,
+        sourceDurationFrames: 180,
+        holdDuration: 0,
+        holdDurationFrames: 0,
         duration: 3,
         durationFrames: 180,
         masterStart: 2.5,
@@ -306,6 +314,68 @@ test('get_sequence resolves crossfades and master duration on frame boundaries',
         endFrame: 180,
       },
     ])
+    assert.deepEqual(payload.issues, [])
+  } finally {
+    fs.rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('get_sequence includes trailing hold frames without extending the source range', async () => {
+  const scene = multiSceneFixture()
+  const detailItem = scene.sequenceItems?.detailItem
+  if (!detailItem) throw new Error('missing detail sequence item')
+  detailItem.holdDuration = 2.25
+  const fixture = writeFixture(scene)
+  try {
+    const result = await handleGetSequence({ scene: fixture.scenePath })
+    assert.equal(result.isError, undefined)
+    const payload = JSON.parse(assertToolText(result)) as {
+      masterDuration: number
+      masterDurationFrames: number
+      items: Array<{
+        id: string
+        sourceStart: number
+        sourceEnd: number
+        sourceDuration: number
+        sourceDurationFrames: number
+        holdDuration: number
+        holdDurationFrames: number
+        duration: number
+        durationFrames: number
+        masterStart: number
+        masterEnd: number
+      }>
+      issues: unknown[]
+    }
+
+    assert.equal(payload.masterDuration, 7.75)
+    assert.equal(payload.masterDurationFrames, 465)
+    assert.deepEqual(
+      payload.items.find((item) => item.id === 'detailItem'),
+      {
+        id: 'detailItem',
+        sceneId: 'detail',
+        sceneName: 'Detail',
+        masterAudioMuted: true,
+        sourceIndex: 1,
+        sequenceIndex: 1,
+        sourceStart: 0,
+        sourceEnd: 3,
+        sourceDuration: 3,
+        sourceDurationFrames: 180,
+        holdDuration: 2.25,
+        holdDurationFrames: 135,
+        duration: 5.25,
+        durationFrames: 315,
+        masterStart: 2.5,
+        masterEnd: 7.75,
+        masterStartFrame: 150,
+        masterEndFrame: 465,
+        transitionIn: 0.5,
+        transitionOut: 0,
+        transitionOutRequest: { kind: 'cut', duration: 0 },
+      },
+    )
     assert.deepEqual(payload.issues, [])
   } finally {
     fs.rmSync(fixture.directory, { recursive: true, force: true })

@@ -5,7 +5,7 @@ import { resolveDimensions, resolveFrameSegments } from './formats'
 import type { ExportSceneContext } from './orchestrator'
 import { useExportProgress } from './progressStore'
 import { getProjectAPI } from '@/project'
-import { resolveSceneExportOccurrence } from './audioMix'
+import { resolveSceneExportTarget } from './sceneTarget'
 
 /**
  * Editor-side client for the render-window export flow.
@@ -104,16 +104,27 @@ export async function runRenderWindowExport(
   const scope =
     ctx.scope ??
     (project.getSequenceItems().length > 1 ? 'sequence' : 'scene')
-  const durationSec =
-    scope === 'sequence' ? sequenceMap.duration : ctx.durationSec
-  const selectedSequenceItemId =
+  const sceneTarget =
     scope === 'scene'
-      ? resolveSceneExportOccurrence(
-          sequenceMap,
-          ctx.selectedSequenceItemId,
-          project.getActiveSceneId(),
-        )?.item.id
-      : undefined
+      ? resolveSceneExportTarget({
+          scenes: project.getScenes(),
+          sequenceTimeMap: sequenceMap,
+          requestedCompositionSceneId: ctx.compositionSceneId,
+          activeCompositionSceneId: project.getActiveSceneId(),
+          selectedSequenceItemId: ctx.selectedSequenceItemId,
+        })
+      : null
+  if (scope === 'scene' && !sceneTarget) {
+    progress.setError('The selected scene is no longer available.')
+    return
+  }
+  const compositionSceneId = sceneTarget?.composition.id
+  const targetComposition = sceneTarget?.composition ?? null
+  const durationSec =
+    scope === 'sequence'
+      ? sequenceMap.duration
+      : targetComposition?.duration ?? ctx.durationSec
+  const selectedSequenceItemId = sceneTarget?.selectedSequenceItemId
 
   // Resolve output dimensions up-front so we can size the render
   // window correctly. Passing `format.id` enables the H.264 cap for
@@ -141,7 +152,7 @@ export async function runRenderWindowExport(
   // Provisional filename — main's filename is informational; we re-derive
   // in the render window so the chapterTag etc. is consistent. Provide
   // here for the progress UI before any frames render.
-  const sceneName = ctx.sceneName
+  const sceneName = targetComposition?.name ?? ctx.sceneName
   const provisionalFileName = `${sceneName.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'export'}.${ctx.format.extension}`
 
   progress.start(ctx.format, totalFrames, provisionalFileName)
@@ -215,6 +226,7 @@ export async function runRenderWindowExport(
         sceneName,
         durationSec,
         scope,
+        compositionSceneId,
         selectedSequenceItemId,
         frameRate: ctx.frameRate,
         exportFps: fps,

@@ -236,4 +236,38 @@ describe('preview audio mapping', () => {
       sequenceItemId: 'second-a',
     })
   })
+
+  it('keeps Master audio running while a held final frame silences its scene overlay', () => {
+    const timeMap = buildSequenceTimeMap({
+      scenes: [scenes[0]!],
+      items: [
+        {
+          id: 'held-a',
+          sceneId: 'scene-a',
+          duration: 2,
+          holdDuration: 3,
+        },
+      ],
+      frameRate: 60,
+    })
+
+    expect(
+      resolvePreviewAudioContributions(
+        input({
+          timeMap,
+          playhead: 3,
+          sceneAudio: [{ audioNodeId: 'overlay-a', sceneId: 'scene-a' }],
+        }),
+      ),
+    ).toEqual([
+      {
+        key: 'master:soundtrack:sequence',
+        audioNodeId: 'soundtrack',
+        timelineTime: 3,
+        gain: 1,
+        source: 'master',
+        sequenceItemId: null,
+      },
+    ])
+  })
 })

@@ -17,6 +17,7 @@ import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
 import { useProjectAPI } from '@/project'
 import { parseTimeExpression } from '@/ui/fields/timeExpression'
+import { SelectField } from '@/ui/fields/SelectField'
 
 /**
  * Export popover (spec sheet layout).
@@ -81,16 +82,38 @@ export function ExportMenu({
     [project, version],
   )
   const activeComposition = project.getActiveScene()
+  const compositions = useMemo(
+    () => project.getScenes(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project, version],
+  )
   const hasSequence = sequenceMap.items.length > 1
   const [exportScope, setExportScope] = useState<ExportScope>(() =>
     hasSequence ? 'sequence' : 'scene',
   )
+  const [compositionSceneId, setCompositionSceneId] = useState(
+    () => activeComposition?.id ?? compositions[0]?.id ?? '',
+  )
+  const selectedComposition =
+    compositions.find((composition) => composition.id === compositionSceneId) ??
+    activeComposition ??
+    compositions[0] ??
+    null
+  const selectedCompositionIsActive =
+    selectedComposition?.id === activeComposition?.id
   const exportDuration =
-    exportScope === 'sequence' ? sequenceMap.duration : meta.duration
+    exportScope === 'sequence'
+      ? sequenceMap.duration
+      : selectedComposition?.duration ?? meta.duration
   const exportName =
     exportScope === 'scene'
-      ? activeComposition?.name ?? meta.name
+      ? selectedComposition?.name ?? meta.name
       : meta.name
+  const exportWorkArea =
+    exportScope === 'scene'
+      ? selectedComposition?.workArea ??
+        (selectedCompositionIsActive ? workAreaRange : null)
+      : null
 
   // Format. Default MP4 — share-ready, captures the most cases. Drives
   // the file extension downstream + which pipeline the orchestrator
@@ -116,10 +139,13 @@ export function ExportMenu({
   })
 
   // Range. Default to the active chapter when one's isolated, else full.
-  const initialMode: RangeMode = isolatedRange
-    ? 'chapter'
-    : workAreaRange
-      ? 'work'
+  const initialMode: RangeMode =
+    exportScope === 'scene'
+      ? isolatedRange
+        ? 'chapter'
+        : exportWorkArea
+          ? 'work'
+          : 'full'
       : 'full'
   const [rangeMode, setRangeMode] = useState<RangeMode>(initialMode)
   // Multi-chapter selection. A Set keyed by section id; rendered + sent
@@ -172,11 +198,15 @@ export function ExportMenu({
         })),
       }
     }
-    if (rangeMode === 'work' && workAreaRange) {
-      return { kind: 'time', startSec: workAreaRange.start, endSec: workAreaRange.end }
+    if (rangeMode === 'work' && exportWorkArea) {
+      return {
+        kind: 'time',
+        startSec: exportWorkArea.start,
+        endSec: exportWorkArea.end,
+      }
     }
     return { kind: 'time', startSec: customStart, endSec: customEnd }
-  }, [rangeMode, selectedChapters, workAreaRange, customStart, customEnd])
+  }, [rangeMode, selectedChapters, exportWorkArea, customStart, customEnd])
 
   // Filename tag — empty string when not partial, sanitized chapter
   // ids joined when one or more chapters are selected.
@@ -193,6 +223,7 @@ export function ExportMenu({
 
   const exportDisabled =
     exportRunning ||
+    (exportScope === 'scene' && !selectedComposition) ||
     (rangeMode === 'chapter' && selectedChapters.length === 0)
 
   // Range readout values. For segments, sum each span's duration; for
@@ -281,6 +312,8 @@ export function ExportMenu({
       sceneName: exportName,
       durationSec: exportDuration,
       scope: exportScope,
+      compositionSceneId:
+        exportScope === 'scene' ? selectedComposition?.id : undefined,
       selectedSequenceItemId:
         exportScope === 'scene'
           ? selectedSequenceItemId ?? undefined
@@ -305,7 +338,10 @@ export function ExportMenu({
   }, [exportName, format.extension])
 
   const totalFrames = Math.max(1, Math.round(exportDuration * fps))
-  const hasChapters = exportScope === 'scene' && sections.length > 0
+  const hasChapters =
+    exportScope === 'scene' &&
+    selectedCompositionIsActive &&
+    sections.length > 0
 
   return createPortal(
     <div
@@ -339,10 +375,12 @@ export function ExportMenu({
                 setExportScope('scene')
                 setRangeMode('full')
                 setCustomStart(0)
-                setCustomEnd(meta.duration)
+                setCustomEnd(
+                  selectedComposition?.duration ?? meta.duration,
+                )
               }}
             >
-              Active scene
+              Individual scene
             </SegmentBtn>
             <SegmentBtn
               active={exportScope === 'sequence'}
@@ -362,6 +400,29 @@ export function ExportMenu({
             </SegmentBtn>
           </Segments>
         </FieldRow>
+
+        {exportScope === 'scene' && selectedComposition ? (
+          <FieldRow label="Scene">
+            <SelectField
+              value={selectedComposition.id}
+              options={compositions.map((composition, index) => ({
+                value: composition.id,
+                label: `${index + 1} · ${composition.name}`,
+              }))}
+              onCommit={(nextId) => {
+                const nextComposition = compositions.find(
+                  (composition) => composition.id === nextId,
+                )
+                if (!nextComposition) return
+                setCompositionSceneId(nextId)
+                setRangeMode('full')
+                setCustomStart(0)
+                setCustomEnd(nextComposition.duration)
+              }}
+              ariaLabel="Scene to export"
+            />
+          </FieldRow>
+        ) : null}
 
         <FieldRow label="Format">
           <Segments>
@@ -430,7 +491,7 @@ export function ExportMenu({
                   Chapter
                 </SegmentBtn>
               )}
-              {exportScope === 'scene' && workAreaRange && (
+              {exportScope === 'scene' && exportWorkArea && (
                 <SegmentBtn
                   active={rangeMode === 'work'}
                   onClick={() => setRangeMode('work')}
@@ -476,7 +537,7 @@ export function ExportMenu({
               </div>
             )}
 
-            {rangeMode === 'work' && workAreaRange && (
+            {rangeMode === 'work' && exportWorkArea && (
               <RangeReadout
                 start={rangeStart}
                 end={rangeEnd}

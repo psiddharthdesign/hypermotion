@@ -58,6 +58,15 @@ export interface ProjectAPI {
   activateScene(id: string): void
   createScene(input?: CreateCompositionInput): CompositionScene
   duplicateScene(id: string, insertAt?: number): CompositionScene | null
+  /**
+   * Register a composition whose nodes have already been cloned into this
+   * document. This narrow entry point is used by cross-file scene transfer;
+   * callers must never write the project Yjs collections directly.
+   */
+  registerTransferredScene(
+    composition: CompositionScene,
+    insertAt?: number,
+  ): SequenceItem
   deleteScene(id: string): DeleteCompositionResult
   updateScene(
     id: string,
@@ -82,7 +91,11 @@ export interface ProjectAPI {
     patch: Partial<
       Pick<
         SequenceItem,
-        'trimStart' | 'duration' | 'transitionOut' | 'masterAudioMuted'
+        | 'trimStart'
+        | 'duration'
+        | 'holdDuration'
+        | 'transitionOut'
+        | 'masterAudioMuted'
       >
     >,
   ): void
@@ -519,6 +532,71 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
       return copied
     },
 
+    registerTransferredScene: (composition, insertAt) => {
+      if (compositions.has(composition.id)) {
+        throw new Error(`Scene already exists: ${composition.id}`)
+      }
+      const root = api.getNode(composition.rootNodeId)
+      if (!root || root.kind !== 'frame' || root.parent !== null) {
+        throw new Error(
+          `Transferred scene has an invalid root: ${composition.rootNodeId}`,
+        )
+      }
+      for (const cameraId of composition.cameraIds) {
+        const camera = api.getNode(cameraId)
+        if (!camera || camera.kind !== 'camera' || camera.parent !== null) {
+          throw new Error(
+            `Transferred scene has an invalid camera: ${cameraId}`,
+          )
+        }
+      }
+      for (const workspaceNodeId of composition.workspaceNodeIds ?? []) {
+        const workspaceNode = api.getNode(workspaceNodeId)
+        if (
+          !workspaceNode ||
+          workspaceNode.parent !== null ||
+          !workspaceNode.workspaceOnly
+        ) {
+          throw new Error(
+            `Transferred scene has an invalid workspace node: ${workspaceNodeId}`,
+          )
+        }
+      }
+      if (
+        composition.defaultCameraId !== null &&
+        !composition.cameraIds.includes(composition.defaultCameraId)
+      ) {
+        throw new Error(
+          `Transferred scene default camera is not owned: ${composition.defaultCameraId}`,
+        )
+      }
+      for (const cut of Object.values(composition.cameraCuts)) {
+        if (!composition.cameraIds.includes(cut.cameraId)) {
+          throw new Error(
+            `Transferred scene camera cut is not owned: ${cut.id}`,
+          )
+        }
+      }
+
+      const item: SequenceItem = {
+        id: uniqueId('item'),
+        sceneId: composition.id,
+        trimStart: 0,
+        transitionOut: { kind: 'cut', duration: 0 },
+      }
+      api.doc.transact(() => {
+        compositions.set(composition.id, cloneValue(composition))
+        sequenceItems.set(item.id, item)
+        const index = clampIndex(
+          insertAt ?? sequenceOrder.length,
+          sequenceOrder.length,
+        )
+        sequenceOrder.insert(index, [item.id])
+        scene.set('sequenceSchemaVersion', SCHEMA_VERSION)
+      }, 'scene-transfer-register')
+      return item
+    },
+
     deleteScene: (id) => {
       ensureInitialized()
       const composition = readScene(id)
@@ -756,6 +834,14 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
             )
       const effectiveDuration =
         duration ?? composition.duration - trimStart
+      const requestedHoldDuration =
+        Object.prototype.hasOwnProperty.call(patch, 'holdDuration')
+          ? patch.holdDuration
+          : item.holdDuration
+      const holdDuration = Math.max(
+        0,
+        finite(requestedHoldDuration, 0),
+      )
       const masterAudioMuted =
         Object.prototype.hasOwnProperty.call(patch, 'masterAudioMuted')
           ? patch.masterAudioMuted === true
@@ -766,11 +852,13 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
         trimStart,
         transitionOut: normalizeTransition(
           patch.transitionOut ?? item.transitionOut,
-          effectiveDuration,
+          effectiveDuration + holdDuration,
         ),
       }
       if (duration === undefined) delete next.duration
       else next.duration = duration
+      if (holdDuration > 0) next.holdDuration = holdDuration
+      else delete next.holdDuration
       // False is the default. Keeping only the meaningful true value makes
       // existing files byte-light and preserves compatibility with schema-v2
       // projects authored before occurrence audio controls existed.
@@ -973,6 +1061,7 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
     item.duration === undefined
       ? undefined
       : Math.max(0, finite(item.duration, 0))
+  const holdDuration = Math.max(0, finite(item.holdDuration, 0))
   const normalized: SequenceItem = {
     ...item,
     trimStart: Math.max(0, finite(item.trimStart, 0)),
@@ -980,8 +1069,13 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
     // An omitted duration means "the remainder of the composition", not zero.
     // The pure time-map layer has the scene context needed to clamp this
     // transition precisely; preserve the authored request until then.
-    transitionOut: normalizeTransition(item.transitionOut, duration),
+    transitionOut: normalizeTransition(
+      item.transitionOut,
+      duration === undefined ? undefined : duration + holdDuration,
+    ),
   }
+  if (holdDuration > 0) normalized.holdDuration = holdDuration
+  else delete normalized.holdDuration
   if (item.masterAudioMuted === true) normalized.masterAudioMuted = true
   else delete normalized.masterAudioMuted
   return normalized

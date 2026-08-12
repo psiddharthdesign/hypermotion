@@ -67,3 +67,32 @@ export function resolveTransportSpacePatch(
     playing: !state.playing,
   }
 }
+
+/**
+ * Resolve a one-frame keyboard step against the timeline that owns the
+ * transport. Master and Scene share one playhead, but have different bounds.
+ */
+export function resolveTransportFrameStepPatch(
+  state: TransportShortcutState,
+  direction: -1 | 1,
+  sceneDuration: number,
+  sequenceDuration: number,
+  frameRate: number,
+): TransportShortcutPatch {
+  const isMaster = state.timelineScope === 'sequence'
+  const duration = Math.max(
+    0,
+    isMaster ? sequenceDuration : sceneDuration,
+  )
+  const step = 1 / Math.max(1, frameRate)
+  const playhead = Math.min(
+    duration,
+    Math.max(0, state.playhead + direction * step),
+  )
+
+  return {
+    ...(isMaster ? { previewScope: 'sequence' as const } : {}),
+    playhead,
+    playing: false,
+  }
+}

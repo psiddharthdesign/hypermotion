@@ -12,8 +12,11 @@ import {
 } from 'lucide-react'
 import {
   useCallback,
+  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
@@ -25,15 +28,24 @@ import {
 } from '@/audio/masterAudio'
 import { useProjectAPI } from '@/project'
 import { useSceneAPI, useSceneVersion } from '@/scene'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import {
+  buildSequenceTimeMap,
   resizeSequenceOccurrenceOut,
+  resizeSequenceTailToMasterDuration,
+  secondsToFrames,
+  sequenceMasterDurationBounds,
   type ResolvedSequenceItem,
 } from '@/sequence'
 import { useUI } from '@/state/ui'
 import { importAudioFile } from '@/ui/importMedia'
+import { MasterTimeField } from '@/ui/MasterTimeField'
+import { masterTimelineRevealScrollLeft } from '@/ui/masterTimelineViewport'
+import { TimelineDurationControl } from '@/ui/TimelineDurationControl'
 
 const LABEL_COLUMN_WIDTH = 184
 const MIN_PIXELS_PER_SECOND = 72
+const TIMELINE_END_PADDING = 200
 const SCENE_TRACK_HEIGHT = 88
 const MASTER_AUDIO_ROW_HEIGHT = 36
 
@@ -49,7 +61,7 @@ export function MasterTimeline() {
   const version = useSceneVersion()
   const api = useSceneAPI()
   const project = useProjectAPI()
-  const map = useMemo(
+  const baseMap = useMemo(
     () => project.getSequenceTimeMap(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, version],
@@ -67,7 +79,34 @@ export function MasterTimeline() {
   const setSelection = useUI((state) => state.setSelection)
   const setInspectorMode = useUI((state) => state.setInspectorMode)
   const stripRef = useRef<HTMLDivElement>(null)
+  const rulerContentRef = useRef<HTMLDivElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
+  const [masterDurationPreview, setMasterDurationPreview] = useState<
+    number | null
+  >(null)
+  const previewEdit = useMemo(
+    () =>
+      masterDurationPreview === null
+        ? null
+        : resizeSequenceTailToMasterDuration(
+            baseMap,
+            masterDurationPreview,
+          ),
+    [baseMap, masterDurationPreview],
+  )
+  const map = useMemo(() => {
+    if (!previewEdit) return baseMap
+    const items = project.getSequenceItems().map((item) =>
+      item.id === previewEdit.itemId
+        ? { ...item, ...previewEdit.patch }
+        : item,
+    )
+    return buildSequenceTimeMap({
+      scenes: project.getScenes(),
+      items,
+      frameRate: baseMap.frameRate,
+    })
+  }, [baseMap, previewEdit, project])
   const pixelsPerSecond = Math.max(
     MIN_PIXELS_PER_SECOND,
     useUI((state) => state.timelinePxPerSecond),
@@ -87,10 +126,58 @@ export function MasterTimeline() {
       (node) => node.startTime + masterAudioClipDuration(node),
     ),
   )
-  const width = Math.max(480, contentDuration * pixelsPerSecond)
+  const width = Math.max(
+    480,
+    contentDuration * pixelsPerSecond + TIMELINE_END_PADDING,
+  )
+  const durationBounds = useMemo(
+    () => sequenceMasterDurationBounds(baseMap),
+    [baseMap],
+  )
   const contentHeight =
     SCENE_TRACK_HEIGHT +
     Math.max(1, masterAudio.length) * MASTER_AUDIO_ROW_HEIGHT
+
+  const syncRulerScroll = useCallback(() => {
+    const strip = stripRef.current
+    const ruler = rulerContentRef.current
+    if (!strip || !ruler) return
+    ruler.style.transform = `translate3d(${-strip.scrollLeft}px, 0, 0)`
+  }, [])
+
+  const revealMasterTime = useCallback(
+    (time: number, behavior: ScrollBehavior = 'auto') => {
+      const strip = stripRef.current
+      if (!strip) return
+      const left = masterTimelineRevealScrollLeft({
+        time,
+        pixelsPerSecond,
+        scrollLeft: strip.scrollLeft,
+        clientWidth: strip.clientWidth,
+        scrollWidth: strip.scrollWidth,
+      })
+      if (Math.abs(left - strip.scrollLeft) < 0.5) return
+      strip.scrollTo({ left, behavior })
+    },
+    [pixelsPerSecond],
+  )
+
+  useLayoutEffect(() => {
+    syncRulerScroll()
+  }, [syncRulerScroll, width])
+
+  useEffect(() => {
+    return useUI.subscribe((state, previous) => {
+      if (
+        !state.playing ||
+        state.previewScope !== 'sequence' ||
+        state.playhead === previous.playhead
+      ) {
+        return
+      }
+      revealMasterTime(state.playhead)
+    })
+  }, [revealMasterTime])
 
   const selectMasterAudio = useCallback(
     (nodeId: string) => {
@@ -246,6 +333,7 @@ export function MasterTimeline() {
     if (event.button !== 0) return
     event.preventDefault()
     setPlaying(false)
+    ;(document.activeElement as HTMLElement | null)?.blur()
     seekFromClientX(event.clientX)
     const element = event.currentTarget
     element.setPointerCapture(event.pointerId)
@@ -264,6 +352,44 @@ export function MasterTimeline() {
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
   }
+
+  const commitMasterDuration = useCallback(
+    (requestedDuration: number) => {
+      setMasterDurationPreview(null)
+      const currentMap = project.getSequenceTimeMap()
+      const edit = resizeSequenceTailToMasterDuration(
+        currentMap,
+        requestedDuration,
+      )
+      if (!edit) return
+      setPlaying(false)
+      setPreviewScope('sequence')
+      if (
+        secondsToFrames(edit.duration, currentMap.frameRate) ===
+        currentMap.durationFrames
+      ) {
+        return
+      }
+      api.doc.transact(() => {
+        project.updateSequenceItem(edit.itemId, edit.patch)
+      }, UNDOABLE_GESTURE_ORIGIN)
+      if (useUI.getState().playhead > edit.duration) {
+        setPlayhead(edit.duration)
+      }
+    },
+    [api.doc, project, setPlayhead, setPlaying, setPreviewScope],
+  )
+
+  const previewMasterDuration = useCallback(
+    (requestedDuration: number) => {
+      const edit = resizeSequenceTailToMasterDuration(
+        baseMap,
+        requestedDuration,
+      )
+      setMasterDurationPreview(edit?.duration ?? null)
+    },
+    [baseMap],
+  )
 
   const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
@@ -306,6 +432,7 @@ export function MasterTimeline() {
               setPlaying(false)
               setPlayhead(0)
               setProgramSequencePosition(null, null)
+              revealMasterTime(0, 'smooth')
             }}
             className="hm-icon-button h-7 w-7"
           >
@@ -324,6 +451,7 @@ export function MasterTimeline() {
               setPreviewScope('sequence')
               if (!playing && useUI.getState().playhead >= map.duration) {
                 setPlayhead(0)
+                revealMasterTime(0, 'smooth')
               }
               setPlaying(!playing)
             }}
@@ -338,13 +466,18 @@ export function MasterTimeline() {
               setPlaying(false)
               setPreviewScope('sequence')
               setPlayhead(map.duration)
+              revealMasterTime(map.duration, 'smooth')
             }}
             className="hm-icon-button h-7 w-7"
           >
             <SkipForward size={13} />
           </button>
         </div>
-        <MasterTimeReadout duration={map.duration} frameRate={map.frameRate} />
+        <MasterTimeReadout
+          duration={map.duration}
+          frameRate={map.frameRate}
+          onRevealTime={revealMasterTime}
+        />
         <div className="flex-1" />
         <input
           ref={audioInputRef}
@@ -367,11 +500,25 @@ export function MasterTimeline() {
           Add audio
         </button>
         <span className="text-[10px] text-text-dim">
-          {map.items.length} scenes
+          {map.items.length} scene{map.items.length === 1 ? '' : 's'}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-text-muted">
-          {map.duration.toFixed(2)}s
-        </span>
+        <div
+          className="flex shrink-0 items-center gap-2"
+          title="Changes Master length on the final occurrence; extending holds its last frame"
+        >
+          <span className="text-[11px] text-text-dim">Duration</span>
+          <TimelineDurationControl
+            duration={map.duration}
+            onChange={commitMasterDuration}
+            onScrubPreview={previewMasterDuration}
+            onScrubCommit={commitMasterDuration}
+            onScrubCancel={() => setMasterDurationPreview(null)}
+            min={durationBounds?.min ?? 0}
+            max={durationBounds?.max}
+            disabled={!durationBounds}
+            ariaLabel="Master duration"
+          />
+        </div>
       </div>
 
       <div className="flex h-7 shrink-0 border-b border-border bg-panel">
@@ -383,8 +530,9 @@ export function MasterTimeline() {
         </div>
         <div className="relative min-w-0 flex-1 overflow-hidden">
           <div
+            ref={rulerContentRef}
             className="relative h-full"
-            style={{ width }}
+            style={{ width, willChange: 'transform' }}
             onPointerDown={onScrubPointerDown}
           >
             <MasterRuler
@@ -441,6 +589,7 @@ export function MasterTimeline() {
             ref={stripRef}
             className="relative min-w-0 flex-1 overflow-x-auto bg-app-bg"
             onPointerDown={onScrubPointerDown}
+            onScroll={syncRulerScroll}
           >
             <div
               className="relative"
@@ -753,16 +902,33 @@ function MasterAudioClip({
 function MasterTimeReadout({
   duration,
   frameRate,
+  onRevealTime,
 }: {
   duration: number
   frameRate: number
+  onRevealTime: (time: number, behavior?: ScrollBehavior) => void
 }) {
   const playhead = useUI((state) => state.playhead)
-  const frame = Math.round(clamp(playhead, 0, duration) * frameRate)
+  const setPlaying = useUI((state) => state.setPlaying)
+  const setPlayhead = useUI((state) => state.setPlayhead)
+  const setPreviewScope = useUI((state) => state.setPreviewScope)
+  const commit = useCallback(
+    (next: number) => {
+      const safeTime = clamp(next, 0, duration)
+      setPlaying(false)
+      setPreviewScope('sequence')
+      setPlayhead(safeTime)
+      onRevealTime(safeTime, 'smooth')
+    },
+    [duration, onRevealTime, setPlayhead, setPlaying, setPreviewScope],
+  )
   return (
-    <span className="rounded border border-border bg-panel px-2 py-1 font-mono text-[9px] tabular-nums text-text-muted">
-      {clamp(playhead, 0, duration).toFixed(2)}s · f{frame}
-    </span>
+    <MasterTimeField
+      value={playhead}
+      duration={duration}
+      frameRate={frameRate}
+      onChange={commit}
+    />
   )
 }
 

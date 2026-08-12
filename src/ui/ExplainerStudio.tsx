@@ -385,9 +385,6 @@ export function ExplainerStudio({ onClose }: ExplainerStudioProps) {
           >
             Explainer
           </h2>
-          <p className="mt-0.5 text-[10px] leading-4 text-text-muted">
-            Build an editable, beat-synced master sequence.
-          </p>
         </div>
         <button
           type="button"

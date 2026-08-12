@@ -24,13 +24,16 @@ import { useProjectAPI, type ProjectAPI } from '@/project'
 import { useUI } from '@/state/ui'
 import {
   MAX_CAMERA_SCROLL_SENSITIVITY,
+  MAX_LAYER_Z_INDEX,
   MIN_CAMERA_SCROLL_SENSITIVITY,
+  MIN_LAYER_Z_INDEX,
   MAX_LAYER_BLUR_PX,
   clampLayerBlurAmount,
   effectBlurPropertyId,
   effectStableId,
   normalizeCameraScrollSensitivity,
   normalizeEllipseArc,
+  normalizeLayerZIndex,
   useSceneAPI,
   useSceneVersion,
 } from '@/scene'
@@ -1005,6 +1008,9 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   const allHaveSize = nodes.every((n) => 'size' in n)
   const allHaveLayout = nodes.every((n) => 'layout' in n)
   const allFrames = nodes.every((n) => n.kind === 'frame')
+  const allCanSetZIndex = nodes.every(
+    (n) => n.parent !== null && n.kind !== 'camera' && n.kind !== 'audio',
+  )
   const renderModeNodes = renderModeEligibleNodes(nodes)
 
   // Per-group patchers. Each writes to every selected node that has
@@ -1164,6 +1170,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   // Shared values across the selection — `mixed` means they disagree.
   const cVisible = common(nodes, (n) => n.visible)
   const cLocked = common(nodes, (n) => n.locked)
+  const cZIndex = common(nodes, (n) => n.zIndex)
 
   const cX = common(nodes, (n) => n.transform.x)
   const cY = common(nodes, (n) => n.transform.y)
@@ -1268,79 +1275,41 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
         </FieldRow>
       </Section>
 
+      {allCanSetZIndex ? (
+        <Section title="Layout position">
+          <FieldRow label="Z index">
+            <MixedCell mixed={cZIndex.mixed}>
+              <NumberField
+                value={cZIndex.value}
+                min={MIN_LAYER_Z_INDEX}
+                max={MAX_LAYER_Z_INDEX}
+                step={1}
+                ariaLabel="Z index"
+                onCommit={(value) => {
+                  const zIndex = normalizeLayerZIndex(value)
+                  api.doc.transact(() => {
+                    for (const node of nodes) {
+                      api.setNodeProperty(node.id, 'zIndex', zIndex)
+                    }
+                  }, UNDOABLE_GESTURE_ORIGIN)
+                }}
+              />
+            </MixedCell>
+          </FieldRow>
+          <p className="px-2 pt-0.5 text-[10.5px] leading-snug text-text-dim">
+            Higher values paint in front within each parent. Layout and 3D
+            depth stay unchanged.
+          </p>
+        </Section>
+      ) : null}
+
       <Section title="Transform">
         {/* Align tools span the full width of the section as a top
             band, Framer-style. Greys out automatically when the
             selection sits inside a stack (parent has flex / grid
             layout) — alignment via transform would just visually
             shift the node out of its solved Yoga position. */}
-          <AlignTools api={api} selection={selection} />
-        {cRenderMode ? (
-          <FieldRow label="Render mode">
-            <MixedCell mixed={cRenderMode.mixed}>
-              <SelectField<RenderMode>
-                value={cRenderMode.value}
-                options={RENDER_MODE_OPTIONS}
-                onCommit={(renderMode) =>
-                  applyRenderModeToSelection(api, nodes, renderMode)
-                }
-                width="w-full"
-              />
-            </MixedCell>
-          </FieldRow>
-        ) : null}
-        <FieldRow label="3D space">
-          <MixedCell mixed={cSpace.mixed}>
-            <SelectField<NonNullable<Transform['space']>>
-              value={cSpace.value}
-              options={[
-                { value: 'local', label: 'Local plane' },
-                { value: 'world', label: 'World' },
-              ]}
-              onCommit={(space) => patchTransformAll({ space })}
-              width="w-full"
-            />
-          </MixedCell>
-        </FieldRow>
-        <ScalePairField
-          scaleX={cSX.value}
-          scaleY={cSY.value}
-          mixedX={cSX.mixed}
-          mixedY={cSY.mixed}
-          onCommitX={(v) => patchTransformAll({ scaleX: v })}
-          onCommitY={(v) => patchTransformAll({ scaleY: v })}
-          onCommitPair={({ scaleX, scaleY }) =>
-            patchTransformAll({ scaleX, scaleY })
-          }
-          onScrubPreviewPair={({ scaleX, scaleY }) =>
-            previewVisualAll({ scaleX, scaleY })
-          }
-          onScrubCommitPair={({ scaleX, scaleY }) =>
-            commitTransformScrubAll({ scaleX, scaleY })
-          }
-          onScrubCancel={cancelVisualPreview}
-          keyframeX={
-            <MultiKeyframeButton
-              targets={nodes.map((node) => ({
-                nodeId: node.id,
-                currentValue: node.transform.scaleX,
-              }))}
-              propertyId="transform.scaleX"
-            />
-          }
-          keyframeY={
-            <MultiKeyframeButton
-              targets={nodes.map((node) => ({
-                nodeId: node.id,
-                currentValue: node.transform.scaleY,
-              }))}
-              propertyId="transform.scaleY"
-            />
-          }
-        />
-      </Section>
-
-      <Section title="Position">
+        <AlignTools api={api} selection={selection} />
         <KeyframeSliderRow
           label="Position X"
           value={cX.value}
@@ -1404,9 +1373,6 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             />
           }
         />
-      </Section>
-
-      <Section title="Rotation">
         <KeyframeSliderRow
           label="Rotate X"
           value={cRotX.value}
@@ -1479,6 +1445,69 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
             />
           }
         />
+        <ScalePairField
+          scaleX={cSX.value}
+          scaleY={cSY.value}
+          mixedX={cSX.mixed}
+          mixedY={cSY.mixed}
+          onCommitX={(v) => patchTransformAll({ scaleX: v })}
+          onCommitY={(v) => patchTransformAll({ scaleY: v })}
+          onCommitPair={({ scaleX, scaleY }) =>
+            patchTransformAll({ scaleX, scaleY })
+          }
+          onScrubPreviewPair={({ scaleX, scaleY }) =>
+            previewVisualAll({ scaleX, scaleY })
+          }
+          onScrubCommitPair={({ scaleX, scaleY }) =>
+            commitTransformScrubAll({ scaleX, scaleY })
+          }
+          onScrubCancel={cancelVisualPreview}
+          keyframeX={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.scaleX,
+              }))}
+              propertyId="transform.scaleX"
+            />
+          }
+          keyframeY={
+            <MultiKeyframeButton
+              targets={nodes.map((node) => ({
+                nodeId: node.id,
+                currentValue: node.transform.scaleY,
+              }))}
+              propertyId="transform.scaleY"
+            />
+          }
+        />
+        {cRenderMode ? (
+          <FieldRow label="Render mode">
+            <MixedCell mixed={cRenderMode.mixed}>
+              <SelectField<RenderMode>
+                value={cRenderMode.value}
+                options={RENDER_MODE_OPTIONS}
+                onCommit={(renderMode) =>
+                  applyRenderModeToSelection(api, nodes, renderMode)
+                }
+                width="w-full"
+              />
+            </MixedCell>
+          </FieldRow>
+        ) : null}
+        <FieldRow label="3D space">
+          <MixedCell mixed={cSpace.mixed}>
+            <SelectField<NonNullable<Transform['space']>>
+              value={cSpace.value}
+              options={[
+                { value: 'local', label: 'Local plane' },
+                { value: 'world', label: 'World' },
+              ]}
+              onCommit={(space) => patchTransformAll({ space })}
+              width="w-full"
+            />
+          </MixedCell>
+        </FieldRow>
       </Section>
 
       {cW && cH ? (
@@ -3150,6 +3179,63 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
         />
         <KeyframeSliderRow
+          label="Position Z"
+          value={liveZ}
+          onCommit={(v) => patchTransform({ z: v })}
+          onScrubPreview={(v) => previewNodeVisual({ z: v })}
+          onScrubCommit={(v) => commitTransformScrub({ z: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={POSITION_SLIDER_MIN}
+          sliderMax={POSITION_SLIDER_MAX}
+          step={1}
+          suffix="px"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.z"
+              currentValue={liveZ}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate X"
+          value={liveRotX}
+          onCommit={(v) => patchTransform({ rotationX: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationX: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationX"
+              currentValue={liveRotX}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate Y"
+          value={liveRotY}
+          onCommit={(v) => patchTransform({ rotationY: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationY: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationY"
+              currentValue={liveRotY}
+            />
+          }
+        />
+        <KeyframeSliderRow
           label="Rotate Z"
           value={liveRot}
           onCommit={(v) => patchTransform({ rotation: v })}
@@ -3208,67 +3294,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               width="w-full"
             />
           </FieldRow>
-          <KeyframeSliderRow
-            label="Position Z"
-            value={liveZ}
-            onCommit={(v) => patchTransform({ z: v })}
-            onScrubPreview={(v) => previewNodeVisual({ z: v })}
-            onScrubCommit={(v) => commitTransformScrub({ z: v })}
-            onScrubCancel={cancelNodeVisualPreview}
-            sliderMin={POSITION_SLIDER_MIN}
-            sliderMax={POSITION_SLIDER_MAX}
-            step={1}
-            suffix="px"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="transform.z"
-                currentValue={liveZ}
-              />
-            }
-          />
-          <KeyframeSliderRow
-            label="Rotate X"
-            value={liveRotX}
-            onCommit={(v) => patchTransform({ rotationX: v })}
-            onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
-            onScrubCommit={(v) =>
-              commitTransformScrub({ rotationX: v })
-            }
-            onScrubCancel={cancelNodeVisualPreview}
-            sliderMin={ROTATION_SLIDER_MIN}
-            sliderMax={ROTATION_SLIDER_MAX}
-            step={1}
-            suffix="°"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="transform.rotationX"
-                currentValue={liveRotX}
-              />
-            }
-          />
-          <KeyframeSliderRow
-            label="Rotate Y"
-            value={liveRotY}
-            onCommit={(v) => patchTransform({ rotationY: v })}
-            onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
-            onScrubCommit={(v) =>
-              commitTransformScrub({ rotationY: v })
-            }
-            onScrubCancel={cancelNodeVisualPreview}
-            sliderMin={ROTATION_SLIDER_MIN}
-            sliderMax={ROTATION_SLIDER_MAX}
-            step={1}
-            suffix="°"
-            keyframe={
-              <KeyframeButton
-                nodeId={node.id}
-                propertyId="transform.rotationY"
-                currentValue={liveRotY}
-              />
-            }
-          />
           <FieldRow label="Pivot">
             <SelectField<PivotPreset>
               value={pivotPreset}
@@ -6493,6 +6518,24 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
           width="w-full"
         />
       </FieldRow>
+      <FieldRow label="Z index">
+        <NumberField
+          value={node.zIndex}
+          min={MIN_LAYER_Z_INDEX}
+          max={MAX_LAYER_Z_INDEX}
+          step={1}
+          ariaLabel="Z index"
+          onCommit={(value) => {
+            api.doc.transact(() => {
+              api.setNodeProperty(
+                node.id,
+                'zIndex',
+                normalizeLayerZIndex(value),
+              )
+            }, UNDOABLE_GESTURE_ORIGIN)
+          }}
+        />
+      </FieldRow>
       <p className="px-2 pt-0.5 text-[10.5px] leading-snug text-text-dim">
         {node.position === 'flow'
           ? parentMode === 'flex'
@@ -6501,6 +6544,10 @@ function PositionSection({ node, api }: { node: Node; api: SceneAPI }) {
               ? 'Following parent grid.'
               : 'Relative to the parent layer.'
           : 'Pinned by Transform — siblings ignore it.'}
+      </p>
+      <p className="px-2 pt-0.5 text-[10.5px] leading-snug text-text-dim">
+        Higher values paint in front of siblings. This does not change layout
+        or Position Z.
       </p>
       {/* When this node is in flow under an auto-layout parent and
           carries a non-zero transform.x/y, the offset shifts it OFF

@@ -18,6 +18,7 @@ import {
   normalizeTextStaggerCurve,
   type TextStaggerCurve,
 } from './textStaggerCurve'
+import { parseNumberFlowText } from './numberFlow'
 
 export type TextAnimationId =
   | 'appear'
@@ -39,6 +40,7 @@ export type TextAnimationId =
   | 'color-fade'
   | 'gradient-reveal'
   | 'typewriter'
+  | 'number-flow'
   | 'tracking'
   | 'skew'
 
@@ -53,6 +55,7 @@ export type TextAnimationAcceleration =
   | 'smooth'
   | 'spring'
 export type TextAnimationSmoothing = 'none' | 'soft' | 'smooth'
+export type NumberFlowTrend = 'auto' | 'up' | 'down' | 'individual'
 
 /**
  * Per-segment motion offset in line-height multiples: +X moves right, +Y moves
@@ -70,6 +73,23 @@ export interface TextAnimationConfig {
   smoothing: TextAnimationSmoothing
   staggerCurve: TextStaggerCurve | null
   duration: number
+  numberFrom: number
+  numberFlowTrend: NumberFlowTrend
+  numberFlowContinuous: boolean
+  /** Numeric increment between visible rolls; null follows display precision. */
+  numberFlowIncrement: number | null
+  /** Whole-digit travel measured in the current text line height. */
+  numberFlowSpinDistance: number
+  /** Strength of the outgoing/incoming digit cross-fade, from 0 to 1. */
+  numberFlowFadeAmount: number
+  /** Soft clipping band at the top and bottom of the number, in em. */
+  numberFlowMaskHeight: number
+  /** Soft clipping band at the left and right of the number, in em. */
+  numberFlowMaskWidth: number
+  /** Portion of the segment duration used by each Number Flow channel. */
+  numberFlowTransformTimingRatio: number
+  numberFlowSpinTimingRatio: number
+  numberFlowOpacityTimingRatio: number
   startTime: number
   acceleration: TextAnimationAcceleration
   easingPresetId: EasingPresetId
@@ -107,6 +127,17 @@ export const DEFAULT_TEXT_ANIMATION: TextAnimationConfig = {
   smoothing: 'none',
   staggerCurve: null,
   duration: 0.8,
+  numberFrom: 0,
+  numberFlowTrend: 'auto',
+  numberFlowContinuous: true,
+  numberFlowIncrement: null,
+  numberFlowSpinDistance: 1,
+  numberFlowFadeAmount: 1,
+  numberFlowMaskHeight: 0.25,
+  numberFlowMaskWidth: 0.5,
+  numberFlowTransformTimingRatio: 1,
+  numberFlowSpinTimingRatio: 1,
+  numberFlowOpacityTimingRatio: 0.5,
   startTime: 0,
   acceleration: 'slow-down',
   easingPresetId: 'smooth',
@@ -169,6 +200,20 @@ export const TEXT_ANIMATION_PRESETS: TextAnimationPreset[] = [
   { id: 'typewriter', label: 'Typewriter', category: 'Reveal', defaults: { duration: 0.9, delay: 0.06 } },
   { id: 'tracking', label: 'Tracking', category: 'Reveal', defaults: { duration: 0.7, delay: 0.04 } },
   { id: 'skew', label: 'Skew', category: 'Reveal', defaults: { duration: 0.65, delay: 0.06 } },
+  {
+    id: 'number-flow',
+    label: 'Number Flow',
+    category: 'Numbers',
+    defaults: {
+      applyTo: 'layer',
+      delay: 0,
+      duration: 0.8,
+      travelDistance: 0,
+      motionVector: null,
+      motionPath: null,
+      blurRadius: 8,
+    },
+  },
 ]
 
 /** Progressive whole-layer reveal shared by DOM, Canvas2D, and WebGL. */
@@ -193,12 +238,12 @@ export function typewriterTextAtProgress(
 export function textAnimationDefaults(id: TextAnimationId): TextAnimationConfig {
   const preset = TEXT_ANIMATION_PRESETS.find((p) => p.id === id)
   const direction = directionFromPresetId(id)
-  return {
+  return enforceTextAnimationPresetConstraints({
     ...DEFAULT_TEXT_ANIMATION,
     ...(direction ? { direction } : {}),
     id,
     ...(preset?.defaults ?? {}),
-  }
+  })
 }
 
 /** Legacy presets whose direction/travel fields author a real translation. */
@@ -224,8 +269,16 @@ export function applyTextAnimation(
   options: { trackId?: TrackId; replaceAll?: boolean } = {},
 ): TextAnimationConfig {
   const defaults = textAnimationDefaults(id)
+  const node = api.getNode(nodeId)
+  const storedAnimation = node?.kind === 'text' ? node.textAnimation : null
+  if (
+    id === 'number-flow' &&
+    (node?.kind !== 'text' || parseNumberFlowText(node.text) === null)
+  ) {
+    return existing ?? normalizeTextAnimation(storedAnimation) ?? defaults
+  }
   const previous = existing ? normalizeTextAnimation(existing) : null
-  const next: TextAnimationConfig = {
+  const next = enforceTextAnimationPresetConstraints({
     ...defaults,
     ...(previous
       ? {
@@ -238,6 +291,18 @@ export function applyTextAnimation(
           easingPresetId: previous.easingPresetId,
           easingStrength: previous.easingStrength,
           customEasing: previous.customEasing,
+          numberFrom: previous.numberFrom,
+          numberFlowTrend: previous.numberFlowTrend,
+          numberFlowContinuous: previous.numberFlowContinuous,
+          numberFlowIncrement: previous.numberFlowIncrement,
+          numberFlowSpinDistance: previous.numberFlowSpinDistance,
+          numberFlowFadeAmount: previous.numberFlowFadeAmount,
+          numberFlowMaskHeight: previous.numberFlowMaskHeight,
+          numberFlowMaskWidth: previous.numberFlowMaskWidth,
+          numberFlowTransformTimingRatio:
+            previous.numberFlowTransformTimingRatio,
+          numberFlowSpinTimingRatio: previous.numberFlowSpinTimingRatio,
+          numberFlowOpacityTimingRatio: previous.numberFlowOpacityTimingRatio,
           motionVector: previous.motionVector,
           // Selecting Curve Drop from a legacy effect should install its
           // useful bowed default. Once a path exists, preset changes retain
@@ -246,9 +311,8 @@ export function applyTextAnimation(
         }
       : {}),
     startTime,
-  }
+  })
   api.setNodeProperty(nodeId, 'textAnimation', next)
-  const node = api.getNode(nodeId)
   stampTextAnimationKeyframes(
     api,
     nodeId,
@@ -494,7 +558,7 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
   const base = textAnimationDefaults(id)
   const smoothing = isSmoothing(value.smoothing) ? value.smoothing : base.smoothing
   const staggerCurve = normalizeTextStaggerCurve(value.staggerCurve)
-  return {
+  return enforceTextAnimationPresetConstraints({
     ...base,
     mode: value.mode === 'out' ? 'out' : 'in',
     applyTo: isApplyTo(value.applyTo) ? value.applyTo : base.applyTo,
@@ -503,6 +567,50 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
     smoothing,
     staggerCurve: value.staggerCurve == null ? null : staggerCurve,
     duration: Math.max(0.05, finiteNumber(value.duration, base.duration)),
+    numberFrom: finiteNumber(value.numberFrom, base.numberFrom),
+    numberFlowTrend: isNumberFlowTrend(value.numberFlowTrend)
+      ? value.numberFlowTrend
+      : base.numberFlowTrend,
+    numberFlowContinuous:
+      typeof value.numberFlowContinuous === 'boolean'
+        ? value.numberFlowContinuous
+        : base.numberFlowContinuous,
+    numberFlowIncrement: normalizeNumberFlowIncrement(
+      value.numberFlowIncrement,
+      base.numberFlowIncrement,
+    ),
+    numberFlowSpinDistance: clamp(
+      finiteNumber(value.numberFlowSpinDistance, base.numberFlowSpinDistance),
+      0.25,
+      2,
+    ),
+    numberFlowFadeAmount: clamp(
+      finiteNumber(value.numberFlowFadeAmount, base.numberFlowFadeAmount),
+      0,
+      1,
+    ),
+    numberFlowMaskHeight: clamp(
+      finiteNumber(value.numberFlowMaskHeight, base.numberFlowMaskHeight),
+      0,
+      1,
+    ),
+    numberFlowMaskWidth: clamp(
+      finiteNumber(value.numberFlowMaskWidth, base.numberFlowMaskWidth),
+      0,
+      2,
+    ),
+    numberFlowTransformTimingRatio: clampTimingRatio(
+      value.numberFlowTransformTimingRatio,
+      base.numberFlowTransformTimingRatio,
+    ),
+    numberFlowSpinTimingRatio: clampTimingRatio(
+      value.numberFlowSpinTimingRatio,
+      base.numberFlowSpinTimingRatio,
+    ),
+    numberFlowOpacityTimingRatio: clampTimingRatio(
+      value.numberFlowOpacityTimingRatio,
+      base.numberFlowOpacityTimingRatio,
+    ),
     startTime: Math.max(0, finiteNumber(value.startTime, base.startTime)),
     acceleration: isAcceleration(value.acceleration) ? value.acceleration : base.acceleration,
     easingPresetId: isEasingPresetId(value.easingPresetId) ? value.easingPresetId : base.easingPresetId,
@@ -524,7 +632,49 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
     endColor: typeof value.endColor === 'string' ? value.endColor : base.endColor,
     startGradient: value.startGradient ?? base.startGradient,
     endGradient: value.endGradient ?? base.endGradient,
+  })
+}
+
+function enforceTextAnimationPresetConstraints(
+  config: TextAnimationConfig,
+): TextAnimationConfig {
+  if (config.id !== 'number-flow') return config
+  return {
+    ...config,
+    applyTo: 'layer',
+    delay: 0,
+    travelDistance: 0,
+    motionVector: null,
+    motionPath: null,
+    blurRadius: clamp(config.blurRadius, 0, 32),
   }
+}
+
+function isNumberFlowTrend(value: unknown): value is NumberFlowTrend {
+  return (
+    value === 'auto' ||
+    value === 'up' ||
+    value === 'down' ||
+    value === 'individual'
+  )
+}
+
+function clampTimingRatio(value: unknown, fallback: number): number {
+  return clamp(finiteNumber(value, fallback), 0.05, 1)
+}
+
+function normalizeNumberFlowIncrement(
+  value: unknown,
+  fallback: number | null,
+): number | null {
+  if (value == null) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  if (value <= 0) return null
+  return Math.min(value, 1_000_000_000_000_000)
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }
 
 function normalizeMotionVector(

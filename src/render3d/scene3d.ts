@@ -27,7 +27,10 @@ import {
   normalizeCameraPostEffects,
   type CameraPostEffectsState,
 } from '@/render3d/postEffects'
-import { isAlwaysOnTopNode } from '@/render/layerCompositing'
+import {
+  isAlwaysOnTopNode,
+  nodesInBackToFrontPaintOrder,
+} from '@/render/layerCompositing'
 import {
   expandRectForLayerEffects,
   nodeEffectsWrapSubtree,
@@ -88,6 +91,8 @@ export interface Plane3D {
   renderKind: 'canvas' | 'segment-text'
   contentMode: 'self' | 'subtree'
   paintOrder: number
+  /** True for an overlay instance and every extracted plane in its subtree. */
+  alwaysOnTop: boolean
   opacity: number
   center: Vec3
   rotation: Vec3
@@ -163,6 +168,8 @@ interface PlaneBuildOptions {
 export interface PlaneBuildContext {
   readonly rootId: NodeId
   readonly nodesById: ReadonlyMap<NodeId, Node>
+  /** Static sibling-local paint topology, rebuilt only on a scene version. */
+  readonly childPaintOrderByParentId: ReadonlyMap<NodeId, readonly NodeId[]>
   readonly segmentTextNodeIds: ReadonlySet<NodeId>
   readonly explicit3DDescendantNodeIds: ReadonlySet<NodeId>
   /**
@@ -253,6 +260,17 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
   for (const nodeId of api.getAllNodeIds()) {
     const node = api.getNode(nodeId)
     if (node) nodesById.set(nodeId, node)
+  }
+  const childPaintOrderByParentId = new Map<NodeId, readonly NodeId[]>()
+  for (const [nodeId, node] of nodesById) {
+    childPaintOrderByParentId.set(
+      nodeId,
+      nodesInBackToFrontPaintOrder(
+        node.children
+          .map((childId) => nodesById.get(childId))
+          .filter((child): child is Node => !!child),
+      ).map((child) => child.id),
+    )
   }
 
   const segmentTextNodeIds = new Set<NodeId>()
@@ -375,6 +393,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
   return {
     rootId,
     nodesById,
+    childPaintOrderByParentId,
     segmentTextNodeIds,
     explicit3DDescendantNodeIds,
     effectRasterizationBlockedDescendantNodeIds,
@@ -851,6 +870,7 @@ export function buildWorldPlanes(
     id: NodeId,
     inherited: Inherited3D,
     activeClips: PlaneClip3D[] = [],
+    insideAlwaysOnTopSubtree = false,
   ): void => {
     if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
@@ -863,6 +883,8 @@ export function buildWorldPlanes(
     // first hidden node: this matches the DOM renderer and also removes hidden
     // descendants from rendering, outlines, and hit testing in one place.
     if (!node.visible) return
+    const alwaysOnTop =
+      insideAlwaysOnTopSubtree || isAlwaysOnTopNode(node)
     const a = animated[id]
     const isRoot = id === rootId
     const x = a?.x ?? node.transform.x
@@ -987,6 +1009,7 @@ export function buildWorldPlanes(
         renderKind: segmentText ? 'segment-text' : 'canvas',
         contentMode,
         paintOrder: paintOrder++,
+        alwaysOnTop,
         // Opacity belongs to the emitted plane, irrespective of whether its
         // pixels come from the node itself or a flattened subtree. Baking a
         // subtree root's animated opacity into a CanvasTexture forced a full
@@ -1030,11 +1053,9 @@ export function buildWorldPlanes(
         (node.transform.renderMode ?? 'flat') === 'group3d' ||
         containsExplicit3DDescendant)
     ) {
-      const childIds = splitsSegmentStack
-        ? node.children
-        : [...node.children].reverse()
+      const childIds = context.childPaintOrderByParentId.get(id) ?? []
       for (const childId of childIds) {
-        visit(childId, nextInherited, nextClips)
+        visit(childId, nextInherited, nextClips, alwaysOnTop)
       }
     }
   }
@@ -1137,15 +1158,16 @@ export function hitTestPlanes(
   for (let i = planes.length - 1; i >= 0; i--) {
     const plane = planes[i]!
     if (!plane.node.visible || plane.node.locked) continue
-    const overlay = isAlwaysOnTopNode(plane.node)
-    // Overlay planes are paint-ordered rather than depth-ordered. The list is
-    // traversed front-to-back, so the first overlay bounds hit is the same
-    // one the user can see and should be able to select.
-    if (overlay && bestOverlay) continue
+    const overlay = plane.alwaysOnTop
+    // Rendering uses deterministic paint order with depth testing disabled so
+    // transparent layer planes compose like the DOM renderer. Traverse the
+    // same list front-to-back and keep the first hit in each compositing band;
+    // authored 3D depth remains available on the winning hit for controls/DOF.
+    if ((overlay && bestOverlay) || (!overlay && bestScene)) continue
     const denom = dot3(ray.direction, plane.normal)
     if (Math.abs(denom) < 0.0001) continue
     const t = dot3(sub3(plane.center, ray.origin), plane.normal) / denom
-    if (t <= 0 || (!overlay && bestScene && t >= bestScene.t)) continue
+    if (t <= 0) continue
     const point = add3(ray.origin, mul3(ray.direction, t))
     const rel = sub3(point, plane.center)
     const localX = dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX)) + plane.rect.width / 2
