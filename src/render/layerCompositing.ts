@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Node, NodeId, SceneAPI } from '@/scene'
+import type { SceneAPI } from '@/scene/doc'
+import type { Node, NodeId } from '@/scene/types'
+import { normalizeLayerZIndex } from '@/scene/zIndex'
 
 /**
  * Normal planes use small document-derived paint-order values. Reserve a
@@ -14,10 +16,86 @@ export function isAlwaysOnTopNode(
   return node?.kind === 'instance' && node.alwaysOnTop
 }
 
-export function layerRenderOrder(node: Node, paintOrder: number): number {
+export function layerRenderOrder(
+  node: Node,
+  paintOrder: number,
+  insideAlwaysOnTopSubtree = isAlwaysOnTopNode(node),
+): number {
   return (
-    (isAlwaysOnTopNode(node) ? ALWAYS_ON_TOP_RENDER_ORDER_BASE : 0) +
+    (insideAlwaysOnTopSubtree ? ALWAYS_ON_TOP_RENDER_ORDER_BASE : 0) +
     paintOrder
+  )
+}
+
+/**
+ * Return siblings in the order a painter should append them: back to front.
+ *
+ * z-index is deliberately local to the sibling list. Recursing through this
+ * order keeps every subtree contiguous, so a deeply nested child can never
+ * escape above an unrelated parent. Equal z-index values retain the existing
+ * layer-panel contract: child index 0 is frontmost.
+ */
+export function nodesInBackToFrontPaintOrder(
+  nodes: readonly Node[],
+): Node[] {
+  return nodes
+    .map((node, index) => ({
+      node,
+      index,
+      zIndex: normalizeLayerZIndex(node.zIndex),
+    }))
+    .sort(
+      (a, b) =>
+        a.zIndex - b.zIndex ||
+        b.index - a.index,
+    )
+    .map(({ node }) => node)
+}
+
+export function childrenInBackToFrontPaintOrder(
+  api: SceneAPI,
+  parentId: NodeId,
+): Node[] {
+  return nodesInBackToFrontPaintOrder(api.getChildren(parentId))
+}
+
+/**
+ * Flatten a layer subtree in deterministic back-to-front paint order. Each
+ * direct sibling list is sorted independently and each child subtree is
+ * emitted as one contiguous paint group.
+ */
+export function flattenLayerSubtreeInPaintOrder(
+  api: SceneAPI,
+  rootId: NodeId,
+): NodeId[] {
+  const out: NodeId[] = []
+  const visited = new Set<NodeId>()
+  const visit = (id: NodeId) => {
+    if (visited.has(id)) return
+    const node = api.getNode(id)
+    if (!node) return
+    visited.add(id)
+    out.push(id)
+    for (const child of childrenInBackToFrontPaintOrder(api, id)) {
+      visit(child.id)
+    }
+  }
+  visit(rootId)
+  return out
+}
+
+/**
+ * Scene paint order shared by the editor and hidden render window. Explicit
+ * overlay instances remain a final, separate compositing pass regardless of
+ * their numeric z-index.
+ */
+export function flattenSceneInPaintOrder(
+  api: SceneAPI,
+  rootId: NodeId,
+): NodeId[] {
+  return moveAlwaysOnTopSubtreesLast(
+    api,
+    flattenLayerSubtreeInPaintOrder(api, rootId),
   )
 }
 
@@ -79,9 +157,8 @@ export function alwaysOnTopRootsInPaintOrder(api: SceneAPI): NodeId[] {
       out.push(id)
       return
     }
-    const children = api.getChildren(id)
-    for (let index = children.length - 1; index >= 0; index--) {
-      visit(children[index]!.id, insideOverlay || overlay)
+    for (const child of childrenInBackToFrontPaintOrder(api, id)) {
+      visit(child.id, insideOverlay || overlay)
     }
   }
   visit(rootId, false)

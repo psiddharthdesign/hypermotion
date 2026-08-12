@@ -64,6 +64,7 @@ import { getPreservedVectorSource } from '@/render/vectorSource'
 import {
   alwaysOnTopRootsInPaintOrder,
   isAlwaysOnTopNode,
+  nodesInBackToFrontPaintOrder,
 } from '@/render/layerCompositing'
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import {
@@ -543,25 +544,27 @@ export class PixiExportRenderer {
     // parent — keeps the position math straightforward.
     //
     // Phase 3 mask wiring: when a child has isMask=true, its silhouette
-    // clips the immediate NEXT sibling's container (Figma's mask
-    // convention). We track the pending mask in a local variable
-    // through the iteration; once the next non-mask child is rendered,
-    // we hook up `targetContainer.mask = maskContainer` and clear the
-    // pending state. Pixi treats the mask container as an alpha mask
-    // and doesn't paint it visibly when used this way.
-    let pendingMask: Container | null = null
-    for (const childId of node.children) {
-      const childNode = input.api.getNode(childId)
-      if (!childNode) continue
-      this.renderNode(childId, this.root!, input, includeAlwaysOnTop)
-      const childContainer = this.nodeMap.get(childId)
-      if (!childContainer) continue
-      if (pendingMask) {
-        childContainer.mask = pendingMask
-        pendingMask = null
-      }
-      if (childNode.isMask) {
-        pendingMask = childContainer
+    // clips the authored immediate NEXT sibling's container (Figma's mask
+    // convention). Paint order is independent from that structural pairing.
+    const authoredChildren = node.children
+      .map((childId) => input.api.getNode(childId))
+      .filter((child): child is Node => !!child)
+    for (const child of nodesInBackToFrontPaintOrder(authoredChildren)) {
+      this.renderNode(child.id, this.root!, input, includeAlwaysOnTop)
+    }
+
+    // Mask ownership is structural, not paint-order-derived: a mask still
+    // clips the authored immediate next sibling after z-index sorting. Wire
+    // masks only after every sibling exists so the two nodes may occupy any
+    // sibling-local z-index without losing their relationship.
+    for (let index = 0; index < authoredChildren.length - 1; index++) {
+      const masker = authoredChildren[index]!
+      if (!masker.isMask) continue
+      const target = authoredChildren[index + 1]!
+      const maskerContainer = this.nodeMap.get(masker.id)
+      const targetContainer = this.nodeMap.get(target.id)
+      if (maskerContainer && targetContainer) {
+        targetContainer.mask = maskerContainer
       }
     }
   }

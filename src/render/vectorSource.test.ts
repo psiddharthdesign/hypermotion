@@ -31,6 +31,7 @@ function node(): VectorNode {
     visible: true,
     locked: false,
     position: 'absolute',
+    zIndex: 0,
     isMask: false,
     size: { width: 100, height: 100 },
     viewBox: { x: 0, y: 0, width: 100, height: 100 },

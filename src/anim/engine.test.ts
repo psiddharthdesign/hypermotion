@@ -6,6 +6,7 @@ import type { NodeId, Track } from '@/scene'
 import { getAnimEngine } from '@/anim/engine'
 import { normalizeLayerMotionPath } from '@/anim/layerMotionPath'
 import { textAnimationDefaults } from '@/anim/textAnimations'
+import { numberFlowVisualFrameAtProgress } from '@/anim/numberFlow'
 import { effectBlurPropertyId } from '@/scene/props'
 
 function textProgressTrack(
@@ -15,8 +16,9 @@ function textProgressTrack(
   end: number,
   options: {
     mode?: 'in' | 'out'
-    effect?: 'slide-up' | 'blur'
+    effect?: 'slide-up' | 'blur' | 'number-flow'
     values?: readonly [number, number]
+    easing?: Track['defaultEasing']
   } = {},
 ): Track {
   const mode = options.mode ?? 'in'
@@ -26,7 +28,7 @@ function textProgressTrack(
     id,
     nodeId,
     propertyId: 'text.progress',
-    defaultEasing: 'linear',
+    defaultEasing: options.easing ?? 'linear',
     textAnimation: {
       ...textAnimationDefaults(effect),
       mode,
@@ -547,6 +549,74 @@ describe('animation engine layer motion paths', () => {
 })
 
 describe('animation engine stacked text clips', () => {
+  it('keeps Number Flow intermediate for the full authored keyframe span', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('text', null, { text: '2.41M' })
+    const duration = 8.425
+    api.setTrack(
+      textProgressTrack('number-flow', nodeId, 0, duration, {
+        effect: 'number-flow',
+      }),
+    )
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(2)
+
+    expect(engine.getSnapshot()[nodeId]?.textProgress).toBeCloseTo(
+      2 / duration,
+    )
+    expect(engine.getSnapshot()[nodeId]?.textTimelineProgress).toBeCloseTo(
+      2 / duration,
+    )
+
+    engine.seek(duration)
+    expect(engine.getSnapshot()[nodeId]?.textProgress).toBe(1)
+    expect(engine.getSnapshot()[nodeId]?.textTimelineProgress).toBe(1)
+  })
+
+  it('does not settle Number Flow when easing overshoots before the final key', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('text', null, { text: '100' })
+    const duration = 8.425
+    api.setTrack(
+      textProgressTrack('number-flow-overshoot', nodeId, 0, duration, {
+        effect: 'number-flow',
+        easing: { bezier: [0.34, 2.8, 0.64, 1] },
+      }),
+    )
+
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(2)
+    const intermediate = engine.getSnapshot()[nodeId]!
+    expect(intermediate.textProgress).toBeGreaterThan(1)
+    expect(intermediate.textTimelineProgress).toBeCloseTo(2 / duration)
+    expect(
+      numberFlowVisualFrameAtProgress(
+        '100',
+        0,
+        'in',
+        intermediate.textProgress!,
+        { continuous: true },
+        intermediate.textTimelineProgress!,
+      ).settledText,
+    ).not.toBe('100')
+
+    engine.seek(duration)
+    const endpoint = engine.getSnapshot()[nodeId]!
+    expect(
+      numberFlowVisualFrameAtProgress(
+        '100',
+        0,
+        'in',
+        endpoint.textProgress!,
+        { continuous: true },
+        endpoint.textTimelineProgress!,
+      ).settledText,
+    ).toBe('100')
+  })
+
   it('hands ownership from In to Out by authored start time', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('text', null, { text: 'Motion' })

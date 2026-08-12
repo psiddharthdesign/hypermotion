@@ -60,6 +60,8 @@ export interface AnimatedValue {
   layoutPaddingBottom?: number
   layoutPaddingLeft?: number
   textProgress?: number
+  /** Uneased position between the active text animation's authored keys. */
+  textTimelineProgress?: number
   textAnimation?: TextAnimationConfig
   motionPathProgress?: number
   /** Discrete component selection evaluated from a semantic variant track. */

@@ -152,6 +152,7 @@ test('create_scene description documents multi-scene sequence authoring', () => 
     'workspaceNodeIds',
     'transitionOut',
     'masterAudioMuted',
+    'holdDuration',
   ]) {
     assert.match(description, new RegExp(field))
   }
@@ -166,6 +167,8 @@ test('create_scene description documents multi-scene sequence authoring', () => 
   assert.match(description, /Scene-local overlay/)
   assert.match(description, /masterStart \+ sceneTime - sourceStart/)
   assert.match(description, /beat\/bar guides stay visible/)
+  assert.match(description, /trailing freeze-frame/)
+  assert.match(description, /without extending the local source range/)
 })
 
 test('create_scene description lists supported transform property ids', () => {

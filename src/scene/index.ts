@@ -12,6 +12,11 @@ export * from './types'
 export { fillToCss, defaultFill, imageBackgroundStyle } from './fill'
 export { displayedText, resolveTextCase } from './text'
 export {
+  MAX_LAYER_Z_INDEX,
+  MIN_LAYER_Z_INDEX,
+  normalizeLayerZIndex,
+} from './zIndex'
+export {
   DEFAULT_ELLIPSE_ARC,
   ellipseArcFromRadians,
   normalizeEllipseArc,

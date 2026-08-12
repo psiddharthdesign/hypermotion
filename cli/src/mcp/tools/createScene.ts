@@ -141,10 +141,11 @@ export const createSceneTool: Tool = {
     "For a multi-scene project, set sequenceSchemaVersion: 2 and author compositionScenes keyed by id as " +
     "{ id, name, rootNodeId, duration, workArea?: { start, end }, workspaceNodeIds?, cameraIds, defaultCameraId, cameraCuts }, with workArea and cameraCuts local to that composition. " +
     "Omitting workArea uses the complete composition. Master occurrences are intersected with the work area, so item trimStart/duration can narrow it but never reveal source outside it. " +
+    "An optional sequence-item holdDuration appends a trailing freeze-frame on the Master timeline without extending the local source range. " +
     "Use workspaceNodeIds only for parentless nodes marked workspaceOnly: true whose lifecycle belongs to that composition, such as generated component masters. " +
     "Unlisted pasteboard assets remain project-level and are preserved when a composition is deleted; duplicated compositions may intentionally share listed workspace assets. " +
     "All referenced roots, cameras, layers, and animation tracks remain project-global nodes/tracks; a camera must be owned by exactly one composition. " +
-    "Author sequenceItems keyed by id as { id, sceneId, masterAudioMuted?: boolean, trimStart?, duration?, transitionOut?: { kind: 'cut'|'crossfade', duration } }, " +
+    "Author sequenceItems keyed by id as { id, sceneId, masterAudioMuted?: boolean, trimStart?, duration?, holdDuration?, transitionOut?: { kind: 'cut'|'crossfade', duration } }, " +
     "Set masterAudioMuted: true to silence the project-level Master soundtrack during that occurrence; omission means audible. Across a crossfade, Master-audio gain follows the summed visual weight of unmuted occurrences, so mute boundaries ramp with the transition without doubling enabled audio. " +
     "A parentless audio node is a Master-owned soundtrack; audio parented under a composition root is a Scene-local overlay. Scene preview and Scene-only export borrow the selected occurrence at masterStart + sceneTime - sourceStart, while Scene overlays remain on the local clock. Projected Master beat/bar guides stay visible for Scene keyframe timing even when that occurrence's Master bed is muted. " +
     "put those item ids in sequenceOrder, and select activeCompositionId. A composition may occur more than once through separate sequence items. " +

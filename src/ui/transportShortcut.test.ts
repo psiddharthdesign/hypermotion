@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  resolveTransportFrameStepPatch,
   resolveTransportSpacePatch,
   shouldNativeControlOwnTransportSpace,
 } from './transportShortcut'
@@ -119,5 +120,69 @@ describe('resolveTransportSpacePatch', () => {
         12,
       ),
     ).toEqual({ playing: true })
+  })
+})
+
+describe('resolveTransportFrameStepPatch', () => {
+  it('steps Scene time within the active scene duration', () => {
+    expect(
+      resolveTransportFrameStepPatch(
+        {
+          timelineScope: 'scene',
+          previewScope: 'scene',
+          playhead: 4,
+          playing: true,
+        },
+        1,
+        4,
+        12,
+        60,
+      ),
+    ).toEqual({
+      playhead: 4,
+      playing: false,
+    })
+  })
+
+  it('steps Master time beyond the active scene and claims sequence preview', () => {
+    expect(
+      resolveTransportFrameStepPatch(
+        {
+          timelineScope: 'sequence',
+          previewScope: 'scene',
+          playhead: 4,
+          playing: true,
+        },
+        1,
+        4,
+        12,
+        60,
+      ),
+    ).toEqual({
+      previewScope: 'sequence',
+      playhead: 4 + 1 / 60,
+      playing: false,
+    })
+  })
+
+  it('clamps a backward Master step to zero', () => {
+    expect(
+      resolveTransportFrameStepPatch(
+        {
+          timelineScope: 'sequence',
+          previewScope: 'sequence',
+          playhead: 0,
+          playing: false,
+        },
+        -1,
+        4,
+        12,
+        60,
+      ),
+    ).toEqual({
+      previewScope: 'sequence',
+      playhead: 0,
+      playing: false,
+    })
   })
 })

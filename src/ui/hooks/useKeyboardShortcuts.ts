@@ -52,6 +52,7 @@ import {
 } from '@/ui/cameraActions'
 import { useProjectAPI } from '@/project'
 import {
+  resolveTransportFrameStepPatch,
   resolveTransportSpacePatch,
   shouldNativeControlOwnTransportSpace,
 } from '@/ui/transportShortcut'
@@ -850,13 +851,21 @@ export function useKeyboardShortcuts() {
       // under zero or past the comp end.
       if (!meta && !e.shiftKey && !e.altKey && (e.key === '[' || e.key === ']')) {
         e.preventDefault()
-        const { frameRate, duration } = api.getMeta()
-        const step = 1 / Math.max(1, frameRate)
-        const cur = useUI.getState().playhead
-        const next = e.key === '['
-          ? Math.max(0, cur - step)
-          : Math.min(duration, cur + step)
-        useUI.setState({ playhead: next, playing: false })
+        const { frameRate, duration: sceneDuration } = api.getMeta()
+        const ui = useUI.getState()
+        const sequenceDuration =
+          ui.timelineScope === 'sequence'
+            ? project.getSequenceTimeMap().duration
+            : 0
+        useUI.setState(
+          resolveTransportFrameStepPatch(
+            ui,
+            e.key === '[' ? -1 : 1,
+            sceneDuration,
+            sequenceDuration,
+            frameRate,
+          ),
+        )
       }
     }
     const onKeyUp = (e: KeyboardEvent) => {

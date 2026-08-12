@@ -31,6 +31,7 @@ import {
   cameraCutDeleteKeyGuard,
   isCameraCutDeleteKey,
 } from '@/ui/cameraCutKeyboard'
+import { NumberReadout } from '@/ui/fields/NumberReadout'
 
 const CAMERA_CUT_DRAG_THRESHOLD_PX = 3
 
@@ -334,7 +335,7 @@ export function CameraCutTimelineLeftRow() {
         Camera cuts
       </span>
       <span className="ml-auto rounded bg-panel-raised px-1 font-mono text-[8px] tabular-nums text-text-dim">
-        {model.cuts.length}
+        <NumberReadout value={model.cuts.length} />
       </span>
     </div>
   )

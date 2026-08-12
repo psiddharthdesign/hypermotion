@@ -91,7 +91,11 @@ export interface ProjectAPI {
     patch: Partial<
       Pick<
         SequenceItem,
-        'trimStart' | 'duration' | 'transitionOut' | 'masterAudioMuted'
+        | 'trimStart'
+        | 'duration'
+        | 'holdDuration'
+        | 'transitionOut'
+        | 'masterAudioMuted'
       >
     >,
   ): void
@@ -830,6 +834,14 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
             )
       const effectiveDuration =
         duration ?? composition.duration - trimStart
+      const requestedHoldDuration =
+        Object.prototype.hasOwnProperty.call(patch, 'holdDuration')
+          ? patch.holdDuration
+          : item.holdDuration
+      const holdDuration = Math.max(
+        0,
+        finite(requestedHoldDuration, 0),
+      )
       const masterAudioMuted =
         Object.prototype.hasOwnProperty.call(patch, 'masterAudioMuted')
           ? patch.masterAudioMuted === true
@@ -840,11 +852,13 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
         trimStart,
         transitionOut: normalizeTransition(
           patch.transitionOut ?? item.transitionOut,
-          effectiveDuration,
+          effectiveDuration + holdDuration,
         ),
       }
       if (duration === undefined) delete next.duration
       else next.duration = duration
+      if (holdDuration > 0) next.holdDuration = holdDuration
+      else delete next.holdDuration
       // False is the default. Keeping only the meaningful true value makes
       // existing files byte-light and preserves compatibility with schema-v2
       // projects authored before occurrence audio controls existed.
@@ -1047,6 +1061,7 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
     item.duration === undefined
       ? undefined
       : Math.max(0, finite(item.duration, 0))
+  const holdDuration = Math.max(0, finite(item.holdDuration, 0))
   const normalized: SequenceItem = {
     ...item,
     trimStart: Math.max(0, finite(item.trimStart, 0)),
@@ -1054,8 +1069,13 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
     // An omitted duration means "the remainder of the composition", not zero.
     // The pure time-map layer has the scene context needed to clamp this
     // transition precisely; preserve the authored request until then.
-    transitionOut: normalizeTransition(item.transitionOut, duration),
+    transitionOut: normalizeTransition(
+      item.transitionOut,
+      duration === undefined ? undefined : duration + holdDuration,
+    ),
   }
+  if (holdDuration > 0) normalized.holdDuration = holdDuration
+  else delete normalized.holdDuration
   if (item.masterAudioMuted === true) normalized.masterAudioMuted = true
   else delete normalized.masterAudioMuted
   return normalized

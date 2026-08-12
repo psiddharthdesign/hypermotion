@@ -169,8 +169,16 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
     const meta = api.getMeta()
     const project = getProjectAPI(api)
     project.ensureInitialized()
+    const sequenceItems = project.getSequenceItems()
     const sequenceMap = project.getSequenceTimeMap()
-    const renderSequence = project.getSequenceItems().length > 1
+    const renderSequence =
+      sequenceItems.length > 1 ||
+      sequenceItems.some(
+        (item) =>
+          (item.trimStart ?? 0) > 0 ||
+          item.duration !== undefined ||
+          (item.holdDuration ?? 0) > 0,
+      )
     const durationSec = renderSequence ? sequenceMap.duration : meta.duration
 
     console.log(

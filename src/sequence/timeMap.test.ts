@@ -205,6 +205,39 @@ describe('buildSequenceTimeMap', () => {
     )
   })
 
+  it('extends an occurrence with a frame-aligned final-frame hold', () => {
+    const intro = scene('intro', 2)
+    const map = buildSequenceTimeMap({
+      scenes: [intro],
+      items: [
+        item('held', intro.id, {
+          duration: 1.5,
+          holdDuration: 2.25,
+        }),
+      ],
+      frameRate: 20,
+    })
+
+    expect(map.items[0]).toMatchObject({
+      sourceStartFrame: 0,
+      sourceEndFrame: 30,
+      sourceDurationFrames: 30,
+      holdDurationFrames: 45,
+      durationFrames: 75,
+      sourceDuration: 1.5,
+      holdDuration: 2.25,
+      duration: 3.75,
+      masterEnd: 3.75,
+    })
+    expect(resolveMasterTime(map, 2.5).layers[0]).toMatchObject({
+      localTime: 1.5,
+    })
+    expect(resolveMasterTime(map, map.duration).layers[0]).toMatchObject({
+      localTime: 1.5,
+    })
+    expect(map.issues).toEqual([])
+  })
+
   it('builds adjacent crossfades with frame-exact master and local ranges', () => {
     const scenes = [
       scene('a', 4),

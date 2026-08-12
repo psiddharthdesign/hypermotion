@@ -77,6 +77,53 @@ describe('direct nested-layer hit testing', () => {
     )
     expect(hit?.nodeId).toBe(childId)
   })
+
+  it('hits the visually front sibling even when that plane is farther away', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const nearerId = api.createNode('rect', rootId, {
+      name: 'Physically nearer',
+      zIndex: 0,
+      size: { width: 200, height: 200 },
+    })
+    const frontId = api.createNode('rect', rootId, {
+      name: 'Visually front by z-index',
+      zIndex: 10,
+      size: { width: 200, height: 200 },
+    })
+    const frontNode = api.getNode(frontId)
+    if (!frontNode) throw new Error('Expected the front z-index test node')
+    api.setNodeProperty(frontId, 'transform', {
+      ...frontNode.transform,
+      z: 200,
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [nearerId]: { x: 380, y: 170, width: 200, height: 200 },
+      [frontId]: { x: 380, y: 170, width: 200, height: 200 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
+    const viewport = { width: 960, height: 540 }
+    const resolvedCamera = resolveCamera3D(camera, undefined, viewport)
+    const planes = buildWorldPlanes(api, layout, {}, resolvedCamera)
+
+    expect(planes.map((plane) => plane.nodeId)).toEqual([nearerId, frontId])
+    expect(planes.find((plane) => plane.nodeId === frontId)!.cameraDepth).toBeGreaterThan(
+      planes.find((plane) => plane.nodeId === nearerId)!.cameraDepth,
+    )
+
+    const hit = hitTestPlanes(
+      planes,
+      viewportPointToRay(resolvedCamera, 480, 270, viewport),
+      resolvedCamera,
+      viewport,
+    )
+    expect(hit?.nodeId).toBe(frontId)
+  })
 })
 
 describe('clipped overflow planes', () => {
@@ -475,7 +522,7 @@ describe('stable animated-text plane topology', () => {
     ).toMatchObject({ renderKind: 'segment-text' })
   })
 
-  it('splits the sibling stack so later overlays stay above spatial text', () => {
+  it('uses the same sibling z-index order for segment text and canvas planes', () => {
     const api = createSceneAPI()
     const rootId = api.createNode('frame', null, {
       name: 'Root',
@@ -506,6 +553,75 @@ describe('stable animated-text plane topology', () => {
     }
     const camera = api.getActiveCamera()
     if (!camera) throw new Error('Expected the default camera')
+    const defaultPlanes = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+
+    expect(defaultPlanes.map((plane) => plane.nodeId)).toEqual([
+      parentId,
+      overlayId,
+      textId,
+    ])
+    api.setNodeProperty(overlayId, 'zIndex', 1)
+    const raisedOverlayPlanes = buildWorldPlanes(
+      api,
+      layout,
+      {},
+      resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
+    )
+    expect(raisedOverlayPlanes.map((plane) => plane.nodeId)).toEqual([
+      parentId,
+      textId,
+      overlayId,
+    ])
+    expect(raisedOverlayPlanes.map((plane) => plane.paintOrder)).toEqual([
+      0,
+      1,
+      2,
+    ])
+    expect(
+      raisedOverlayPlanes.find((plane) => plane.nodeId === parentId)
+        ?.contentMode,
+    ).toBe('self')
+    expect(
+      raisedOverlayPlanes.find((plane) => plane.nodeId === overlayId),
+    ).toMatchObject({
+      contentMode: 'subtree',
+      extractedFromParent: true,
+    })
+  })
+
+  it('propagates always-on-top through extracted descendant planes', () => {
+    const api = createSceneAPI()
+    const rootId = api.createNode('frame', null, {
+      name: 'Root',
+      size: { width: 960, height: 540 },
+    })
+    const overlayId = api.createNode('instance', rootId, {
+      name: 'Cursor overlay',
+      componentId: 'cursor-component',
+      alwaysOnTop: true,
+      size: { width: 200, height: 80 },
+    })
+    const childId = api.createNode('text', overlayId, {
+      name: 'Animated cursor label',
+      text: 'Overlay',
+      size: { width: 160, height: 40 },
+      textAnimation: {
+        ...DEFAULT_TEXT_ANIMATION,
+        motionVector: { x: 0, y: 0, z: 1 },
+      },
+    })
+    const layout: SolvedLayout = {
+      [rootId]: { x: 0, y: 0, width: 960, height: 540 },
+      [overlayId]: { x: 380, y: 230, width: 200, height: 80 },
+      [childId]: { x: 400, y: 250, width: 160, height: 40 },
+    }
+    const camera = api.getActiveCamera()
+    if (!camera) throw new Error('Expected the default camera')
     const planes = buildWorldPlanes(
       api,
       layout,
@@ -513,19 +629,12 @@ describe('stable animated-text plane topology', () => {
       resolveCamera3D(camera, undefined, { width: 960, height: 540 }),
     )
 
-    expect(planes.map((plane) => plane.nodeId)).toEqual([
-      parentId,
-      textId,
-      overlayId,
-    ])
-    expect(planes.map((plane) => plane.paintOrder)).toEqual([0, 1, 2])
-    expect(planes.find((plane) => plane.nodeId === parentId)?.contentMode).toBe(
-      'self',
+    expect(planes.find((plane) => plane.nodeId === overlayId)?.alwaysOnTop).toBe(
+      true,
     )
-    expect(planes.find((plane) => plane.nodeId === overlayId)).toMatchObject({
-      contentMode: 'subtree',
-      extractedFromParent: true,
-    })
+    expect(planes.find((plane) => plane.nodeId === childId)?.alwaysOnTop).toBe(
+      true,
+    )
   })
 
   it('extracts an all-zero node vector as a clipped self segment plane', () => {

@@ -2,6 +2,7 @@
 
 import type { SceneAPI } from '@/scene/doc'
 import { getAnimEngine } from '@/anim'
+import { deriveTextAnimationTiming } from '@/anim/textAnimations'
 import type { Track } from '@/scene'
 import { resolveStaggerKeyframeBundle } from '@/anim/staggerSets'
 
@@ -257,12 +258,21 @@ export function commitKeyframeTimes(
         (a, b) => a.keyframe.time - b.keyframe.time || a.index - b.index,
       )
       const keyframes = next.map((entry) => entry.keyframe)
+      const node = api.getNode(track.nodeId)
+      const nextTrack = { ...track, keyframes }
       const textAnimation =
         track.propertyId === 'text.progress' && track.textAnimation
-          ? {
-              ...track.textAnimation,
-              startTime: keyframes[0]?.time ?? track.textAnimation.startTime,
-            }
+          ? node?.kind === 'text'
+            ? deriveTextAnimationTiming(
+                track.textAnimation,
+                nextTrack,
+                node.text,
+              ) ?? track.textAnimation
+            : {
+                ...track.textAnimation,
+                startTime:
+                  keyframes[0]?.time ?? track.textAnimation.startTime,
+              }
           : track.textAnimation
       api.setTrack({
         ...track,
@@ -270,7 +280,6 @@ export function commitKeyframeTimes(
         ...(textAnimation ? { textAnimation } : {}),
       })
       if (track.propertyId === 'text.progress' && textAnimation) {
-        const node = api.getNode(track.nodeId)
         const textTracks = api
           .getTracksForNode(track.nodeId)
           .filter((candidate) => candidate.propertyId === 'text.progress')
@@ -290,6 +299,7 @@ export interface KeyframeDragSession {
 }
 
 function previewTracksForDrag(
+  api: SceneAPI,
   baseTracks: ReadonlyMap<string, Track>,
   targets: readonly KeyframeDragTarget[],
 ): ReadonlyMap<string, Track> {
@@ -319,7 +329,22 @@ function previewTracksForDrag(
         (a, b) => a.keyframe.time - b.keyframe.time || a.index - b.index,
       )
       .map((entry) => entry.keyframe)
-    previews.set(trackId, { ...track, keyframes })
+    const nextTrack = { ...track, keyframes }
+    const node = api.getNode(track.nodeId)
+    const textAnimation =
+      track.propertyId === 'text.progress' &&
+      track.textAnimation &&
+      node?.kind === 'text'
+        ? deriveTextAnimationTiming(
+            track.textAnimation,
+            nextTrack,
+            node.text,
+          )
+        : track.textAnimation
+    previews.set(trackId, {
+      ...nextTrack,
+      ...(textAnimation ? { textAnimation } : {}),
+    })
   }
   return previews
 }
@@ -361,7 +386,7 @@ export function createKeyframeDragSession(
   const unsubscribePreview = store.subscribeAll(() => {
     if (!lastTargets || ended) return
     getAnimEngine().setTrackPreview(
-      previewTracksForDrag(baseTracks, lastTargets),
+      previewTracksForDrag(api, baseTracks, lastTargets),
     )
   })
   return {

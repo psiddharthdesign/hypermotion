@@ -72,6 +72,16 @@ export function resolvePreviewAudioContributions(
   })
   for (const layer of resolution.layers) {
     if (layer.weight <= TIME_EPSILON) continue
+    // A Master hold freezes the final visual frame, not the composition's
+    // media clock. Scene-owned audio/video must stop at the source out-point;
+    // project-level Master audio above remains on the Master clock.
+    if (
+      layer.item.holdDuration > TIME_EPSILON &&
+      playhead >=
+        layer.item.masterStart + layer.item.sourceDuration - TIME_EPSILON
+    ) {
+      continue
+    }
     for (const audio of input.sceneAudio) {
       if (audio.sceneId !== layer.item.scene.id) continue
       contributions.push({

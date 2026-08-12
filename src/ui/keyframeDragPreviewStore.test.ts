@@ -6,7 +6,10 @@ import { createSceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import type { Track } from '@/scene'
 import { getAnimEngine } from '@/anim'
-import { DEFAULT_TEXT_ANIMATION } from '@/anim/textAnimations'
+import {
+  DEFAULT_TEXT_ANIMATION,
+  textAnimationDefaults,
+} from '@/anim/textAnimations'
 import {
   setStaggerSetDelayMetadata,
   toggleStaggerSetPropertyKeyframes,
@@ -418,7 +421,13 @@ describe('keyframe drag preview', () => {
   it('keeps text animation timing attached when its keyframes move', () => {
     const api = createSceneAPI()
     const nodeId = api.createNode('text', null)
-    const textAnimation = { ...DEFAULT_TEXT_ANIMATION, startTime: 1 }
+    const textAnimation = {
+      ...DEFAULT_TEXT_ANIMATION,
+      startTime: 1,
+      // Four default glyphs with 0.12s stagger occupy the remaining 0.36s
+      // of this authored one-second keyframe span.
+      duration: 0.64,
+    }
     api.setNodeProperty(nodeId, 'textAnimation', textAnimation)
     const track: Track = {
       id: 'text-progress',
@@ -450,5 +459,59 @@ describe('keyframe drag preview', () => {
     expect(node?.kind === 'text' ? node.textAnimation?.startTime : null).toBe(
       2.5,
     )
+    expect(api.getTrack(track.id)?.textAnimation?.duration).toBe(
+      textAnimation.duration,
+    )
+  })
+
+  it('updates text animation duration while its end key is retimed', () => {
+    const api = createSceneAPI()
+    const nodeId = api.createNode('text', null, { text: '100' })
+    const textAnimation = {
+      ...textAnimationDefaults('number-flow'),
+      startTime: 0,
+      duration: 1,
+    }
+    api.setNodeProperty(nodeId, 'textAnimation', textAnimation)
+    const track: Track = {
+      id: 'number-flow-progress',
+      nodeId,
+      propertyId: 'text.progress',
+      defaultEasing: 'linear',
+      textAnimation,
+      keyframes: [
+        { id: 'text-start', time: 0, value: 0 },
+        { id: 'text-end', time: 1, value: 1 },
+      ],
+    }
+    api.setTrack(track)
+    const engine = getAnimEngine()
+    engine.attach(api)
+    engine.seek(2)
+
+    const store = createKeyframeDragPreviewStore()
+    const session = createKeyframeDragSession(
+      api,
+      [{ trackId: track.id, kfId: 'text-end', startTime: 1 }],
+      store,
+    )
+    session.preview(7.425)
+    const [frameId, callback] = callbacks.entries().next().value!
+    callbacks.delete(frameId)
+    callback(16)
+
+    expect(engine.getSnapshot()[nodeId]?.textAnimation?.duration).toBeCloseTo(
+      8.425,
+    )
+    expect(engine.getSnapshot()[nodeId]?.textTimelineProgress).toBeCloseTo(
+      2 / 8.425,
+    )
+
+    session.commit()
+    expect(api.getTrack(track.id)?.textAnimation?.duration).toBeCloseTo(8.425)
+    const node = api.getNode(nodeId)
+    expect(
+      node?.kind === 'text' ? node.textAnimation?.duration : null,
+    ).toBeCloseTo(8.425)
   })
 })

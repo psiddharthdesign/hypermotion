@@ -208,4 +208,30 @@ describe('sequence media timeline mapping', () => {
       sequenceTimeMap: map,
     })).toEqual([])
   })
+
+  it('keeps Master audio on its clock but silences scene media during a held final frame', () => {
+    const heldMap = buildSequenceTimeMap({
+      scenes: [scene('detail', 4)],
+      items: [
+        {
+          id: 'held-detail',
+          sceneId: 'detail',
+          duration: 2,
+          holdDuration: 3,
+        },
+      ],
+      frameRate: 30,
+    })
+
+    expect(resolveMediaTimelineSamples({
+      masterTime: 3,
+      ownerSceneId: null,
+      sequenceTimeMap: heldMap,
+    })).toEqual([{ time: 3, weight: 1 }])
+    expect(resolveMediaTimelineSamples({
+      masterTime: 3,
+      ownerSceneId: 'detail',
+      sequenceTimeMap: heldMap,
+    })).toEqual([])
+  })
 })

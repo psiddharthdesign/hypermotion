@@ -4,7 +4,10 @@ import { z } from 'zod'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { inspectScene } from '../../scene/build.js'
+import {
+  inspectScene,
+  normalizeLayerZIndex,
+} from '../../scene/build.js'
 import type { McpToolArgs, StringSchemaProperty } from './schema.js'
 
 const ScenePathInput = z.string().trim().min(1, 'scene path is required')
@@ -33,6 +36,7 @@ type LayerSummary = {
   kind: unknown
   parent: unknown
   children: string[]
+  zIndex: number
 }
 type CameraSummary = McpToolArgs & {
   id: string
@@ -55,7 +59,8 @@ const NODE_ID_PROPERTY: StringSchemaProperty = {
 
 export const listLayersTool: Tool = {
   name: 'list_layers',
-  description: 'List all scene layers with id, name, kind, parent, and children.',
+  description:
+    'List all scene layers with id, name, kind, parent, children, and z-index.',
   inputSchema: {
     type: 'object',
     properties: { scene: SCENE_PATH_PROPERTY },
@@ -128,6 +133,7 @@ export async function handleListLayers(
         kind: n.kind,
         parent: n.parent,
         children: stringArray(n.children),
+        zIndex: normalizeLayerZIndex(n.zIndex),
       })),
   })
 }
@@ -144,7 +150,7 @@ export async function handleGetLayer(
 
   const node = record(record(loaded.scene.nodes)[input.nodeId])
   if (node.id !== input.nodeId) return errorText(`Layer not found: ${input.nodeId}`)
-  return text(node)
+  return text({ ...node, zIndex: normalizeLayerZIndex(node.zIndex) })
 }
 
 export async function handleListTracks(

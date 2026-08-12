@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Yoga, MeasureFunction } from 'yoga-layout/load'
+import { numberFlowTextAtProgress } from '@/anim/numberFlow'
 import { displayedText } from '@/scene/text'
 import type { TextNode } from '@/scene/types'
 
@@ -128,17 +129,20 @@ export function measureTextNodeSize(
   widthBudget?: number,
 ): { width: number; height: number } {
   const ctx = getCtx()
-  const text = displayedText(node)
+  const texts = measurementTexts(node)
   if (!ctx) {
     // No canvas available — fall back to a rough estimate so we don't
     // collapse to 0. 0.6em per glyph is a reasonable average for
     // proportional fonts.
     const charW = node.fontSize * 0.6 + Math.max(0, node.letterSpacing)
-    const naturalWidth = Math.max(1, text.length * charW)
+    const naturalWidth = Math.max(
+      1,
+      ...texts.map((text) => text.length * charW),
+    )
     const effectiveWidth = Math.max(1, widthBudget ?? naturalWidth)
     const estimatedLines = widthBudget
       ? Math.max(1, Math.ceil(naturalWidth / effectiveWidth))
-      : Math.max(1, text.split('\n').length)
+      : Math.max(1, ...texts.map((text) => text.split('\n').length))
     return {
       width: widthBudget ? effectiveWidth : naturalWidth,
       height: Math.max(
@@ -148,7 +152,7 @@ export function measureTextNodeSize(
     }
   }
   ctx.font = fontString(node)
-  const lines =
+  const lineSets = texts.map((text) =>
     widthBudget === undefined
       ? text.split('\n')
       : wrapToWidthWithTracking(
@@ -156,12 +160,14 @@ export function measureTextNodeSize(
           text,
           Math.max(1, widthBudget),
           node.letterSpacing,
-        )
-  const lineCount = Math.max(1, lines.length)
-  const measuredWidth = widestLineWidthWithTracking(
-    ctx,
-    lines,
-    node.letterSpacing,
+        ),
+  )
+  const lineCount = Math.max(1, ...lineSets.map((lines) => lines.length))
+  const measuredWidth = Math.max(
+    0,
+    ...lineSets.map((lines) =>
+      widestLineWidthWithTracking(ctx, lines, node.letterSpacing),
+    ),
   )
   // CRITICAL: ceil + 1px safety margin.
   //
@@ -178,6 +184,25 @@ export function measureTextNodeSize(
       Math.ceil(lineCount * node.fontSize * node.lineHeight),
     ),
   }
+}
+
+/**
+ * Number Flow can begin with a wider value than the authored destination.
+ * Reserve the larger endpoint so hug-sized text does not clip or relayout
+ * while the timeline advances.
+ */
+function measurementTexts(node: TextNode): string[] {
+  const target = displayedText(node)
+  const config = node.textAnimation
+  if (config?.id !== 'number-flow') return [target]
+
+  const from = numberFlowTextAtProgress(
+    target,
+    config.numberFrom,
+    'in',
+    0,
+  )
+  return from === target ? [target] : [target, from]
 }
 
 function widestLineWidthWithTracking(

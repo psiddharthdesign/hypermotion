@@ -28,6 +28,7 @@ import {
 } from '@/render3d/imageTextureCache'
 import { resolveFallbackCameraPostEffects } from '@/render/cameraPostEffectsFallbackState'
 import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
+import { flattenSceneInPaintOrder } from '@/render/layerCompositing'
 import {
   PaperShaderRenderQualityProvider,
   PaperShaderSourceLayer,
@@ -329,13 +330,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
   const renderOrder = useMemo<NodeId[]>(() => {
     void version
     if (!rootId) return []
-    const out: NodeId[] = []
-    const visit = (id: NodeId) => {
-      out.push(id)
-      for (const c of api.getChildren(id)) visit(c.id)
-    }
-    visit(rootId)
-    return out
+    return flattenSceneInPaintOrder(api, rootId)
   }, [api, rootId, version])
 
   const activeComposition = project.getActiveScene()

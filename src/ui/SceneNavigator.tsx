@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +19,7 @@ import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
 import type { CompositionScene, SequenceItem } from '@/sequence'
 import { AppIcon } from '@/ui/AppIcon'
+import { NumberReadout } from '@/ui/fields/NumberReadout'
 import { useToast } from '@/ui/toastStore'
 
 const SCENE_ITEM_DRAG_TYPE = 'application/x-hypermotion-sequence-item'
@@ -51,7 +53,12 @@ export function SceneNavigator() {
   const showToast = useToast((state) => state.show)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [transferBusy, setTransferBusy] = useState(false)
+  const [sceneStripFade, setSceneStripFade] = useState({
+    left: false,
+    right: false,
+  })
   const importInputRef = useRef<HTMLInputElement>(null)
+  const sceneStripRef = useRef<HTMLDivElement>(null)
 
   const scenes = useMemo(
     () => project.getScenes(),
@@ -67,6 +74,39 @@ export function SceneNavigator() {
     () => new Map(scenes.map((scene) => [scene.id, scene])),
     [scenes],
   )
+
+  const updateSceneStripFade = useCallback(() => {
+    const viewport = sceneStripRef.current
+    if (!viewport) return
+
+    const maxScrollLeft = Math.max(
+      0,
+      viewport.scrollWidth - viewport.clientWidth,
+    )
+    const next = {
+      left: viewport.scrollLeft > 1,
+      right: maxScrollLeft - viewport.scrollLeft > 1,
+    }
+    setSceneStripFade((current) =>
+      current.left === next.left && current.right === next.right
+        ? current
+        : next,
+    )
+  }, [])
+
+  useEffect(() => {
+    const viewport = sceneStripRef.current
+    if (!viewport) return
+
+    updateSceneStripFade()
+    const resizeObserver = new ResizeObserver(updateSceneStripFade)
+    resizeObserver.observe(viewport)
+    if (viewport.firstElementChild instanceof HTMLElement) {
+      resizeObserver.observe(viewport.firstElementChild)
+    }
+    return () => resizeObserver.disconnect()
+  }, [items.length, updateSceneStripFade])
+
   // Hydrate the editor-only selection from the document's persisted active
   // composition after IndexedDB/file loading. This does not pick a different
   // scene; it only gives the UI store the same occurrence id.
@@ -323,57 +363,94 @@ export function SceneNavigator() {
 
         <div className="h-8 w-px shrink-0 bg-border" />
 
-        <div className="max-w-[min(54vw,560px)] min-w-0 overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex min-w-max items-center gap-1.5 px-0.5">
-            {items.map((item, index) => {
-              const composition = sceneById.get(item.sceneId)
-              if (!composition) return null
-              const selected =
-                item.id === selectedItemId ||
-                (!selectedItemId && composition.id === activeCompositionId)
-              return (
-                <SceneCard
-                  key={item.id}
-                  index={index}
-                  item={item}
-                  scene={composition}
-                  selected={selected}
-                  program={programSequenceItemId === item.id}
-                  dragOver={dragOverId === item.id}
-                  rootBackground={rootBackground(sceneApi, composition)}
-                  onSelect={() => selectItem(item)}
-                  onDuplicate={() => duplicate(item, index)}
-                  onDelete={() => remove(item)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData(SCENE_ITEM_DRAG_TYPE, item.id)
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault()
-                    event.dataTransfer.dropEffect = 'move'
-                    setDragOverId(item.id)
-                  }}
-                  onDragLeave={() =>
-                    setDragOverId((current) =>
-                      current === item.id ? null : current,
-                    )
-                  }
-                  onDrop={(event) => onDrop(event, item, index)}
-                />
-              )
-            })}
+        <div className="relative max-w-[min(54vw,560px)] min-w-0">
+          <div
+            ref={sceneStripRef}
+            data-scene-strip-viewport="1"
+            onScroll={updateSceneStripFade}
+            className="overflow-x-auto overflow-y-hidden py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <div className="flex min-w-max items-center gap-1.5 px-0.5">
+              {items.map((item, index) => {
+                const composition = sceneById.get(item.sceneId)
+                if (!composition) return null
+                const selected =
+                  item.id === selectedItemId ||
+                  (!selectedItemId && composition.id === activeCompositionId)
+                return (
+                  <SceneCard
+                    key={item.id}
+                    index={index}
+                    item={item}
+                    scene={composition}
+                    selected={selected}
+                    program={programSequenceItemId === item.id}
+                    dragOver={dragOverId === item.id}
+                    rootBackground={rootBackground(sceneApi, composition)}
+                    onSelect={() => selectItem(item)}
+                    onDuplicate={() => duplicate(item, index)}
+                    onDelete={() => remove(item)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData(
+                        SCENE_ITEM_DRAG_TYPE,
+                        item.id,
+                      )
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                      setDragOverId(item.id)
+                    }}
+                    onDragLeave={() =>
+                      setDragOverId((current) =>
+                        current === item.id ? null : current,
+                      )
+                    }
+                    onDrop={(event) => onDrop(event, item, index)}
+                  />
+                )
+              })}
 
-            <button
-              type="button"
-              onClick={addScene}
-              disabled={transferBusy}
-              title="Add scene"
-              aria-label="Add scene"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
-            >
-              <AppIcon name="plus" size={16} />
-            </button>
+              <button
+                type="button"
+                onClick={addScene}
+                disabled={transferBusy}
+                title="Add scene"
+                aria-label="Add scene"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+              >
+                <AppIcon name="plus" size={16} />
+              </button>
+            </div>
           </div>
+
+          <div
+            aria-hidden="true"
+            data-scene-strip-fade="left"
+            className={[
+              'pointer-events-none absolute inset-y-0 left-0 z-10 w-6 transition-opacity motion-reduce:transition-none',
+              sceneStripFade.left ? 'opacity-100' : 'opacity-0',
+            ].join(' ')}
+            style={{
+              background:
+                'linear-gradient(to right, var(--color-panel-raised), transparent)',
+              transitionDuration: 'var(--duration-ui-fast)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            data-scene-strip-fade="right"
+            className={[
+              'pointer-events-none absolute inset-y-0 right-0 z-10 w-6 transition-opacity motion-reduce:transition-none',
+              sceneStripFade.right ? 'opacity-100' : 'opacity-0',
+            ].join(' ')}
+            style={{
+              background:
+                'linear-gradient(to left, var(--color-panel-raised), transparent)',
+              transitionDuration: 'var(--duration-ui-fast)',
+            }}
+          />
         </div>
 
         <input
@@ -509,7 +586,7 @@ function SceneCard({
       >
         <span className="absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/5" />
         <span className="absolute bottom-1 left-1 flex h-4 min-w-4 items-center justify-center rounded bg-black/65 px-0.5 font-mono text-[8px] text-white">
-          {index + 1}
+          <NumberReadout value={index + 1} />
         </span>
         {program ? (
           <span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-1 ring-black/35" />

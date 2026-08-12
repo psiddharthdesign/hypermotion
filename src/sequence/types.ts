@@ -115,6 +115,14 @@ export interface SequenceItem {
    * duration after `trimStart`.
    */
   duration?: number
+  /**
+   * Optional freeze-frame tail appended after the visible source range.
+   *
+   * This extends the occurrence on the Master timeline without changing the
+   * owning composition's authored duration. The final source frame remains
+   * active throughout the hold. Missing and zero are equivalent.
+   */
+  holdDuration?: number
   /** Transition from this item to the next resolved item. */
   transitionOut?: SequenceTransition
 }
@@ -169,9 +177,17 @@ export interface ResolvedSequenceItem {
   sequenceIndex: number
   sourceStartFrame: number
   sourceEndFrame: number
+  /** Renderable source frames before any trailing freeze-frame hold. */
+  sourceDurationFrames: number
+  /** Trailing freeze-frame frames on the Master timeline. */
+  holdDurationFrames: number
+  /** Total Master occurrence span, including `holdDurationFrames`. */
   durationFrames: number
   sourceStart: number
   sourceEnd: number
+  sourceDuration: number
+  holdDuration: number
+  /** Total Master occurrence span, including `holdDuration`. */
   duration: number
   masterStartFrame: number
   masterEndFrame: number

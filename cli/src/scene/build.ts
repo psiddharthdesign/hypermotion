@@ -67,6 +67,17 @@ export interface SceneMetaJson {
 export type TextAlignJson = 'start' | 'center' | 'end'
 export type NodePositionJson = 'flow' | 'absolute'
 
+export const MIN_LAYER_Z_INDEX = -9_999
+export const MAX_LAYER_Z_INDEX = 9_999
+
+export function normalizeLayerZIndex(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.max(
+    MIN_LAYER_Z_INDEX,
+    Math.min(MAX_LAYER_Z_INDEX, Math.round(value)),
+  )
+}
+
 export const PAPER_SHADER_TYPES = [
   'mesh-gradient',
   'smoke-ring',
@@ -238,6 +249,8 @@ export interface NodeJson {
   visible?: boolean
   locked?: boolean
   position?: NodePositionJson
+  /** Sibling paint order. Larger values render in front; default 0. */
+  zIndex?: number
   isMask?: boolean
   componentSourceId?: string | null
   workspaceOnly?: boolean
@@ -766,6 +779,8 @@ export interface SequenceItemJson {
   masterAudioMuted?: boolean
   trimStart?: number
   duration?: number
+  /** Optional trailing freeze-frame span on the Master timeline. */
+  holdDuration?: number
   transitionOut?: SequenceTransitionJson
 }
 
@@ -1257,6 +1272,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
     y.set('position', node.position ?? 'flow')
+    y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
@@ -1721,6 +1737,17 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
     }
     if (node.position !== undefined && (typeof node.position !== 'string' || !isNodePosition(node.position))) {
       errors.push(`node ${id} has unsupported position: ${String(node.position)}`)
+    }
+    if (
+      node.zIndex !== undefined &&
+      (typeof node.zIndex !== 'number' ||
+        !Number.isInteger(node.zIndex) ||
+        node.zIndex < MIN_LAYER_Z_INDEX ||
+        node.zIndex > MAX_LAYER_Z_INDEX)
+    ) {
+      errors.push(
+        `node ${id} zIndex must be an integer between ${MIN_LAYER_Z_INDEX} and ${MAX_LAYER_Z_INDEX}`,
+      )
     }
     validateLayerMotionPath(id, node, root, errors)
     const parent = typeof node.parent === 'string' ? node.parent : null
@@ -2373,6 +2400,16 @@ function validateSequenceModel(
         )
       }
     }
+    if (
+      item.holdDuration !== undefined &&
+      (typeof item.holdDuration !== 'number' ||
+        !Number.isFinite(item.holdDuration) ||
+        item.holdDuration < 0)
+    ) {
+      errors.push(
+        `sequence item ${id} holdDuration must be a finite number greater than or equal to 0`,
+      )
+    }
 
     if (item.transitionOut !== undefined) {
       const transition = asRecord(item.transitionOut)
@@ -2723,7 +2760,8 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       const node = getNodeMap(scene, op.nodeId)
       for (const [k, v] of Object.entries(op.patch)) {
         if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v)
-        if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
+        if (k === 'zIndex') node.set(k, normalizeLayerZIndex(v))
+        else if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
       return
@@ -2733,8 +2771,13 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       if (op.key === 'kind') {
         assertNodeKindCanBeAuthored(op.nodeId, op.value)
       }
-      if (op.key === 'children' && Array.isArray(op.value)) node.set(op.key, arrayToY(op.value))
-      else node.set(op.key, op.value)
+      if (op.key === 'zIndex') {
+        node.set(op.key, normalizeLayerZIndex(op.value))
+      } else if (op.key === 'children' && Array.isArray(op.value)) {
+        node.set(op.key, arrayToY(op.value))
+      } else {
+        node.set(op.key, op.value)
+      }
       return
     }
     case 'appendChild': {
@@ -2795,6 +2838,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'visible',
     'locked',
     'position',
+    'zIndex',
     'isMask',
     'componentSourceId',
     'workspaceOnly',
@@ -2818,6 +2862,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
   y.set('position', node.position ?? 'flow')
+  y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)

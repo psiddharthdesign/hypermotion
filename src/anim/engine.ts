@@ -110,6 +110,12 @@ export interface AnimatedValue {
   layoutPaddingLeft?: number
   /** 0→1 progress for text-specific animation effects. */
   textProgress?: number
+  /**
+   * Uneased 0→1 position between the active text track's authored keys.
+   * Renderers use this to distinguish easing overshoot from the real end of
+   * the keyframe span.
+   */
+  textTimelineProgress?: number
   /** Text effect config attached to the active text.progress track. */
   textAnimation?: TextAnimationConfig
   /** 0→1 progress for a generic layer motion path. */
@@ -646,6 +652,7 @@ function applyTextProgressTrack(
   if (t < first.time) {
     if ((mode === 'in' || mode === 'out') && typeof first.value === 'number') {
       into.textProgress = first.value
+      into.textTimelineProgress = first.value
       into.textAnimation = textAnimation
     }
     return
@@ -653,6 +660,7 @@ function applyTextProgressTrack(
   if (t > last.time) {
     if ((mode === 'in' || mode === 'out') && typeof last.value === 'number') {
       into.textProgress = last.value
+      into.textTimelineProgress = last.value
       into.textAnimation = textAnimation
     }
     return
@@ -683,6 +691,7 @@ function applyTextProgressTrack(
   const bv = b.value
   if (typeof av !== 'number' || typeof bv !== 'number') return
   into.textProgress = av + (bv - av) * u
+  into.textTimelineProgress = av + (bv - av) * rawU
   if (track.textAnimation) into.textAnimation = track.textAnimation
 }
 
