@@ -721,6 +721,17 @@ test('buildSceneBytes deep-merges partial metadata defaults', () => {
   assert.deepEqual(summary.meta.canvas, { width: 1080, height: 540 })
 })
 
+test('buildSceneBytes infers root and active camera ids', () => {
+  const scene = sampleScene()
+  delete scene.root
+  delete scene.activeCameraId
+
+  const summary = readSceneSummary(buildSceneBytes(scene))
+
+  assert.equal(summary.root, 'root')
+  assert.equal(summary.activeCameraId, 'camera')
+})
+
 test('buildSceneBytes fills nested defaults expected by the desktop app', () => {
   const data = inspectScene(buildSceneBytes(sampleScene()))
   const nodes = data.nodes as PlainSceneMap
