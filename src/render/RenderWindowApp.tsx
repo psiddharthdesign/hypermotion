@@ -762,6 +762,9 @@ async function runExportLoop(
       // when it spawned us. Resizing again would be redundant + might
       // race against the visible-window dimensions.
       outputSize: targetDims,
+      // Avoid PNG encoding and decoding on every worker frame. The main
+      // process retains a tagged PNG fallback if native bitmap capture fails.
+      transport: 'bitmap',
     })
   } catch (e) {
     reportError(
@@ -775,6 +778,10 @@ async function runExportLoop(
   let smoothedFrameMs = 0
   let outputIndex = 0
   let isFirstFrameOverall = true
+  // Crossfades need a third retained surface while the two scene captures
+  // are blended. Reuse it for the complete job to avoid allocating a full
+  // output-sized canvas on every transition frame.
+  const sequenceCompositeCanvas = document.createElement('canvas')
 
   try {
     reportProgress(requestId, { phase: 'rendering', frame: 0, totalFrames })
@@ -808,7 +815,7 @@ async function runExportLoop(
           weight: number
         }> = []
 
-        for (const layer of captureLayers) {
+        for (const [layerIndex, layer] of captureLayers.entries()) {
           const targetSceneId = layer.item?.scene.id ?? null
           const changedScene =
             targetSceneId !== null &&
@@ -829,7 +836,11 @@ async function runExportLoop(
 
           let layerCanvas: HTMLCanvasElement
           try {
-            layerCanvas = await capture.capture()
+            layerCanvas = await capture.capture({
+              // A transition retains both captures until compositing, so each
+              // needs its own pooled slot. Ordinary frames use slot zero.
+              surface: layerIndex,
+            })
           } catch (e) {
             throw new Error(
               `Failed to capture frame ${outputIndex + 1}/${totalFrames}: ${
@@ -862,7 +873,10 @@ async function runExportLoop(
           })
         }
 
-        const canvasEl = compositeSequenceLayers(captured)
+        const canvasEl = compositeSequenceLayers(
+          captured,
+          sequenceCompositeCanvas,
+        )
 
         if (!encoder) {
           try {
@@ -1003,14 +1017,22 @@ function reportError(requestId: string, message: string): void {
  */
 function compositeSequenceLayers(
   layers: readonly { canvas: HTMLCanvasElement; weight: number }[],
+  output: HTMLCanvasElement,
 ): HTMLCanvasElement {
   const first = layers[0]
   if (!first) throw new Error('No scene surface was captured for this frame.')
   if (layers.length === 1) return first.canvas
-  const output = document.createElement('canvas')
-  output.width = first.canvas.width
-  output.height = first.canvas.height
-  const context = output.getContext('2d')
+  if (
+    output.width !== first.canvas.width ||
+    output.height !== first.canvas.height
+  ) {
+    output.width = first.canvas.width
+    output.height = first.canvas.height
+  }
+  const context = output.getContext('2d', {
+    alpha: false,
+    colorSpace: 'srgb',
+  })
   if (!context) throw new Error('Unable to create sequence compositor.')
   context.globalAlpha = 1
   context.drawImage(first.canvas, 0, 0, output.width, output.height)
