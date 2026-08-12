@@ -192,6 +192,16 @@ describe('numberFlowVisualFrameAtProgress', () => {
     expect(down.incomingOffsetEm).toBeLessThan(0)
   })
 
+  it('uses the shortest displayed roll for the individual trend mode', () => {
+    const frame = numberFlowVisualFrameAtProgress('19', 11, 'in', 0.5, {
+      continuous: false,
+      trend: 'individual',
+      spinDistance: 1,
+    })
+    expect(frame.outgoingOffsetEm).toBeGreaterThan(0)
+    expect(frame.incomingOffsetEm).toBeLessThan(0)
+  })
+
   it('passes through adjacent formatted values in continuous mode', () => {
     const frame = numberFlowVisualFrameAtProgress('10.0%', 0, 'in', 0.255, {
       continuous: true,

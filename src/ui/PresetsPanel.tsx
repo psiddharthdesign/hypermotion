@@ -1220,7 +1220,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
                 ['auto', 'Auto'],
                 ['up', 'Up'],
                 ['down', 'Down'],
-                ['individual', 'Per digit'],
+                ['individual', 'Shortest roll'],
               ]}
               onChange={(numberFlowTrend) => patch({ numberFlowTrend })}
               ariaLabel="Number flow roll direction"
