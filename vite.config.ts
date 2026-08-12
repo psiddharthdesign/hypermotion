@@ -1,8 +1,12 @@
-import { defineConfig } from 'vite'
+import { realpathSync } from 'node:fs'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import electron from 'vite-plugin-electron'
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url))
+const dependencyRoot = realpathSync(new URL('./node_modules', import.meta.url))
 
 /**
  * Vite config — same renderer setup as the web build, with Electron
@@ -25,6 +29,15 @@ import electron from 'vite-plugin-electron'
  */
 export default defineConfig({
   base: './',
+  server: {
+    fs: {
+      // Codex worktrees may share dependencies through a node_modules
+      // symlink. Keep Vite's normal workspace boundary and explicitly allow
+      // only that symlink's resolved dependency directory so local font
+      // assets (including Bricolage Grotesque) remain available in dev.
+      allow: [searchForWorkspaceRoot(projectRoot), dependencyRoot],
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),
