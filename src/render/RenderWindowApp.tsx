@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   SceneProvider,
   fillToCss,
@@ -67,6 +74,12 @@ import {
   type DofRenderQuality,
 } from './apertureBokeh'
 import { shouldUseRadialExportFocusMask } from './focusFallback'
+import { resolveDirectGpuExportEligibility } from './directGpuExportEligibility'
+import {
+  FrameReadyBarrier,
+  type FrameReadyIdentity,
+} from './frameReady'
+import { renderCameraBackendKey } from './renderCameraBackend'
 
 /**
  * RenderWindowApp — the chrome-less render shell loaded in the hidden
@@ -83,9 +96,10 @@ import { shouldUseRadialExportFocusMask } from './focusFallback'
  *      render-window mode.
  *   3. Mount <RenderCanvas> — paints the scene at the exact output
  *      dimensions, no editor chrome, no overlays, no pan/zoom transform.
- *   4. Wait for first paint + a few rAFs so the canvas is on-screen.
- *   5. Walk the requested frame range, seek the anim engine, capture
- *      each frame via Electron CDP, push into the WebCodecs encoder.
+ *   4. Wait for the initial scene assets to become renderable.
+ *   5. Walk the requested frame range, seek the animation engine, then
+ *      wait for an exact renderer acknowledgement. Eligible WebGL surfaces
+ *      feed WebCodecs directly; all other frames use Electron capture.
  *   6. Stream progress to the editor via `export:render-window-progress`.
  *   7. On completion, ship the encoded bytes back via
  *      `export:render-window-done`. Main closes this window.
@@ -99,6 +113,81 @@ interface HyperMotionBridge {
 }
 
 const EMPTY_NODE_IDS: NodeId[] = []
+
+interface PreparedRenderFrame {
+  identity: FrameReadyIdentity
+  sceneId: string | null
+  localTime: number
+  backend: 'dom' | 'webgl'
+  surface: HTMLCanvasElement | null
+  sceneFillCss: string | null
+}
+
+interface RenderFrameRequest extends FrameReadyIdentity {
+  sceneId: string | null
+  localTime: number
+}
+
+interface RenderFrameCoordinator {
+  prepareFrame: (input: {
+    sceneId: string | null
+    localTime: number
+  }) => Promise<PreparedRenderFrame>
+  acknowledge: (
+    request: RenderFrameRequest,
+    backend: PreparedRenderFrame['backend'],
+    surface?: HTMLCanvasElement | null,
+    sceneFillCss?: string | null,
+  ) => void
+  dispose: (reason?: unknown) => void
+}
+
+function createRenderFrameCoordinator(
+  publish: (request: RenderFrameRequest) => void,
+): RenderFrameCoordinator {
+  const barrier = new FrameReadyBarrier({ timeoutMs: 15_000 })
+  const receipts = new Map<number, PreparedRenderFrame>()
+
+  return {
+    async prepareFrame(input) {
+      const pending = barrier.begin()
+      const request: RenderFrameRequest = {
+        ...pending.identity,
+        sceneId: input.sceneId,
+        localTime: input.localTime,
+      }
+      publish(request)
+      await pending.promise
+      const receipt = receipts.get(request.token)
+      receipts.delete(request.token)
+      if (!receipt) {
+        throw new Error(
+          `Renderer acknowledged frame ${request.token} without a surface receipt.`,
+        )
+      }
+      return receipt
+    },
+    acknowledge(request, backend, surface = null, sceneFillCss = null) {
+      const receipt: PreparedRenderFrame = {
+        identity: { token: request.token, pass: request.pass },
+        sceneId: request.sceneId,
+        localTime: request.localTime,
+        backend,
+        surface,
+        sceneFillCss,
+      }
+      // Promise continuations run in a microtask, so recording immediately
+      // after a successful acknowledgement still precedes prepareFrame's
+      // receipt lookup. A duplicate DOM/WebGL acknowledgement must not erase
+      // the valid receipt for the request that won the race.
+      if (barrier.acknowledge(request)) receipts.set(request.token, receipt)
+    },
+    dispose(reason) {
+      receipts.clear()
+      barrier.dispose(reason)
+    },
+  }
+}
 
 function getBridge(): HyperMotionBridge | null {
   if (typeof window === 'undefined') return null
@@ -172,7 +261,13 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
 
   const [job, setJob] = useState<RenderJob | null>(null)
   const [fontsReady, setFontsReady] = useState(false)
+  const [renderRequest, setRenderRequest] =
+    useState<RenderFrameRequest | null>(null)
   const exportStartedRef = useRef(false)
+  const frameCoordinator = useMemo(
+    () => createRenderFrameCoordinator(setRenderRequest),
+    [],
+  )
 
   // Step 1: fetch our render job from main and seed the document before
   // publishing the job to React. Treating that pair as one async operation
@@ -264,8 +359,8 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
   useEffect(() => {
     if (!fontsReady || !job || exportStartedRef.current) return
     exportStartedRef.current = true
-    void runExportLoop(api, job, requestId)
-  }, [fontsReady, job, api, requestId])
+    void runExportLoop(api, job, requestId, frameCoordinator)
+  }, [fontsReady, job, api, requestId, frameCoordinator])
 
   if (!job || !fontsReady) {
     // Black surface while we boot. Hidden window so the user never sees
@@ -281,7 +376,13 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
       />
     )
   }
-  return <RenderCanvas job={job} />
+  return (
+    <RenderCanvas
+      job={job}
+      renderRequest={renderRequest}
+      acknowledgeFrame={frameCoordinator.acknowledge}
+    />
+  )
 }
 
 /**
@@ -303,7 +404,15 @@ function RenderRunnerContent({ requestId }: { requestId: string }) {
  * imported from Canvas.tsx so editor and render-window paint identical
  * pixels for the same scene state.
  */
-function RenderCanvas({ job }: { job: RenderJob }) {
+function RenderCanvas({
+  job,
+  renderRequest,
+  acknowledgeFrame,
+}: {
+  job: RenderJob
+  renderRequest: RenderFrameRequest | null
+  acknowledgeFrame: RenderFrameCoordinator['acknowledge']
+}) {
   const api = useSceneAPI()
   const version = useSceneVersion()
   const project = useProjectAPI()
@@ -348,10 +457,7 @@ function RenderCanvas({ job }: { job: RenderJob }) {
         fallbackCameraId: api.getActiveCameraId(),
       }).cameraId
     : api.getActiveCameraId()
-  const cameraAnimationIds = useMemo(
-    () => (cameraId ? [cameraId] : []),
-    [cameraId],
-  )
+  const cameraAnimationIds = cameraId ? [cameraId] : EMPTY_NODE_IDS
   const animated = useAnimatedValues(renderOrder)
   const sceneFill =
     rootId && animated[rootId]?.fill !== undefined
@@ -387,51 +493,86 @@ function RenderCanvas({ job }: { job: RenderJob }) {
     ? fillBackgroundStyle(cameraBackgroundFill)
     : null
 
-  const cameraDomProjection = useMemo(
-    () =>
-      resolveCameraDomProjection(
-        camera && camera.kind === 'camera' ? camera : null,
-        cameraAnim,
-        { width: canvasWidth, height: canvasHeight },
-      ),
-    [camera, cameraAnim, canvasWidth, canvasHeight],
+  const cameraDomProjection = resolveCameraDomProjection(
+    camera && camera.kind === 'camera' ? camera : null,
+    cameraAnim,
+    { width: canvasWidth, height: canvasHeight },
   )
   const cameraFocalLength = cameraDomProjection.focalLength
   const cameraScaleFromZ = cameraDomProjection.scale
   const cameraTransform = cameraDomProjection.transform
 
-  const cameraDepthOfField = useMemo(
-    () => {
-      const focusTargetWorld = resolveCameraFocusTargetPoint(
-        api,
-        camera && camera.kind === 'camera' ? camera : null,
-        solved ?? {},
-        animated,
-        inherited,
-        { width: canvasWidth, height: canvasHeight },
-      )
-      return computeCameraDepthOfField(
-        camera && camera.kind === 'camera' ? camera : null,
-        cameraAnim,
-        cameraScaleFromZ,
-        canvasWidth,
-        canvasHeight,
-        focusTargetWorld,
-      )
-    },
-    [
-      api,
-      camera,
-      cameraAnim,
-      cameraScaleFromZ,
-      canvasWidth,
-      canvasHeight,
-      solved,
-      animated,
-      inherited,
-    ],
+  const focusTargetWorld = resolveCameraFocusTargetPoint(
+    api,
+    camera && camera.kind === 'camera' ? camera : null,
+    solved ?? {},
+    animated,
+    inherited,
+    { width: canvasWidth, height: canvasHeight },
   )
-  const [threeCameraAvailable, setThreeCameraAvailable] = useState(false)
+  const cameraDepthOfField = computeCameraDepthOfField(
+    camera && camera.kind === 'camera' ? camera : null,
+    cameraAnim,
+    cameraScaleFromZ,
+    canvasWidth,
+    canvasHeight,
+    focusTargetWorld,
+  )
+  const cameraBackendKey = renderCameraBackendKey(
+    activeComposition?.id,
+    cameraId,
+  )
+  const [threeCapability, setThreeCapability] = useState<{
+    key: string
+    available: boolean
+  } | null>(null)
+  const threeCameraAvailable =
+    threeCapability?.key === cameraBackendKey
+      ? threeCapability.available
+      : null
+  const handleThreeAvailability = useCallback(
+    (available: boolean) => {
+      setThreeCapability({ key: cameraBackendKey, available })
+    },
+    [cameraBackendKey],
+  )
+  const acknowledgedDomTokenRef = useRef(0)
+  const acknowledgeWebglFrame = useCallback(
+    (
+      request: FrameReadyIdentity,
+      surface: HTMLCanvasElement,
+    ) => {
+      if (
+        !renderRequest ||
+        request.token !== renderRequest.token ||
+        request.pass !== renderRequest.pass
+      ) {
+        return
+      }
+      acknowledgeFrame(renderRequest, 'webgl', surface, sceneFill)
+    },
+    [acknowledgeFrame, renderRequest, sceneFill],
+  )
+
+  useLayoutEffect(() => {
+    if (!renderRequest || !solved) return
+    const expectsWebgl = camera?.kind === 'camera'
+    // A camera viewport first reports availability from its WebGL mount. Do
+    // not acknowledge the temporary DOM fallback while that capability is
+    // still unknown, otherwise export can capture the pre-GPU frame.
+    if (expectsWebgl && threeCameraAvailable === null) return
+    if (expectsWebgl && threeCameraAvailable) return
+    if (acknowledgedDomTokenRef.current === renderRequest.token) return
+    acknowledgedDomTokenRef.current = renderRequest.token
+    acknowledgeFrame(renderRequest, 'dom', null, sceneFill)
+  }, [
+    acknowledgeFrame,
+    camera,
+    renderRequest,
+    sceneFill,
+    solved,
+    threeCameraAvailable,
+  ])
 
   // Output scale — the render window's content area is sized to the
   // output dimensions in main. The artboard is rendered at its own
@@ -576,7 +717,10 @@ function RenderCanvas({ job }: { job: RenderJob }) {
               playing={playing}
               playhead={playhead}
               sceneVersion={version}
-              onAvailabilityChange={setThreeCameraAvailable}
+              key={cameraBackendKey}
+              onAvailabilityChange={handleThreeAvailability}
+              renderRequest={renderRequest}
+              onFrameRendered={acknowledgeWebglFrame}
             />
           </div>
         ) : (
@@ -631,6 +775,7 @@ async function runExportLoop(
   api: ReturnType<typeof useSceneAPI>,
   job: RenderJob,
   requestId: string,
+  frameCoordinator: RenderFrameCoordinator,
 ): Promise<void> {
   const bridge = getBridge()
   if (!bridge) {
@@ -753,31 +898,34 @@ async function runExportLoop(
   const originalSceneId = project.getActiveSceneId()
   ui.setPlaying(false)
 
-  let capture: Awaited<ReturnType<typeof createElectronCapture>>
-  try {
-    capture = await createElectronCapture({
+  // The capture bridge is initialized lazily. A fully eligible GPU job never
+  // calls capturePage or transfers a frame-sized bitmap through Electron.
+  const captureSession: {
+    current: Awaited<ReturnType<typeof createElectronCapture>> | null
+  } = { current: null }
+  const getCapture = async () => {
+    if (captureSession.current) return captureSession.current
+    captureSession.current = await createElectronCapture({
       // No zoomFactor — the render window's WebContents is already at
       // 1.0 by default and there's no editor zoom to fight.
       // No fitViewportTo — main sized the window to exactly outputW × H
       // when it spawned us. Resizing again would be redundant + might
       // race against the visible-window dimensions.
       outputSize: targetDims,
-      // Avoid PNG encoding and decoding on every worker frame. The main
+      // Avoid PNG encoding and decoding on every fallback frame. The main
       // process retains a tagged PNG fallback if native bitmap capture fails.
       transport: 'bitmap',
     })
-  } catch (e) {
-    reportError(
-      requestId,
-      `Failed to set up capture: ${e instanceof Error ? e.message : String(e)}`,
-    )
-    return
+    return captureSession.current
   }
 
   let encoder: FrameEncoder | null = null
   let smoothedFrameMs = 0
   let outputIndex = 0
-  let isFirstFrameOverall = true
+  const directGpuFallbackReasons = new Set<string>()
+  let directGpuFrames = 0
+  let captureFrames = 0
+  let previousPreparedSceneId: string | null = null
   // Crossfades need a third retained surface while the two scene captures
   // are blended. Reuse it for the complete job to avoid allocating a full
   // output-sized canvas on every transition frame.
@@ -817,36 +965,125 @@ async function runExportLoop(
 
         for (const [layerIndex, layer] of captureLayers.entries()) {
           const targetSceneId = layer.item?.scene.id ?? null
+          const requestedSceneId =
+            targetSceneId ?? project.getActiveSceneId()
           const changedScene =
             targetSceneId !== null &&
             project.getActiveSceneId() !== targetSceneId
+          const firstPreparedFrame = previousPreparedSceneId === null
           if (targetSceneId && changedScene) {
             project.activateScene(targetSceneId)
           }
+          const activeRootId = api.getRoot() || null
+          const asyncNodes = inspectActiveRenderSubtree(api, activeRootId)
           engine.seek(layer.localTime)
           useUI.getState().setPlayhead(layer.localTime)
-          // Multiple rAFs let React commit the new composition + local
-          // playhead before CDP captures. A transition captures both scenes at
-          // their own local times, then composites the two canvases below.
-          await waitForFrames(isFirstFrameOverall || changedScene ? 5 : 3)
-          if (changedScene) await waitForPaperShadersReady()
-          await waitForRender3dVideosReady()
+          // React/Yoga and the GPU renderer acknowledge this exact token only
+          // after the requested local time reaches their committed surface.
+          // This replaces the old fixed 3-5 display-frame delay.
+          let prepared = await frameCoordinator.prepareFrame({
+            sceneId: requestedSceneId,
+            localTime: layer.localTime,
+          })
+          const shadersReady =
+            asyncNodes.hasShader || changedScene || firstPreparedFrame
+            ? await waitForPaperShadersReady()
+            : true
+          if (!shadersReady) {
+            throw new Error(
+              'A Paper shader image could not be prepared for export. Check its source image and CORS access, then try again.',
+            )
+          }
+          // Paper applies uniforms in a passive effect and publishes its source
+          // to Three on the following paint. Shader scenes remain on the
+          // fidelity fallback, so retain a bounded settle window here instead
+          // of letting their asynchronous source lag a frame behind.
+          if (asyncNodes.hasShader) await waitForFrames(3)
+          if (asyncNodes.hasVideo) await waitForRender3dVideosReady()
           await waitForCachedRender3dImages()
-          isFirstFrameOverall = false
+
+          // Scene switches and asynchronous asset readiness can invalidate a
+          // texture after the first GPU commit. Request one exact second pass
+          // so the decoded source reaches the final surface before encoding.
+          if (
+            changedScene ||
+            firstPreparedFrame ||
+            asyncNodes.hasShader ||
+            asyncNodes.hasVideo
+          ) {
+            prepared = await frameCoordinator.prepareFrame({
+              sceneId: requestedSceneId,
+              localTime: layer.localTime,
+            })
+          }
+          if (asyncNodes.hasVideo) {
+            // Pass two can be the first pass with metadata available, in which
+            // case it initiates the target seek. Wait for that exact decoded
+            // presentation frame, then submit one final GPU pass.
+            await waitForRender3dVideosReady()
+            prepared = await frameCoordinator.prepareFrame({
+              sceneId: requestedSceneId,
+              localTime: layer.localTime,
+            })
+          }
+          previousPreparedSceneId = requestedSceneId
+
+          const rootId = api.getRoot()
+          const rootNode = rootId ? api.getNode(rootId) : null
+          const rootHasVisualAnimation = rootId
+            ? api.getTracksForNode(rootId).some((track) =>
+                ROOT_COMPOSITING_PROPERTY_IDS.has(track.propertyId),
+              )
+            : false
+          const activeCameraId = resolveRenderProgramCameraId(
+            api,
+            project,
+            layer.localTime,
+          )
+          const activeCamera = activeCameraId
+            ? api.getNode(activeCameraId)
+            : null
+          const eligibility = resolveDirectGpuExportEligibility({
+            format: job.format,
+            sequenceLayerCount: captureLayers.length,
+            receipt: {
+              backend: prepared.backend,
+              surface: prepared.surface,
+            },
+            target: targetDims,
+            activeCamera:
+              activeCamera?.kind === 'camera' ? activeCamera : null,
+            activeRoot: rootNode,
+            rootHasVisualAnimation,
+            getNode: (id) => api.getNode(id),
+            animatedSceneFillCss: prepared.sceneFillCss,
+          })
 
           let layerCanvas: HTMLCanvasElement
-          try {
-            layerCanvas = await capture.capture({
-              // A transition retains both captures until compositing, so each
-              // needs its own pooled slot. Ordinary frames use slot zero.
-              surface: layerIndex,
-            })
-          } catch (e) {
-            throw new Error(
-              `Failed to capture frame ${outputIndex + 1}/${totalFrames}: ${
-                e instanceof Error ? e.message : String(e)
-              }`,
-            )
+          if (eligibility.eligible && prepared.surface) {
+            layerCanvas = prepared.surface
+            directGpuFrames += 1
+          } else {
+            directGpuFallbackReasons.add(eligibility.reason)
+            // capturePage observes Chromium's composited page rather than the
+            // renderer's drawing buffer. One post-paint turn is sufficient
+            // after the exact React/GPU acknowledgement above.
+            await waitForFrames(2)
+            try {
+              const fallbackCapture = await getCapture()
+              layerCanvas = await fallbackCapture.capture({
+                // A transition retains both captures until compositing, so each
+                // needs its own pooled slot. Ordinary frames use slot zero.
+                surface: layerIndex,
+              })
+              captureFrames += 1
+            } catch (e) {
+              throw new Error(
+                `Failed to capture frame ${outputIndex + 1}/${totalFrames}: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              )
+            }
           }
           // ThreeSceneViewport already resolves depth-of-field in its final
           // render pass. Applying the canvas aperture pass on that capture
@@ -954,6 +1191,14 @@ async function runExportLoop(
     if (!encoder) throw new Error('No frames captured — export aborted.')
     const blob = await encoder.finish()
 
+    console.info(
+      `[render-window] frame transport ${JSON.stringify({
+        directGpuFrames,
+        captureFrames,
+        fallbackReasons: [...directGpuFallbackReasons],
+      })}`,
+    )
+
     const buf = await blob.arrayBuffer()
     const bytes = new Uint8Array(buf)
 
@@ -968,7 +1213,7 @@ async function runExportLoop(
     reportError(requestId, e instanceof Error ? e.message : String(e))
   } finally {
     try {
-      await capture.destroy()
+      await captureSession.current?.destroy()
     } catch {
       /* best effort */
     }
@@ -980,7 +1225,48 @@ async function runExportLoop(
     }
     engine.seek(originalPlayhead)
     if (originalPlaying) engine.play()
+    frameCoordinator.dispose('Render export finished.')
   }
+}
+
+interface ActiveRenderSubtreeFeatures {
+  hasShader: boolean
+  hasVideo: boolean
+}
+
+const ROOT_COMPOSITING_PROPERTY_IDS = new Set([
+  'appearance.opacity',
+  'appearance.fill',
+  'appearance.cornerRadius',
+  'appearance.blendMode',
+])
+
+function inspectActiveRenderSubtree(
+  api: ReturnType<typeof useSceneAPI>,
+  rootId: NodeId | null,
+): ActiveRenderSubtreeFeatures {
+  const result: ActiveRenderSubtreeFeatures = {
+    hasShader: false,
+    hasVideo: false,
+  }
+  if (!rootId) return result
+
+  const root = api.getNode(rootId)
+  if (!root) return result
+  const pending = [...root.children]
+  const visited = new Set<NodeId>([rootId])
+  while (pending.length > 0) {
+    const nodeId = pending.pop()!
+    if (visited.has(nodeId)) continue
+    visited.add(nodeId)
+    const node = api.getNode(nodeId)
+    if (!node) continue
+    if (node.kind === 'shader') result.hasShader = true
+    if (node.kind === 'video') result.hasVideo = true
+    if (result.hasShader && result.hasVideo) break
+    pending.push(...node.children)
+  }
+  return result
 }
 
 function reportProgress(
@@ -1331,14 +1617,16 @@ async function waitForRender3dVideosReady(timeoutMs = 900): Promise<void> {
     const videos = (
       window as Window & { __hypermotionRender3dVideos?: HTMLVideoElement[] }
     ).__hypermotionRender3dVideos ?? []
+    if (videos.length === 0) return
     if (
-      videos.length === 0 ||
       videos.every(
         (video) =>
           video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
           !video.seeking,
       )
     ) {
+      // Let the decoded frame become the element's current presentation image;
+      // the caller follows this with an exact second GPU render request.
       await waitForFrames(1)
       return
     }

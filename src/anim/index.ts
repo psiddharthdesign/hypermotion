@@ -84,6 +84,8 @@ export {
   type TextAnimationId,
   type TextAnimationMode,
   type TextAnimationMotionVector,
+  type NumberFlowDigitMode,
+  type NumberFlowDigitOrder,
   type NumberFlowTrend,
   type TextAnimationOrder,
   type TextAnimationPreset,

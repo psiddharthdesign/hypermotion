@@ -132,6 +132,7 @@ import {
   numberFlowTextAtProgress,
   numberFlowVisualFrameAtProgress,
   numberFlowVisualOptionsFromConfig,
+  type NumberFlowVisualToken,
 } from '@/anim/numberFlow'
 import { scrambleTextForSegment } from '@/anim/textScramble'
 import {
@@ -5998,6 +5999,64 @@ function renderTextSegmentContent(
       textAlign: 'inherit',
       willChange: 'transform, opacity, filter',
     })
+    if (
+      config.numberFlowDigitMode === 'staggered' &&
+      frame.tokens.length > 0
+    ) {
+      const prefixText = frame.tokens
+        .filter((token) => token.kind === 'prefix')
+        .map((token) => token.outgoingChar)
+        .join('')
+      const numericTokens = frame.tokens.filter(
+        (token) => token.kind === 'digit' || token.kind === 'separator',
+      )
+      const suffixText = frame.tokens
+        .filter((token) => token.kind === 'suffix')
+        .map((token) => token.outgoingChar)
+        .join('')
+
+      return (
+        <span
+          aria-label={frame.settledText}
+          style={{
+            position: 'relative',
+            display: 'block',
+            width: '100%',
+            WebkitMaskImage: sideMask,
+            maskImage: sideMask,
+          }}
+        >
+          <span
+            style={{
+              position: 'relative',
+              display: 'block',
+              width: '100%',
+              WebkitMaskImage: edgeMask,
+              maskImage: edgeMask,
+            }}
+          >
+            <span aria-hidden style={{ whiteSpace: 'inherit' }}>
+              {prefixText}
+              {numericTokens.length > 0 ? (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'baseline',
+                    verticalAlign: 'baseline',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {numericTokens.map((token) => (
+                    <NumberFlowTokenColumn key={token.key} token={token} />
+                  ))}
+                </span>
+              ) : null}
+              {suffixText}
+            </span>
+          </span>
+        </span>
+      )
+    }
     return (
       <span
         style={{
@@ -6062,6 +6121,86 @@ function renderTextSegmentContent(
       </span>
     </>
   )
+}
+
+function NumberFlowTokenColumn({
+  token,
+}: {
+  token: NumberFlowVisualToken
+}) {
+  const measureChars = numberFlowTokenMeasureChars(token)
+  const tokenLayerStyle = (
+    offsetEm: number,
+    opacity: number,
+  ): CSSProperties => ({
+    gridArea: '1 / 1',
+    justifySelf: 'center',
+    whiteSpace: 'pre',
+    transform: `translateY(${offsetEm}em)`,
+    opacity,
+    filter:
+      token.blurRadius > 0.01
+        ? `blur(${token.blurRadius}px)`
+        : undefined,
+    pointerEvents: 'none',
+    willChange: 'transform, opacity, filter',
+  })
+
+  return (
+    <span
+      style={{
+        position: 'relative',
+        display: 'inline-grid',
+        gridTemplateColumns: 'max-content',
+        gridTemplateRows: '1fr',
+        verticalAlign: 'baseline',
+      }}
+    >
+      {measureChars.map((character, index) => (
+        <span
+          key={`${token.key}:measure:${index}`}
+          aria-hidden
+          style={{
+            gridArea: '1 / 1',
+            visibility: 'hidden',
+            whiteSpace: 'pre',
+          }}
+        >
+          {character}
+        </span>
+      ))}
+      <span
+        aria-hidden
+        style={tokenLayerStyle(
+          token.outgoingOffsetEm,
+          token.outgoingOpacity,
+        )}
+      >
+        {token.outgoingChar}
+      </span>
+      <span
+        aria-hidden
+        style={tokenLayerStyle(
+          token.incomingOffsetEm,
+          token.incomingOpacity,
+        )}
+      >
+        {token.incomingChar}
+      </span>
+    </span>
+  )
+}
+
+function numberFlowTokenMeasureChars(
+  token: NumberFlowVisualToken,
+): string[] {
+  if (token.kind === 'digit') return Array.from('0123456789')
+  if (token.kind !== 'separator') {
+    return [token.outgoingChar || token.incomingChar || '\u200b']
+  }
+  if (token.key === 'separator:sign') return ['-']
+  if (token.key === 'separator:decimal') return ['.']
+  return [',']
 }
 
 type MediaVideoProps = {

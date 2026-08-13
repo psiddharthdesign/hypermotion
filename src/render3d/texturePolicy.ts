@@ -15,6 +15,22 @@ export interface CachedPlaneTextureState {
   textureSignature: string
 }
 
+export interface TextureScaleOptions {
+  /**
+   * Realtime previews stay capped at 2x. Final renders may opt into a higher
+   * ceiling when a camera projects a plane across more output pixels than its
+   * authored bounds contain.
+   */
+  maximumScale?: number
+  /** Keep individual CanvasTextures inside a conservative GPU-safe bound. */
+  maximumDimension?: number
+  /**
+   * Round upward so small camera changes reuse the same raster instead of
+   * repainting and uploading a texture on every animation frame.
+   */
+  bucketStep?: number
+}
+
 /**
  * Match the editor framebuffer to the scene's on-screen footprint. A 4K
  * artboard viewed at 25% should not allocate an 8K Retina render target.
@@ -96,13 +112,30 @@ export function textureScaleForRect(
   rect: Pick<Rect, 'width' | 'height'>,
   devicePixelRatio =
     typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+  options: TextureScaleOptions = {},
 ): number {
-  const desired = Math.min(
-    MAX_TEXTURE_SCALE,
-    Math.max(1, devicePixelRatio),
+  const maximumScale = Number.isFinite(options.maximumScale)
+    ? Math.max(1, options.maximumScale!)
+    : MAX_TEXTURE_SCALE
+  const maximumDimension = Number.isFinite(options.maximumDimension)
+    ? Math.max(1, options.maximumDimension!)
+    : MAX_TEXTURE_DIMENSION
+  const requested = Math.min(
+    maximumScale,
+    Math.max(1, Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1),
   )
+  const bucketStep = Number.isFinite(options.bucketStep)
+    ? Math.max(0, options.bucketStep!)
+    : 0
+  const desired =
+    bucketStep > 0
+      ? Math.min(
+          maximumScale,
+          Math.ceil((requested - Number.EPSILON) / bucketStep) * bucketStep,
+        )
+      : requested
   const maxSide = Math.max(1, Math.ceil(Math.max(rect.width, rect.height)))
-  return Math.max(1, Math.min(desired, MAX_TEXTURE_DIMENSION / maxSide))
+  return Math.max(1, Math.min(desired, maximumDimension / maxSide))
 }
 
 /** Workspace-only view changes reuse the existing bitmap. */

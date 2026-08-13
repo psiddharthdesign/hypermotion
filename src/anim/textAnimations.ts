@@ -56,6 +56,8 @@ export type TextAnimationAcceleration =
   | 'spring'
 export type TextAnimationSmoothing = 'none' | 'soft' | 'smooth'
 export type NumberFlowTrend = 'auto' | 'up' | 'down' | 'individual'
+export type NumberFlowDigitMode = 'together' | 'staggered'
+export type NumberFlowDigitOrder = 'forward' | 'backward'
 
 /**
  * Per-segment motion offset in line-height multiples: +X moves right, +Y moves
@@ -76,6 +78,12 @@ export interface TextAnimationConfig {
   numberFrom: number
   numberFlowTrend: NumberFlowTrend
   numberFlowContinuous: boolean
+  /** Whether digit columns move together or occupy staggered segment windows. */
+  numberFlowDigitMode: NumberFlowDigitMode
+  /** Visual digit traversal order used when digit staggering is enabled. */
+  numberFlowDigitOrder: NumberFlowDigitOrder
+  /** Portion of the segment reserved for delays between digit columns. */
+  numberFlowDigitStagger: number
   /** Numeric increment between visible rolls; null follows display precision. */
   numberFlowIncrement: number | null
   /** Whole-digit travel measured in the current text line height. */
@@ -130,6 +138,9 @@ export const DEFAULT_TEXT_ANIMATION: TextAnimationConfig = {
   numberFrom: 0,
   numberFlowTrend: 'auto',
   numberFlowContinuous: true,
+  numberFlowDigitMode: 'together',
+  numberFlowDigitOrder: 'forward',
+  numberFlowDigitStagger: 0.25,
   numberFlowIncrement: null,
   numberFlowSpinDistance: 1,
   numberFlowFadeAmount: 1,
@@ -294,6 +305,9 @@ export function applyTextAnimation(
           numberFrom: previous.numberFrom,
           numberFlowTrend: previous.numberFlowTrend,
           numberFlowContinuous: previous.numberFlowContinuous,
+          numberFlowDigitMode: previous.numberFlowDigitMode,
+          numberFlowDigitOrder: previous.numberFlowDigitOrder,
+          numberFlowDigitStagger: previous.numberFlowDigitStagger,
           numberFlowIncrement: previous.numberFlowIncrement,
           numberFlowSpinDistance: previous.numberFlowSpinDistance,
           numberFlowFadeAmount: previous.numberFlowFadeAmount,
@@ -575,6 +589,17 @@ export function normalizeTextAnimation(raw: unknown): TextAnimationConfig | null
       typeof value.numberFlowContinuous === 'boolean'
         ? value.numberFlowContinuous
         : base.numberFlowContinuous,
+    numberFlowDigitMode: isNumberFlowDigitMode(value.numberFlowDigitMode)
+      ? value.numberFlowDigitMode
+      : base.numberFlowDigitMode,
+    numberFlowDigitOrder: isNumberFlowDigitOrder(value.numberFlowDigitOrder)
+      ? value.numberFlowDigitOrder
+      : base.numberFlowDigitOrder,
+    numberFlowDigitStagger: clamp(
+      finiteNumber(value.numberFlowDigitStagger, base.numberFlowDigitStagger),
+      0,
+      0.9,
+    ),
     numberFlowIncrement: normalizeNumberFlowIncrement(
       value.numberFlowIncrement,
       base.numberFlowIncrement,
@@ -657,6 +682,14 @@ function isNumberFlowTrend(value: unknown): value is NumberFlowTrend {
     value === 'down' ||
     value === 'individual'
   )
+}
+
+function isNumberFlowDigitMode(value: unknown): value is NumberFlowDigitMode {
+  return value === 'together' || value === 'staggered'
+}
+
+function isNumberFlowDigitOrder(value: unknown): value is NumberFlowDigitOrder {
+  return value === 'forward' || value === 'backward'
 }
 
 function clampTimingRatio(value: unknown, fallback: number): number {

@@ -264,6 +264,11 @@ export async function createElectronCapture(
     } finally {
       probe.remove()
       probe = null
+      // The bitmap probe deliberately paints a red calibration pixel. Wait
+      // until its removal reaches Chromium's compositor before the first real
+      // capture; this matters now that fallback capture is initialized lazily
+      // on the exact frame that will be encoded.
+      await waitForFrames(2)
     }
   }
 

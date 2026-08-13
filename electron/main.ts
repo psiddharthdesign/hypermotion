@@ -38,6 +38,7 @@ import {
   type FigmaPluginStatus,
 } from './figmaPlugin'
 import { isRenderWindowLeaseStale } from './renderWindowLease'
+import { resolveExportDestinationPath } from './exportDestination'
 import {
   detectNativeBitmapMetadata,
   expectedBitmapByteLength,
@@ -1759,6 +1760,14 @@ ipcMain.handle(
         'The export worker became unresponsive and was closed.',
       )
     })
+    // Keep one concise transport summary visible to headless/CLI callers.
+    // This makes it possible to verify that a job used direct GPU frames or
+    // the fidelity fallback without forwarding the hidden renderer's full log.
+    win.webContents.on('console-message', (_event, _level, message) => {
+      if (message.startsWith('[render-window] frame transport ')) {
+        console.info(message)
+      }
+    })
     win.webContents.on('render-process-gone', (_event, details) => {
       failRenderWindow(
         requestId,
@@ -1900,6 +1909,70 @@ ipcMain.handle(
 ipcMain.handle('export:cancel-render-window', (_e, requestId: string) => {
   closeRenderWindow(requestId)
 })
+
+ipcMain.handle('export:get-default-directory', () => app.getPath('downloads'))
+
+ipcMain.handle(
+  'export:choose-directory',
+  async (
+    _e,
+    opts?: { defaultPath?: string; suggestedName?: string },
+  ): Promise<{ directory: string; fileName: string } | null> => {
+    if (!mainWindow) return null
+    const directory = opts?.defaultPath || app.getPath('downloads')
+    const suggestedName =
+      opts?.suggestedName && path.basename(opts.suggestedName) === opts.suggestedName
+        ? opts.suggestedName
+        : 'export.mp4'
+    const extension = path.extname(suggestedName).slice(1).toLowerCase()
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Choose export destination',
+      defaultPath: path.join(directory, suggestedName),
+      buttonLabel: 'Save',
+      filters: [
+        {
+          name: extension ? extension.toUpperCase() : 'Video',
+          extensions: [extension || 'mp4'],
+        },
+      ],
+    })
+    return result.canceled || !result.filePath
+      ? null
+      : {
+          directory: path.dirname(result.filePath),
+          fileName: path.basename(result.filePath),
+        }
+  },
+)
+
+ipcMain.handle(
+  'export:write-file',
+  (
+    _e,
+    payload: {
+      directory: string
+      fileName: string
+      bytes: Uint8Array
+    },
+  ): { ok: boolean; path?: string; error?: string } => {
+    try {
+      const directoryStats = fs.statSync(payload.directory)
+      if (!directoryStats.isDirectory()) {
+        throw new Error('The selected export folder is unavailable.')
+      }
+      const destination = resolveExportDestinationPath(
+        payload.directory,
+        payload.fileName,
+      )
+      fs.writeFileSync(destination, Buffer.from(payload.bytes))
+      return { ok: true, path: destination }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[export] write failed: ${message}`)
+      return { ok: false, error: message }
+    }
+  },
+)
 
 /**
  * `.hype` file I/O bridge.
