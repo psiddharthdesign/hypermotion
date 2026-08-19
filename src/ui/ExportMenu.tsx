@@ -11,8 +11,13 @@ import {
   type ExportFormatId,
   type ExportQualityId,
   type ExportRange,
-  resolveDimensions,
 } from '@/export'
+import {
+  chooseExportDirectory,
+  getDefaultExportDirectory,
+  sanitizeExportTitle,
+  writeExportBlob,
+} from '@/export/destination'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import { useUI } from '@/state/ui'
 import { useProjectAPI } from '@/project'
@@ -114,6 +119,36 @@ export function ExportMenu({
       ? selectedComposition?.workArea ??
         (selectedCompositionIsActive ? workAreaRange : null)
       : null
+  const bridge =
+    typeof window === 'undefined' ? undefined : window.hypermotion
+  const [exportTitleState, setExportTitleState] = useState(() => ({
+    sourceName: exportName,
+    value: sanitizeExportTitle(exportName),
+  }))
+  const exportTitle =
+    exportTitleState.sourceName === exportName
+      ? exportTitleState.value
+      : sanitizeExportTitle(exportName)
+  const setExportTitle = (value: string) => {
+    setExportTitleState({ sourceName: exportName, value })
+  }
+  const [folderPath, setFolderPath] = useState('')
+  const [folderPending, setFolderPending] = useState(Boolean(bridge))
+
+  useEffect(() => {
+    if (!bridge) return
+    let active = true
+    void getDefaultExportDirectory(bridge)
+      .then((directory) => {
+        if (active) setFolderPath(directory)
+      })
+      .finally(() => {
+        if (active) setFolderPending(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [bridge])
 
   // Format. Default MP4 — share-ready, captures the most cases. Drives
   // the file extension downstream + which pipeline the orchestrator
@@ -223,6 +258,7 @@ export function ExportMenu({
 
   const exportDisabled =
     exportRunning ||
+    (Boolean(bridge) && !folderPath) ||
     (exportScope === 'scene' && !selectedComposition) ||
     (rangeMode === 'chapter' && selectedChapters.length === 0)
 
@@ -251,13 +287,6 @@ export function ExportMenu({
       ? range.segments.reduce((acc, s) => acc + (s.endSec - s.startSec), 0)
       : rangeEnd - rangeStart
   const frameCount = Math.max(1, Math.round(totalSelectedSec * fps))
-
-  // Resolved output dimensions for the filename estimate footer.
-  const sceneCanvasMeta = useMemo(
-    () => ({ width: meta.canvas.width, height: meta.canvas.height }),
-    [meta.canvas.width, meta.canvas.height],
-  )
-  const dims = resolveDimensions(quality, sceneCanvasMeta)
 
   // Position the panel below the trigger, flipping above when there's
   // not enough room. Mirrors the previous behaviour.
@@ -306,10 +335,12 @@ export function ExportMenu({
 
   const onExport = () => {
     if (exportDisabled) return
+    const safeTitle = sanitizeExportTitle(exportTitle, exportName)
+    setExportTitle(safeTitle)
     onClose()
     void exportScene({
       api,
-      sceneName: exportName,
+      sceneName: safeTitle,
       durationSec: exportDuration,
       scope: exportScope,
       compositionSceneId:
@@ -324,18 +355,22 @@ export function ExportMenu({
       exportFps: fps,
       range,
       filenameTag,
+      onBlob:
+        bridge && folderPath
+          ? async (blob, resolvedFileName) => {
+              await writeExportBlob(
+                bridge,
+                folderPath,
+                resolvedFileName,
+                blob,
+              )
+            }
+          : undefined,
       // No pipeline override: the orchestrator picks captureRect when
       // running under Electron and falls back to tab capture in the
       // web tree. The previous Fast/HQ chip distinction was redundant.
     })
   }
-
-  const fileName = useMemo(() => {
-    const base = (exportName || 'export')
-      .replace(/[^a-zA-Z0-9-_ ]/g, '')
-      .trim()
-    return `${base || 'export'}.${format.extension}`
-  }, [exportName, format.extension])
 
   const totalFrames = Math.max(1, Math.round(exportDuration * fps))
   const hasChapters =
@@ -357,9 +392,8 @@ export function ExportMenu({
       }}
       className="hm-popover-surface z-[100] overflow-hidden border border-border"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <span className="text-[12px] font-medium text-text">Export</span>
+      {/* Compact job metadata; the redundant dialog title is intentionally omitted. */}
+      <div className="flex items-center justify-end border-b border-border px-4 py-2.5">
         <span className="font-mono text-[10px] tabular-nums text-text-dim">
           {exportDuration.toFixed(2)}s · {totalFrames}f @ {fps}fps
         </span>
@@ -367,6 +401,63 @@ export function ExportMenu({
 
       {/* Body — spec sheet rows */}
       <div className="px-4 py-3">
+        <FieldRow label="Title">
+          <input
+            type="text"
+            value={exportTitle}
+            aria-label="Export title"
+            spellCheck={false}
+            onChange={(event) => setExportTitle(event.target.value)}
+            onBlur={() =>
+              setExportTitle(sanitizeExportTitle(exportTitle, exportName))
+            }
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur()
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setExportTitle(sanitizeExportTitle(exportName))
+                event.currentTarget.blur()
+              }
+            }}
+            className="hm-control-surface hm-control-compact h-8 w-full px-3 text-[11px] text-text outline-none"
+          />
+        </FieldRow>
+
+        <FieldRow label="Folder">
+          <button
+            type="button"
+            aria-label="Choose export folder"
+            aria-busy={folderPending}
+            title={folderPath || undefined}
+            disabled={!bridge || folderPending}
+            onClick={() => {
+              if (!bridge) return
+              setFolderPending(true)
+              void chooseExportDirectory(
+                bridge,
+                folderPath,
+                exportTitle,
+                formatId,
+              )
+                .then((selection) => {
+                  if (!selection) return
+                  setFolderPath(selection.directory)
+                  setExportTitle(selection.title)
+                })
+                .finally(() => setFolderPending(false))
+            }}
+            className="hm-control-surface hm-control-compact flex h-8 w-full min-w-0 items-center px-3 text-left font-mono text-[10px] text-text-muted outline-none disabled:cursor-default disabled:opacity-60"
+          >
+            <span className="truncate">
+              {folderPending
+                ? 'Loading folder…'
+                : folderPath || (bridge ? 'Choose a folder' : 'Downloads')}
+            </span>
+          </button>
+        </FieldRow>
+
+        <div className="my-2 border-t border-border" />
+
         <FieldRow label="Output">
           <Segments>
             <SegmentBtn
@@ -561,11 +652,8 @@ export function ExportMenu({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center gap-2 border-t border-border bg-panel px-4 py-2.5">
-        <span className="font-mono text-[10px] tabular-nums text-text-dim">
-          {fileName} · {dims.width} × {dims.height}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex items-center justify-end gap-2 border-t border-border bg-panel px-4 py-2.5">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={onClose}
@@ -584,7 +672,7 @@ export function ExportMenu({
                 : 'bg-accent text-white hover:brightness-110',
             ].join(' ')}
           >
-            {exportRunning ? 'Export in progress' : `Export ${format.label}`}
+            {exportRunning ? 'Export in progress' : 'Export'}
           </button>
         </div>
       </div>

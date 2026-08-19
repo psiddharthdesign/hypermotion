@@ -96,6 +96,9 @@ describe('text animation track reconciliation', () => {
       blurRadius: 8,
       numberFlowTrend: 'auto',
       numberFlowContinuous: true,
+      numberFlowDigitMode: 'together',
+      numberFlowDigitOrder: 'forward',
+      numberFlowDigitStagger: 0.25,
       numberFlowIncrement: null,
       numberFlowSpinDistance: 1,
       numberFlowFadeAmount: 1,
@@ -121,6 +124,9 @@ describe('text animation track reconciliation', () => {
         blurRadius: 16,
         numberFlowTrend: 'down',
         numberFlowContinuous: false,
+        numberFlowDigitMode: 'staggered',
+        numberFlowDigitOrder: 'backward',
+        numberFlowDigitStagger: 4,
         numberFlowIncrement: 1_000_000_000_000_001,
         numberFlowSpinDistance: 5,
         numberFlowFadeAmount: -1,
@@ -141,6 +147,9 @@ describe('text animation track reconciliation', () => {
       blurRadius: 16,
       numberFlowTrend: 'down',
       numberFlowContinuous: false,
+      numberFlowDigitMode: 'staggered',
+      numberFlowDigitOrder: 'backward',
+      numberFlowDigitStagger: 0.9,
       numberFlowIncrement: 1_000_000_000_000_000,
       numberFlowSpinDistance: 2,
       numberFlowFadeAmount: 0,
@@ -162,6 +171,18 @@ describe('text animation track reconciliation', () => {
         numberFlowIncrement: 0,
       })?.numberFlowIncrement,
     ).toBeNull()
+    expect(
+      normalizeTextAnimation({
+        id: 'number-flow',
+        numberFlowDigitMode: 'unsupported',
+        numberFlowDigitOrder: 'outside-in',
+        numberFlowDigitStagger: Number.NaN,
+      }),
+    ).toMatchObject({
+      numberFlowDigitMode: 'together',
+      numberFlowDigitOrder: 'forward',
+      numberFlowDigitStagger: 0.25,
+    })
   })
 
   it('installs Curve Drop motion and preserves a customized path across presets', () => {
@@ -245,6 +266,9 @@ describe('text animation track reconciliation', () => {
         applyTo: 'letters',
         delay: 0.2,
         numberFrom: 25,
+        numberFlowDigitMode: 'staggered',
+        numberFlowDigitOrder: 'backward',
+        numberFlowDigitStagger: 0.4,
         numberFlowIncrement: 10,
         motionVector: { x: 1, y: 2, z: 3 },
       },
@@ -256,6 +280,9 @@ describe('text animation track reconciliation', () => {
       applyTo: 'layer',
       delay: 0,
       numberFrom: 25,
+      numberFlowDigitMode: 'staggered',
+      numberFlowDigitOrder: 'backward',
+      numberFlowDigitStagger: 0.4,
       numberFlowIncrement: 10,
       travelDistance: 0,
       motionVector: null,
@@ -269,6 +296,20 @@ describe('text animation track reconciliation', () => {
       1,
       1.8,
     ])
+    expect(api.getNode(nodeId)).toMatchObject({
+      textAnimation: {
+        numberFlowDigitMode: 'staggered',
+        numberFlowDigitOrder: 'backward',
+        numberFlowDigitStagger: 0.4,
+      },
+    })
+    expect(api.getTrack(track.id)).toMatchObject({
+      textAnimation: {
+        numberFlowDigitMode: 'staggered',
+        numberFlowDigitOrder: 'backward',
+        numberFlowDigitStagger: 0.4,
+      },
+    })
   })
 
   it('leaves existing animation data untouched when Number Flow text is invalid', () => {

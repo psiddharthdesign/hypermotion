@@ -341,3 +341,240 @@ describe('numberFlowVisualFrameAtProgress', () => {
     expect(endpoint.outgoingText).toBe('100')
   })
 })
+
+describe('per-digit Number Flow frames', () => {
+  it('keeps semantic token columns stable when grouping changes', () => {
+    const start = numberFlowVisualFrameAtProgress(
+      '$1,000.50 USD',
+      999.5,
+      'in',
+      0,
+      { continuous: false, digitMode: 'staggered' },
+    )
+    const middle = numberFlowVisualFrameAtProgress(
+      '$1,000.50 USD',
+      999.5,
+      'in',
+      0.5,
+      { continuous: false, digitMode: 'staggered' },
+    )
+    const end = numberFlowVisualFrameAtProgress(
+      '$1,000.50 USD',
+      999.5,
+      'in',
+      1,
+      { continuous: false, digitMode: 'staggered' },
+    )
+
+    const keys = middle.tokens.map((token) => token.key)
+    expect(start.tokens.map((token) => token.key)).toEqual(keys)
+    expect(end.tokens.map((token) => token.key)).toEqual(keys)
+    expect(keys).toEqual([
+      'prefix:0',
+      'digit:integer:3',
+      'separator:group:2',
+      'digit:integer:2',
+      'digit:integer:1',
+      'digit:integer:0',
+      'separator:decimal',
+      'digit:fraction:0',
+      'digit:fraction:1',
+      'suffix:0',
+      'suffix:1',
+      'suffix:2',
+      'suffix:3',
+    ])
+
+    const leadingDigit = middle.tokens.find(
+      (token) => token.key === 'digit:integer:3',
+    )!
+    const group = middle.tokens.find(
+      (token) => token.key === 'separator:group:2',
+    )!
+    expect(leadingDigit).toMatchObject({
+      kind: 'digit',
+      outgoingChar: '',
+      incomingChar: '1',
+    })
+    expect(group).toMatchObject({
+      kind: 'separator',
+      outgoingChar: '',
+      incomingChar: ',',
+    })
+    expect(
+      middle.tokens
+        .filter((token) => token.kind === 'prefix' || token.kind === 'suffix')
+        .every((token) => !token.active && token.phase === 0),
+    ).toBe(true)
+  })
+
+  it('stagger-rolls digits from left to right in forward order', () => {
+    const frame = numberFlowVisualFrameAtProgress('123', 0, 'in', 0.3, {
+      continuous: false,
+      digitMode: 'staggered',
+      digitOrder: 'forward',
+      digitStagger: 0.6,
+      spinTimingRatio: 1,
+    })
+    const digits = frame.tokens.filter((token) => token.kind === 'digit')
+    expect(digits.map((token) => token.key)).toEqual([
+      'digit:integer:2',
+      'digit:integer:1',
+      'digit:integer:0',
+    ])
+    expect(digits[0]!.phase).toBeCloseTo(0.75)
+    expect(digits[1]!.phase).toBe(0)
+    expect(digits[2]!.phase).toBe(0)
+  })
+
+  it('reverses only the timing order without changing display order', () => {
+    const frame = numberFlowVisualFrameAtProgress('123', 0, 'in', 0.3, {
+      continuous: false,
+      digitMode: 'staggered',
+      digitOrder: 'backward',
+      digitStagger: 0.6,
+      spinTimingRatio: 1,
+    })
+    const digits = frame.tokens.filter((token) => token.kind === 'digit')
+    expect(digits.map((token) => token.key)).toEqual([
+      'digit:integer:2',
+      'digit:integer:1',
+      'digit:integer:0',
+    ])
+    expect(digits[0]!.phase).toBe(0)
+    expect(digits[1]!.phase).toBe(0)
+    expect(digits[2]!.phase).toBeCloseTo(0.75)
+  })
+
+  it('keeps all digit phases together when stagger is disabled', () => {
+    const frame = numberFlowVisualFrameAtProgress('123', 0, 'in', 0.3, {
+      continuous: false,
+      digitMode: 'together',
+      digitStagger: 0.9,
+      spinTimingRatio: 1,
+    })
+    const activeDigits = frame.tokens.filter(
+      (token) => token.kind === 'digit' && token.active,
+    )
+    expect(activeDigits.map((token) => token.phase)).toEqual([0.3, 0.3, 0.3])
+  })
+
+  it('resolves shortest-roll direction independently for each digit', () => {
+    const frame = numberFlowVisualFrameAtProgress('28', 11, 'in', 0.5, {
+      continuous: false,
+      digitMode: 'together',
+      trend: 'individual',
+      spinDistance: 1,
+    })
+    const tens = frame.tokens.find(
+      (token) => token.key === 'digit:integer:1',
+    )!
+    const ones = frame.tokens.find(
+      (token) => token.key === 'digit:integer:0',
+    )!
+    expect(tens.outgoingOffsetEm).toBeLessThan(0)
+    expect(tens.incomingOffsetEm).toBeGreaterThan(0)
+    expect(ones.outgoingOffsetEm).toBeGreaterThan(0)
+    expect(ones.incomingOffsetEm).toBeLessThan(0)
+  })
+
+  it('retains count-by stepping while exposing changed digit columns', () => {
+    const frame = numberFlowVisualFrameAtProgress('25', 0, 'in', 0.9, {
+      continuous: true,
+      increment: 10,
+      digitMode: 'together',
+      spinTimingRatio: 1,
+    })
+    expect(frame).toMatchObject({
+      outgoingText: '20',
+      incomingText: '25',
+    })
+    expect(frame.phase).toBeCloseTo(0.7)
+    const tens = frame.tokens.find(
+      (token) => token.key === 'digit:integer:1',
+    )!
+    const ones = frame.tokens.find(
+      (token) => token.key === 'digit:integer:0',
+    )!
+    expect(tens).toMatchObject({
+      outgoingChar: '2',
+      incomingChar: '2',
+      active: false,
+    })
+    expect(ones).toMatchObject({
+      outgoingChar: '0',
+      incomingChar: '5',
+      active: true,
+    })
+    expect(ones.phase).toBeCloseTo(0.7)
+  })
+
+  it('uses raw timeline endpoints to settle every digit deterministically', () => {
+    const atStart = numberFlowVisualFrameAtProgress(
+      '321',
+      0,
+      'in',
+      0.8,
+      { digitMode: 'staggered', digitStagger: 0.8 },
+      0,
+    )
+    const atEnd = numberFlowVisualFrameAtProgress(
+      '321',
+      0,
+      'in',
+      0.2,
+      { digitMode: 'staggered', digitStagger: 0.8 },
+      1,
+    )
+    expect(atStart.settledText).toBe('0')
+    expect(atEnd.settledText).toBe('321')
+    expect(atStart.tokens.every((token) => !token.active)).toBe(true)
+    expect(atEnd.tokens.every((token) => !token.active)).toBe(true)
+    expect(
+      atEnd.tokens
+        .filter((token) => token.kind === 'digit')
+        .map((token) => token.outgoingChar)
+        .join(''),
+    ).toBe('321')
+  })
+
+  it('returns byte-for-byte identical token frames for the same seek', () => {
+    const resolve = () =>
+      numberFlowVisualFrameAtProgress('Revenue $12,345.67', 0, 'in', 0.437, {
+        continuous: true,
+        increment: 100,
+        digitMode: 'staggered',
+        digitOrder: 'backward',
+        digitStagger: 0.45,
+        trend: 'individual',
+      })
+    expect(resolve()).toEqual(resolve())
+  })
+
+  it('keeps endpoint token topology when easing overshoots a digit boundary', () => {
+    const inRange = numberFlowVisualFrameAtProgress(
+      '99',
+      0,
+      'in',
+      0.5,
+      { digitMode: 'staggered', continuous: true },
+      0.5,
+    )
+    const overshoot = numberFlowVisualFrameAtProgress(
+      '99',
+      0,
+      'in',
+      1.2,
+      { digitMode: 'staggered', continuous: true },
+      0.5,
+    )
+
+    expect(overshoot.settledText).toBe('119')
+    expect(overshoot.tokens.map((token) => token.key)).toEqual(
+      inRange.tokens.map((token) => token.key),
+    )
+    expect(
+      overshoot.tokens.filter((token) => token.kind === 'digit'),
+    ).toHaveLength(2)
+  })
+})

@@ -152,7 +152,10 @@ export async function runRenderWindowExport(
   // Provisional filename — main's filename is informational; we re-derive
   // in the render window so the chapterTag etc. is consistent. Provide
   // here for the progress UI before any frames render.
-  const sceneName = targetComposition?.name ?? ctx.sceneName
+  // `ctx.sceneName` is the user-editable export title. Composition identity
+  // is carried independently by `compositionSceneId`, so replacing the title
+  // here with the authored scene name would silently ignore the dialog field.
+  const sceneName = ctx.sceneName
   const provisionalFileName = `${sceneName.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'export'}.${ctx.format.extension}`
 
   progress.start(ctx.format, totalFrames, provisionalFileName)

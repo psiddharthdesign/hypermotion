@@ -25,6 +25,8 @@ import {
   Notification,
   shell,
   webContents,
+  type NativeImage,
+  type Rectangle,
   type MenuItemConstructorOptions,
 } from 'electron'
 import path from 'node:path'
@@ -36,6 +38,15 @@ import {
   type FigmaPluginStatus,
 } from './figmaPlugin'
 import { isRenderWindowLeaseStale } from './renderWindowLease'
+import { resolveExportDestinationPath } from './exportDestination'
+import {
+  detectNativeBitmapMetadata,
+  expectedBitmapByteLength,
+  pickBitmapMetadata,
+  type NativeBitmapColorSpace,
+  type NativeBitmapMetadata,
+  type NativeBitmapPixelFormat,
+} from './captureBitmap'
 
 // Hyper Motion is a desktop editor: pressing Play in our own timeline should
 // always be allowed to start timeline audio, even if React applies the state
@@ -1152,28 +1163,230 @@ ipcMain.handle('preview:open-window', async () => {
   return { ok: true }
 })
 
+type ExportCaptureTransport = 'bitmap' | 'png'
+
+interface ExportCaptureRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+interface ExportCaptureRequest {
+  rect: ExportCaptureRect
+  transport: ExportCaptureTransport
+  outputSize?: { width: number; height: number }
+}
+
+interface ExportBitmapCaptureResult {
+  transport: 'bitmap'
+  data: Uint8Array
+  width: number
+  height: number
+  pixelFormat: NativeBitmapPixelFormat
+  colorSpace: NativeBitmapColorSpace
+}
+
+interface ExportPngCaptureResult {
+  transport: 'png'
+  data: Uint8Array
+}
+
+type ExportCaptureResult = ExportBitmapCaptureResult | ExportPngCaptureResult
+
+const nativeBitmapMetadataByWebContents = new Map<
+  number,
+  NativeBitmapMetadata
+>()
+
+async function calibrateNativeBitmapMetadata(
+  wc: Electron.WebContents,
+  rect: Rectangle,
+): Promise<NativeBitmapMetadata> {
+  const image = await wc.capturePage(rect)
+  if (image.isEmpty()) {
+    throw new Error('Native bitmap calibration returned an empty image')
+  }
+  const size = image.getSize(1)
+  const pixel = image
+    .crop({
+      x: Math.floor(size.width / 2),
+      y: Math.floor(size.height / 2),
+      width: 1,
+      height: 1,
+    })
+    .toBitmap({ scaleFactor: 1 })
+  const metadata = detectNativeBitmapMetadata(pixel)
+  const resolved = pickBitmapMetadata(
+    nativeBitmapMetadataByWebContents.get(wc.id),
+    metadata,
+  )
+  if (!nativeBitmapMetadataByWebContents.has(wc.id)) {
+    nativeBitmapMetadataByWebContents.set(wc.id, resolved)
+    wc.once('destroyed', () => nativeBitmapMetadataByWebContents.delete(wc.id))
+  }
+  return resolved
+}
+
+function isStructuredCaptureRequest(
+  request: ExportCaptureRect | ExportCaptureRequest,
+): request is ExportCaptureRequest {
+  return 'rect' in request
+}
+
+function normalizeCaptureRect(rect: ExportCaptureRect): Rectangle {
+  return {
+    x: Math.max(0, Math.round(rect.x)),
+    y: Math.max(0, Math.round(rect.y)),
+    width: Math.max(1, Math.round(rect.width)),
+    height: Math.max(1, Math.round(rect.height)),
+  }
+}
+
+function normalizeOutputSize(
+  outputSize: ExportCaptureRequest['outputSize'],
+): { width: number; height: number } | null {
+  if (!outputSize) return null
+  if (
+    !Number.isFinite(outputSize.width) ||
+    !Number.isFinite(outputSize.height) ||
+    outputSize.width <= 0 ||
+    outputSize.height <= 0
+  ) {
+    throw new Error(
+      `export:capture-rect — invalid output size ${outputSize.width}×${outputSize.height}`,
+    )
+  }
+  return {
+    width: Math.max(1, Math.round(outputSize.width)),
+    height: Math.max(1, Math.round(outputSize.height)),
+  }
+}
+
+async function capturePng(
+  wc: Electron.WebContents,
+  rect: Rectangle,
+): Promise<Uint8Array> {
+  // PRIMARY: Chrome DevTools Protocol `Page.captureScreenshot` with a
+  // `clip` parameter. CDP captures regions of the rendered DOCUMENT,
+  // NOT just the visible viewport — which is the whole point. An
+  // artboard sized 3840×2880 on a 1920×1080 screen normally has the
+  // off-viewport portion unrasterized by Chromium's compositor, so
+  // `webContents.capturePage` only returns the visible center. CDP
+  // rasterizes the requested clip rect even when it extends beyond
+  // the visible area, giving us the full artboard at native pixels.
+  //
+  // We attach the debugger once per process and reuse it; reattaching
+  // every frame would burn IPC time. If anything goes wrong we fall
+  // through to the legacy capturePage path below, which still works
+  // for artboards that fit in the viewport.
+  try {
+    if (!wc.debugger.isAttached()) {
+      wc.debugger.attach('1.3')
+    }
+    const result = (await wc.debugger.sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      clip: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        // `scale: 1` means "capture at the page's current device pixel
+        // ratio." Use the WebContents zoom factor to influence
+        // resolution; here we want native CSS pixels per unit.
+        scale: 1,
+      },
+      // Force the capture beyond the viewport. Without this, CDP
+      // still respects viewport bounds and we're back to square one.
+      captureBeyondViewport: true,
+      fromSurface: true,
+    })) as { data: string }
+    // CDP returns base64; decode to a buffer for IPC.
+    return Buffer.from(result.data, 'base64')
+  } catch (err) {
+    console.warn(
+      '[export] CDP captureScreenshot failed, falling back to capturePage:',
+      err,
+    )
+    const image = await wc.capturePage(rect)
+    return image.toPNG()
+  }
+}
+
+async function captureBitmap(
+  wc: Electron.WebContents,
+  rect: Rectangle,
+  outputSize: ExportCaptureRequest['outputSize'],
+): Promise<ExportBitmapCaptureResult> {
+  let image: NativeImage = await wc.capturePage(rect)
+  if (image.isEmpty()) {
+    throw new Error('capturePage returned an empty NativeImage')
+  }
+
+  const metadata = nativeBitmapMetadataByWebContents.get(wc.id)
+  if (!metadata) {
+    throw new Error(
+      'Native bitmap capture was not calibrated for this render surface',
+    )
+  }
+
+  const target = normalizeOutputSize(outputSize)
+  if (target) {
+    const current = image.getSize(1)
+    if (current.width !== target.width || current.height !== target.height) {
+      image = image.resize({ ...target, quality: 'best' })
+    }
+  }
+
+  // Use the same explicit representation for size and bytes. Mixing the
+  // default representation with `scaleFactor: 1` can report CSS dimensions
+  // for one and Retina dimensions for the other.
+  const scaleFactor = 1
+  const size = image.getSize(scaleFactor)
+  const data = image.toBitmap({ scaleFactor })
+  const expectedLength = expectedBitmapByteLength(size.width, size.height)
+  if (data.byteLength !== expectedLength) {
+    throw new Error(
+      `Native bitmap returned ${data.byteLength} bytes for ${size.width}×${size.height}; expected ${expectedLength}.`,
+    )
+  }
+
+  return {
+    transport: 'bitmap',
+    data,
+    width: size.width,
+    height: size.height,
+    pixelFormat: metadata.pixelFormat,
+    colorSpace: metadata.colorSpace,
+  }
+}
+
+ipcMain.handle(
+  'export:probe-bitmap-metadata',
+  async (e, requestedRect: ExportCaptureRect): Promise<NativeBitmapMetadata> => {
+    const wc = e.sender ?? mainWindow?.webContents
+    if (!wc) {
+      throw new Error('export:probe-bitmap-metadata — no active webContents')
+    }
+    return calibrateNativeBitmapMetadata(wc, normalizeCaptureRect(requestedRect))
+  },
+)
+
 /**
  * Export capture bridge.
  *
- * `webContents.capturePage(rect)` returns the rendered page region as a
- * NativeImage — bypasses getDisplayMedia entirely (no permission prompt,
- * no OS-level "REC" overlay, no chrome bleed) and captures only the
- * rectangle we care about (the artboard). The renderer drives the
- * timeline frame-by-frame and asks for one capture per frame; the
- * resulting PNG bytes are decoded back into a canvas in the renderer
- * and handed to the WebCodecs MP4 / GIF encoder.
- *
- * For HQ exports (2K / 4K from a 1080p artboard), the renderer calls
- * `export:set-zoom-factor` first. Page zoom re-rasterizes the scene
- * (text stays sharp) and `capturePage` then returns image data scaled
- * up by the same factor — real pixels, not upscale mush.
+ * Legacy rectangle-only calls preserve the original PNG-byte return value.
+ * Structured callers may request a native four-channel bitmap to avoid the
+ * PNG encode/base64/decode loop. Bitmap capture permanently falls back to the
+ * tagged PNG path, and `HYPERMOTION_CAPTURE_TRANSPORT=png` can force that path
+ * for A/B benchmarks without rebuilding the app.
  */
 ipcMain.handle(
   'export:capture-rect',
   async (
     e,
-    rect: { x: number; y: number; width: number; height: number },
-  ): Promise<Uint8Array> => {
+    request: ExportCaptureRect | ExportCaptureRequest,
+  ): Promise<Uint8Array | ExportCaptureResult> => {
     // Use the SENDER's webContents — not mainWindow's. The render-window
     // architecture (added below) spawns a separate BrowserWindow that
     // calls this IPC to capture itself, not the editor. Reading
@@ -1181,58 +1394,34 @@ ipcMain.handle(
     // legacy in-editor capture path AND the new render-window flow.
     const wc = e.sender ?? mainWindow?.webContents
     if (!wc) throw new Error('export:capture-rect — no active webContents')
-    // Whole numbers + ≥1 dims; Electron / CDP both reject odd inputs.
-    const r = {
-      x: Math.max(0, Math.round(rect.x)),
-      y: Math.max(0, Math.round(rect.y)),
-      width: Math.max(1, Math.round(rect.width)),
-      height: Math.max(1, Math.round(rect.height)),
+    const structured = isStructuredCaptureRequest(request)
+    const rect = normalizeCaptureRect(structured ? request.rect : request)
+
+    if (!structured) {
+      return capturePng(wc, rect)
     }
 
-    // PRIMARY: Chrome DevTools Protocol `Page.captureScreenshot` with a
-    // `clip` parameter. CDP captures regions of the rendered DOCUMENT,
-    // NOT just the visible viewport — which is the whole point. An
-    // artboard sized 3840×2880 on a 1920×1080 screen normally has the
-    // off-viewport portion unrasterized by Chromium's compositor, so
-    // `webContents.capturePage` only returns the visible center. CDP
-    // rasterizes the requested clip rect even when it extends beyond
-    // the visible area, giving us the full artboard at native pixels.
-    //
-    // We attach the debugger once per process and reuse it; reattaching
-    // every frame would burn IPC time. If anything goes wrong we fall
-    // through to the legacy capturePage path below, which still works
-    // for artboards that fit in the viewport.
-    try {
-      if (!wc.debugger.isAttached()) {
-        wc.debugger.attach('1.3')
-      }
-      const result = (await wc.debugger.sendCommand('Page.captureScreenshot', {
-        format: 'png',
-        clip: {
-          x: r.x,
-          y: r.y,
-          width: r.width,
-          height: r.height,
-          // `scale: 1` means "capture at the page's current device pixel
-          // ratio." Use the WebContents zoom factor to influence
-          // resolution; here we want native CSS pixels per unit.
-          scale: 1,
-        },
-        // Force the capture beyond the viewport. Without this, CDP
-        // still respects viewport bounds and we're back to square one.
-        captureBeyondViewport: true,
-        fromSurface: true,
-      })) as { data: string }
-      // CDP returns base64; decode to a buffer for IPC.
-      return Buffer.from(result.data, 'base64')
-    } catch (err) {
-      console.warn(
-        '[export] CDP captureScreenshot failed, falling back to capturePage:',
-        err,
+    if (request.transport !== 'bitmap' && request.transport !== 'png') {
+      throw new Error(
+        `export:capture-rect — unsupported transport ${String(request.transport)}`,
       )
-      const image = await wc.capturePage(r)
-      return image.toPNG()
     }
+
+    const forcePng =
+      process.env.HYPERMOTION_CAPTURE_TRANSPORT?.trim().toLowerCase() ===
+      'png'
+    if (request.transport === 'bitmap' && !forcePng) {
+      try {
+        return await captureBitmap(wc, rect, request.outputSize)
+      } catch (err) {
+        console.warn(
+          '[export] Native bitmap capture failed, falling back to PNG:',
+          err,
+        )
+      }
+    }
+
+    return { transport: 'png', data: await capturePng(wc, rect) }
   },
 )
 
@@ -1571,6 +1760,14 @@ ipcMain.handle(
         'The export worker became unresponsive and was closed.',
       )
     })
+    // Keep one concise transport summary visible to headless/CLI callers.
+    // This makes it possible to verify that a job used direct GPU frames or
+    // the fidelity fallback without forwarding the hidden renderer's full log.
+    win.webContents.on('console-message', (_event, _level, message) => {
+      if (message.startsWith('[render-window] frame transport ')) {
+        console.info(message)
+      }
+    })
     win.webContents.on('render-process-gone', (_event, details) => {
       failRenderWindow(
         requestId,
@@ -1712,6 +1909,70 @@ ipcMain.handle(
 ipcMain.handle('export:cancel-render-window', (_e, requestId: string) => {
   closeRenderWindow(requestId)
 })
+
+ipcMain.handle('export:get-default-directory', () => app.getPath('downloads'))
+
+ipcMain.handle(
+  'export:choose-directory',
+  async (
+    _e,
+    opts?: { defaultPath?: string; suggestedName?: string },
+  ): Promise<{ directory: string; fileName: string } | null> => {
+    if (!mainWindow) return null
+    const directory = opts?.defaultPath || app.getPath('downloads')
+    const suggestedName =
+      opts?.suggestedName && path.basename(opts.suggestedName) === opts.suggestedName
+        ? opts.suggestedName
+        : 'export.mp4'
+    const extension = path.extname(suggestedName).slice(1).toLowerCase()
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Choose export destination',
+      defaultPath: path.join(directory, suggestedName),
+      buttonLabel: 'Save',
+      filters: [
+        {
+          name: extension ? extension.toUpperCase() : 'Video',
+          extensions: [extension || 'mp4'],
+        },
+      ],
+    })
+    return result.canceled || !result.filePath
+      ? null
+      : {
+          directory: path.dirname(result.filePath),
+          fileName: path.basename(result.filePath),
+        }
+  },
+)
+
+ipcMain.handle(
+  'export:write-file',
+  (
+    _e,
+    payload: {
+      directory: string
+      fileName: string
+      bytes: Uint8Array
+    },
+  ): { ok: boolean; path?: string; error?: string } => {
+    try {
+      const directoryStats = fs.statSync(payload.directory)
+      if (!directoryStats.isDirectory()) {
+        throw new Error('The selected export folder is unavailable.')
+      }
+      const destination = resolveExportDestinationPath(
+        payload.directory,
+        payload.fileName,
+      )
+      fs.writeFileSync(destination, Buffer.from(payload.bytes))
+      return { ok: true, path: destination }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[export] write failed: ${message}`)
+      return { ok: false, error: message }
+    }
+  },
+)
 
 /**
  * `.hype` file I/O bridge.

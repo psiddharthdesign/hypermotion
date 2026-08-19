@@ -39,6 +39,29 @@ describe('WebGL plane texture policy', () => {
     expect(2208 * 1816 * 4).toBe(16_038_912)
   })
 
+  it('lets final renders request native 4K texture density', () => {
+    const scale = textureScaleForRect(
+      { width: 960, height: 540 },
+      3.15,
+      { maximumScale: 8, bucketStep: 0.5 },
+    )
+
+    expect(scale).toBe(3.5)
+    expect(Math.ceil(960 * scale)).toBe(3360)
+    expect(Math.ceil(540 * scale)).toBe(1890)
+  })
+
+  it('keeps projection-aware export textures inside the dimension bound', () => {
+    const scale = textureScaleForRect(
+      { width: 1440, height: 1080 },
+      6.2,
+      { maximumScale: 8, bucketStep: 0.5 },
+    )
+
+    expect(scale).toBeCloseTo(4096 / 1440)
+    expect(Math.ceil(1440 * scale)).toBe(4096)
+  })
+
   it('reuses a canvas texture when only the workspace view changes', () => {
     const revision = {}
     const cached = {

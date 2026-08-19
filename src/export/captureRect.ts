@@ -5,9 +5,9 @@
  *
  * This is the new export-time source of truth. The renderer drives the
  * timeline (engine.seek), then asks main to capture the artboard's
- * on-screen rectangle. Pixel data comes back as PNG bytes, gets decoded
- * into an HTMLCanvasElement, and that canvas is what the encoder
- * ingests — same shape the WebCodecs MP4 / GIF encoders already accept.
+ * on-screen rectangle. Pixel data comes back as either an owned native
+ * bitmap or PNG fallback and is copied into an HTMLCanvasElement for the
+ * existing WebCodecs MP4 / GIF encoders.
  *
  * Why this replaces both prior paths:
  *
@@ -38,6 +38,12 @@
  *     subsequent capturePage rects come back with that many more
  *     pixels per CSS unit. We restore the original zoom in destroy().
  */
+
+import {
+  captureBitmapToRgba,
+  type CaptureColorSpace,
+  type CapturePixelFormat,
+} from './captureBitmap'
 
 /**
  * Stable selector for the artboard frame in the editor DOM.
@@ -99,6 +105,11 @@ export function isElectronCaptureSupported(): boolean {
 
 export interface ElectronCaptureOptions {
   /**
+   * Bitmap avoids a PNG encode/decode round-trip in the isolated render
+   * worker. PNG remains the legacy default and permanent fallback.
+   */
+  transport?: 'png' | 'bitmap'
+  /**
    * Page-zoom factor to apply BEFORE the frame loop. Use 2 for 2K
    * exports from a 1080p artboard, 4 for 4K. Pass 1 for native size.
    */
@@ -136,7 +147,7 @@ export interface ElectronCapture {
    * the timeline + waited at least one rAF so the DOM reflects the
    * new playhead before this is called.
    */
-  capture(): Promise<HTMLCanvasElement>
+  capture(opts?: { surface?: number }): Promise<HTMLCanvasElement>
   /**
    * Restore zoom factor. Always call in a `finally` block — leaving
    * the page zoomed in after a failed export is the worst possible
@@ -206,11 +217,16 @@ export async function createElectronCapture(
     )
   }
 
-  // Cache one canvas, resize it on first capture and reuse — saves a
-  // GC churn cycle per frame on long exports.
-  const outCanvas = document.createElement('canvas')
-  const outCtx = outCanvas.getContext('2d', { alpha: false })
-  if (!outCtx) {
+  // Cache capture surfaces by slot. Ordinary frames use slot zero;
+  // crossfades use slots zero and one so both scene captures remain valid
+  // until compositing without allocating full-resolution canvases per frame.
+  const captureSurfaces = [document.createElement('canvas')]
+  if (
+    !captureSurfaces[0]!.getContext('2d', {
+      alpha: false,
+      colorSpace: 'srgb',
+    })
+  ) {
     if (Math.abs(targetZoom - originalZoom) > 0.001) {
       await invoke('export:set-zoom-factor', originalZoom)
     }
@@ -218,50 +234,105 @@ export async function createElectronCapture(
   }
 
   let destroyed = false
+  let bitmapTransportActive = opts.transport === 'bitmap'
+  let probe: HTMLElement | null = null
+
+  if (bitmapTransportActive) {
+    probe = document.createElement('div')
+    probe.setAttribute('aria-hidden', 'true')
+    Object.assign(probe.style, {
+      position: 'fixed',
+      left: `${Math.round(initialRect.x)}px`,
+      top: `${Math.round(initialRect.y)}px`,
+      width: '1px',
+      height: '1px',
+      background: '#ff0000',
+      pointerEvents: 'none',
+      zIndex: '2147483647',
+    })
+    document.body.appendChild(probe)
+    await waitForFrames(2)
+    try {
+      await invoke('export:probe-bitmap-metadata', {
+        x: initialRect.x,
+        y: initialRect.y,
+        width: 1,
+        height: 1,
+      })
+    } catch {
+      bitmapTransportActive = false
+    } finally {
+      probe.remove()
+      probe = null
+      // The bitmap probe deliberately paints a red calibration pixel. Wait
+      // until its removal reaches Chromium's compositor before the first real
+      // capture; this matters now that fallback capture is initialized lazily
+      // on the exact frame that will be encoded.
+      await waitForFrames(2)
+    }
+  }
 
   return {
-    async capture(): Promise<HTMLCanvasElement> {
+    async capture(captureOpts = {}): Promise<HTMLCanvasElement> {
       if (destroyed) throw new Error('capture() called after destroy()')
       // Re-read the rect each frame — cheap (one getBoundingClientRect
       // on a div with no children intersecting it) — so a window
       // resize mid-export doesn't strand us with a stale rect.
       const rect = readArtboardRect() ?? initialRect
-      const png = (await invoke('export:capture-rect', rect)) as Uint8Array
-      // Cast through BlobPart — Uint8Array<ArrayBufferLike> doesn't
-      // satisfy the strict ArrayBuffer-only constraint TS infers under
-      // SharedArrayBuffer-aware lib settings, even though the runtime
-      // is happy. Same workaround used in transcodeMp4.ts.
-      const blob = new Blob([png as BlobPart], { type: 'image/png' })
-      const bitmap = await createImageBitmap(blob)
-      try {
-        // Two paths:
-        //   - outputSize set → draw the bitmap into a fixed-size canvas,
-        //     letting drawImage's bilinear filter downsample any DPR
-        //     inflation. Encoder gets exact target pixel dims.
-        //   - outputSize unset → keep the captured bitmap at native
-        //     dims (legacy behavior).
-        const targetW = opts.outputSize?.width ?? bitmap.width
-        const targetH = opts.outputSize?.height ?? bitmap.height
-        if (
-          outCanvas.width !== targetW ||
-          outCanvas.height !== targetH
-        ) {
-          outCanvas.width = targetW
-          outCanvas.height = targetH
-        }
-        // drawImage with explicit destination rect performs the
-        // resample. High-quality on modern Chromium without us
-        // having to manage smoothing settings.
-        outCtx.drawImage(bitmap, 0, 0, targetW, targetH)
-      } finally {
-        bitmap.close()
+      const surface = captureOpts.surface ?? 0
+      if (!Number.isSafeInteger(surface) || surface < 0) {
+        throw new Error(`Invalid capture surface: ${String(surface)}.`)
       }
-      return outCanvas
+      const canvas =
+        captureSurfaces[surface] ??
+        (captureSurfaces[surface] = document.createElement('canvas'))
+
+      if (opts.transport === 'bitmap') {
+        const result = (await invoke('export:capture-rect', {
+          rect,
+          transport: bitmapTransportActive ? 'bitmap' : 'png',
+          outputSize: opts.outputSize,
+        })) as StructuredCaptureResult
+        if (result.transport === 'bitmap') {
+          try {
+            drawNativeBitmap(canvas, result)
+            return canvas
+          } catch {
+            // A malformed/unsupported native representation should cost one
+            // retry, not fail every remaining frame. Permanently use the
+            // tagged PNG transport for this capture session after the first
+            // bitmap-side failure.
+            bitmapTransportActive = false
+            const pngFallback = (await invoke('export:capture-rect', {
+              rect,
+              transport: 'png',
+            })) as StructuredCaptureResult
+            if (pngFallback.transport !== 'png') {
+              throw new Error('PNG capture fallback returned bitmap data.')
+            }
+            await drawPng(canvas, pngFallback.data, opts.outputSize)
+            return canvas
+          }
+        } else {
+          // Main uses this tagged result when native capture is unavailable
+          // or explicitly disabled. Latch it so later frames do not retry the
+          // native path (and potentially perform two captures every frame).
+          bitmapTransportActive = false
+          await drawPng(canvas, result.data, opts.outputSize)
+        }
+        return canvas
+      }
+
+      const png = (await invoke('export:capture-rect', rect)) as Uint8Array
+      await drawPng(canvas, png, opts.outputSize)
+      return canvas
     },
 
     async destroy(): Promise<void> {
       if (destroyed) return
       destroyed = true
+      probe?.remove()
+      probe = null
       if (Math.abs(targetZoom - originalZoom) > 0.001) {
         try {
           await invoke('export:set-zoom-factor', originalZoom)
@@ -279,6 +350,73 @@ export async function createElectronCapture(
       }
     },
   }
+}
+
+type StructuredCaptureResult =
+  | {
+      transport: 'bitmap'
+      data: Uint8Array
+      width: number
+      height: number
+      pixelFormat: CapturePixelFormat
+      colorSpace: CaptureColorSpace
+    }
+  | { transport: 'png'; data: Uint8Array }
+
+function drawNativeBitmap(
+  canvas: HTMLCanvasElement,
+  payload: Extract<StructuredCaptureResult, { transport: 'bitmap' }>,
+): void {
+  const context = prepareCanvas(canvas, payload.width, payload.height)
+  const rgba = captureBitmapToRgba(payload)
+  const imageData = new ImageData(rgba, payload.width, payload.height, {
+    colorSpace: payload.colorSpace,
+  })
+  if (imageData.colorSpace !== payload.colorSpace) {
+    throw new Error(
+      `Native bitmap color space ${payload.colorSpace} is not supported.`,
+    )
+  }
+  context.putImageData(imageData, 0, 0)
+}
+
+async function drawPng(
+  canvas: HTMLCanvasElement,
+  png: Uint8Array,
+  outputSize?: { width: number; height: number },
+): Promise<void> {
+  // Uint8Array<ArrayBufferLike> does not satisfy the strict ArrayBuffer-only
+  // BlobPart constraint under SharedArrayBuffer-aware lib settings, even
+  // though Chromium accepts it at runtime.
+  const blob = new Blob([png as BlobPart], { type: 'image/png' })
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const targetW = outputSize?.width ?? bitmap.width
+    const targetH = outputSize?.height ?? bitmap.height
+    const context = prepareCanvas(canvas, targetW, targetH)
+    context.drawImage(bitmap, 0, 0, targetW, targetH)
+  } finally {
+    bitmap.close()
+  }
+}
+
+function prepareCanvas(
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+): CanvasRenderingContext2D {
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+  const context = canvas.getContext('2d', {
+    alpha: false,
+    colorSpace: 'srgb',
+  })
+  if (!context) {
+    throw new Error('Failed to create output canvas — no 2D context.')
+  }
+  return context
 }
 
 function waitForFrames(n: number): Promise<void> {

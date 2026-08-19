@@ -1273,6 +1273,50 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
 
       {isNumberFlow ? (
         <ControlCard title="Number motion">
+          <ParamRow label="Digit animation">
+            <SelectField<TextAnimationConfig['numberFlowDigitMode']>
+              value={current.numberFlowDigitMode}
+              options={[
+                ['together', 'Together'],
+                ['staggered', 'One by one'],
+              ]}
+              onChange={(numberFlowDigitMode) =>
+                patch({ numberFlowDigitMode })
+              }
+              ariaLabel="Number flow digit animation"
+            />
+          </ParamRow>
+          {current.numberFlowDigitMode === 'staggered' ? (
+            <>
+              <ParamRow label="Order">
+                <SelectField<TextAnimationConfig['numberFlowDigitOrder']>
+                  value={current.numberFlowDigitOrder}
+                  options={[
+                    ['forward', 'Left to right'],
+                    ['backward', 'Right to left'],
+                  ]}
+                  onChange={(numberFlowDigitOrder) =>
+                    patch({ numberFlowDigitOrder })
+                  }
+                  ariaLabel="Number flow digit order"
+                />
+              </ParamRow>
+              <ParamRow label="Digit stagger">
+                <NumberField
+                  value={Math.round(current.numberFlowDigitStagger * 100)}
+                  onCommit={(value) =>
+                    patch({ numberFlowDigitStagger: value / 100 })
+                  }
+                  min={0}
+                  max={90}
+                  suffix="%"
+                  width="w-24"
+                  ariaLabel="Number flow digit stagger"
+                />
+              </ParamRow>
+              <div className="my-2 border-t border-border" />
+            </>
+          ) : null}
           <ParamRow label="Spin distance">
             <NumberField
               value={Math.round(current.numberFlowSpinDistance * 100)}

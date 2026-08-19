@@ -23,6 +23,7 @@ import {
 import {
   numberFlowVisualFrameAtProgress,
   numberFlowVisualOptionsFromConfig,
+  type NumberFlowVisualFrame,
 } from '@/anim/numberFlow'
 import {
   resolveTextMotionRailAmount,
@@ -62,6 +63,7 @@ import {
   createPlaneBuildContext,
   depthBlurAmount,
   effectiveApertureStrength,
+  projectWorldPoint,
   resolveCamera3D,
   type PlaneBuildContext,
   type PlaneClip3D,
@@ -181,6 +183,17 @@ interface ThreeSceneViewportProps {
   /** Invalidates the captured scene graph when roots or node topology change. */
   sceneVersion: number
   onAvailabilityChange?: (available: boolean) => void
+  /**
+   * Monotonic export-frame identity. Supplying a new identity forces one
+   * complete synchronous GPU render even when the authored scene state is
+   * otherwise referentially unchanged.
+   */
+  renderRequest?: { token: number; pass: number } | null
+  /** Fired immediately after the requested frame reaches the WebGL surface. */
+  onFrameRendered?: (
+    request: { token: number; pass: number },
+    surface: HTMLCanvasElement,
+  ) => void
   /** Camera gesture/scrub is transient; keep GPU DOF on its realtime budget. */
   interactiveCameraPreview?: boolean
   /** Keep GPU resources mounted while suppressing all scene/post rendering. */
@@ -494,6 +507,8 @@ export function ThreeSceneViewport({
   playhead = 0,
   sceneVersion,
   onAvailabilityChange,
+  renderRequest = null,
+  onFrameRendered,
   interactiveCameraPreview = false,
   suspended = false,
 }: ThreeSceneViewportProps) {
@@ -691,6 +706,10 @@ export function ThreeSceneViewport({
         antialias: true,
         alpha: true,
         powerPreference: 'high-performance',
+        // Final export consumes this canvas directly through VideoFrame. Keep
+        // the submitted drawing buffer alive across the acknowledgement
+        // microtask; editor canvases retain Three's cheaper default behavior.
+        preserveDrawingBuffer: finalRender,
       })
     } catch (error) {
       console.warn('3D helper disabled: WebGL context creation failed.', error)
@@ -813,6 +832,11 @@ export function ThreeSceneViewport({
           playhead,
         )
       : playheadDrivenTextureRanges.size > 0
+    // Export frame passes are explicit render requests. A video element may
+    // finish metadata/decode without changing any React input; force its
+    // synchronization on every pass so a follow-up request can initiate the
+    // exact seek and then paint the decoded presentation frame.
+    const requestedVideoSync = hasVideoPlane && renderRequest !== null
     const planeStateChanged =
       !previousPlaneSync ||
       previousPlaneSync.planes !== planes ||
@@ -831,6 +855,7 @@ export function ThreeSceneViewport({
       (hasVideoPlane &&
         (previousPlaneSync.playing !== playing ||
           previousPlaneSync.playhead !== playhead)) ||
+      requestedVideoSync ||
       playheadDrivenTextureChanged ||
       hasDynamicDepthOfField ||
       previousPlaneSync.dynamicDepthOfField !== hasDynamicDepthOfField
@@ -957,6 +982,13 @@ export function ThreeSceneViewport({
         renderer.render(scene, perspective)
       }
     }
+    // Keep this callback adjacent to the final renderer submission. Export
+    // consumes the drawing buffer synchronously from this acknowledgement;
+    // deferring it to a passive effect can observe a cleared/stale WebGL
+    // surface when preserveDrawingBuffer is disabled.
+    if (renderRequest) {
+      onFrameRendered?.(renderRequest, renderer.domElement)
+    }
   }, [
     api,
     planeBuildContext,
@@ -987,6 +1019,8 @@ export function ThreeSceneViewport({
     // Changing the zoom-derived pixel-ratio bucket reallocates and clears the
     // WebGL drawing buffer. Render again immediately after the resize effect.
     renderPixelRatio,
+    renderRequest,
+    onFrameRendered,
   ])
 
   if (webglUnavailable) return null
@@ -1281,18 +1315,48 @@ function syncPlanes(
         sampleCount,
         interactiveCameraPreview,
         texturePixelRatio,
+        finalRender,
       })
       records.set(plane.nodeId, nextRecord)
       continue
     }
     const videoNode = plane.node.kind === 'video' ? plane.node : null
     const textureRect = plane.textureRect ?? plane.rect
+    const requestedTextureScale = projectedPlaneTextureScale({
+      plane,
+      camera,
+      viewportSize,
+      screenPixelRatio,
+      fallbackScale: texturePixelRatio,
+    })
+    const previousTextureScale =
+      record?.textureKind === 'canvas'
+        ? Number(
+            (record.texture.image as HTMLCanvasElement | undefined)?.dataset
+              .textureScale,
+          )
+        : 0
+    const textureScale = videoNode
+      ? 1
+      : textureScaleForRect(
+          textureRect,
+          Math.max(
+            requestedTextureScale,
+            Number.isFinite(previousTextureScale) ? previousTextureScale : 0,
+          ),
+          {
+            maximumScale:
+              finalRender ? 8 : playing || interactiveCameraPreview ? 2 : 4,
+            bucketStep: finalRender ? 0.5 : 0.25,
+          },
+        )
     const textureSignature = [
       plane.contentMode,
       Number(textureRect.x.toFixed(3)),
       Number(textureRect.y.toFixed(3)),
       Number(textureRect.width.toFixed(3)),
       Number(textureRect.height.toFixed(3)),
+      Number(textureScale.toFixed(4)),
       planeTextureAnimationSignature(
         planeBuildContext,
         plane,
@@ -1322,6 +1386,7 @@ function syncPlanes(
           emittedPlaneNodeIds,
           animated,
           playhead,
+          textureScale,
         )
       : null
     if (!record) {
@@ -1512,6 +1577,7 @@ interface TextSegmentPlaneSyncOptions {
   sampleCount: number
   interactiveCameraPreview: boolean
   texturePixelRatio: number
+  finalRender: boolean
 }
 
 /**
@@ -1541,6 +1607,7 @@ function syncTextSegmentPlane({
   sampleCount,
   interactiveCameraPreview,
   texturePixelRatio,
+  finalRender,
 }: TextSegmentPlaneSyncOptions): PlaneRecord {
   if (plane.node.kind !== 'text') {
     throw new Error('A segment-text plane must reference a text node')
@@ -1569,7 +1636,18 @@ function syncTextSegmentPlane({
     (point.z - camera.position.z) * cameraForward.z
   const atlasScale = textureScaleForRect(
     plane.rect,
-    texturePixelRatio,
+    projectedPlaneTextureScale({
+      plane,
+      camera,
+      viewportSize,
+      screenPixelRatio,
+      fallbackScale: texturePixelRatio,
+    }),
+    {
+      maximumScale:
+        finalRender ? 8 : playing || interactiveCameraPreview ? 2 : 4,
+      bucketStep: finalRender ? 0.5 : 0.25,
+    },
   )
   const lineHeightPx = Math.max(
     1,
@@ -2142,7 +2220,13 @@ function resolveTextSegmentGeometryStates(
           config.id === 'scramble' ||
           config.id === 'number-flow')
       state.opacity = atlasDrivenLayerReveal ? 1 : visual.opacity
-      state.effectBlur = numberFlowFrame?.blurRadius ?? visual.blur
+      // Staggered Number Flow bakes blur into each independently timed digit
+      // column. Applying the material blur as well would blur static digits
+      // and separators a second time, diverging from the DOM/export fallback.
+      state.effectBlur =
+        numberFlowFrame && config.numberFlowDigitMode === 'staggered'
+          ? 0
+          : (numberFlowFrame?.blurRadius ?? visual.blur)
       state.scale = visual.scale
       state.skew = visual.skew
       state.rotationX =
@@ -2493,6 +2577,23 @@ function textSegmentTextureSignature(
       maskWidth: frame.maskWidthEm,
       spinDistance: config.numberFlowSpinDistance,
       blurRadius: config.blurRadius,
+      digitMode: config.numberFlowDigitMode,
+      digitOrder: config.numberFlowDigitOrder,
+      digitStagger: config.numberFlowDigitStagger,
+      tokens:
+        config.numberFlowDigitMode === 'staggered'
+          ? frame.tokens.map((token) => ({
+              key: token.key,
+              outgoing: token.outgoingChar,
+              incoming: token.incomingChar,
+              phase: Number(token.phase.toFixed(4)),
+              outgoingOffset: Number(token.outgoingOffsetEm.toFixed(4)),
+              incomingOffset: Number(token.incomingOffsetEm.toFixed(4)),
+              outgoingOpacity: Number(token.outgoingOpacity.toFixed(4)),
+              incomingOpacity: Number(token.incomingOpacity.toFixed(4)),
+              blurRadius: Number(token.blurRadius.toFixed(4)),
+            }))
+          : null,
     }
   } else if (config?.id === 'tracking' && config.applyTo !== 'letters') {
     dynamicFrame = Math.round(
@@ -3106,19 +3207,12 @@ function paintTextSegmentAtlasCell(
             ? Math.max(0, rect.height - textHeight)
             : 0
       if (numberFlowFrame) {
-        const paintNumberLayer = (
-          layerText: string,
-          offsetEm: number,
-          opacity: number,
-        ) => {
-          if (opacity <= 0.001) return
-          ctx.save()
-          ctx.globalAlpha *= opacity
-          paintText(
+        if (config.numberFlowDigitMode === 'staggered') {
+          paintNumberFlowTokenColumns(
             ctx,
-            layerText,
+            numberFlowFrame,
             entry.padding,
-            entry.padding + alignedY + offsetEm * lineHeightPx,
+            entry.padding + alignedY,
             rect.width,
             fontSize,
             lineHeight,
@@ -3126,18 +3220,40 @@ function paintTextSegmentAtlasCell(
             node.textAlign ?? 'start',
             node.textDecoration ?? 'none',
           )
-          ctx.restore()
+        } else {
+          const paintNumberLayer = (
+            layerText: string,
+            offsetEm: number,
+            opacity: number,
+          ) => {
+            if (opacity <= 0.001) return
+            ctx.save()
+            ctx.globalAlpha *= opacity
+            paintText(
+              ctx,
+              layerText,
+              entry.padding,
+              entry.padding + alignedY + offsetEm * lineHeightPx,
+              rect.width,
+              fontSize,
+              lineHeight,
+              tracking,
+              node.textAlign ?? 'start',
+              node.textDecoration ?? 'none',
+            )
+            ctx.restore()
+          }
+          paintNumberLayer(
+            numberFlowFrame.outgoingText,
+            numberFlowFrame.outgoingOffsetEm,
+            numberFlowFrame.outgoingOpacity,
+          )
+          paintNumberLayer(
+            numberFlowFrame.incomingText,
+            numberFlowFrame.incomingOffsetEm,
+            numberFlowFrame.incomingOpacity,
+          )
         }
-        paintNumberLayer(
-          numberFlowFrame.outgoingText,
-          numberFlowFrame.outgoingOffsetEm,
-          numberFlowFrame.outgoingOpacity,
-        )
-        paintNumberLayer(
-          numberFlowFrame.incomingText,
-          numberFlowFrame.incomingOffsetEm,
-          numberFlowFrame.incomingOpacity,
-        )
       } else {
         paintText(
           ctx,
@@ -3304,6 +3420,79 @@ function clearPlanes(scene: THREE.Scene, records: Map<NodeId, PlaneRecord>) {
   publishRender3dVideos(records)
 }
 
+interface ProjectedPlaneTextureScaleOptions {
+  plane: Plane3D
+  camera: ResolvedCamera3D
+  viewportSize: THREE.Vector2
+  screenPixelRatio: number
+  fallbackScale: number
+}
+
+/**
+ * Resolve how many texture pixels each authored plane unit needs after the
+ * camera projects it into the output framebuffer. A fixed DPR is insufficient
+ * for a tilted card that is magnified to fill a 4K frame: Three would otherwise
+ * enlarge a much smaller flattened bitmap and expose soft glyph edges.
+ */
+function projectedPlaneTextureScale({
+  plane,
+  camera,
+  viewportSize,
+  screenPixelRatio,
+  fallbackScale,
+}: ProjectedPlaneTextureScaleOptions): number {
+  const rect = plane.textureRect ?? plane.rect
+  const center = plane.textureCenter ?? plane.center
+  const width = Math.max(1, Math.abs(rect.width))
+  const height = Math.max(1, Math.abs(rect.height))
+  const halfWidth = (width * Math.abs(plane.scaleX)) / 2
+  const halfHeight = (height * Math.abs(plane.scaleY)) / 2
+  const corner = (horizontal: number, vertical: number) => ({
+    x:
+      center.x +
+      plane.right.x * halfWidth * horizontal +
+      plane.down.x * halfHeight * vertical,
+    y:
+      center.y +
+      plane.right.y * halfWidth * horizontal +
+      plane.down.y * halfHeight * vertical,
+    z:
+      center.z +
+      plane.right.z * halfWidth * horizontal +
+      plane.down.z * halfHeight * vertical,
+  })
+  const viewport = {
+    width: Math.max(1, viewportSize.x),
+    height: Math.max(1, viewportSize.y),
+  }
+  const projected = [
+    corner(-1, -1),
+    corner(1, -1),
+    corner(1, 1),
+    corner(-1, 1),
+  ].map((point) => projectWorldPoint(point, camera, viewport))
+  const edgeLength = (from: number, to: number) =>
+    Math.hypot(
+      projected[to]!.x - projected[from]!.x,
+      projected[to]!.y - projected[from]!.y,
+    )
+  const projectedUnitsPerAuthoredUnit = Math.max(
+    edgeLength(0, 1) / width,
+    edgeLength(3, 2) / width,
+    edgeLength(0, 3) / height,
+    edgeLength(1, 2) / height,
+  )
+  const fallback = Number.isFinite(fallbackScale)
+    ? Math.max(1, fallbackScale)
+    : 1
+  const projectedScale =
+    projectedUnitsPerAuthoredUnit *
+    (Number.isFinite(screenPixelRatio) ? Math.max(0.25, screenPixelRatio) : 1)
+  return Number.isFinite(projectedScale)
+    ? Math.max(fallback, projectedScale)
+    : fallback
+}
+
 function renderPlaneCanvas(
   api: SceneAPI,
   layout: SolvedLayout,
@@ -3311,6 +3500,7 @@ function renderPlaneCanvas(
   emittedPlaneNodeIds: ReadonlySet<NodeId>,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
+  textureScale: number,
 ): HTMLCanvasElement {
   // Clipping is applied by the material's world-space clipping planes. Baking
   // the same mask into this bitmap makes it move with an animated layer and
@@ -3322,6 +3512,7 @@ function renderPlaneCanvas(
     emittedPlaneNodeIds,
     animated,
     playhead,
+    textureScale,
   )
 }
 
@@ -3332,6 +3523,7 @@ function renderSharpPlaneCanvas(
   emittedPlaneNodeIds: ReadonlySet<NodeId>,
   animated: Record<NodeId, AnimatedValue>,
   playhead: number,
+  textureScale: number,
 ): HTMLCanvasElement {
   if (plane.contentMode === 'self') {
     return renderPlaneTexture(
@@ -3340,6 +3532,7 @@ function renderSharpPlaneCanvas(
       animated[plane.nodeId],
       playhead,
       plane.textureRect ?? plane.rect,
+      textureScale,
     )
   }
   const textureRect = plane.textureRect ?? plane.rect
@@ -3352,6 +3545,7 @@ function renderSharpPlaneCanvas(
       emittedPlaneNodeIds,
       animated,
       playhead,
+      textureScale,
     ) ??
     renderPlaneTexture(
       plane.node,
@@ -3359,6 +3553,7 @@ function renderSharpPlaneCanvas(
       animated[plane.nodeId],
       playhead,
       plane.textureRect ?? plane.rect,
+      textureScale,
     )
   )
 }
@@ -3680,12 +3875,13 @@ function renderPlaneTexture(
   anim: AnimatedValue | undefined,
   playhead: number,
   textureRect: Rect = rect,
+  textureScale = textureScaleForRect(textureRect),
 ): HTMLCanvasElement {
   const w = Math.max(1, Math.ceil(rect.width))
   const h = Math.max(1, Math.ceil(rect.height))
   const canvasWidth = Math.max(1, Math.ceil(textureRect.width))
   const canvasHeight = Math.max(1, Math.ceil(textureRect.height))
-  const scale = textureScaleForRect(textureRect)
+  const scale = textureScale
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(canvasWidth * scale))
   canvas.height = Math.max(1, Math.ceil(canvasHeight * scale))
@@ -3712,11 +3908,12 @@ function renderSubtreeTexture(
   emittedPlaneNodeIds: ReadonlySet<NodeId> = new Set(),
   animated: Record<NodeId, AnimatedValue> = {},
   playhead = 0,
+  textureScale = textureScaleForRect(rootRect),
 ): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null
   const width = Math.max(1, Math.ceil(rootRect.width))
   const height = Math.max(1, Math.ceil(rootRect.height))
-  const scale = textureScaleForRect(rootRect)
+  const scale = textureScale
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
@@ -4687,16 +4884,31 @@ function paintAnimatedTextNode(
     targetCtx.beginPath()
     targetCtx.rect(scratchCtx ? 0 : x, scratchCtx ? 0 : y, maxWidth, maxHeight)
     targetCtx.clip()
-    paintNumberLayer(
-      frame.outgoingText,
-      frame.outgoingOffsetEm,
-      frame.outgoingOpacity,
-    )
-    paintNumberLayer(
-      frame.incomingText,
-      frame.incomingOffsetEm,
-      frame.incomingOpacity,
-    )
+    if (config.numberFlowDigitMode === 'staggered') {
+      paintNumberFlowTokenColumns(
+        targetCtx,
+        frame,
+        targetX,
+        targetY,
+        maxWidth,
+        fontSize,
+        lineHeight,
+        authoredTracking,
+        node.textAlign ?? 'start',
+        node.textDecoration ?? 'none',
+      )
+    } else {
+      paintNumberLayer(
+        frame.outgoingText,
+        frame.outgoingOffsetEm,
+        frame.outgoingOpacity,
+      )
+      paintNumberLayer(
+        frame.incomingText,
+        frame.incomingOffsetEm,
+        frame.incomingOpacity,
+      )
+    }
     targetCtx.restore()
     if (scratchCtx) {
       if (frame.maskHeightEm > 0) {
@@ -5513,6 +5725,222 @@ function measureCanvasTextWidth(
   const base = ctx.measureText(text).width
   if (!Number.isFinite(tracking) || tracking === 0) return base
   return base + Math.max(0, Array.from(text).length - 1) * tracking
+}
+
+/**
+ * Paint independently animated Number Flow columns without relying on
+ * wall-clock Web Animations. Digits reserve one numeric column even when a
+ * carry introduces or removes a place, so seeks and frame exports keep the
+ * same horizontal geometry throughout the authored segment.
+ */
+function paintNumberFlowTokenColumns(
+  ctx: CanvasRenderingContext2D,
+  frame: NumberFlowVisualFrame,
+  x: number,
+  y: number,
+  maxWidth: number,
+  fontSize: number,
+  lineHeight: number,
+  tracking = 0,
+  align: Extract<Node, { kind: 'text' }>['textAlign'] = 'start',
+  decoration: Extract<Node, { kind: 'text' }>['textDecoration'] = 'none',
+) {
+  const tokens = frame.tokens
+  if (tokens.length === 0) return
+
+  const characterWidth = (value: string) =>
+    value ? ctx.measureText(value).width : 0
+  const widestDigitWidth = Math.max(
+    ...Array.from('0123456789').map(characterWidth),
+  )
+  const reserveCharacter = (token: NumberFlowVisualFrame['tokens'][number]) => {
+    if (token.kind === 'digit') return '0'
+    if (token.key === 'separator:sign') return '-'
+    if (token.key.startsWith('separator:group:')) return ','
+    if (token.key === 'separator:decimal') return '.'
+    return token.outgoingChar || token.incomingChar
+  }
+  type TokenEntry = {
+    token: NumberFlowVisualFrame['tokens'][number]
+    width: number
+    layoutCharacter: string
+  }
+  type TokenLine = {
+    entries: TokenEntry[]
+    canJustify: boolean
+  }
+  const entries: TokenEntry[] = tokens.map((token) => ({
+    token,
+    width:
+      token.kind === 'digit'
+        ? widestDigitWidth
+        : Math.max(
+            characterWidth(token.outgoingChar),
+            characterWidth(token.incomingChar),
+            characterWidth(reserveCharacter(token)),
+          ),
+    layoutCharacter:
+      token.kind === 'digit'
+        ? '0'
+        : token.outgoingChar || token.incomingChar || reserveCharacter(token),
+  }))
+  const lineWidth = (lineEntries: TokenEntry[]) =>
+    lineEntries.reduce((sum, entry) => sum + entry.width, 0) +
+    Math.max(0, lineEntries.length - 1) * tracking
+  const trimLeadingWhitespace = (lineEntries: TokenEntry[]) => {
+    let start = 0
+    while (
+      start < lineEntries.length &&
+      /^\s$/.test(lineEntries[start]!.layoutCharacter)
+    ) {
+      start += 1
+    }
+    return lineEntries.slice(start)
+  }
+  const trimTrailingWhitespace = (lineEntries: TokenEntry[]) => {
+    let end = lineEntries.length
+    while (
+      end > 0 &&
+      /^\s$/.test(lineEntries[end - 1]!.layoutCharacter)
+    ) {
+      end -= 1
+    }
+    return lineEntries.slice(0, end)
+  }
+  const lines: TokenLine[] = []
+  const paragraphs: TokenEntry[][] = [[]]
+  for (const entry of entries) {
+    if (entry.layoutCharacter === '\n') {
+      paragraphs.push([])
+    } else {
+      paragraphs[paragraphs.length - 1]!.push(entry)
+    }
+  }
+  for (const paragraph of paragraphs) {
+    if (paragraph.length === 0) {
+      lines.push({ entries: [], canJustify: false })
+      continue
+    }
+    const runs: TokenEntry[][] = []
+    for (const entry of paragraph) {
+      const whitespace = /^\s$/.test(entry.layoutCharacter)
+      const previous = runs[runs.length - 1]
+      const previousWhitespace = previous
+        ? /^\s$/.test(previous[0]!.layoutCharacter)
+        : !whitespace
+      if (!previous || previousWhitespace !== whitespace) {
+        runs.push([entry])
+      } else {
+        previous.push(entry)
+      }
+    }
+    let current: TokenEntry[] = []
+    const paragraphLines: TokenEntry[][] = []
+    for (const run of runs) {
+      const candidate = [...current, ...run]
+      if (current.length === 0 || lineWidth(candidate) <= maxWidth) {
+        current = candidate
+      } else {
+        paragraphLines.push(trimTrailingWhitespace(current))
+        current = trimLeadingWhitespace(run)
+      }
+    }
+    paragraphLines.push(trimTrailingWhitespace(current))
+    paragraphLines.forEach((lineEntries, index) => {
+      lines.push({
+        entries: lineEntries,
+        canJustify:
+          index < paragraphLines.length - 1 &&
+          lineEntries.some((entry) => /^\s$/.test(entry.layoutCharacter)),
+      })
+    })
+  }
+  const lineHeightPx = Math.max(1, fontSize * lineHeight)
+
+  const paintCharacter = (
+    cursorX: number,
+    lineY: number,
+    value: string,
+    columnWidth: number,
+    offsetEm: number,
+    opacity: number,
+    blurRadius: number,
+  ) => {
+    if (!value || opacity <= 0.001) return
+    const width = characterWidth(value)
+    ctx.save()
+    ctx.globalAlpha *= opacity
+    if (blurRadius > 0.01) ctx.filter = `blur(${blurRadius}px)`
+    ctx.fillText(
+      value,
+      cursorX + Math.max(0, (columnWidth - width) / 2),
+      canvasTextBaseline(
+        ctx,
+        lineY + offsetEm * lineHeightPx,
+        fontSize,
+        lineHeight,
+      ),
+    )
+    ctx.restore()
+  }
+
+  lines.forEach((line, lineIndex) => {
+    const totalWidth = lineWidth(line.entries)
+    const lineX =
+      align === 'center'
+        ? x + Math.max(0, (maxWidth - totalWidth) / 2)
+        : align === 'end'
+          ? x + Math.max(0, maxWidth - totalWidth)
+          : x
+    const whitespaceCount = line.canJustify
+      ? line.entries.filter((entry) => /^\s$/.test(entry.layoutCharacter))
+          .length
+      : 0
+    const extraPerWhitespace =
+      align === 'justify' && whitespaceCount > 0
+        ? Math.max(0, maxWidth - totalWidth) / whitespaceCount
+        : 0
+    const lineY = y + lineIndex * lineHeightPx
+    let cursorX = lineX
+
+    for (const entry of line.entries) {
+      const { token, width: columnWidth } = entry
+      paintCharacter(
+        cursorX,
+        lineY,
+        token.outgoingChar,
+        columnWidth,
+        token.outgoingOffsetEm,
+        token.outgoingOpacity,
+        token.blurRadius,
+      )
+      if (token.active || token.incomingChar !== token.outgoingChar) {
+        paintCharacter(
+          cursorX,
+          lineY,
+          token.incomingChar,
+          columnWidth,
+          token.incomingOffsetEm,
+          token.incomingOpacity,
+          token.blurRadius,
+        )
+      }
+      cursorX +=
+        columnWidth +
+        tracking +
+        (/^\s$/.test(entry.layoutCharacter) ? extraPerWhitespace : 0)
+    }
+
+    paintCanvasTextDecoration(
+      ctx,
+      decoration,
+      lineX,
+      lineY,
+      align === 'justify' && line.canJustify ? maxWidth : totalWidth,
+      fontSize,
+      lineHeight,
+    )
+  })
 }
 
 function paintImagePlaceholder(ctx: CanvasRenderingContext2D, width: number, height: number) {
