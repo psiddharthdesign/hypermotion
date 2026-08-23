@@ -127,7 +127,7 @@ async function runHeadlessRender(req: HeadlessRequest): Promise<void> {
   // MediaRecorder), which requires a user gesture on macOS Chromium.
   // In headless mode there's no gesture — the call hangs forever.
   // Fail fast with a clear message so the agent can fall back to MP4
-  // or GIF instead of waiting out the 5-minute CLI timeout. Rebuilding
+  // or GIF instead of waiting out the CLI render watchdog. Rebuilding
   // WebM on top of capturePage (frame-by-frame WebM encoding) is the
   // proper fix.
   //
