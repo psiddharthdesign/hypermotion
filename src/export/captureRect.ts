@@ -3,11 +3,14 @@
 /**
  * Frame source built on Electron's `webContents.capturePage`.
  *
- * This is the new export-time source of truth. The renderer drives the
- * timeline (engine.seek), then asks main to capture the artboard's
- * on-screen rectangle. Pixel data comes back as either an owned native
- * bitmap or PNG fallback and is copied into an HTMLCanvasElement for the
- * existing WebCodecs MP4 / GIF encoders.
+ * The hidden render-window pipeline also uses this frame source when a
+ * frame cannot be transferred directly from WebGL. The editor keeps a
+ * separate instance as the legacy fallback when the render window is
+ * unavailable or a caller explicitly requests the native path. In both
+ * cases the renderer drives the timeline (engine.seek), then asks main to
+ * capture the artboard's on-screen rectangle. Pixel data comes back as
+ * either an owned native bitmap or PNG fallback and is copied into an
+ * HTMLCanvasElement for the existing WebCodecs MP4 / GIF encoders.
  *
  * Why this replaces both prior paths:
  *
@@ -15,8 +18,8 @@
  *     renderer trying to mirror what the editor's DOM was already
  *     painting. Anything Pixi got subtly wrong (text font cache, image
  *     fills, position math) showed up only in exports. With capturePage
- *     we use the single source of truth — the editor's own DOM — and
- *     never have to keep two renderers in sync.
+ *     we use the same DOM scene painter as the editor and never have to
+ *     maintain a separate Pixi implementation.
  *
  *   - vs. getDisplayMedia + MediaRecorder: tab capture grabs the WHOLE
  *     window (chrome, status pill, panels), and then we depended on
