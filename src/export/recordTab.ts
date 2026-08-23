@@ -18,9 +18,9 @@ import { getProjectAPI } from '@/project/doc'
  *
  * Used as:
  *  - Primary path for `webm` (real-time getDisplayMedia + MediaRecorder).
- *  - Fallback path for `mp4` on browsers that don't support WebCodecs
- *    (Safari < 16.4, Firefox). Captures WebM, transcodes via ffmpeg.wasm.
- *    Native WebCodecs MP4 is preferred when available; see encodeMp4.ts.
+ *  - Error path for `mp4` when native WebCodecs export is unavailable or
+ *    tab capture is forced. The recorder cannot transcode its WebM output.
+ *    See encodeMp4.ts for the supported native MP4 path.
  *
  * Architectural notes:
  *
