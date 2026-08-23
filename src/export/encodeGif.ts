@@ -6,9 +6,9 @@ import { GIFEncoder, quantize, applyPalette } from 'gifenc'
  * GIF encoder built on `gifenc`.
  *
  * GIFs are 256-color paletted, so each frame is quantized down from
- * 24-bit RGBA before being written. `quantize` uses neuquant by
- * default — modern, small, fast, and produces palettes designers
- * recognize as "good GIF colors" rather than the dithered mess
+ * 24-bit RGBA before being written. `quantize` uses pairwise nearest
+ * neighbor clustering — modern, small, fast, and produces palettes
+ * designers recognize as "good GIF colors" rather than the dithered mess
  * cheaper encoders make.
  *
  * Delay is in centiseconds (GIF89a's native unit). 24fps → 4 cs per
