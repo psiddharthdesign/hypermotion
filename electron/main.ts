@@ -2138,7 +2138,7 @@ ipcMain.handle('export:headless-error', (_e, message: string) => {
   console.error(`[headless] renderer reported error: ${message}`)
   // Drop an error sentinel at `<output>.error` so the CLI driver
   // doesn't poll forever waiting for `<output>.done`. Without this,
-  // the CLI hits its 5-minute timeout and the agent never gets a
+  // the CLI hits its render watchdog and the agent never gets a
   // proper rejection — observed as "the call is stuck."
   if (headlessRequest?.outputPath) {
     try {
