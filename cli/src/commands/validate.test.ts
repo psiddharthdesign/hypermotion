@@ -10,7 +10,11 @@ import { withProcessExitThrow } from '../testUtils/processExit.js'
 import { captureStderr, captureStdout } from '../testUtils/stdout.js'
 import { validateCommand } from './validate.js'
 
-function malformedSceneInput(value: Record<string, unknown>): SceneJson {
+type MalformedSceneJson = Omit<SceneJson, 'nodes'> & {
+  nodes: Record<string, Record<string, unknown>>
+}
+
+function malformedSceneInput(value: MalformedSceneJson): SceneJson {
   return value as unknown as SceneJson
 }
 
