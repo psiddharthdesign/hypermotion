@@ -81,10 +81,16 @@ export function ExportMenu({
   void version
   const meta = api.getMeta()
   const sections = api.getSections()
+  const items = useMemo(() => {
+    void version
+    return project.getSequenceItems()
+  }, [project, version])
+  const [selectionOverrides, setSelectionOverrides] = useState<Record<string, boolean>>({})
+  const sequenceItemIds = useMemo(() => items.filter((item) => selectionOverrides[item.id] ?? !item.skipped).map((item) => item.id), [items, selectionOverrides])
   const sequenceMap = useMemo(
-    () => project.getSequenceTimeMap(),
+    () => project.getSequenceTimeMap(sequenceItemIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [project, version],
+    [project, version, sequenceItemIds],
   )
   const activeComposition = project.getActiveScene()
   const compositions = useMemo(
@@ -92,7 +98,7 @@ export function ExportMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [project, version],
   )
-  const hasSequence = sequenceMap.items.length > 1
+  const hasSequence = items.length > 1
   const [exportScope, setExportScope] = useState<ExportScope>(() =>
     hasSequence ? 'sequence' : 'scene',
   )
@@ -240,8 +246,8 @@ export function ExportMenu({
         endSec: exportWorkArea.end,
       }
     }
-    return { kind: 'time', startSec: customStart, endSec: customEnd }
-  }, [rangeMode, selectedChapters, exportWorkArea, customStart, customEnd])
+    return { kind: 'time', startSec: Math.min(customStart, Math.max(0, exportDuration - 1 / fps)), endSec: Math.min(customEnd, exportDuration) }
+  }, [rangeMode, selectedChapters, exportWorkArea, customStart, customEnd, exportDuration, fps])
 
   // Filename tag — empty string when not partial, sanitized chapter
   // ids joined when one or more chapters are selected.
@@ -260,6 +266,7 @@ export function ExportMenu({
     exportRunning ||
     (Boolean(bridge) && !folderPath) ||
     (exportScope === 'scene' && !selectedComposition) ||
+    (exportScope === 'sequence' && sequenceMap.items.length === 0) ||
     (rangeMode === 'chapter' && selectedChapters.length === 0)
 
   // Range readout values. For segments, sum each span's duration; for
@@ -307,7 +314,7 @@ export function ExportMenu({
       top = Math.max(pad, anchorRect.top - rect.height - 4)
     }
     setPos({ left, top })
-  }, [anchorRect])
+  }, [anchorRect, exportScope])
 
   // Dismiss on Escape / click-outside / scroll, like ContextMenu.
   useEffect(() => {
@@ -322,7 +329,9 @@ export function ExportMenu({
         onClose()
       }
     }
-    const onScroll = () => onClose()
+    const onScroll = (event: WheelEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose()
+    }
     window.addEventListener('pointerdown', onPointerDown, true)
     window.addEventListener('keydown', onKey)
     window.addEventListener('wheel', onScroll, { passive: true })
@@ -343,6 +352,7 @@ export function ExportMenu({
       sceneName: safeTitle,
       durationSec: exportDuration,
       scope: exportScope,
+      sequenceItemIds: exportScope === 'sequence' ? sequenceItemIds : undefined,
       compositionSceneId:
         exportScope === 'scene' ? selectedComposition?.id : undefined,
       selectedSequenceItemId:
@@ -390,7 +400,7 @@ export function ExportMenu({
         visibility: pos ? 'visible' : 'hidden',
         width: PANEL_WIDTH,
       }}
-      className="hm-popover-surface z-[100] overflow-hidden border border-border"
+      className="hm-popover-surface z-[100] flex max-h-[calc(100vh-12px)] flex-col overflow-hidden border border-border"
     >
       {/* Compact job metadata; the redundant dialog title is intentionally omitted. */}
       <div className="flex items-center justify-end border-b border-border px-4 py-2.5">
@@ -400,7 +410,7 @@ export function ExportMenu({
       </div>
 
       {/* Body — spec sheet rows */}
-      <div className="px-4 py-3">
+      <div className="min-h-0 overflow-y-auto px-4 py-3">
         <FieldRow label="Title">
           <input
             type="text"
@@ -483,14 +493,45 @@ export function ExportMenu({
               }}
               title={
                 hasSequence
-                  ? 'Render every ordered scene as one movie'
+                  ? 'Render the selected scenes as one movie'
                   : 'The sequence currently contains one scene'
               }
             >
-              Full sequence
+              Master sequence
             </SegmentBtn>
           </Segments>
         </FieldRow>
+
+        {exportScope === 'sequence' ? (
+          <FieldRow label="Scenes">
+            <div className="w-full">
+              <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted">
+                <span>{sequenceItemIds.length} of {items.length} included</span>
+                <div className="flex gap-3">
+                  <button type="button" className="hover:text-text" onClick={() => { setSelectionOverrides({}); setRangeMode('full') }}>Use Master</button>
+                  <button type="button" className="hover:text-text" onClick={() => { setSelectionOverrides(Object.fromEntries(items.map((item) => [item.id, true]))); setRangeMode('full') }}>Include all</button>
+                </div>
+              </div>
+              <div className="max-h-36 overflow-y-auto rounded-md border border-border p-1">
+                {items.map((item, index) => {
+                  const scene = compositions.find((composition) => composition.id === item.sceneId)
+                  if (!scene) return null
+                  return (
+                    <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[11px] hover:bg-panel-raised">
+                      <input type="checkbox" checked={sequenceItemIds.includes(item.id)} onChange={(event) => {
+                        setSelectionOverrides((previous) => ({ ...previous, [item.id]: event.target.checked }))
+                        setRangeMode('full')
+                      }} className="accent-accent" />
+                      <span className="min-w-0 flex-1 truncate">{index + 1}. {scene.name}</span>
+                      {item.skipped ? <span className="shrink-0 text-[9px] text-text-dim">Skipped in Master</span> : null}
+                    </label>
+                  )
+                })}
+              </div>
+              <p className="mt-1.5 text-[10px] text-text-dim">Selection applies to this export only.</p>
+            </div>
+          </FieldRow>
+        ) : null}
 
         {exportScope === 'scene' && selectedComposition ? (
           <FieldRow label="Scene">

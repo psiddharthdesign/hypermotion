@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { NumberField } from './fields/NumberField'
+import { useSequenceExportPreview } from '@/export/sequencePreview'
 
 import {
+  EyeOff,
   Music2,
   Pause,
   Play,
@@ -61,10 +64,11 @@ export function MasterTimeline() {
   const version = useSceneVersion()
   const api = useSceneAPI()
   const project = useProjectAPI()
+  const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
   const baseMap = useMemo(
-    () => project.getSequenceTimeMap(),
+    () => project.getSequenceTimeMap(exportItemIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [project, version],
+    [project, version, exportItemIds],
   )
   const timelineHeight = useUI((state) => state.timelineHeight)
   const setTimelineHeight = useUI((state) => state.setTimelineHeight)
@@ -75,6 +79,8 @@ export function MasterTimeline() {
   const setProgramSequencePosition = useUI(
     (state) => state.setProgramSequencePosition,
   )
+  const [speedItemId, setSpeedItemId] = useState(() => useUI.getState().selectedSequenceItemId ?? '')
+  const speedItem = baseMap.items.find((entry) => entry.item.id === speedItemId) ?? baseMap.items[0]
   const selection = useUI((state) => state.selection)
   const setSelection = useUI((state) => state.setSelection)
   const setInspectorMode = useUI((state) => state.setInspectorMode)
@@ -285,7 +291,7 @@ export function MasterTimeline() {
       const onMove = (move: PointerEvent) => {
         const requestedSourceEnd =
           initialSourceEnd +
-          (move.clientX - startClientX) / pixelsPerSecond
+          (move.clientX - startClientX) / pixelsPerSecond * resolved.playbackRate
         project.updateSequenceItem(
           resolved.item.id,
           resizeSequenceOccurrenceOut(
@@ -441,6 +447,7 @@ export function MasterTimeline() {
           <button
             type="button"
             data-transport-toggle="1"
+            disabled={map.items.length === 0}
             aria-label={
               playing ? 'Pause master sequence' : 'Play master sequence'
             }
@@ -479,6 +486,37 @@ export function MasterTimeline() {
           onRevealTime={revealMasterTime}
         />
         <div className="flex-1" />
+        <div className="flex shrink-0 items-center gap-2" title="Speed of this scene in Master (0.1×–16×)">
+          <span className="text-[11px] text-text-dim">Scene speed</span>
+          <select
+            aria-label="Scene to adjust speed"
+            value={speedItem?.item.id ?? ''}
+            disabled={!speedItem}
+            onChange={(event) => setSpeedItemId(event.target.value)}
+            className="h-7 max-w-36 rounded border border-border bg-panel px-2 text-[11px] text-text"
+          >
+            {baseMap.items.map((entry) => (
+              <option key={entry.item.id} value={entry.item.id}>{entry.sourceIndex + 1}. {entry.scene.name}</option>
+            ))}
+          </select>
+          <NumberField
+            value={speedItem?.playbackRate ?? 1}
+            min={0.1}
+            max={16}
+            step={0.1}
+            suffix="×"
+            width="w-16"
+            showScrubHandle={false}
+            ariaLabel="Scene speed"
+            disabled={!speedItem}
+            onCommit={(rate) => {
+              if (!speedItem) return
+              setPlaying(false)
+              project.updateSequenceItem(speedItem.item.id, { playbackRate: rate })
+              setPlayhead(Math.min(useUI.getState().playhead, project.getSequenceTimeMap().duration))
+            }}
+          />
+        </div>
         <input
           ref={audioInputRef}
           type="file"
@@ -613,6 +651,11 @@ export function MasterTimeline() {
                   }}
                 />
               ))}
+              {map.items.length === 0 ? (
+                <div className="absolute left-4 top-5 text-[11px] text-text-muted">
+                  All scenes are skipped. Use the eye control above to include a scene in Master.
+                </div>
+              ) : null}
               {map.items.map((resolved, index) => {
                 const left = resolved.masterStart * pixelsPerSecond
                 const itemWidth = Math.max(
@@ -626,6 +669,7 @@ export function MasterTimeline() {
                 const selectOccurrence = () => {
                   setPlaying(false)
                   setPreviewScope('sequence')
+                  setSpeedItemId(resolved.item.id)
                   setPlayhead(resolved.masterStart)
                   setProgramSequencePosition(
                     resolved.item.id,
@@ -656,14 +700,30 @@ export function MasterTimeline() {
                     data-master-scene={resolved.scene.id}
                   >
                     <span className="absolute top-1.5 left-1.5 flex h-4 min-w-4 items-center justify-center rounded bg-black/25 px-1 font-mono text-[8px] text-text">
-                      {index + 1}
+                      {resolved.sourceIndex + 1}
                     </span>
                     <span className="absolute top-1.5 right-1.5 font-mono text-[8px] text-text-dim">
-                      {resolved.duration.toFixed(2)}s
+                      {resolved.playbackRate !== 1 ? `${resolved.playbackRate}× · ` : ''}{resolved.duration.toFixed(2)}s
                     </span>
-                    <span className="absolute right-7 bottom-2 left-2 truncate text-[10px] font-semibold text-text">
+                    <span className="absolute right-14 bottom-2 left-2 truncate text-[10px] font-semibold text-text">
                       {resolved.scene.name}
                     </span>
+                    <button
+                      type="button"
+                      title="Skip in Master"
+                      aria-label={`Skip scene ${resolved.sourceIndex + 1} in Master`}
+                      className="absolute right-8 bottom-1.5 z-20 flex h-5 w-5 items-center justify-center rounded bg-black/20 text-text-muted hover:text-text"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setPlaying(false)
+                        project.updateSequenceItem(resolved.item.id, { skipped: true })
+                        setPlayhead(Math.min(useUI.getState().playhead, project.getSequenceTimeMap().duration))
+                      }}
+                    >
+                      <EyeOff size={11} />
+                    </button>
                     <span
                       role="button"
                       tabIndex={0}

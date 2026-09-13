@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { programMediaRate } from '@/state/sequenceMediaClock'
 
 import {
   useEffect,
@@ -413,13 +414,14 @@ function syncVideoElement(
   video.muted = node.muted
   video.volume = Math.max(0, Math.min(1, node.volume))
   const rate = clampPlaybackRate(node.playbackRate)
-  video.playbackRate = rate
+  const clockRate = programMediaRate()
+  video.playbackRate = clampPlaybackRate(rate * (clockRate || 1))
   const sourceClipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
   const sceneClipLen = sourceClipLen / rate
   const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
   const local = clampVideoLocal((playhead - node.startTime) * rate + node.trimStart, node)
 
-  const shouldPlay = playing && inRange
+  const shouldPlay = playing && inRange && clockRate > 0
   syncMediaPlayback(
     video,
     shouldPlay ? local : previewLocalForVideoTexture(local, node),

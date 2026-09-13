@@ -25,9 +25,18 @@ interface ItemTiming {
   sourceStartFrame: number
   sourceEndFrame: number
   sourceDurationFrames: number
+  playbackRate: number
+  playbackDurationFrames: number
   holdDurationFrames: number
   /** Total Master occurrence span, including the trailing hold. */
   durationFrames: number
+}
+
+/** Validate occurrence speed without letting malformed collaborative state break timing. */
+export function normalizeSequencePlaybackRate(rate: number | undefined): number {
+  return typeof rate === 'number' && Number.isFinite(rate) && rate > 0
+    ? Math.max(0.1, Math.min(16, rate))
+    : 1
 }
 
 /** Return a usable timebase while keeping this pure layer crash-safe. */
@@ -117,6 +126,9 @@ export function buildSequenceTimeMap(
   const sceneById = indexScenes(input.scenes, issues)
   validateGlobalNodeReferences(input.scenes, issues)
 
+  const includedIds = input.includedItemIds === undefined
+    ? null
+    : new Set(input.includedItemIds)
   const seenItemIds = new Set<string>()
   const timings: ItemTiming[] = []
   for (let sourceIndex = 0; sourceIndex < input.items.length; sourceIndex++) {
@@ -139,6 +151,7 @@ export function buildSequenceTimeMap(
       continue
     }
     seenItemIds.add(item.id)
+    if (includedIds ? !includedIds.has(item.id) : item.skipped === true) continue
 
     const scene = sceneById.get(item.sceneId)
     if (!scene) {
@@ -245,6 +258,8 @@ export function buildSequenceTimeMap(
     }
 
     const sourceDurationFrames = intersectedEndFrame - intersectedStartFrame
+    const playbackRate = normalizeSequencePlaybackRate(item.playbackRate)
+    const playbackDurationFrames = Math.max(1, Math.round(sourceDurationFrames / playbackRate))
     const holdDurationFrames = resolveItemHoldDurationFrames(
       item.holdDuration,
       frameRate,
@@ -258,7 +273,9 @@ export function buildSequenceTimeMap(
       sourceEndFrame: intersectedEndFrame,
       sourceDurationFrames,
       holdDurationFrames,
-      durationFrames: sourceDurationFrames + holdDurationFrames,
+      playbackRate,
+      playbackDurationFrames,
+      durationFrames: playbackDurationFrames + holdDurationFrames,
     })
   }
 
@@ -287,6 +304,9 @@ export function buildSequenceTimeMap(
       sourceStartFrame: timing.sourceStartFrame,
       sourceEndFrame: timing.sourceEndFrame,
       sourceDurationFrames: timing.sourceDurationFrames,
+      playbackRate: timing.playbackRate,
+      playbackDurationFrames: timing.playbackDurationFrames,
+      playbackDuration: framesToSeconds(timing.playbackDurationFrames, frameRate),
       holdDurationFrames: timing.holdDurationFrames,
       durationFrames: timing.durationFrames,
       sourceStart: framesToSeconds(timing.sourceStartFrame, frameRate),
@@ -510,7 +530,8 @@ export function masterTimeForLocalTime(
     item.sourceStart,
     item.sourceEnd,
   )
-  return item.masterStart + clampedLocalTime - item.sourceStart
+  if (clampedLocalTime >= item.sourceEnd) return item.masterStart + item.playbackDuration
+  return item.masterStart + Math.min(item.playbackDuration, (clampedLocalTime - item.sourceStart) / item.playbackRate)
 }
 
 /**
@@ -543,11 +564,7 @@ export function localTimeForMasterTime(
     item.masterStart,
     item.masterEnd,
   )
-  return clamp(
-    item.sourceStart + itemTime - item.masterStart,
-    item.sourceStart,
-    item.sourceEnd,
-  )
+  return sequenceSourceTime(item, itemTime)
 }
 
 function indexScenes(
@@ -766,6 +783,12 @@ function resolveTransitionFrames(
   return result
 }
 
+function sequenceSourceTime(item: ResolvedSequenceItem, masterTime: number): number {
+  const elapsed = Math.max(0, masterTime - item.masterStart)
+  if (elapsed >= item.playbackDuration - TIME_EPSILON) return item.sourceEnd
+  return clamp(item.sourceStart + elapsed * item.playbackRate, item.sourceStart, item.sourceEnd)
+}
+
 function sequenceLayerAtMasterTime(
   item: ResolvedSequenceItem,
   masterTime: number,
@@ -773,11 +796,7 @@ function sequenceLayerAtMasterTime(
   weight: number,
   transitionProgress: number | null,
 ): ResolvedSequenceLayer {
-  const localTime = clamp(
-    item.sourceStart + masterTime - item.masterStart,
-    item.sourceStart,
-    item.sourceEnd,
-  )
+  const localTime = sequenceSourceTime(item, masterTime)
   return sequenceLayer(
     item,
     role,

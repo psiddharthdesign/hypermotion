@@ -44,7 +44,7 @@ export function sceneMasterAudioGuideSegments(
   occurrence: Pick<
     ResolvedSequenceItem,
     'masterStart' | 'masterEnd' | 'sourceStart' | 'sourceEnd'
-  >,
+  > & Partial<Pick<ResolvedSequenceItem, 'playbackRate'>>,
   soundtracks: readonly MasterAudioNode[],
 ): SceneMasterAudioGuideSegment[] {
   const result: SceneMasterAudioGuideSegment[] = []
@@ -101,12 +101,12 @@ export function sceneMasterAudioGuideSegments(
 
       const sceneStart = clamp(
         occurrence.sourceStart +
-          (masterStart - occurrence.masterStart),
+          (masterStart - occurrence.masterStart) * (occurrence.playbackRate ?? 1),
         occurrence.sourceStart,
         occurrence.sourceEnd,
       )
       const sceneEnd = clamp(
-        occurrence.sourceStart + (masterEnd - occurrence.masterStart),
+        occurrence.sourceStart + (masterEnd - occurrence.masterStart) * (occurrence.playbackRate ?? 1),
         sceneStart,
         occurrence.sourceEnd,
       )
@@ -147,7 +147,7 @@ export function projectMasterBeatSourcesToScene(
   occurrence: Pick<
     ResolvedSequenceItem,
     'masterStart' | 'masterEnd' | 'sourceStart' | 'sourceEnd'
-  >,
+  > & Partial<Pick<ResolvedSequenceItem, 'playbackRate'>>,
   soundtracks: readonly MasterAudioNode[],
 ): SceneMasterBeatSource[] {
   const segments = sceneMasterAudioGuideSegments(occurrence, soundtracks)
@@ -168,6 +168,7 @@ export function projectMasterBeatSourcesToScene(
         // source time still maps identically, while beat planners are now
         // physically clipped to this cycle/occurrence intersection.
         startTime: segment.sceneStart,
+        playbackRate: (soundtrack.playbackRate ?? 1) / (occurrence.playbackRate ?? 1),
         duration: originalDuration,
         trimStart: segment.sourceStart,
         trimEnd: segment.sourceEnd,
@@ -188,7 +189,7 @@ export function projectMasterBeatSourceToScene(
   occurrence: Pick<
     ResolvedSequenceItem,
     'masterStart' | 'masterEnd' | 'sourceStart' | 'sourceEnd'
-  >,
+  > & Partial<Pick<ResolvedSequenceItem, 'playbackRate'>>,
   soundtracks: readonly MasterAudioNode[],
 ): SceneMasterBeatSource | null {
   return projectMasterBeatSourcesToScene(occurrence, soundtracks)[0] ?? null

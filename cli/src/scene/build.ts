@@ -776,6 +776,8 @@ export interface SequenceItemJson {
    * Mute the project-level Master soundtrack for this occurrence.
    * Omitted is equivalent to false.
    */
+  skipped?: boolean
+  playbackRate?: number
   masterAudioMuted?: boolean
   trimStart?: number
   duration?: number
@@ -2354,6 +2356,12 @@ function validateSequenceModel(
       errors.push(`sequence item ${id} points to missing composition: ${sceneId}`)
     }
 
+    if (item.playbackRate !== undefined && (typeof item.playbackRate !== 'number' || !Number.isFinite(item.playbackRate) || item.playbackRate < 0.1 || item.playbackRate > 16)) {
+      errors.push(`sequence item ${id} playbackRate must be between 0.1 and 16`)
+    }
+    if (item.skipped !== undefined && typeof item.skipped !== 'boolean') {
+      errors.push(`sequence item ${id} skipped must be a boolean when provided`)
+    }
     const compositionDuration = asRecord(compositions[sceneId]).duration
     if (
       item.masterAudioMuted !== undefined &&

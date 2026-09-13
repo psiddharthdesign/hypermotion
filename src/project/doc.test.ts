@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { createSceneAPI } from '@/scene/doc'
 import type { CompositionScene } from '@/sequence'
 import { createProjectAPI } from './doc'
@@ -514,4 +515,51 @@ describe('ProjectAPI', () => {
       transitionOut: 0.5,
     })
   })
+})
+
+it('persists skipped occurrences, restores them, and keeps export overrides ephemeral', () => {
+  const { api } = legacyDocument()
+  const project = createProjectAPI(api)
+  project.ensureInitialized()
+  project.createScene({ name: 'Second', duration: 2 })
+  const first = project.getSequenceItems()[0]!
+  const undo = new Y.UndoManager(api.doc.getMap('scene'), { trackedOrigins: new Set([UNDOABLE_GESTURE_ORIGIN]) })
+  project.updateSequenceItem(first.id, { skipped: true })
+  expect(project.getSequenceTimeMap().duration).toBe(2)
+  expect(project.getScenes()).toHaveLength(2)
+  expect(project.getSequenceTimeMap([first.id]).duration).toBe(4)
+  expect(project.getSequenceItems()[0]!.skipped).toBe(true)
+  const copiedDoc = new Y.Doc()
+  Y.applyUpdate(copiedDoc, Y.encodeStateAsUpdate(api.doc))
+  const copy = createSceneAPI(copiedDoc)
+  expect(createProjectAPI(copy).getSequenceItems()[0]!.skipped).toBe(true)
+  undo.undo()
+  expect(project.getSequenceTimeMap().duration).toBe(6)
+  undo.redo()
+  expect(project.getSequenceTimeMap().duration).toBe(2)
+  project.updateSequenceItem(first.id, { skipped: false })
+  expect(project.getSequenceItems()[0]!.skipped).toBeUndefined()
+  expect(project.getSequenceTimeMap().duration).toBe(6)
+  undo.destroy()
+})
+
+it('saves and undoes occurrence speed without changing composition duration', () => {
+  const { api } = legacyDocument()
+  const project = createProjectAPI(api)
+  project.ensureInitialized()
+  const first = project.getSequenceItems()[0]!
+  const undo = new Y.UndoManager(api.doc.getMap('scene'), { trackedOrigins: new Set([UNDOABLE_GESTURE_ORIGIN]) })
+  project.updateSequenceItem(first.id, { playbackRate: 2 })
+  expect(project.getSequenceTimeMap().duration).toBe(2)
+  expect(project.getScenes()[0]!.duration).toBe(4)
+  const copy = new Y.Doc()
+  Y.applyUpdate(copy, Y.encodeStateAsUpdate(api.doc))
+  expect(createProjectAPI(createSceneAPI(copy)).getSequenceItems()[0]!.playbackRate).toBe(2)
+  undo.undo()
+  expect(project.getSequenceTimeMap().duration).toBe(4)
+  undo.redo()
+  expect(project.getSequenceTimeMap().duration).toBe(2)
+  project.updateSequenceItem(first.id, { playbackRate: 1 })
+  expect(project.getSequenceItems()[0]!.playbackRate).toBeUndefined()
+  undo.destroy()
 })

@@ -271,3 +271,12 @@ describe('preview audio mapping', () => {
     ])
   })
 })
+
+it('retimes scene audio in Master without speeding the Master soundtrack', () => {
+  const timeMap = buildSequenceTimeMap({ scenes, items: [{ id: 'fast', sceneId: 'scene-a', playbackRate: 2, holdDuration: 1 }], frameRate: 60 })
+  const result = resolvePreviewAudioContributions(input({ timeMap, playhead: 1 }))
+  expect(result.find((entry) => entry.audioNodeId === 'soundtrack')).toMatchObject({ timelineTime: 1 })
+  expect(result.find((entry) => entry.audioNodeId === 'soundtrack')?.clockRate).toBeUndefined()
+  expect(result.find((entry) => entry.audioNodeId === 'overlay-a')).toMatchObject({ timelineTime: 2, clockRate: 2 })
+  expect(resolvePreviewAudioContributions(input({ timeMap, playhead: 3.5 })).map((entry) => entry.audioNodeId)).toEqual(['soundtrack'])
+})

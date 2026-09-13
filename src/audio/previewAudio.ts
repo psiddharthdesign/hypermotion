@@ -20,6 +20,8 @@ export interface PreviewAudioContribution {
   audioNodeId: string
   /** Time in the audio node's owning clock (Master or composition-local). */
   timelineTime: number
+  /** Wall-clock speed of the owning timeline, omitted at normal speed. */
+  clockRate?: number
   /** Sequence/crossfade contribution in the inclusive range 0..1. */
   gain: number
   source: 'master' | 'scene-overlay'
@@ -78,7 +80,7 @@ export function resolvePreviewAudioContributions(
     if (
       layer.item.holdDuration > TIME_EPSILON &&
       playhead >=
-        layer.item.masterStart + layer.item.sourceDuration - TIME_EPSILON
+        layer.item.masterStart + layer.item.playbackDuration - TIME_EPSILON
     ) {
       continue
     }
@@ -88,6 +90,7 @@ export function resolvePreviewAudioContributions(
         key: `scene:${audio.audioNodeId}:${layer.item.item.id}`,
         audioNodeId: audio.audioNodeId,
         timelineTime: layer.localTime,
+        ...(layer.item.playbackRate === 1 ? {} : { clockRate: layer.item.playbackRate }),
         gain: clamp01(layer.weight),
         source: 'scene-overlay',
         sequenceItemId: layer.item.item.id,
@@ -135,12 +138,13 @@ function resolveScenePreviewContributions(
   }
 
   const masterTime =
-    occurrence.masterStart + playhead - occurrence.sourceStart
+    occurrence.masterStart + (playhead - occurrence.sourceStart) / occurrence.playbackRate
   for (const audioNodeId of input.masterAudioNodeIds) {
     contributions.push({
       key: `master:${audioNodeId}:scene:${occurrence.item.id}`,
       audioNodeId,
       timelineTime: masterTime,
+      ...(occurrence.playbackRate === 1 ? {} : { clockRate: 1 / occurrence.playbackRate }),
       gain: 1,
       source: 'master',
       sequenceItemId: occurrence.item.id,

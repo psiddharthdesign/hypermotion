@@ -100,10 +100,14 @@ export async function runRenderWindowExport(
   const fps = ctx.exportFps ?? ctx.frameRate
   const project = getProjectAPI(ctx.api)
   project.ensureInitialized()
-  const sequenceMap = project.getSequenceTimeMap()
+  const sequenceMap = project.getSequenceTimeMap(ctx.scope === 'scene' ? undefined : ctx.sequenceItemIds)
   const scope =
     ctx.scope ??
     (project.getSequenceItems().length > 1 ? 'sequence' : 'scene')
+  if (scope === 'sequence' && sequenceMap.items.length === 0) {
+    progress.setError('Choose at least one scene to export.')
+    return
+  }
   const sceneTarget =
     scope === 'scene'
       ? resolveSceneExportTarget({
@@ -231,6 +235,7 @@ export async function runRenderWindowExport(
         scope,
         compositionSceneId,
         selectedSequenceItemId,
+        sequenceItemIds: scope === 'sequence' ? ctx.sequenceItemIds : undefined,
         frameRate: ctx.frameRate,
         exportFps: fps,
         outputWidth: targetDims.width,

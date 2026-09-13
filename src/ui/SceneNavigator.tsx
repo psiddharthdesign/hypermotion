@@ -9,7 +9,7 @@ import {
   type DragEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, Upload } from 'lucide-react'
+import { Download, Upload, Eye, EyeOff } from 'lucide-react'
 import {
   exportCompositionToHypeBytes,
   importScenesFromHypeBytes,
@@ -390,6 +390,13 @@ export function SceneNavigator() {
                     onSelect={() => selectItem(item)}
                     onDuplicate={() => duplicate(item, index)}
                     onDelete={() => remove(item)}
+                    onToggleSkipped={() => {
+                      setPlaying(false)
+                      project.updateSequenceItem(item.id, { skipped: !item.skipped })
+                      if (useUI.getState().previewScope === 'sequence') {
+                        setPlayhead(Math.min(useUI.getState().playhead, project.getSequenceTimeMap().duration))
+                      }
+                    }}
                     onDragStart={(event) => {
                       event.dataTransfer.effectAllowed = 'move'
                       event.dataTransfer.setData(
@@ -511,6 +518,7 @@ function SceneCard({
   onSelect,
   onDuplicate,
   onDelete,
+  onToggleSkipped,
   onDragStart,
   onDragOver,
   onDragLeave,
@@ -526,6 +534,7 @@ function SceneCard({
   onSelect: () => void
   onDuplicate: () => void
   onDelete: () => void
+  onToggleSkipped: () => void
   onDragStart: (event: DragEvent) => void
   onDragOver: (event: DragEvent) => void
   onDragLeave: () => void
@@ -582,7 +591,7 @@ function SceneCard({
         aria-label={`Edit scene ${index + 1}: ${scene.name}`}
         aria-describedby={tooltipPosition ? tooltipId : undefined}
         className="relative h-full w-full overflow-hidden rounded-[calc(var(--radius-panel)_-_2px)] bg-panel-raised outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        style={{ background: rootBackground }}
+        style={{ background: rootBackground, opacity: item.skipped ? 0.4 : 1 }}
       >
         <span className="absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/5" />
         <span className="absolute bottom-1 left-1 flex h-4 min-w-4 items-center justify-center rounded bg-black/65 px-0.5 font-mono text-[8px] text-white">
@@ -598,6 +607,16 @@ function SceneCard({
         ) : null}
       </button>
 
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); onToggleSkipped() }}
+        aria-label={`${item.skipped ? 'Include' : 'Skip'} scene ${index + 1} in Master`}
+        aria-pressed={item.skipped === true}
+        title={item.skipped ? 'Include in Master' : 'Skip in Master'}
+        className={`absolute left-1 top-1 flex h-4 w-4 items-center justify-center rounded bg-black/65 text-white transition-opacity focus-visible:opacity-100 ${item.skipped ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}
+      >
+        {item.skipped ? <EyeOff size={10} /> : <Eye size={10} />}
+      </button>
       <div className="absolute inset-y-1 right-1 flex flex-col justify-between opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           type="button"
@@ -634,7 +653,7 @@ function SceneCard({
               className="pointer-events-none fixed z-[120] max-w-[min(280px,calc(100vw-24px))] -translate-x-1/2 rounded-md border border-border bg-panel-raised px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-text shadow-[var(--shadow-popover)]"
               style={tooltipPosition}
             >
-              {scene.name}
+              {scene.name}{item.skipped ? ' · Skipped in Master' : ''}
             </div>,
             document.body,
           )

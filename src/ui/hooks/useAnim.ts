@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { useSequenceExportPreview } from '@/export/sequencePreview'
+import { useSequenceMediaClock } from '@/state/sequenceMediaClock'
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSceneAPI, useSceneVersion } from '@/scene'
@@ -33,6 +35,7 @@ export function useAnim() {
   const api = useSceneAPI()
   const sceneVersion = useSceneVersion()
   const project = useProjectAPI()
+  const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
   const setPlayhead = useUI((s) => s.setPlayhead)
@@ -49,9 +52,9 @@ export function useAnim() {
   const wasPlayingRef = useRef(false)
   const previousUiPlayheadRef = useRef(playhead)
   const sequenceMap = useMemo(
-    () => project.getSequenceTimeMap(),
+    () => project.getSequenceTimeMap(exportItemIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [project, sceneVersion],
+    [project, sceneVersion, exportItemIds],
   )
   const playbackCompositionId =
     activeCompositionId ?? project.getActiveSceneId()
@@ -86,6 +89,12 @@ export function useAnim() {
           : resolution.layers.reduce((winner, candidate) =>
               candidate.weight >= winner.weight ? candidate : winner,
             )
+      const mediaRate = layer
+        ? (masterTime >= layer.item.masterStart + layer.item.playbackDuration ? 0 : layer.item.playbackRate)
+        : 0
+      if (useSequenceMediaClock.getState().rate !== mediaRate) {
+        useSequenceMediaClock.setState({ rate: mediaRate })
+      }
       if (!layer) {
         setProgramSequencePosition(null, null)
         return null

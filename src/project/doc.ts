@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 
 import * as Y from 'yjs'
 import type { Node, NodeId, SceneMeta, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   buildSequenceTimeMap,
+  normalizeSequencePlaybackRate,
   type CameraCut,
   type CompositionScene,
   type CompositionWorkArea,
@@ -51,7 +53,7 @@ export interface ProjectAPI {
   getScenes(): CompositionScene[]
   getScene(id: string): CompositionScene | null
   getSequenceItems(): SequenceItem[]
-  getSequenceTimeMap(): SequenceTimeMap
+  getSequenceTimeMap(includedItemIds?: readonly string[]): SequenceTimeMap
   getActiveSceneId(): string | null
   getActiveScene(): CompositionScene | null
 
@@ -96,6 +98,8 @@ export interface ProjectAPI {
         | 'holdDuration'
         | 'transitionOut'
         | 'masterAudioMuted'
+        | 'skipped'
+        | 'playbackRate'
       >
     >,
   ): void
@@ -358,11 +362,12 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
       return orderedItems()
     },
 
-    getSequenceTimeMap: () => {
+    getSequenceTimeMap: (includedItemIds) => {
       ensureInitialized()
       return buildSequenceTimeMap({
         scenes: projectApi.getScenes(),
         items: orderedItems(),
+        includedItemIds,
         frameRate: api.getMeta().frameRate,
       })
     },
@@ -846,15 +851,21 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
         Object.prototype.hasOwnProperty.call(patch, 'masterAudioMuted')
           ? patch.masterAudioMuted === true
           : item.masterAudioMuted === true
+      const playbackRate = normalizeSequencePlaybackRate(
+        Object.prototype.hasOwnProperty.call(patch, 'playbackRate') ? patch.playbackRate : item.playbackRate,
+      )
       const next: SequenceItem = {
         ...item,
         ...patch,
         trimStart,
         transitionOut: normalizeTransition(
           patch.transitionOut ?? item.transitionOut,
-          effectiveDuration + holdDuration,
+          effectiveDuration / playbackRate + holdDuration,
         ),
       }
+      if (playbackRate === 1) delete next.playbackRate
+      else next.playbackRate = playbackRate
+      if (next.skipped !== true) delete next.skipped
       if (duration === undefined) delete next.duration
       else next.duration = duration
       if (holdDuration > 0) next.holdDuration = holdDuration
@@ -866,7 +877,10 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
       else delete next.masterAudioMuted
       api.doc.transact(
         () => sequenceItems.set(itemId, next),
-        'sequence-update',
+        (Object.prototype.hasOwnProperty.call(patch, 'skipped') ||
+          Object.prototype.hasOwnProperty.call(patch, 'playbackRate'))
+          ? UNDOABLE_GESTURE_ORIGIN
+          : 'sequence-update',
       )
     },
 
@@ -1062,6 +1076,7 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
       ? undefined
       : Math.max(0, finite(item.duration, 0))
   const holdDuration = Math.max(0, finite(item.holdDuration, 0))
+  const playbackRate = normalizeSequencePlaybackRate(item.playbackRate)
   const normalized: SequenceItem = {
     ...item,
     trimStart: Math.max(0, finite(item.trimStart, 0)),
@@ -1071,13 +1086,16 @@ function normalizeSequenceItem(item: SequenceItem): SequenceItem {
     // transition precisely; preserve the authored request until then.
     transitionOut: normalizeTransition(
       item.transitionOut,
-      duration === undefined ? undefined : duration + holdDuration,
+      duration === undefined ? undefined : duration / playbackRate + holdDuration,
     ),
   }
   if (holdDuration > 0) normalized.holdDuration = holdDuration
   else delete normalized.holdDuration
   if (item.masterAudioMuted === true) normalized.masterAudioMuted = true
   else delete normalized.masterAudioMuted
+  if (item.skipped !== true) delete normalized.skipped
+  if (playbackRate === 1) delete normalized.playbackRate
+  else normalized.playbackRate = playbackRate
   return normalized
 }
 

@@ -77,6 +77,8 @@ export interface ExportSceneContext {
    * resolves the active composition's first occurrence deterministically.
    */
   selectedSequenceItemId?: string
+  /** Optional occurrence selection for this sequence export only. */
+  sequenceItemIds?: string[]
   /** Scene's intrinsic frame rate. */
   frameRate: number
   /** Format the user picked. */
@@ -198,6 +200,10 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
       return
     }
 
+    if (ctx.scope === 'sequence') {
+      useExportProgress.getState().setError('Master export requires the render window. Use the standard desktop export pipeline.')
+      return
+    }
     return runWithSelectedComposition(ctx, () =>
       runCaptureRect(ctx, async (width, height, fps) => {
         if (id === 'gif') {

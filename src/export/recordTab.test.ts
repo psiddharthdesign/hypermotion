@@ -34,3 +34,16 @@ describe('sequence tab-capture compatibility', () => {
     ).toContain('cannot render crossfades')
   })
 })
+
+it('checks the export selection rather than the saved Master selection', () => {
+  const api = createSceneAPI()
+  api.createNode('frame', null, { name: 'Opening' })
+  const project = createProjectAPI(api)
+  project.ensureInitialized()
+  project.createScene({ name: 'Following' })
+  const first = project.getSequenceItems()[0]!
+  project.setTransition(first.id, { kind: 'crossfade', duration: 0.5 })
+  expect(getSequenceTabCaptureError({ api, scope: 'sequence', sequenceItemIds: [first.id] })).toBeNull()
+  expect(getSequenceTabCaptureError({ api, scope: 'sequence', sequenceItemIds: [] })).toContain('at least one')
+  expect(project.getSequenceTimeMap().items).toHaveLength(2)
+})

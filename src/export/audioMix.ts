@@ -309,8 +309,7 @@ export function resolveMediaTimelineSamples(input: {
       return [{
         time:
           occurrence.masterStart +
-          masterTime -
-          occurrence.sourceStart,
+          (masterTime - occurrence.sourceStart) / occurrence.playbackRate,
         weight: 1,
       }]
     }
@@ -332,7 +331,7 @@ export function resolveMediaTimelineSamples(input: {
         layer.item.holdDuration <= TIME_EPSILON ||
         masterTime <
           layer.item.masterStart +
-            layer.item.sourceDuration -
+            layer.item.playbackDuration -
             TIME_EPSILON,
     )
     .map((layer) => ({

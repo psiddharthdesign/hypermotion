@@ -259,6 +259,7 @@ test('get_sequence resolves crossfades and master duration on frame boundaries',
         sceneId: 'intro',
         sceneName: 'Intro',
         masterAudioMuted: false,
+        playbackRate: 1,
         sourceIndex: 0,
         sequenceIndex: 0,
         sourceStart: 0.5,
@@ -282,6 +283,7 @@ test('get_sequence resolves crossfades and master duration on frame boundaries',
         sceneId: 'detail',
         sceneName: 'Detail',
         masterAudioMuted: true,
+        playbackRate: 1,
         sourceIndex: 1,
         sequenceIndex: 1,
         sourceStart: 0,
@@ -357,6 +359,7 @@ test('get_sequence includes trailing hold frames without extending the source ra
         sceneId: 'detail',
         sceneName: 'Detail',
         masterAudioMuted: true,
+        playbackRate: 1,
         sourceIndex: 1,
         sequenceIndex: 1,
         sourceStart: 0,
@@ -444,6 +447,38 @@ test('sequence queries synthesize one composition and item for legacy files', as
     assert.equal(sequence.masterDuration, 2.5)
     assert.equal(sequence.items[0]?.id, 'legacy-item')
     assert.equal(sequence.items[0]?.sceneId, 'legacy-scene')
+  } finally {
+    fs.rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('Master query closes the gap left by skipped scenes', async () => {
+  const scene = multiSceneFixture()
+  scene.sequenceItems!.introItem!.skipped = true
+  const fixture = writeFixture(scene)
+  try {
+    const result = await handleGetSequence({ scene: fixture.scenePath })
+    assert.equal(result.isError, undefined)
+    const payload = JSON.parse(assertToolText(result))
+    assert.deepEqual(payload.items.map((item: { id: string }) => item.id), ['detailItem'])
+    assert.equal(payload.masterDuration, 3)
+    assert.equal(payload.items[0].masterStart, 0)
+  } finally {
+    fs.rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('Master query uses per-occurrence speed while preserving source duration', async () => {
+  const scene = multiSceneFixture()
+  scene.sequenceItems!.detailItem!.playbackRate = 2
+  const fixture = writeFixture(scene)
+  try {
+    const result = await handleGetSequence({ scene: fixture.scenePath })
+    const payload = JSON.parse(assertToolText(result))
+    assert.equal(payload.items[1].playbackRate, 2)
+    assert.equal(payload.items[1].sourceDuration, 3)
+    assert.equal(payload.items[1].duration, 1.5)
+    assert.equal(payload.masterDuration, 4)
   } finally {
     fs.rmSync(fixture.directory, { recursive: true, force: true })
   }

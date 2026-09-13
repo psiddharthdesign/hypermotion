@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { useSequenceExportPreview } from '@/export/sequencePreview'
 
 import {
   useCallback,
@@ -335,10 +336,11 @@ function AudioPlaybackHost() {
     return { audioById, masterAudioNodeIds, sceneAudio }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, project, version])
+  const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
   const timeMap = useMemo(
-    () => project.getSequenceTimeMap(),
+    () => project.getSequenceTimeMap(exportItemIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [project, version],
+    [project, version, exportItemIds],
   )
   const activeCompositionId =
     uiActiveCompositionId ?? project.getActiveSceneId()
@@ -399,6 +401,7 @@ function AudioPlaybackHost() {
             node={clip}
             timelineTime={contribution.timelineTime}
             gainScale={contribution.gain}
+            clockRate={contribution.clockRate ?? 1}
           />
         ) : null
       })}
@@ -426,10 +429,12 @@ function AudioPlaybackElement({
   node,
   timelineTime,
   gainScale,
+  clockRate,
 }: {
   node: Extract<SceneNode, { kind: 'audio' }>
   timelineTime: number
   gainScale: number
+  clockRate: number
 }) {
   const mediaRef = useRef<HTMLAudioElement | null>(null)
   const bufferRef = useRef<AudioBuffer | null>(null)
@@ -442,7 +447,8 @@ function AudioPlaybackElement({
   const [decodeTick, setDecodeTick] = useState(0)
   const [fallbackToMediaElement, setFallbackToMediaElement] = useState(false)
   const playing = useUI((s) => s.playing)
-  const rate = Math.max(0.05, Math.min(16, node.playbackRate ?? 1))
+  const nodeRate = Math.max(0.05, Math.min(16, node.playbackRate ?? 1))
+  const rate = Math.max(0.05, Math.min(16, nodeRate * clockRate))
   const startTime = Number.isFinite(node.startTime) ? node.startTime : 0
   const trimStart = Number.isFinite(node.trimStart) ? node.trimStart : 0
   const sourceDuration =
@@ -460,7 +466,7 @@ function AudioPlaybackElement({
     startTime,
     trimStart,
     trimEnd,
-    playbackRate: rate,
+    playbackRate: nodeRate,
     loop: node.loop,
   })
   const local = playbackClock.localTime
@@ -761,6 +767,7 @@ function PreviewShell() {
   const currentFilePath = useUI((s) => s.currentFilePath)
   const playing = useUI((s) => s.playing)
   const playhead = useUI((s) => s.playhead)
+  const previewScope = useUI((s) => s.previewScope)
   const setIsolatedRange = useUI((s) => s.setIsolatedRange)
   const storedWorkArea = useUI((s) => s.workAreaRange)
   const setStoredWorkArea = useUI((s) => s.setWorkAreaRange)
@@ -772,11 +779,16 @@ function PreviewShell() {
   } | null>(null)
   const sceneVersion = useSceneVersion()
   const meta = api.getMeta()
-  const duration = Math.max(0.1, meta.duration)
+  const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
+  const sequenceTimeMap = useMemo(() => {
+    void sceneVersion
+    return project.getSequenceTimeMap(exportItemIds)
+  }, [project, sceneVersion, exportItemIds])
+  const duration = previewScope === 'sequence' ? sequenceTimeMap.duration : Math.max(0.1, meta.duration)
   const frameStep = 1 / Math.max(1, meta.frameRate)
   const minWorkArea = Math.max(frameStep, 0.05)
   const normalizedWorkArea = normalizePreviewWorkArea(
-    storedWorkArea ?? { start: 0, end: duration },
+    previewScope === 'sequence' ? { start: 0, end: duration } : storedWorkArea ?? { start: 0, end: duration },
     duration,
     minWorkArea,
   )
@@ -787,12 +799,13 @@ function PreviewShell() {
 
   const commitPreviewWorkArea = useCallback(
     (range: { start: number; end: number } | null) => {
+      if (previewScope === 'sequence') return
       setStoredWorkArea(range)
       if (activeCompositionId) {
         project.setSceneWorkArea(activeCompositionId, range)
       }
     },
-    [activeCompositionId, project, setStoredWorkArea],
+    [activeCompositionId, previewScope, project, setStoredWorkArea],
   )
 
   const displayName = (() => {
@@ -897,7 +910,7 @@ function PreviewShell() {
   ])
 
   useEffect(() => {
-    if (!storedWorkArea) return
+    if (previewScope === 'sequence' || !storedWorkArea) return
     const next = normalizePreviewWorkArea(
       storedWorkArea,
       duration,
@@ -911,6 +924,7 @@ function PreviewShell() {
     }
   }, [
     commitPreviewWorkArea,
+    previewScope,
     duration,
     minWorkArea,
     storedWorkArea,

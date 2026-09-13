@@ -42,6 +42,8 @@ interface NormalizedTransition {
 interface NormalizedSequenceItem {
   id: string
   sceneId: string
+  skipped?: boolean
+  playbackRate?: number
   masterAudioMuted?: boolean
   trimStart?: number
   duration?: number
@@ -173,6 +175,7 @@ export async function handleGetSequence(
       sceneId: entry.scene.id,
       sceneName: entry.scene.name,
       masterAudioMuted: entry.item.masterAudioMuted === true,
+      playbackRate: entry.item.playbackRate ?? 1,
       sourceIndex: entry.item.sourceIndex,
       sequenceIndex: entry.sequenceIndex,
       sourceStart: framesToSeconds(
@@ -514,6 +517,8 @@ function normalizeSequenceItem(
   return {
     id,
     sceneId: typeof raw.sceneId === 'string' ? raw.sceneId : '',
+    skipped: raw.skipped === true ? true : undefined,
+    playbackRate: typeof raw.playbackRate === 'number' && Number.isFinite(raw.playbackRate) && raw.playbackRate > 0 ? Math.max(0.1, Math.min(16, raw.playbackRate)) : 1,
     masterAudioMuted: raw.masterAudioMuted === true ? true : undefined,
     trimStart:
       typeof raw.trimStart === 'number' ? raw.trimStart : undefined,
@@ -570,6 +575,7 @@ function resolveSequence(project: NormalizedProject): ResolvedSequence {
   }> = []
 
   for (const item of project.items) {
+    if (item.skipped) continue
     const scene = sceneById.get(item.sceneId)
     if (!scene) {
       issues.push({
@@ -695,7 +701,7 @@ function resolveSequence(project: NormalizedProject): ResolvedSequence {
     timings.push({
       item,
       scene,
-      durationFrames: sourceDurationFrames + holdResolution.frames,
+      durationFrames: Math.max(1, Math.round(sourceDurationFrames / (item.playbackRate ?? 1))) + holdResolution.frames,
       sourceStartFrame: intersectedStartFrame,
       sourceEndFrame: intersectedEndFrame,
       sourceDurationFrames,

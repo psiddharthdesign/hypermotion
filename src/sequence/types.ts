@@ -100,6 +100,10 @@ export interface SequenceTransition {
 export interface SequenceItem {
   id: SequenceItemId
   sceneId: CompositionSceneId
+  /** Omit this occurrence from Master playback and default sequence exports. */
+  skipped?: boolean
+  /** Composition seconds per Master second (0.1–16). Defaults to 1. */
+  playbackRate?: number
   /**
    * Mute the project-level Master soundtrack for this occurrence.
    *
@@ -164,6 +168,8 @@ export interface BuildSequenceTimeMapInput {
   scenes: readonly CompositionScene[]
   /** Master-timeline order. */
   items: readonly SequenceItem[]
+  /** Export-only selection; when supplied, overrides saved skip flags. */
+  includedItemIds?: readonly SequenceItemId[]
   frameRate: number
 }
 
@@ -179,6 +185,10 @@ export interface ResolvedSequenceItem {
   sourceEndFrame: number
   /** Renderable source frames before any trailing freeze-frame hold. */
   sourceDurationFrames: number
+  /** Normalized occurrence speed and moving span in the Master clock. */
+  playbackRate: number
+  playbackDurationFrames: number
+  playbackDuration: number
   /** Trailing freeze-frame frames on the Master timeline. */
   holdDurationFrames: number
   /** Total Master occurrence span, including `holdDurationFrames`. */

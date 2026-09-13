@@ -308,3 +308,19 @@ describe('Master sequence duration resize', () => {
     ).toBeNull()
   })
 })
+
+it('resizes fast and slow tails in Master time, preserving source limits and adding holds', () => {
+  for (const rate of [0.1, 0.5, 1.3, 2, 16]) {
+    const composition = scene()
+    const items = [item('tail', composition.id, { playbackRate: rate })]
+    const map = buildSequenceTimeMap({ scenes: [composition], items, frameRate: 60 })
+    for (const requested of [2, 5, 20, 85]) {
+      const result = resizeSequenceTailToMasterDuration(map, requested)!
+      const rebuilt = buildSequenceTimeMap({ scenes: [composition], items: [{ ...items[0]!, ...result.patch }], frameRate: 60 })
+      expect(rebuilt.duration).toBeCloseTo(result.duration)
+      expect(rebuilt.duration).toBeCloseTo(requested)
+      expect(rebuilt.items[0]!.sourceEnd).toBeLessThanOrEqual(8)
+      expect(rebuilt.items[0]!.playbackRate).toBe(rate)
+    }
+  }
+})

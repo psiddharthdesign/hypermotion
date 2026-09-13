@@ -1537,6 +1537,8 @@ interface RenderJob {
     scope?: 'scene' | 'sequence'
     compositionSceneId?: string
     selectedSequenceItemId?: string
+    /** Optional occurrence selection for this sequence export only. */
+    sequenceItemIds?: string[]
     frameRate: number
     exportFps: number
     // Output dimensions in CSS pixels. The render window is sized to

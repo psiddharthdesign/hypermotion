@@ -235,3 +235,20 @@ describe('sequence media timeline mapping', () => {
     })).toEqual([])
   })
 })
+
+it('removes skipped scene audio and starts the following scene at the closed gap', () => {
+  const map = buildSequenceTimeMap({
+    scenes: [scene('opening', 4), scene('detail', 3)],
+    items: [{ id: 'opening-use', sceneId: 'opening', skipped: true }, { id: 'detail-use', sceneId: 'detail' }],
+    frameRate: 30,
+  })
+  expect(resolveMediaTimelineSamples({ masterTime: 1, ownerSceneId: 'opening', sequenceTimeMap: map })).toEqual([])
+  expect(resolveMediaTimelineSamples({ masterTime: 1, ownerSceneId: 'detail', sequenceTimeMap: map })).toEqual([{ time: 1, weight: 1 }])
+})
+
+it('exports sped-up scene audio on source time and silences its hold', () => {
+  const map = buildSequenceTimeMap({ scenes: [scene('a', 4)], items: [{ id: 'a1', sceneId: 'a', playbackRate: 2, holdDuration: 1 }], frameRate: 60 })
+  expect(resolveMediaTimelineSamples({ masterTime: 1, ownerSceneId: 'a', sequenceTimeMap: map })).toEqual([{ time: 2, weight: 1 }])
+  expect(resolveMediaTimelineSamples({ masterTime: 2.5, ownerSceneId: 'a', sequenceTimeMap: map })).toEqual([])
+  expect(resolveMediaTimelineSamples({ masterTime: 2.5, ownerSceneId: null, sequenceTimeMap: map })).toEqual([{ time: 2.5, weight: 1 }])
+})

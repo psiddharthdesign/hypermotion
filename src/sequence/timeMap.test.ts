@@ -496,3 +496,68 @@ describe('resolveMasterTime', () => {
     expect(masterTimeForLocalTime(map, 'absent', 1)).toBeNull()
   })
 })
+
+describe('Master scene selection', () => {
+  const scenes = [scene('a', 3), scene('b', 4), scene('c', 2)]
+  const items = [
+    item('a1', 'a', { transitionOut: { kind: 'crossfade', duration: 0.5 } }),
+    item('b1', 'b', { skipped: true, holdDuration: 2 }),
+    item('c1', 'c'),
+  ]
+  it('closes gaps and resolves the transition to the next included occurrence', () => {
+    const map = buildSequenceTimeMap({ scenes, items, frameRate: 30 })
+    expect(map.items.map((entry) => entry.item.id)).toEqual(['a1', 'c1'])
+    expect(map.duration).toBe(4.5)
+    expect(map.items[1]).toMatchObject({ masterStart: 2.5, sourceIndex: 2, sequenceIndex: 1 })
+    expect(resolveMasterTime(map, 2.75).layers.map((layer) => layer.item.scene.id)).toEqual(['a', 'c'])
+  })
+  it('allows export overrides without changing saved flags or scene order', () => {
+    const map = buildSequenceTimeMap({ scenes, items, frameRate: 30, includedItemIds: ['c1', 'b1'] })
+    expect(map.items.map((entry) => entry.item.id)).toEqual(['b1', 'c1'])
+    expect(map.duration).toBe(8)
+    expect(items[1]!.skipped).toBe(true)
+    expect(buildSequenceTimeMap({ scenes, items, frameRate: 30, includedItemIds: [] }).duration).toBe(0)
+  })
+  it('skips only the chosen occurrence of a repeated scene', () => {
+    const map = buildSequenceTimeMap({ scenes, frameRate: 30, items: [item('one', 'a', { skipped: true }), item('two', 'a')] })
+    expect(map.items.map((entry) => entry.item.id)).toEqual(['two'])
+    expect(map.duration).toBe(3)
+  })
+})
+
+describe('Master occurrence speed', () => {
+  it('retimes source windows independently for repeated scenes and maps both directions', () => {
+    const map = buildSequenceTimeMap({
+      scenes: [scene('a', 8)],
+      items: [item('fast', 'a', { trimStart: 2, duration: 4, playbackRate: 2 }), item('normal', 'a', { duration: 2 })],
+      frameRate: 60,
+    })
+    expect(map.duration).toBe(4)
+    expect(map.items[0]).toMatchObject({ sourceStart: 2, sourceEnd: 6, sourceDuration: 4, playbackDuration: 2, duration: 2 })
+    expect(localTimeForMasterTime(map, 'fast', 1)).toBe(4)
+    expect(masterTimeForLocalTime(map, 'fast', 4)).toBe(1)
+    expect(resolveMasterTime(map, 2).layers[0]!.item.item.id).toBe('normal')
+    expect(resolveMasterTime(map, 3).layers[0]!.localTime).toBe(1)
+  })
+  it('scales moving time while preserving holds and crossfade time on Master', () => {
+    const map = buildSequenceTimeMap({
+      scenes: [scene('a', 4), scene('b', 4)],
+      items: [item('fast', 'a', { playbackRate: 2, holdDuration: 1, transitionOut: { kind: 'crossfade', duration: 0.5 } }), item('slow', 'b', { playbackRate: 0.5 })],
+      frameRate: 60,
+    })
+    expect(map.duration).toBe(10.5)
+    const layers = resolveMasterTime(map, 2.75, { quantize: 'none' }).layers
+    expect(layers.map((layer) => layer.localTime)).toEqual([4, 0.125])
+    expect(layers.map((layer) => layer.weight)).toEqual([0.5, 0.5])
+    expect(map.items[1]!.masterStart).toBe(2.5)
+  })
+  it('keeps arbitrary speeds frame-aligned and clamps corrupt rates safely', () => {
+    const map = buildSequenceTimeMap({ scenes: [scene('a', 1)], items: [item('a1', 'a', { playbackRate: 1.3, holdDuration: 1 })], frameRate: 30 })
+    expect(map.items[0]!.playbackDurationFrames).toBe(23)
+    expect(localTimeForMasterTime(map, 'a1', 23 / 30)).toBe(1)
+    expect(masterTimeForLocalTime(map, 'a1', 1)).toBe(23 / 30)
+    for (const rate of [NaN, Infinity, 0, -1]) {
+      expect(buildSequenceTimeMap({ scenes: [scene('a', 1)], items: [item('a1', 'a', { playbackRate: rate })], frameRate: 30 }).duration).toBe(1)
+    }
+  })
+})

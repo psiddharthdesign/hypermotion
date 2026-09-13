@@ -121,7 +121,7 @@ export function sequenceMasterDurationBounds(
   const tail = sequenceTailTiming(timeMap)
   if (!tail) return null
   return {
-    min: framesToSeconds(tail.masterDurationForTailFrames(1), tail.frameRate),
+    min: framesToSeconds(tail.masterDurationForTailFrames(Math.max(1, Math.round(1 / tail.last.playbackRate))), tail.frameRate),
   }
 }
 
@@ -143,7 +143,7 @@ export function resizeSequenceTailToMasterDuration(
   if (!tail) return null
 
   const bounds = {
-    min: framesToSeconds(tail.masterDurationForTailFrames(1), tail.frameRate),
+    min: framesToSeconds(tail.masterDurationForTailFrames(Math.max(1, Math.round(1 / tail.last.playbackRate))), tail.frameRate),
   }
   const safeRequested = Number.isFinite(requestedDuration)
     ? requestedDuration
@@ -162,7 +162,7 @@ export function resizeSequenceTailToMasterDuration(
     tail.masterDurationForTailFrames(currentTailFrames) !==
     requestedMasterFrames
   ) {
-    let low = 1
+    let low = Math.max(1, Math.round(1 / tail.last.playbackRate))
     let high = Math.max(
       currentTailFrames,
       tail.maxSourceTailFrames,
@@ -186,7 +186,7 @@ export function resizeSequenceTailToMasterDuration(
   }
 
   const selectedSourceTailFrames = Math.min(
-    selectedTailFrames,
+    Math.max(1, Math.floor(selectedTailFrames * tail.last.playbackRate + 1e-9)),
     tail.maxSourceTailFrames,
   )
   const requestedSourceEnd = framesToSeconds(
@@ -209,11 +209,12 @@ export function resizeSequenceTailToMasterDuration(
     1,
     tail.maxSourceTailFrames,
   )
+  const actualPlaybackFrames = Math.max(1, Math.round(actualSourceTailFrames / tail.last.playbackRate))
   const holdDurationFrames = Math.max(
     0,
-    selectedTailFrames - actualSourceTailFrames,
+    selectedTailFrames - actualPlaybackFrames,
   )
-  const actualTailFrames = actualSourceTailFrames + holdDurationFrames
+  const actualTailFrames = actualPlaybackFrames + holdDurationFrames
   const patch = {
     ...sourcePatch,
     holdDuration: framesToSeconds(holdDurationFrames, tail.frameRate),

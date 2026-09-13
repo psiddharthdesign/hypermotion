@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { useSequenceExportPreview } from './sequencePreview'
 
 import { getAnimEngine } from '@/anim'
 import {
@@ -142,6 +143,7 @@ export async function recordTabCapture(
   // Pause + seek to the start of the range. We'll engine.play() once
   // the recorder is armed and the user has dismissed the share prompt.
   const wasPlaying = engine.isPlaying()
+  const originalExportItemIds = useSequenceExportPreview.getState().itemIds
   const originalUi = useUI.getState()
   const originalUiPlayhead = originalUi.playhead
   const originalUiPlaying = originalUi.playing
@@ -150,6 +152,7 @@ export async function recordTabCapture(
   const originalPlayhead = engine.getPlayhead()
   engine.setLoopRange(null) // record straight through; loop range
   if (sequenceCapture) {
+    useSequenceExportPreview.setState({ itemIds: ctx.sequenceItemIds })
     originalUi.setPlaying(false)
     originalUi.setPreviewScope('sequence')
     originalUi.setPlayhead(startSec)
@@ -179,6 +182,7 @@ export async function recordTabCapture(
     engine.pause()
     const latestUi = useUI.getState()
     if (sequenceCapture) {
+      useSequenceExportPreview.setState({ itemIds: originalExportItemIds })
       latestUi.setPlaying(false)
       latestUi.setPreviewScope(originalPreviewScope)
       latestUi.setPlayhead(originalUiPlayhead)
@@ -344,12 +348,14 @@ export async function recordTabCapture(
  * visibly different movie; native MP4/GIF export has the correct compositor.
  */
 export function getSequenceTabCaptureError(
-  ctx: Pick<ExportSceneContext, 'api' | 'scope'>,
+  ctx: Pick<ExportSceneContext, 'api' | 'scope' | 'sequenceItemIds'>,
 ): string | null {
   if (ctx.scope !== 'sequence') return null
   const project = getProjectAPI(ctx.api)
   project.ensureInitialized()
-  if (project.getSequenceTimeMap().transitions.length === 0) return null
+  const map = project.getSequenceTimeMap(ctx.sequenceItemIds)
+  if (map.items.length === 0) return 'Choose at least one scene to export.'
+  if (map.transitions.length === 0) return null
   return (
     'WebM sequence export cannot render crossfades yet. ' +
     'Choose MP4 or GIF for the full composited sequence, or change the transitions to cuts.'

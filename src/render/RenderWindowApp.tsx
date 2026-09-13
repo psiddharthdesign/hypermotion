@@ -204,6 +204,8 @@ interface RenderJob {
   scope?: 'scene' | 'sequence'
   compositionSceneId?: string
   selectedSequenceItemId?: string
+  /** Optional occurrence selection for this sequence export only. */
+  sequenceItemIds?: string[]
   frameRate: number
   exportFps: number
   outputWidth: number
@@ -790,7 +792,7 @@ async function runExportLoop(
   const engine = getAnimEngine()
   const project = getProjectAPI(api)
   project.ensureInitialized()
-  const sequenceMap = project.getSequenceTimeMap()
+  const sequenceMap = project.getSequenceTimeMap(job.scope === 'scene' ? undefined : job.sequenceItemIds)
   const sequenceScope =
     job.scope === 'sequence' ||
     (job.scope === undefined && project.getSequenceItems().length > 1)
@@ -804,8 +806,9 @@ async function runExportLoop(
   // the complete project before capture so switching composition scenes cannot
   // bake ThreeSceneViewport's placeholder into the exported video.
   try {
-    const renderImageRoots = project
-      .getScenes()
+    const renderImageRoots = (sequenceScope
+      ? sequenceMap.items.map((entry) => entry.scene)
+      : project.getScenes().filter((scene) => scene.id === (job.compositionSceneId ?? project.getActiveSceneId())))
       .flatMap((composition) => [
         composition.rootNodeId,
         ...composition.cameraIds,

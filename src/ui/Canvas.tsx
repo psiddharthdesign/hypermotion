@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { useSequenceExportPreview } from '@/export/sequencePreview'
+import { useSequenceMediaClock } from '@/state/sequenceMediaClock'
 
 import {
   Fragment,
@@ -701,12 +703,13 @@ export function Canvas() {
   // Animated values (opacity, transform offsets) from the anim engine,
   // keyed by node id. Empty object while no tracks exist, which is the
   // current default — the engine is wired but untouched until Step 5.
+  const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
   const activeComposition = project.getActiveScene()
   const cameraLocalTime = useMemo(() => {
     if (!activeComposition) return playhead
     if (previewScope !== 'sequence' || playing) return playhead
     const resolution = resolveMasterTime(
-      project.getSequenceTimeMap(),
+      project.getSequenceTimeMap(exportItemIds),
       playhead,
       { clamp: true, quantize: 'none' },
     )
@@ -715,7 +718,7 @@ export function Canvas() {
         (layer) => layer.item.scene.id === activeComposition.id,
       )?.localTime ?? playhead
     )
-  }, [activeComposition, playhead, playing, previewScope, project])
+  }, [activeComposition, playhead, playing, previewScope, project, exportItemIds])
   const programCameras = useMemo(() => {
     void version
     if (!activeComposition) return []
@@ -6222,8 +6225,18 @@ function MediaVideoSource({ node }: MediaVideoProps) {
   const [decodeError, setDecodeError] = useState('')
   const [hasCanvasFrame, setHasCanvasFrame] = useState(false)
   const playing = useUI((s) => s.playing)
-  const playhead = useUI((s) => s.playhead)
+  const uiPlayhead = useUI((s) => s.playhead)
+  const enginePlayhead = useSyncExternalStore(
+    getAnimEngine().subscribe,
+    () => getAnimEngine().getPlayhead(),
+    () => 0,
+  )
+  const previewScope = useUI((s) => s.previewScope)
+  const playhead = playing || previewScope === 'sequence' ? enginePlayhead : uiPlayhead
+  const sequenceRate = useSequenceMediaClock((s) => s.rate)
+  const clockRate = previewScope === 'sequence' ? sequenceRate : 1
   const rate = clampPlaybackRate(node.playbackRate)
+  const mediaRate = clampPlaybackRate(rate * (clockRate || 1))
   const sourceClipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
   const sceneClipLen = sourceClipLen / rate
   const local = clampLocal((playhead - node.startTime) * rate + node.trimStart, node)
@@ -6253,20 +6266,20 @@ function MediaVideoSource({ node }: MediaVideoProps) {
     // Reflect muted + volume every render. These are cheap.
     el.muted = node.muted
     el.volume = Math.max(0, Math.min(1, node.volume))
-    el.playbackRate = rate
-  }, [node.muted, node.volume, rate])
+    el.playbackRate = mediaRate
+  }, [node.muted, node.volume, mediaRate])
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
-    const shouldPlay = playing && inRange
+    const shouldPlay = playing && inRange && clockRate > 0
     syncMediaPlayback(
       el,
       shouldPlay ? local : previewLocalForPausedVideo(local, node),
       shouldPlay,
     )
-  }, [playing, playhead, local, sceneClipLen, node, rate, mediaReadyTick])
+  }, [playing, playhead, local, sceneClipLen, node, clockRate, mediaReadyTick])
 
   useEffect(() => {
     const video = ref.current
