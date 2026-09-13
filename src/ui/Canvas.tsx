@@ -30,6 +30,7 @@ import type {
   VectorNode,
 } from '@/scene'
 import type { Rect, SolvedLayout } from '@/layout'
+import { syncMediaPlayback } from '@/media/syncPlayback'
 import type { SceneAPI } from '@/scene/doc'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
@@ -6259,27 +6260,12 @@ function MediaVideoSource({ node }: MediaVideoProps) {
     const el = ref.current
     if (!el) return
     const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
-    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
-      el.load()
-      return
-    }
-    if (playing && inRange) {
-      if (el.paused || Math.abs(el.currentTime - local) > 0.35) {
-        seekMediaElement(el, local, 0.2)
-      }
-      if (el.paused) {
-        el.play().catch(() => {
-          // Autoplay policies may reject — user interaction is required.
-          // We pause silently; the user can click play again after
-          // interacting and the browser will admit us.
-        })
-      }
-    } else {
-      if (!el.paused) el.pause()
-      // While paused / out-of-range, pin the element to the scrubbed time.
-      const pausedPreviewLocal = previewLocalForPausedVideo(local, node)
-      seekMediaElement(el, pausedPreviewLocal, 0.05)
-    }
+    const shouldPlay = playing && inRange
+    syncMediaPlayback(
+      el,
+      shouldPlay ? local : previewLocalForPausedVideo(local, node),
+      shouldPlay,
+    )
   }, [playing, playhead, local, sceneClipLen, node, rate, mediaReadyTick])
 
   useEffect(() => {
@@ -6429,25 +6415,6 @@ async function dataUrlToFile(dataUrl: string, fallbackName: string): Promise<Fil
     ? fallbackName
     : `${fallbackName}.${ext}`
   return new File([blob], name, { type: mime })
-}
-
-function seekMediaElement(
-  el: HTMLMediaElement,
-  localTime: number,
-  tolerance: number,
-) {
-  if (!Number.isFinite(localTime)) return
-  const duration = Number.isFinite(el.duration) && el.duration > 0
-    ? el.duration
-    : Number.POSITIVE_INFINITY
-  const next = Math.max(0, Math.min(duration, localTime))
-  if (Math.abs(el.currentTime - next) <= tolerance) return
-  try {
-    el.currentTime = next
-  } catch {
-    // Some codecs reject early seeks until data is decoded. The
-    // loadedmetadata/loadeddata handlers above re-run the sync pass.
-  }
 }
 
 function clampLocal(

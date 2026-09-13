@@ -43,6 +43,7 @@ import {
   textSegmentLinearProgress,
 } from '@/anim/textSegmentEnvelope'
 import type { Rect, SolvedLayout } from '@/layout'
+import { syncMediaPlayback } from '@/media/syncPlayback'
 import type {
   BlendMode,
   CameraNode,
@@ -418,40 +419,12 @@ function syncVideoElement(
   const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
   const local = clampVideoLocal((playhead - node.startTime) * rate + node.trimStart, node)
 
-  if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-    video.load()
-    return
-  }
-
-  if (playing && inRange) {
-    if (Math.abs(video.currentTime - local) > 0.35) {
-      seekVideoElement(video, local, 0.2)
-    }
-    if (video.paused) {
-      void video.play().catch(() => {
-        // Keep the texture on the seeked preview frame if autoplay is blocked.
-      })
-    }
-    return
-  }
-
-  if (!video.paused) video.pause()
-  seekVideoElement(video, previewLocalForVideoTexture(local, node), 0.05)
-}
-
-function seekVideoElement(video: HTMLVideoElement, localTime: number, tolerance: number) {
-  if (!Number.isFinite(localTime)) return
-  const duration =
-    Number.isFinite(video.duration) && video.duration > 0
-      ? video.duration
-      : Number.POSITIVE_INFINITY
-  const next = Math.max(0, Math.min(duration, localTime))
-  if (Math.abs(video.currentTime - next) <= tolerance) return
-  try {
-    video.currentTime = next
-  } catch {
-    // Some media backends reject seeks until the first decode completes.
-  }
+  const shouldPlay = playing && inRange
+  syncMediaPlayback(
+    video,
+    shouldPlay ? local : previewLocalForVideoTexture(local, node),
+    shouldPlay,
+  )
 }
 
 function clampPlaybackRate(rate: number | undefined): number {
