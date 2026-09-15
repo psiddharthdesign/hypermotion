@@ -22,6 +22,11 @@ type PrintableCanvas = {
   readonly height: number | '?'
 }
 
+type PrintableTiming = {
+  readonly duration: number
+  readonly frameRate: number
+}
+
 export function infoCommand(): Command {
   return new Command('info')
     .description('Read a .hype scene file and print a summary.')
@@ -81,13 +86,12 @@ export function infoCommand(): Command {
 
       const { meta } = summary
       const canvas = printableCanvas(meta.canvas)
+      const timing = printableTiming(meta.duration, meta.frameRate)
       const name = printableSceneName(meta.name)
-      const duration = meta.duration ?? 0
-      const frameRate = meta.frameRate ?? 60
 
       console.log(`Scene: ${name}`)
       console.log(`  Canvas:    ${canvas.width} × ${canvas.height}`)
-      console.log(`  Duration:  ${duration}s @ ${frameRate}fps`)
+      console.log(`  Duration:  ${timing.duration}s @ ${timing.frameRate}fps`)
       console.log(`  Layers:    ${summary.layerCount}`)
       console.log(`  Tracks:    ${summary.trackCount}`)
       console.log(`  Sections:  ${summary.sectionCount}`)
@@ -119,6 +123,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function printableCanvasValue(value: unknown): number | '?' {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return '?'
+}
+
+function printableTiming(duration: unknown, frameRate: unknown): PrintableTiming {
+  return {
+    duration: printableTimingValue(duration, 0),
+    frameRate: printableTimingValue(frameRate, 60),
+  }
+}
+
+function printableTimingValue(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return fallback
 }
 
 function printableSceneName(value: unknown): string {
