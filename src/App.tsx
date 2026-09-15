@@ -41,7 +41,6 @@ import {
 import type { NodeId } from '@/scene'
 import { useEagerLoadSceneFonts } from '@/ui/fonts/googleFonts'
 import { useCustomFonts } from '@/ui/fonts/useCustomFonts'
-import { useExportProgress } from '@/export/progressStore'
 import { useProjectAPI } from '@/project'
 import {
   resolvePreviewAudioContributions,
@@ -125,7 +124,6 @@ function Shell() {
   const timelineScope = useUI((s) => s.timelineScope)
   const componentEditId = useUI((s) => s.componentEditId)
   const api = useSceneAPI()
-  const exportPhase = useExportProgress((s) => s.phase)
 
   useEffect(() => {
     const previousDensity = document.body.dataset.hmUiDensity
@@ -163,10 +161,6 @@ function Shell() {
   // fully interactive throughout — pan, zoom, edit anything you
   // want while a 4K export renders in the background.
   //
-  // `exportPhase` is still read at the top of this function because
-  // some legacy diagnostic might want to know — but it no longer
-  // drives any DOM mutation here.
-  void exportPhase
   // Walk the scene and pre-fetch any Google Fonts referenced by text
   // nodes so the canvas renders the right face without waiting for the
   // Inspector to be opened for each one.
