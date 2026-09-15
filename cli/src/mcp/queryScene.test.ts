@@ -101,10 +101,10 @@ test('query scene MCP handlers reject non-record argument payloads', async () =>
     name: string
     run: () => Promise<CallToolResult>
   }> = [
-    { name: 'list_layers', run: () => handleListLayers(null as never) },
-    { name: 'get_layer', run: () => handleGetLayer([] as never) },
-    { name: 'list_tracks', run: () => handleListTracks('scene.hype' as never) },
-    { name: 'list_cameras', run: () => handleListCameras(false as never) },
+    { name: 'list_layers', run: () => handleListLayers(null) },
+    { name: 'get_layer', run: () => handleGetLayer([]) },
+    { name: 'list_tracks', run: () => handleListTracks('scene.hype') },
+    { name: 'list_cameras', run: () => handleListCameras(false) },
   ]
 
   for (const entry of cases) {
