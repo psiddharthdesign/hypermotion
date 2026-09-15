@@ -106,6 +106,17 @@ describe('timeline media playback', () => {
     expect(state.play).toHaveBeenCalledOnce()
   })
 
+  it('seeks every paused frame and corrects a small offset when starting playback', () => {
+    const { media, state, seeks } = createMedia()
+    for (let frame = 0; frame < 5; frame++) {
+      syncMediaPlayback(media, 5 + frame / 60, false, frame * 17)
+      state.seeking = false
+    }
+    expect(seeks).toEqual(Array.from({length: 5}, (_, frame) => 5 + frame / 60))
+    syncMediaPlayback(media, 5, true, 100)
+    expect(seeks.at(-1)).toBe(5)
+  })
+
   it('bounds seeks and ignores non-finite target times', () => {
     const { media, seeks } = createMedia()
     syncMediaPlayback(media, 100, false, 0)

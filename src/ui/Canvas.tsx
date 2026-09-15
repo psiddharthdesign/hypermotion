@@ -16,6 +16,8 @@ import {
   type CSSProperties,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { startVideoFrameLoop } from './videoFrameLoop'
+import { videoVisibleAtTime } from '@/scene/mediaClip'
 import {
   useSceneAPI,
   useSceneVersion,
@@ -33,7 +35,6 @@ import type {
   VectorNode,
 } from '@/scene'
 import type { Rect, SolvedLayout } from '@/layout'
-import { syncMediaPlayback } from '@/media/syncPlayback'
 import type { SceneAPI } from '@/scene/doc'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
@@ -92,6 +93,7 @@ import {
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { resolveVideoCrop } from '@/render3d/videoFit'
 import {
   playbackPixelRatio,
   viewportPixelRatioForZoom,
@@ -303,10 +305,15 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     props.playing === true &&
     camera.vhsEnabled === true &&
     (cameraAnim?.vhsIntensity ?? camera.vhsIntensity ?? 0.65) > 0.001
+  const needsVideoClock = useMemo(() => {
+    void props.sceneVersion
+    return animationIds.some((id) => props.api.getNode(id)?.kind === 'video')
+  }, [animationIds, props.api, props.sceneVersion])
   const playbackClockEnabled =
     nodeTextClockEnabled ||
     paperShaderClockEnabled ||
-    temporalVhsEnabled
+    (props.playing === true && props.showPlanes !== false && needsVideoClock) ||
+    temporalVhsEnabled || props.playing === true
   const playbackClock = useAnimationPlaybackClock(playbackClockEnabled)
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
@@ -6275,37 +6282,48 @@ function MediaVideoSource({ node }: MediaVideoProps) {
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
-    const shouldPlay = playing && inRange && clockRate > 0
-    syncMediaPlayback(
-      el,
-      shouldPlay ? local : previewLocalForPausedVideo(local, node),
-      shouldPlay,
-    )
+    const inRange = playhead >= node.startTime && (node.loop || playhead < node.startTime + sceneClipLen)
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      return
+    }
+    if (playing && inRange && clockRate > 0) {
+      if (!el.seeking && (el.paused || Math.abs(el.currentTime - local) > 0.35)) {
+        seekMediaElement(el, local, 0.2)
+      }
+      if (el.paused) {
+        el.play().catch(() => {
+          // Autoplay policies may reject — user interaction is required.
+          // We pause silently; the user can click play again after
+          // interacting and the browser will admit us.
+        })
+      }
+    } else {
+      if (!el.paused) el.pause()
+      // While paused / out-of-range, pin the element to the scrubbed time.
+      const pausedPreviewLocal = previewLocalForPausedVideo(local, node)
+      seekMediaElement(el, pausedPreviewLocal, 0.05)
+    }
   }, [playing, playhead, local, sceneClipLen, node, clockRate, mediaReadyTick])
 
   useEffect(() => {
     const video = ref.current
     const canvas = canvasRef.current
     if (!video || !canvas) return
-    let raf = 0
-    const draw = () => {
+    return startVideoFrameLoop(video, () => {
       if (drawVideoToCanvas(video, canvas)) {
         setHasCanvasFrame(true)
       }
-      if (playing && !video.paused && !video.ended) {
-        raf = requestAnimationFrame(draw)
-      }
-    }
-    draw()
-    if (playing) raf = requestAnimationFrame(draw)
-    return () => {
-      if (raf) cancelAnimationFrame(raf)
-    }
+    }, playing)
   }, [playing, mediaReadyTick, playhead, node.src])
 
   if (!node.src) return null
   const poster = node.poster || localPoster || undefined
+  const crop = resolveVideoCrop(node.crop)
+  const cropStyle = {
+    objectPosition: `${crop.x * 100}% ${crop.y * 100}%`,
+    transform: `scale(${crop.zoom})`,
+    transformOrigin: `${crop.x * 100}% ${crop.y * 100}%`,
+  }
   const markVideoReady = () => {
     setDecodeError('')
     setMediaReadyTick((tick) => tick + 1)
@@ -6321,6 +6339,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
 
   return (
     <>
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit', visibility: videoVisibleAtTime(node, playhead) ? 'visible' : 'hidden' }}>
       {poster ? (
         <img
           src={poster}
@@ -6335,6 +6354,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
             borderRadius: 'inherit',
             pointerEvents: 'none',
             zIndex: hasCanvasFrame ? 1 : 3,
+            ...cropStyle,
           }}
         />
       ) : null}
@@ -6349,6 +6369,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
           borderRadius: 'inherit',
           pointerEvents: 'none',
           zIndex: 2,
+          ...cropStyle,
         }}
       />
       <video
@@ -6362,7 +6383,6 @@ function MediaVideoSource({ node }: MediaVideoProps) {
         onLoadedData={markVideoReady}
         onCanPlay={markVideoReady}
         onSeeked={markVideoReady}
-        onTimeUpdate={markVideoReady}
         onError={() => {
           const el = ref.current
           setDecodeError(el?.error?.message || 'Video decode failed')
@@ -6386,6 +6406,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
           {decodeError}
         </div>
       ) : null}
+      </div>
     </>
   )
 }
@@ -6433,12 +6454,34 @@ async function dataUrlToFile(dataUrl: string, fallbackName: string): Promise<Fil
   return new File([blob], name, { type: mime })
 }
 
+function seekMediaElement(
+  el: HTMLMediaElement,
+  localTime: number,
+  tolerance: number,
+) {
+  if (!Number.isFinite(localTime)) return
+  const duration = Number.isFinite(el.duration) && el.duration > 0
+    ? el.duration
+    : Number.POSITIVE_INFINITY
+  const next = Math.max(0, Math.min(duration, localTime))
+  if (Math.abs(el.currentTime - next) <= tolerance) return
+  try {
+    el.currentTime = next
+  } catch {
+    // Some codecs reject early seeks until data is decoded. The
+    // loadedmetadata/loadeddata handlers above re-run the sync pass.
+  }
+}
+
 function clampLocal(
   t: number,
   node: Extract<SceneNode, { kind: 'video' | 'audio' }>,
 ): number {
   const trimEnd = node.trimEnd || node.duration || 0
   if (t < node.trimStart) return node.trimStart
+  if (node.loop && trimEnd > node.trimStart) {
+    return node.trimStart + (t - node.trimStart) % (trimEnd - node.trimStart)
+  }
   if (t > trimEnd) return trimEnd
   return t
 }

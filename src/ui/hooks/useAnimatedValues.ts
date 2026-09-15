@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useSyncExternalStore } from 'react'
+import { subscribePlaybackReadout } from './playbackReadoutSubscription'
 import type {
   BlendMode,
   FlexDirection,
@@ -9,6 +10,7 @@ import type {
   VariantSelection,
 } from '@/scene'
 import { getAnimEngine } from '@/anim'
+import { useUI } from '@/state/ui'
 import type { TextAnimationConfig } from '@/anim'
 import {
   nodeTransformPreviewStore,
@@ -286,8 +288,20 @@ export function createAnimatedSnapshotSelector(nodeIds: readonly NodeId[]) {
  */
 export function useAnimatedValues(
   nodeIds: NodeId[],
+  readoutFrameRate?: number,
 ): Record<NodeId, AnimatedValue> {
   const engine = getAnimEngine()
+  const subscribe = useMemo(
+    () => readoutFrameRate
+      ? (listener: () => void) => subscribePlaybackReadout({
+          subscribe: engine.subscribe,
+          // Master seeks the scene engine externally, so engine.isPlaying()
+          // is false even while the actual transport and videos are playing.
+          isPlaying: () => useUI.getState().playing,
+        }, listener, readoutFrameRate)
+      : engine.subscribe,
+    [engine, readoutFrameRate],
+  )
   const selectSnapshot = useMemo(
     () => createAnimatedSnapshotSelector(nodeIds),
     [nodeIds],
@@ -297,7 +311,7 @@ export function useAnimatedValues(
     [engine, selectSnapshot],
   )
   const engineValues = useSyncExternalStore(
-    engine.subscribe,
+    subscribe,
     getSelectedSnapshot,
     getSelectedSnapshot,
   )
@@ -308,10 +322,15 @@ export function useAnimatedValues(
   )
 }
 
+/** Only readouts are capped. Canvas animation and the playhead keep their full cadence. */
+export function useInspectorAnimatedValues(nodeIds: NodeId[]) {
+  return useAnimatedValues(nodeIds, 30)
+}
+
 /**
- * Node-authored text effects predate `text.progress` tracks. They still use
- * absolute scene time, but the structurally shared animation selector stays
- * empty for them. Opt only their small WebGL leaf into the engine clock so
+ * Videos, shaders, and node-authored text effects need scene time even without
+ * keyframe tracks, when the shared animation selector stays empty.
+ * Opt only their small WebGL leaf into the engine clock so
  * playback remains 60fps without making the complete editor render per tick.
  */
 export function useAnimationPlaybackClock(enabled: boolean): number {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { useToast } from '../toastStore'
 import { useEffect } from 'react'
 import { useSceneAPI } from '@/scene'
 import { sceneDoc } from '@/scene/internals'
@@ -32,9 +33,11 @@ declare global {
         writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
-        readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+        readFiles?: () => Promise<Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>>
       }
       media?: {
+        importFile?: (file: File) => Promise<string>
+        normalizeFile?: (src: string) => Promise<string>
         normalizeVideo?: (payload: {
           name: string
           type: string
@@ -133,7 +136,8 @@ export function useFileMenu(): void {
           path,
           bytes,
         })) as boolean
-        if (ok) setFile(path, Date.now())
+        if (ok) { setFile(path, Date.now()); showSaveResult(true) }
+        else showSaveResult(false)
       })()
     })
 
@@ -149,7 +153,8 @@ export function useFileMenu(): void {
           path: chosen,
           bytes,
         })) as boolean
-        if (ok) setFile(chosen, Date.now())
+        if (ok) { setFile(chosen, Date.now()); showSaveResult(true) }
+        else showSaveResult(false)
       })()
     })
 
@@ -183,4 +188,10 @@ function downloadSceneFile(name: string): void {
 
 function safeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'Untitled'
+}
+
+function showSaveResult(ok: boolean): void {
+  useToast.getState().show(ok
+    ? { tone: 'success', title: 'Project saved', description: 'Keep any accompanying .assets folder beside the project when moving or sharing it.', durationMs: 7000 }
+    : { tone: 'error', title: 'Project could not be saved', description: 'Check the destination has enough space and that the project media is available.', durationMs: 10000 })
 }

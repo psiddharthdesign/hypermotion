@@ -288,7 +288,7 @@ export function SceneNavigator() {
         showToast({
           tone: 'success',
           title: 'Scene exported',
-          description: `${composition.name} was saved as a portable .hype file.`,
+          description: `${composition.name} was saved. Keep any accompanying .assets folder beside the .hype file.`,
         })
       } catch (error) {
         console.error('[scene-export] failed', error)
@@ -608,6 +608,7 @@ function SceneCard({
   return (
     <article
       ref={cardRef}
+      data-transition-scene={scene.id}
       draggable
       onDragStart={(event) => { setTooltipPosition(null); onDragStart(event) }}
       onDragEnd={onDragEnd}

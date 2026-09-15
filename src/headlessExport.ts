@@ -54,9 +54,11 @@ declare global {
         writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
-        readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+        readFiles?: () => Promise<Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>>
       }
       media?: {
+        importFile?: (file: File) => Promise<string>
+        normalizeFile?: (src: string) => Promise<string>
         normalizeVideo?: (payload: {
           name: string
           type: string

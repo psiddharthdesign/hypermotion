@@ -12,6 +12,8 @@ import {
   type ResolvedSequenceLayer,
 } from '@/sequence'
 import { selectedOccurrencePlaybackRange } from './scenePlaybackRange'
+import { createMasterFrameGate, masterPlaybackClock } from '../masterPlaybackClock'
+import { masterVideoPrewarm, upcomingVideoWarmups } from '@/render3d/videoPrewarm'
 
 /**
  * Marry the anim engine to the scene + UI store.
@@ -123,6 +125,26 @@ export function useAnim() {
     applySequenceTimeRef.current = applySequenceTime
   }, [applySequenceTime])
 
+  // Decode and seek the next scene's videos while the current scene plays.
+  // The viewport takes these same elements at the cut, avoiding cold loads.
+  useEffect(() => {
+    if (previewScope !== 'sequence') {
+      masterVideoPrewarm.clear()
+      return
+    }
+    let plannedItem: string | null | undefined
+    const prepare = () => {
+      const time = playing ? masterPlaybackClock.getSnapshot() : useUI.getState().playhead
+      const nextId = sequenceMap.items.find((item) => item.masterStart > time)?.item.id ?? null
+      if (nextId === plannedItem) return
+      plannedItem = nextId
+      masterVideoPrewarm.prepare(upcomingVideoWarmups(api, sequenceMap, time))
+    }
+    prepare()
+    return masterPlaybackClock.subscribe(prepare)
+  }, [api, sequenceMap, previewScope, playing])
+  useEffect(() => () => masterVideoPrewarm.clear(), [])
+
   // Attach engine to scene once.
   useEffect(() => {
     getAnimEngine().attach(api)
@@ -192,8 +214,13 @@ export function useAnim() {
         wasPlayingRef.current = true
         return
       }
+      const wasPlaying = wasPlayingRef.current
       wasPlayingRef.current = false
-      applySequenceTime(playhead)
+      const explicitSeek = Math.abs(playhead - previousUiPlayhead) > 0.0001
+      const exactTime = wasPlaying && !explicitSeek ? masterPlaybackClock.getSnapshot() : playhead
+      masterPlaybackClock.publish(exactTime)
+      applySequenceTime(exactTime)
+      if (exactTime !== playhead) setPlayhead(exactTime)
       return
     }
     if (playing) {
@@ -246,14 +273,21 @@ export function useAnim() {
   useEffect(() => {
     if (!playing || previewScope !== 'sequence') return
     const startMaster = useUI.getState().playhead
+    masterPlaybackClock.publish(startMaster)
     const startedAt = performance.now()
     let animationFrame = 0
     let lastUiUpdate = 0
+    const shouldEvaluate = createMasterFrameGate(sequenceMap.frameRate)
 
     const tick = (now: number) => {
       const elapsed = Math.max(0, (now - startedAt) / 1000)
       const masterTime = Math.min(sequenceMap.duration, startMaster + elapsed)
-      applySequenceTimeRef.current(masterTime)
+      masterPlaybackClock.publish(masterTime)
+      // Master used to seek/rebuild every display callback, bypassing the
+      // engine's Scene playback budget on 120/144 Hz screens.
+      if (shouldEvaluate(now) || masterTime >= sequenceMap.duration) {
+        applySequenceTimeRef.current(masterTime)
+      }
       if (
         now - lastUiUpdate >= 50 ||
         masterTime >= sequenceMap.duration
@@ -274,6 +308,7 @@ export function useAnim() {
     playing,
     previewScope,
     sequenceMap.duration,
+    sequenceMap.frameRate,
     setPlayhead,
     setPlaying,
   ])

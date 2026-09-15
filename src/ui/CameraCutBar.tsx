@@ -539,6 +539,22 @@ export function CameraCutTimelineLane({
         )
       })}
 
+      {displayCuts.filter(cut => (cut.dissolveDuration ?? 0) > 0).map(cut => (
+        <button key={`transition-${cut.id}`} type="button"
+          data-transition-camera={cut.id}
+          aria-label={`Edit cross dissolve at ${formatTime(cut.time)}`}
+          title={`Cross dissolve · ${cut.dissolveDuration!.toFixed(2)}s · Click to edit`}
+          className="absolute bottom-0 z-[32] h-2 rounded-sm border border-violet-500 bg-violet-400/80"
+          style={{ left: cut.time * pxPerSecond, width: Math.max(12, cut.dissolveDuration! * pxPerSecond) }}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => {
+            event.stopPropagation()
+            useUI.getState().setInspectorMode('transitions')
+            requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('hm-edit-transition', { detail: { target: { type: 'camera', id: cut.id, side: 'in' }, duration: cut.dissolveDuration } })))
+          }}
+        />
+      ))}
+
       {displayCuts.map((cut) => {
         const camera = cameraById.get(cut.cameraId)
         const active = displayProgram.resolvedCut?.id === cut.id
@@ -625,6 +641,7 @@ export function CameraCutTimelineLane({
               })
             }}
             aria-label={`Camera cut at ${formatTime(cut.time)} to ${camera?.name ?? 'camera'}. Drag horizontally or use arrow keys to retime.`}
+            data-transition-camera={cut.id}
             aria-roledescription="draggable camera cut"
             aria-keyshortcuts="ArrowLeft ArrowRight Delete Backspace"
             aria-current={active ? 'true' : undefined}

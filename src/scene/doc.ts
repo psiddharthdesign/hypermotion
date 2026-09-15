@@ -281,6 +281,7 @@ export interface NodeBaseMutable {
   // `node.kind === 'image'`.
   src: string
   fit: 'cover' | 'contain' | 'fill' | 'none'
+  crop: { x: number; y: number; zoom: number }
   importWarning: string
   // shader-kind fields — common and generic Paper shader authoring parameters.
   shaderType: ShaderNode['shaderType']
@@ -304,6 +305,7 @@ export interface NodeBaseMutable {
   duration: number
   volume: number
   playbackRate: number
+  clipToRange: boolean
   muted: boolean
   startTime: number
   trimStart: number
@@ -835,6 +837,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           ...(kind === 'video'
             ? {
                 poster: (y.get('poster') as string | undefined) ?? '',
+                crop: y.get('crop') as { x: number; y: number; zoom: number } | undefined,
+                clipToRange: (y.get('clipToRange') as boolean) ?? false,
                 fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
                 importWarning:
                   (y.get('importWarning') as string | undefined) ?? undefined,
@@ -1331,8 +1335,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // speaker-chip footprint (audio doesn't paint anything, it's
           // just a handle on the canvas + a row in the layers panel).
           type MediaProps = Partial<{
+            crop: { x: number; y: number; zoom: number };
             size: Size; src: string; poster: string; duration: number; volume: number;
             playbackRate: number;
+            clipToRange: boolean;
             startTime: number; trimStart: number; trimEnd: number; loop: boolean;
             fit: 'cover' | 'contain' | 'fill' | 'none'; muted: boolean;
             importWarning: string;
@@ -1359,6 +1365,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           }
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
+            if (mp.crop) y.set('crop', mp.crop)
+            y.set('clipToRange', mp.clipToRange ?? true)
             if (mp.importWarning) y.set('importWarning', mp.importWarning)
             // Motion tools are primarily visual — default to muted so
             // a dropped MP4 doesn't surprise the user with audio.

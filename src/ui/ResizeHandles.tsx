@@ -10,6 +10,7 @@ import type {
 } from '@/render3d/selectionProjection'
 import { projectedResizeHandles } from '@/render3d/selectionProjection'
 import { useUI } from '@/state/ui'
+import { videoResizeSize } from '@/render3d/videoFit'
 import {
   recordKeyframesForPatch,
   stampToActiveTracksForPatch,
@@ -151,6 +152,11 @@ export function ResizeHandles({
         const patch: Partial<Size> = {}
         if (wSign !== 0) patch.width = nextW
         if (hSign !== 0) patch.height = nextH
+        // Corner handles resize footage proportionally unless Deform is on.
+        // Edge handles edit the crop frame; object-fit keeps its content undistorted.
+        if (current.kind === 'video' && current.fit !== 'fill' && wSign && hSign) {
+          Object.assign(patch, videoResizeSize(d.w0, d.h0, nextW, nextH))
+        }
         if (Object.keys(patch).length === 0) return
 
         d.latestSize = patch
