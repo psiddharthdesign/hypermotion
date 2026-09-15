@@ -52,14 +52,23 @@ export async function locateDesktopApp(): Promise<string | null> {
 }
 
 function resolveOverrideBinary(override: string): string | null {
-  if (isFile(override)) return override
+  const normalizedOverride = trimTrailingPathSeparators(override)
+  if (isFile(normalizedOverride)) return normalizedOverride
 
-  if (path.basename(override).toLowerCase().endsWith('.app')) {
-    const bundleBinary = path.join(override, 'Contents', 'MacOS', 'hyper-motion')
+  if (path.basename(normalizedOverride).toLowerCase().endsWith('.app')) {
+    const bundleBinary = path.join(normalizedOverride, 'Contents', 'MacOS', 'hyper-motion')
     if (isFile(bundleBinary)) return bundleBinary
   }
 
   return null
+}
+
+function trimTrailingPathSeparators(value: string): string {
+  let end = value.length
+  while (end > 1 && (value[end - 1] === '/' || value[end - 1] === '\\')) {
+    end -= 1
+  }
+  return value.slice(0, end)
 }
 
 function locateMac(): string | null {
