@@ -353,3 +353,11 @@ export function hasNodeDrivenTextAnimation(
   }
   return false
 }
+
+/** Videos advance without keyframes, so their canvas needs an explicit clock. */
+export function hasVisibleVideo(api: SceneAPI, nodeIds: readonly NodeId[]): boolean {
+  return nodeIds.some((id) => {
+    const node = api.getNode(id)
+    return node?.kind === 'video' && node.visible !== false
+  })
+}

@@ -229,6 +229,8 @@ interface PlaneRecord {
   textureKind: 'canvas' | 'video'
   renderKind: Plane3D['renderKind']
   video?: HTMLVideoElement
+  /** Authored source identity; reading video.src copies large data URLs. */
+  videoSource?: string
   textureRevision: PlaneTextureRevision | null
   textureSignature: string
   clipSignature: string
@@ -435,7 +437,8 @@ function syncVideoElement(
   video.volume = Math.max(0, Math.min(1, node.volume))
   const rate = clampPlaybackRate(node.playbackRate)
   const clockRate = programMediaRate()
-  video.playbackRate = clampPlaybackRate(rate * (clockRate || 1))
+  const mediaRate = clampPlaybackRate(rate * (clockRate || 1))
+  if (video.playbackRate !== mediaRate) video.playbackRate = mediaRate
   const sourceClipLen = Math.max(0, (node.trimEnd || node.duration) - node.trimStart)
   const sceneClipLen = sourceClipLen / rate
   const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
@@ -1471,6 +1474,7 @@ function syncPlanes(
         textureKind: videoNode ? 'video' : 'canvas',
         renderKind: 'canvas',
         video: videoNode ? texture.image as HTMLVideoElement : undefined,
+        videoSource: videoNode?.src,
         textureRevision: videoNode ? null : textureRevision,
         textureSignature,
         clipSignature: '',
@@ -1580,12 +1584,13 @@ function syncPlanes(
       bends: textureBends,
     })
     if (videoNode) {
-      if (record.textureKind !== 'video' || record.video?.src !== videoNode.src) {
+      if (record.textureKind !== 'video' || record.videoSource !== videoNode.src) {
         record.texture.dispose()
         const video = createVideoElement(videoNode)
         record.texture = createVideoTexture(video)
         record.textureKind = 'video'
         record.video = video
+        record.videoSource = videoNode.src
         material.map = record.texture
         material.needsUpdate = true
       }
@@ -1598,6 +1603,7 @@ function syncPlanes(
         record.texture.dispose()
         record.video?.pause()
         record.video = undefined
+        record.videoSource = undefined
         record.texture = createPlaneTexture(canvas!, renderer)
         record.textureKind = 'canvas'
         material.map = record.texture

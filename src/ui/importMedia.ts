@@ -22,7 +22,7 @@ import type { NodeId, Transform } from '@/scene'
 
 const DATA_URL_SOFT_CEILING_MB = 25
 export const VIDEO_PLAYBACK_PROXY_WARNING =
-  'Video was converted to a Hyper Motion WebM playback proxy for browser-safe playback.'
+  'Video required conversion for playback. Its source resolution and frame rate were retained.'
 
 export interface MediaImportOptions {
   dropPos?: { x: number; y: number }
@@ -240,6 +240,9 @@ export function readMediaFileAsDataUrl(file: File): Promise<string> {
 export async function normalizeVideoFileForBrowser(
   file: File,
 ): Promise<{ file: File; normalized: boolean }> {
+  // Probe an actual decoded frame: MIME support alone cannot tell whether
+  // this file's codec/profile works. Keep playable sources byte-for-byte.
+  if (await canDecodeVideoFile(file)) return { file, normalized: false }
   const bridge = window.hypermotion?.media
   if (!bridge?.normalizeVideo) {
     console.warn('[importMedia] video normalization bridge unavailable')
@@ -278,6 +281,34 @@ export async function normalizeVideoFileForBrowser(
     console.warn('[importMedia] video normalization failed', err)
     return { file, normalized: false }
   }
+}
+
+export function canDecodeVideoFile(file: File): Promise<boolean> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    const url = URL.createObjectURL(file)
+    let settled = false
+    const finish = (decoded: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      video.onloadeddata = null
+      video.onerror = null
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(url)
+      resolve(decoded)
+    }
+    const timeout = setTimeout(() => finish(false), 10_000)
+    video.preload = 'auto'
+    video.muted = true
+    video.playsInline = true
+    video.onloadeddata = () => finish(video.videoWidth > 0 && video.videoHeight > 0)
+    video.onerror = () => finish(false)
+    video.src = url
+    video.load()
+  })
 }
 
 /**

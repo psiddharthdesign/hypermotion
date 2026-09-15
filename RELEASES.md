@@ -3,6 +3,17 @@
 Human-friendly release notes. The GitHub Releases page mirrors the matching
 entry below for each corresponding tag.
 
+## Unreleased
+
+### Video quality and playback
+
+- Keep playable imported videos at their original quality and frame rate.
+- Use lossless video conversion when a codec requires conversion; remove the
+  automatic 1080-pixel, 30 fps playback proxy.
+- Refresh video-only scenes continuously, even when they have no keyframes.
+- Preserve preview detail during playback and avoid repeatedly reading large
+  embedded video URLs on timeline ticks.
+
 ## v0.1.18 — Camera-stable text editing (2026-07-21)
 
 Text editing now stays visually locked to the active camera, so entering text

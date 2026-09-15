@@ -813,8 +813,8 @@ async function normalizeVideoForBrowser(payload: {
   bytes: Uint8Array
 }): Promise<{ name: string; type: string; bytes: Buffer; normalized: boolean }> {
   const ffmpeg = findFfmpegBinary()
-  const avconvert = '/usr/bin/avconvert'
-  if (!ffmpeg && (process.platform !== 'darwin' || !fs.existsSync(avconvert))) {
+  // Never fall back to an OS export preset that silently recompresses video.
+  if (!ffmpeg) {
     return {
       ...payload,
       bytes: Buffer.from(payload.bytes),
@@ -825,22 +825,17 @@ async function normalizeVideoForBrowser(payload: {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-video-normalize-'))
   const inputExt = path.extname(payload.name) || '.mp4'
   const inputPath = path.join(dir, `input${inputExt}`)
-  const outputPath = path.join(dir, ffmpeg ? 'output.webm' : 'output.mp4')
+  const outputPath = path.join(dir, 'output.webm')
   try {
     fs.writeFileSync(inputPath, Buffer.from(payload.bytes))
-    if (ffmpeg) {
-      await runFfmpegNormalize(ffmpeg, inputPath, outputPath)
-    } else {
-      await runAvconvert(avconvert, inputPath, outputPath)
-    }
+    await runFfmpegNormalize(ffmpeg, inputPath, outputPath)
     const bytes = fs.readFileSync(outputPath)
     console.log(
       `[media] normalized video ${payload.name} (${payload.bytes.byteLength} bytes) -> ${path.basename(outputPath)} (${bytes.byteLength} bytes)`,
     )
-    const isWebm = path.extname(outputPath).toLowerCase() === '.webm'
     return {
-      name: `${path.basename(payload.name, path.extname(payload.name))}-compatible.${isWebm ? 'webm' : 'mp4'}`,
-      type: isWebm ? 'video/webm' : 'video/mp4',
+      name: `${path.basename(payload.name, path.extname(payload.name))}-compatible.webm`,
+      type: 'video/webm',
       bytes,
       normalized: true,
     }
@@ -876,6 +871,8 @@ function runFfmpegNormalize(
   outputPath: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Conversion is a decode fallback, not a reduced playback proxy. Keep
+    // source dimensions/timestamps and avoid another lossy video encode.
     const child = spawn(ffmpeg, [
       '-y',
       '-i',
@@ -884,16 +881,14 @@ function runFfmpegNormalize(
       '0:v:0',
       '-map',
       '0:a?',
-      '-vf',
-      "scale='min(1080,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30,format=yuv420p",
       '-c:v',
-      'libvpx',
+      'libvpx-vp9',
       '-deadline',
       'good',
       '-cpu-used',
       '4',
-      '-crf',
-      '10',
+      '-lossless',
+      '1',
       '-b:v',
       '0',
       '-c:a',
@@ -915,40 +910,6 @@ function runFfmpegNormalize(
       reject(
         new Error(
           `ffmpeg exited with code ${code ?? 'unknown'}${stderr ? `: ${stderr.slice(-1600)}` : ''}`,
-        ),
-      )
-    })
-  })
-}
-
-function runAvconvert(
-  avconvert: string,
-  inputPath: string,
-  outputPath: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(avconvert, [
-      '--source',
-      inputPath,
-      '--preset',
-      'PresetAppleM4V1080pHD',
-      '--output',
-      outputPath,
-      '--replace',
-    ])
-    let stderr = ''
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0 && fs.existsSync(outputPath)) {
-        resolve()
-        return
-      }
-      reject(
-        new Error(
-          `avconvert exited with code ${code ?? 'unknown'}${stderr ? `: ${stderr.slice(-1000)}` : ''}`,
         ),
       )
     })

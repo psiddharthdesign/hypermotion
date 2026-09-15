@@ -8,10 +8,23 @@ import {
   createAnimatedSnapshotSelector,
   createTransformPreviewSnapshotSelector,
   hasNodeDrivenTextAnimation,
+  hasVisibleVideo,
   mergeTransformPreviews,
 } from './useAnimatedValues'
 
 describe('animated snapshot selection', () => {
+  it('requests a video clock even when animation snapshots never change', () => {
+    const api = createSceneAPI()
+    const videoId = api.createNode('video', null, { src: 'clip.mp4', duration: 5 })
+    const select = createAnimatedSnapshotSelector([videoId])
+    // No keyframes means this selector cannot drive decoded-frame redraws.
+    expect(select({})).toBe(select({}))
+    expect(api.getTracksForNode(videoId)).toEqual([])
+    expect(hasVisibleVideo(api, [videoId])).toBe(true)
+    api.setNodeProperty(videoId, 'visible', false)
+    expect(hasVisibleVideo(api, [videoId])).toBe(false)
+  })
+
   it('does not invalidate scene consumers for camera-only animation', () => {
     const selectScene = createAnimatedSnapshotSelector(['scene-node'])
     const first = selectScene({ camera: { x: 10 } })

@@ -49,6 +49,7 @@ import { CameraSelectionOverlay } from '@/ui/CameraSelectionOverlay'
 import { DistanceOverlay } from '@/ui/DistanceOverlay'
 import {
   hasNodeDrivenTextAnimation,
+  hasVisibleVideo,
   useAnimatedValues,
   useAnimationPlaybackClock,
   useNodeTransformPreviews,
@@ -296,6 +297,12 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
       )
     })
   }, [animationIds, props.api, props.sceneVersion])
+  const needsVideoClock = useMemo(() => {
+    void props.sceneVersion
+    return hasVisibleVideo(props.api, animationIds)
+  }, [animationIds, props.api, props.sceneVersion])
+  const videoClockEnabled =
+    props.playing === true && props.showPlanes !== false && needsVideoClock
   const nodeTextClockEnabled =
     props.playing === true && props.showPlanes !== false && needsNodeTextClock
   const paperShaderClockEnabled =
@@ -307,6 +314,7 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     camera.vhsEnabled === true &&
     (cameraAnim?.vhsIntensity ?? camera.vhsIntensity ?? 0.65) > 0.001
   const playbackClockEnabled =
+    videoClockEnabled ||
     nodeTextClockEnabled ||
     paperShaderClockEnabled ||
     temporalVhsEnabled
@@ -788,7 +796,13 @@ export function Canvas() {
     canvasWidth,
     canvasHeight,
   )
-  const webglPreviewPixelRatio = playing && !recordingWebmExport
+  // Video detail should not drop when Play is pressed. Keep the same
+  // zoom/GPU-bounded framebuffer used by the paused preview for video scenes.
+  const videoScene = useMemo(() => {
+    void version
+    return hasVisibleVideo(api, [...renderOrder, ...workspaceOrder])
+  }, [api, renderOrder, workspaceOrder, version])
+  const webglPreviewPixelRatio = playing && !recordingWebmExport && !videoScene
     ? playbackPixelRatio(
         pausedWebglPreviewPixelRatio,
         canvasWidth,
