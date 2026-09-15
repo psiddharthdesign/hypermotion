@@ -69,6 +69,10 @@ test('rejectUnexpectedEmptyArgs rejects non-object arguments clearly', () => {
     rejectUnexpectedEmptyArgs('doctor', new CustomArgs()),
     'doctor: invalid arguments — Expected an object',
   )
+  assert.equal(
+    rejectUnexpectedEmptyArgs('doctor', () => ({})),
+    'doctor: invalid arguments — Expected an object',
+  )
 })
 
 test('rejectUnexpectedEmptyArgs reports unexpected keys deterministically', () => {
