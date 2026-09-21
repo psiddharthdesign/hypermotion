@@ -842,6 +842,8 @@ export interface TextNode extends NodeBase {
    * keeping one editable effect row in the Animate inspector.
    */
   textAnimation?: import('@/anim/textAnimations').TextAnimationConfig | null
+  /** Independent paint effect, composited with the text animation. */
+  textShimmer?: import('@/anim/textAnimations').TextAnimationConfig | null
 }
 
 export interface ImageNode extends NodeBase {
@@ -925,6 +927,8 @@ export interface VideoNode extends NodeBase {
   trimEnd: number
   /** Loop the clip for the full scene duration (from trimStart..trimEnd). */
   loop: boolean
+  /** Hide this clip outside its timeline range instead of holding its end frames. */
+  clipToRange?: boolean
 }
 
 /**

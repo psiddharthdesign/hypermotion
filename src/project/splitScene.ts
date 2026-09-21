@@ -37,6 +37,9 @@ export function rebaseSceneNodes(api: SceneAPI, nodeIds: Set<string>, offset: nu
     if (node.kind === 'shader' || node.kind === 'camera') {
       api.setNodeProperty(id, 'proceduralTimeOffset', (node.proceduralTimeOffset ?? 0) + offset)
     }
+    if (node.kind === 'text' && node.textShimmer) {
+      api.setNodeProperty(id, 'textShimmer', { ...node.textShimmer, startTime: node.textShimmer.startTime - offset })
+    }
     if (node.kind === 'text' && node.textAnimation) {
       api.setNodeProperty(id, 'textAnimation', {
         ...node.textAnimation, startTime: node.textAnimation.startTime - offset,

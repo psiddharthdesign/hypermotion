@@ -1,3 +1,4 @@
+import { isVideoVisibleAtTime } from '@/media/videoVisibility'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
 import { useSequenceExportPreview } from '@/export/sequencePreview'
@@ -41,7 +42,7 @@ import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { useUI } from '@/state/ui'
 import { vectorEditPreviewStore } from '@/ui/vectorEditPreviewStore'
 import type { Tool } from '@/state/ui'
-import { useProjectAPI } from '@/project'
+import { getProjectAPI, useProjectAPI } from '@/project'
 import { resolveMasterTime } from '@/sequence'
 import { useExportProgress } from '@/export/progressStore'
 import { SelectionOverlay } from '@/ui/SelectionOverlay'
@@ -313,7 +314,15 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     props.playing === true &&
     camera.vhsEnabled === true &&
     (cameraAnim?.vhsIntensity ?? camera.vhsIntensity ?? 0.65) > 0.001
+  const needsCameraDissolveClock = useMemo(() => {
+    void props.sceneVersion
+    const composition = getProjectAPI(props.api).getScenes()
+      .find((scene) => scene.rootNodeId === props.api.getRoot())
+    return Object.values(composition?.cameraCuts ?? {})
+      .some((cut) => (cut.dissolveDuration ?? 0) > 0)
+  }, [props.api, props.sceneVersion])
   const playbackClockEnabled =
+    (props.playing === true && needsCameraDissolveClock) ||
     videoClockEnabled ||
     nodeTextClockEnabled ||
     paperShaderClockEnabled ||
@@ -5335,7 +5344,7 @@ function TextGlyphs({
   // effects already rerender from their animated snapshot, so they can read
   // the exact engine time without subscribing to the global UI store.
   const mirroredPlayhead = useUI((s) =>
-    legacyTextAnimation ? s.playhead : 0,
+    legacyTextAnimation || node.textShimmer ? s.playhead : 0,
   )
   const playhead = hasTextAnimationTracks
     ? getAnimEngine().getPlayhead()
@@ -5445,6 +5454,10 @@ function TextGlyphs({
         }
       : { color: node.color }),
     ...(textAnimation?.id === 'shimmer' ? { color: effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, background: undefined, WebkitTextFillColor: undefined } : {}),
+    ...(node.textShimmer ? {
+      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color)),
+      backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent',
+    } : {}),
     textAlign,
     whiteSpace: hugWidth ? 'pre' : 'pre-wrap',
     wordBreak: hugWidth ? 'normal' : 'break-word',
@@ -5901,6 +5914,7 @@ function textAnimationSegmentStyle(
     transform: transforms.length > 0 ? transforms.join(' ') : undefined,
     transformOrigin: '50% 50%',
     transformStyle: motion && motion.z !== 0 ? 'preserve-3d' : undefined,
+    ...(sharedStyle.backgroundImage && sharedStyle.WebkitTextFillColor === 'transparent' ? { backgroundImage: sharedStyle.backgroundImage, backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent' } : {}),
     ...(config.id === 'shimmer' ? { background: fillToCss(textShimmerFill(config, playhead, typeof sharedStyle.color === 'string' ? sharedStyle.color : undefined)), backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent' } : {}),
     willChange: 'transform, opacity, filter, clip-path, letter-spacing',
   }
@@ -6373,7 +6387,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
   }
 
   return (
-    <>
+    <div style={{ position: 'absolute', inset: 0, visibility: isVideoVisibleAtTime(node, playhead) ? 'visible' : 'hidden' }}>
       {poster ? (
         <img
           src={poster}
@@ -6439,7 +6453,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
           {decodeError}
         </div>
       ) : null}
-    </>
+    </div>
   )
 }
 

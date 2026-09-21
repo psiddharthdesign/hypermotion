@@ -1,3 +1,4 @@
+import { migrateTextShimmer, setTextShimmer } from './textShimmerEffect'
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Fill } from '@/scene/types'
@@ -287,6 +288,11 @@ export function applyTextAnimation(
   options: { trackId?: TrackId; replaceAll?: boolean } = {},
 ): TextAnimationConfig {
   const defaults = textAnimationDefaults(id)
+  if (id === 'shimmer') {
+    setTextShimmer(api, nodeId, { ...defaults, startTime }, startTime)
+    return { ...defaults, startTime }
+  }
+  migrateTextShimmer(api, nodeId)
   const node = api.getNode(nodeId)
   const storedAnimation = node?.kind === 'text' ? node.textAnimation : null
   if (
@@ -295,7 +301,7 @@ export function applyTextAnimation(
   ) {
     return existing ?? normalizeTextAnimation(storedAnimation) ?? defaults
   }
-  const previous = existing ? normalizeTextAnimation(existing) : null
+  const previous = existing && existing.id !== 'shimmer' ? normalizeTextAnimation(existing) : null
   const next = enforceTextAnimationPresetConstraints({
     ...defaults,
     ...(previous

@@ -84,6 +84,7 @@ export function MasterTimeline() {
   const selection = useUI((state) => state.selection)
   const setSelection = useUI((state) => state.setSelection)
   const setInspectorMode = useUI((state) => state.setInspectorMode)
+  const [selectedTransition, setSelectedTransition] = useState<string | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
   const rulerContentRef = useRef<HTMLDivElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
@@ -662,8 +663,6 @@ export function MasterTimeline() {
                   36,
                   resolved.duration * pixelsPerSecond,
                 )
-                const transitionWidth =
-                  resolved.transitionOut * pixelsPerSecond
                 const soundtrackMuted =
                   resolved.item.masterAudioMuted ?? false
                 const selectOccurrence = () => {
@@ -698,6 +697,7 @@ export function MasterTimeline() {
                     ].join(' ')}
                     style={{ left, width: itemWidth, zIndex: index + 1 }}
                     data-master-scene={resolved.scene.id}
+                    data-transition-master={resolved.item.id}
                   >
                     <span className="absolute top-1.5 left-1.5 flex h-4 min-w-4 items-center justify-center rounded bg-black/25 px-1 font-mono text-[8px] text-text">
                       {resolved.sourceIndex + 1}
@@ -761,13 +761,6 @@ export function MasterTimeline() {
                         <Volume2 size={11} />
                       )}
                     </span>
-                    {transitionWidth > 0 ? (
-                      <span
-                        className="absolute top-0 right-0 h-full border-l border-white/20 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.12),rgba(255,255,255,0.12)_3px,transparent_3px,transparent_6px)]"
-                        style={{ width: transitionWidth }}
-                        title={`${resolved.transitionOut.toFixed(2)}s crossfade`}
-                      />
-                    ) : null}
                     <span
                       className="absolute top-0 right-0 z-10 h-full w-2 cursor-ew-resize border-r-2 border-transparent hover:border-white/70 hover:bg-white/10"
                       title={`Drag to change ${resolved.scene.name} occurrence length`}
@@ -781,19 +774,34 @@ export function MasterTimeline() {
                 )
               })}
               {map.transitions.map((transition) => (
-                <div
+                <button
+                  type="button"
                   key={`${transition.fromItemId}:${transition.toItemId}`}
-                  className="pointer-events-none absolute top-[69px] h-3 rounded-full border border-white/15 bg-white/5 px-1.5 text-[7px] font-semibold uppercase tracking-[0.06em] text-text-muted"
-                  style={{
-                    left: transition.start * pixelsPerSecond,
-                    width: Math.max(
-                      28,
-                      transition.duration * pixelsPerSecond,
-                    ),
+                  aria-label="Select scene cross dissolve"
+                  aria-pressed={selectedTransition === transition.fromItemId}
+                  title="Cross dissolve · Click to select · Delete or Backspace to remove"
+                  className={`absolute top-[25px] z-50 h-7 rounded border px-1.5 text-[9px] font-semibold text-white ${selectedTransition === transition.fromItemId ? 'border-white bg-purple-600 ring-2 ring-purple-300' : 'border-purple-300 bg-purple-800'}`}
+                  style={{ left: transition.start * pixelsPerSecond, width: Math.max(32, transition.duration * pixelsPerSecond) }}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation()
+                    event.currentTarget.focus()
+                    setSelectedTransition(transition.fromItemId)
+                    setInspectorMode('transitions')
+                    requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('hm-edit-transition', { detail: {target: {type: 'master', id: transition.fromItemId, side: 'out'}, duration: transition.duration} })))
+                  }}
+                  onBlur={() => setSelectedTransition(null)}
+                  onKeyDown={event => {
+                    event.stopPropagation()
+                    if (event.key !== 'Delete' && event.key !== 'Backspace') return
+                    event.preventDefault()
+                    api.doc.transact(() => project.setTransition(transition.fromItemId, { kind: 'cut', duration: 0 }), UNDOABLE_GESTURE_ORIGIN)
+                    setSelectedTransition(null)
+                    document.dispatchEvent(new CustomEvent('hm-transition-removed'))
                   }}
                 >
-                  Blend
-                </div>
+                  Dissolve
+                </button>
               ))}
               {masterAudio.map((node, index) => (
                 <MasterAudioClip

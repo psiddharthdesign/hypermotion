@@ -57,6 +57,7 @@ export function SelectionOverlay({
   useSceneVersion()
   const api = useSceneAPI()
   const selection = useUI((s) => s.selection)
+  const editingVectorId = useUI((s) => s.editingVectorId)
   const geometryPreview = useSyncExternalStore(
     nodeGeometryPreviewStore.subscribe,
     nodeGeometryPreviewStore.getSnapshot,
@@ -73,7 +74,6 @@ export function SelectionOverlay({
   // inspector's Width / Height.
   const singleSelection =
     selection.length === 1 ? selection[0]! : null
-  const editingVectorId = useUI((s) => s.editingVectorId)
   const handleNode = singleSelection ? api.getNode(singleSelection) : null
   const editingVector =
     handleNode &&

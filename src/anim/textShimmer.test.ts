@@ -19,6 +19,19 @@ describe('Shimmer text paint', () => {
     expect(middle.stops[32]?.color).toBe('#ff0000ff')
     expect(textShimmerFill({ ...config, shimmerLoop: false }, 3)).toEqual(textShimmerFill({ ...config, shimmerLoop: false }, 4))
   })
+  it('uses the OKLCH colors emitted by the text picker instead of falling back to gray', () => {
+    const fill = textShimmerFill(config, 0, 'oklch(62.7955% 0.257683 29.2339)')
+    if (fill.kind !== 'linear') throw new Error('Expected linear paint')
+    expect(fill.stops.every(stop => stop.color === '#ff000059')).toBe(true)
+    expect(textShimmerFill(config, 0, 'oklch(1 0 0)')).toEqual(textShimmerFill(config, 0, '#ffffff'))
+  })
+  it('preserves base color transparency for OKLCH and hex sources', () => {
+    for (const color of ['oklch(1 0 0 / 50%)', '#ffffff80', '#fff8']) {
+      const fill = textShimmerFill({ ...config, shimmerOpacity: 1 }, 0, color)
+      if (fill.kind !== 'linear') throw new Error('Expected linear paint')
+      expect(fill.stops[0]?.color).toBe(color === '#fff8' ? '#ffffff88' : '#ffffff80')
+    }
+  })
   it('retains settings on save and normalizes invalid controls', () => {
     const stored = normalizeTextAnimation(JSON.parse(JSON.stringify({ ...config, shimmerColor: '#abcdef', shimmerOpacity: 0.2, shimmerLoop: false })))!
     expect(stored).toMatchObject({ id: 'shimmer', shimmerColor: '#abcdef', shimmerOpacity: 0.2, shimmerLoop: false, applyTo: 'layer' })

@@ -1,3 +1,5 @@
+import { TextShimmerPanel } from './TextShimmerPanel'
+import { migrateTextShimmer } from '@/anim/textShimmerEffect'
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, type CSSProperties, type ReactNode } from 'react'
@@ -385,7 +387,7 @@ export function PresetsPanel() {
   const layerSummary = `${playhead.toFixed(2)}s · ${
     selection.length === 1 ? '1 layer' : `${selection.length} layers`
   }`
-  const textSummary = primaryTextConfig
+  const textSummary = primaryTextConfig && primaryTextConfig.id !== 'shimmer'
     ? `${primaryTextPreset?.label ?? 'Text effect'} · ${textApplyLabel(primaryTextConfig.applyTo)} · ${
         primaryTextConfig.mode === 'in' ? 'In' : 'Out'
       }`
@@ -497,6 +499,7 @@ export function PresetsPanel() {
       {hasTextSelection ? (
         <>
           {textSection}
+          <TextShimmerPanel api={api} nodes={selectedTextNodes} />
           {selection.length > 0 ? layerSection : null}
         </>
       ) : (
@@ -742,7 +745,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
     (!activeTextStaggerHasMembers && primary && primarySelectedTimelineTrack
       ? findTextAnimationTrackMatchingRange(api, primary.id, primarySelectedTimelineTrack)
       : null)
-  const primaryTextAnimationConfig = normalizeTextAnimation(primary?.textAnimation)
+  const primaryTextAnimationConfig = primary?.textAnimation?.id === 'shimmer' ? null : normalizeTextAnimation(primary?.textAnimation)
   const staggerTextTrackBundle =
     activeStaggerSetId && primaryResolvedTextTrack
       ? resolveStaggerTrackBundle(
@@ -751,7 +754,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           primaryResolvedTextTrack.id,
         )
       : null
-  const current = primaryResolvedTextTrack
+  const resolvedCurrent = primaryResolvedTextTrack
     ? deriveTextAnimationTiming(
         normalizeTextAnimation(primaryResolvedTextTrack.textAnimation ?? primary?.textAnimation),
         primaryResolvedTextTrack,
@@ -764,6 +767,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
           primarySelectedTimelineTrack,
           primary?.text ?? '',
         )
+  const current = resolvedCurrent?.id === 'shimmer' ? null : resolvedCurrent
   const freshTextStaggerStartTimesAt = (fallbackPlayhead: number) =>
     isTextStaggerActive &&
     !activeTextStaggerHasMembers &&
@@ -924,6 +928,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
   }
   const pickPreset = (id: TextAnimationId) => {
     if (id === 'number-flow' && !numberFlowEligible) return
+    for (const node of selectedTextNodes) migrateTextShimmer(api, node.id)
     const authorTime = currentAnimationAuthorTime()
     const freshTextStaggerStartTimes =
       freshTextStaggerStartTimesAt(authorTime)
@@ -987,7 +992,7 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
         )
         let authoredTrackId: string | null = textTrack?.id ?? null
         if (!textTrack && selectedTimelineTrack) {
-          const previous = normalizeTextAnimation(node.textAnimation)
+          const previous = node.textAnimation?.id === 'shimmer' ? null : normalizeTextAnimation(node.textAnimation)
           const defaults = textAnimationDefaults(id)
           const next = normalizeTextAnimation({
             ...defaults,
@@ -1603,30 +1608,6 @@ function TextAnimationPanel({ playhead }: { playhead: number }) {
             width="w-24"
           />
         </ParamRow>
-        {current.id === 'shimmer' ? (
-          <>
-            <ParamRow label="Highlight color">
-              <input type="color" aria-label="Shimmer highlight color" value={current.shimmerColor ?? '#ffffff'} onChange={(event) => patch({ shimmerColor: event.target.value })} />
-            </ParamRow>
-            <ParamRow label="Base text opacity">
-              <NumberField value={Math.round((current.shimmerOpacity ?? 0.35) * 100)} onCommit={(value) => patch({ shimmerOpacity: value / 100 })} min={0} max={100} suffix="%" width="w-24" />
-            </ParamRow>
-            <ParamRow label="Highlight width">
-              <NumberField value={Math.round((current.shimmerWidth ?? 0.25) * 100)} onCommit={(value) => patch({ shimmerWidth: value / 100 })} min={2} max={100} suffix="%" width="w-24" />
-            </ParamRow>
-            <ParamRow label="Highlight blur">
-              <NumberField value={Math.round((current.shimmerBlur ?? 0.7) * 100)} onCommit={(value) => patch({ shimmerBlur: value / 100 })} min={0} max={100} suffix="%" width="w-24" />
-            </ParamRow>
-            <ParamRow label="Sweep direction">
-              <select aria-label="Shimmer direction" value={current.direction === 'left' ? 'left' : 'right'} onChange={(event) => patch({ direction: event.target.value as 'left' | 'right' })}>
-                <option value="right">Left to right</option><option value="left">Right to left</option>
-              </select>
-            </ParamRow>
-            <ParamRow label="Loop">
-              <input type="checkbox" aria-label="Loop shimmer" checked={current.shimmerLoop !== false} onChange={(event) => patch({ shimmerLoop: event.target.checked })} />
-            </ParamRow>
-          </>
-        ) : null}
         {current.id === 'gradient-reveal' ? (
           <>
             <ParamRow label="Start gradient">
@@ -1852,7 +1833,7 @@ function TextPresetPicker({
         <div key={category} className="mb-5 last:mb-0">
           <div className="mb-2 text-[15px] font-bold text-text">{category}</div>
           <div className="grid grid-cols-2 gap-2">
-            {TEXT_ANIMATION_PRESETS.filter((p) => p.category === category).map(
+            {TEXT_ANIMATION_PRESETS.filter((p) => p.category === category && p.id !== 'shimmer').map(
               (preset) => {
                 const unavailable =
                   preset.id === 'number-flow' && !numberFlowEligible

@@ -9,8 +9,10 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { Camera as CameraIcon, Music2, Wand2 } from 'lucide-react'
+import { Camera as CameraIcon, Music2, Scissors, Wand2 } from 'lucide-react'
 import { useUI } from '@/state/ui'
+import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
+import { mediaClipRange } from '@/scene/mediaClip'
 import {
   effectIdFromBlurPropertyId,
   useSceneAPI,
@@ -37,6 +39,7 @@ import {
 import type { SceneNode, Section, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { chapterAtSplit, splitChapterAtTime } from '@/scene/splitChapter'
 import {
   groupKeyframes as groupKeyframesHelper,
   ungroupKeyframeGroups as ungroupKeyframeGroupsHelper,
@@ -575,6 +578,23 @@ export function Timeline() {
     window.cancelAnimationFrame(smoothSeekAnimationId)
     smoothSeekAnimationId = null
   }, [])
+  const splitChapterAtPlayhead = useCallback((sectionId?: string) => {
+    const ui = useUI.getState()
+    const split = splitChapterAtTime(api, ui.playhead, sectionId)
+    if (!split) return
+    cancelSmoothSeek()
+    ui.setPlaying(false)
+    if (
+      ui.isolatedRange?.start === split.source.start &&
+      ui.isolatedRange?.end === split.source.end
+    ) {
+      ui.setIsolatedRange({
+        start: split.after.start,
+        end: split.after.end,
+        label: split.after.name,
+      })
+    }
+  }, [api, cancelSmoothSeek])
   const setPlayheadImmediate = useCallback(
     (time: number) => {
       cancelSmoothSeek()
@@ -1810,6 +1830,8 @@ export function Timeline() {
     (e: React.MouseEvent, node: MediaTimelineNode) => {
       e.preventDefault()
       e.stopPropagation()
+      const time = useUI.getState().playing ? getAnimEngine().getPlayhead() : useUI.getState().playhead
+      const canCut = canSplitMediaClip(api, node.id, time)
       openContextMenu({
         x: e.clientX,
         y: e.clientY,
@@ -1818,6 +1840,17 @@ export function Timeline() {
             label: node.muted ? 'Unmute clip' : 'Mute clip',
             onClick: () => api.setNodeProperty(node.id, 'muted', !node.muted),
           },
+          {
+            label: 'Split at playhead', disabled: !canCut,
+            onClick: () => {
+              const id = splitMediaClip(api, node.id, time)
+              if (id) setSelection([id])
+            },
+          },
+          { label: 'Trim start to playhead', disabled: !canCut,
+            onClick: () => trimMediaClipAtPlayhead(api, node.id, time, 'start') },
+          { label: 'Trim end to playhead', disabled: !canCut,
+            onClick: () => trimMediaClipAtPlayhead(api, node.id, time, 'end') },
           {
             label: 'Duplicate clip',
             onClick: () => duplicateMediaClip(node),
@@ -1831,7 +1864,7 @@ export function Timeline() {
         ],
       })
     },
-    [api, duplicateMediaClip, openContextMenu],
+    [api, duplicateMediaClip, openContextMenu, setSelection],
   )
 
   // Flat list of every visible track — threaded into KeyframeDiamond so a
@@ -3239,12 +3272,9 @@ export function Timeline() {
                   stacked time/frame lines up with the tick labels.
               `items-end` + `pb-1` puts both labels on the same baseline
               as the ruler ticks (which use `items-end`). */}
-          {/* Top corner — empty strip mirroring the right column's
-              sections-pill row height. Used to hold the "Animated
-              layers" label, which moved down to the ruler-aligned band
-              below (sits next to the timeline scale, where there's
-              actual breathing room). */}
-          <div className="sticky top-0 z-30 flex h-7 items-center justify-end border-b border-border bg-panel-raised/80 px-2 backdrop-blur-sm">
+          {/* Keep chapter actions visible beside the chapter lane. */}
+          <div className="sticky top-0 z-30 flex h-7 items-center justify-between border-b border-border bg-panel-raised/80 px-2 backdrop-blur-sm">
+            <SplitChapterButton api={api} onSplit={splitChapterAtPlayhead} />
             {timelineMode === 'sound' ? (
               <button
                 type="button"
@@ -3854,6 +3884,7 @@ export function Timeline() {
                   isolated={isolatedRange?.start === sec.start && isolatedRange?.end === sec.end}
                   setIsolatedRange={setIsolatedRange}
                   openContextMenu={openContextMenu}
+                  onSplit={splitChapterAtPlayhead}
                 />
               ))}
               {/* The "+ Chapter" button trails the last chapter pill.
@@ -6045,11 +6076,12 @@ function MediaClipRow({
   onContextMenu: (e: React.MouseEvent) => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
-  const trimStart = Math.max(0, node.trimStart || 0)
-  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
-  const sourceDuration = Math.max(0, node.duration || trimEnd)
-  const clipLength = Math.max(0.01, trimEnd - trimStart)
-  const start = Math.max(0, node.startTime || 0)
+  const { trimStart, trimEnd, rate, duration: clipLength } = mediaClipRange(node)
+  const sourceDuration = Math.max(0, node.duration)
+  const sourceFrame = rate / Math.max(1, api.getMeta().frameRate)
+  // Scene splits can leave media starting before scene zero. Preserve that
+  // offset so the visible right edge stays aligned with the actual clip end.
+  const start = mediaClipRange(node).start
   const left = start * readTimelinePxPerSecond()
   const width = Math.max(8, clipLength * readTimelinePxPerSecond())
 
@@ -6082,16 +6114,19 @@ function MediaClipRow({
       if (mode === 'trim-start') {
         const nextTrimStart = Math.max(
           0,
-          Math.min(baseTrimEnd - 0.01, baseTrimStart + deltaSec),
+          Math.min(baseTrimEnd - sourceFrame, baseTrimStart + deltaSec * rate),
         )
-        const nextStart = Math.max(0, baseStart + (nextTrimStart - baseTrimStart))
-        api.setNodeProperty(node.id, 'trimStart', nextTrimStart)
-        api.setNodeProperty(node.id, 'startTime', nextStart)
+        const boundedTrimStart = Math.max(nextTrimStart, baseTrimStart - baseStart * rate)
+        const nextStart = Math.max(0, baseStart + (boundedTrimStart - baseTrimStart) / rate)
+        api.doc.transact(() => {
+          api.setNodeProperty(node.id, 'trimStart', boundedTrimStart)
+          api.setNodeProperty(node.id, 'startTime', nextStart)
+        })
         return
       }
       const nextTrimEnd = Math.max(
-        baseTrimStart + 0.01,
-        Math.min(sourceDuration, baseTrimEnd + deltaSec),
+        baseTrimStart + sourceFrame,
+        Math.min(sourceDuration, baseTrimEnd + deltaSec * rate),
       )
       api.setNodeProperty(node.id, 'trimEnd', nextTrimEnd)
     }
@@ -6107,7 +6142,7 @@ function MediaClipRow({
     <div
       ref={rowRef}
       className={[
-        'relative h-8 border-t border-border/50',
+        'relative h-8 overflow-hidden border-t border-border/50',
         selected ? 'bg-accent-soft/20' : '',
       ].join(' ')}
       style={{ width: totalWidth }}
@@ -6118,6 +6153,7 @@ function MediaClipRow({
       onContextMenu={onContextMenu}
     >
       <div
+        data-transition-layer={node.id}
         data-media-clip-part="body"
         className={[
           'absolute top-1 bottom-1 cursor-grab rounded-md border px-2 active:cursor-grabbing',
@@ -6248,9 +6284,7 @@ function computeWaveformPeaks(
 }
 
 function formatMediaDuration(node: MediaTimelineNode): string {
-  const trimStart = Math.max(0, node.trimStart || 0)
-  const trimEnd = Math.max(trimStart, node.trimEnd || node.duration || 0)
-  const seconds = Math.max(0, trimEnd - trimStart)
+  const seconds = mediaClipRange(node).duration
   return `${seconds.toFixed(seconds < 10 ? 2 : 1)}S`
 }
 
@@ -8266,6 +8300,7 @@ function TrackGroupRightRow({
       >
         {hasSpan && (
           <div
+            data-transition-layer={group.memberTracks[0]?.nodeId}
             data-track-group-bar="1"
             data-timeline-selection-surface="1"
             onPointerDown={onBodyPointerDown}
@@ -9079,19 +9114,30 @@ function normalizeTimelineWorkArea(
   return { start, end }
 }
 
+function SplitChapterButton({ api, onSplit }: { api: SceneAPI; onSplit: () => void }) {
+  // Keep playhead updates in this small control instead of the whole timeline.
+  const playhead = useUI((s) => s.playhead)
+  const canSplit = !!chapterAtSplit(api.getSections(), api.getMeta(), playhead)
+  return (
+    <button
+      type="button"
+      disabled={!canSplit}
+      onClick={() => onSplit()}
+      title={canSplit
+        ? 'Split chapter at playhead'
+        : 'Move the playhead inside a chapter to split it'}
+      className="flex h-6 items-center gap-1.5 rounded px-1.5 text-[11px] text-text-muted hover:bg-panel hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Scissors size={12} aria-hidden="true" />
+      Split chapter
+    </button>
+  )
+}
+
 /**
- * Section pill. A colored, length-bearing bar above the ruler.
- *
- *   - Drag the body  → shift both bounds by the same delta
- *   - Drag left edge → resize the start (end stays put)
- *   - Drag right edge → resize the end (start stays put)
- *   - Right-click    → rename / delete / isolate / set color
- *   - Double-click   → rename
- *   - Click          → isolate this section (one-click focus)
- *
- * Edge handles are 6 px wide, transparent unless hovered. Outer
- * cursor is grab; edges are ew-resize. All transactions write
- * through `api.setSection` which the UndoManager covers.
+ * Chapter pill: drag its body or edges to change boundaries, double-click
+ * to rename, and right-click to split, isolate, recolor, or delete.
+ * Section writes participate in the scene's undo history.
  */
 function SectionPill({
   section,
@@ -9102,6 +9148,7 @@ function SectionPill({
   isolated,
   setIsolatedRange,
   openContextMenu,
+  onSplit,
 }: {
   section: Section
   /**
@@ -9120,6 +9167,7 @@ function SectionPill({
   openContextMenu: (
     menu: import('@/state/ui').ContextMenuState,
   ) => void
+  onSplit: (sectionId: string) => void
 }) {
   const displayedSection = useSectionPreview(section)
   const left = displayedSection.start * readTimelinePxPerSecond()
@@ -9292,6 +9340,12 @@ function SectionPill({
       x: e.clientX,
       y: e.clientY,
       items: [
+        {
+          label: 'Split chapter at playhead',
+          disabled: !chapterAtSplit(api.getSections(), api.getMeta(), useUI.getState().playhead, section.id),
+          onClick: () => onSplit(section.id),
+        },
+        { kind: 'separator' as const },
         {
           label: isolated ? 'Exit isolation' : `Isolate "${section.name}"`,
           onClick: () => {

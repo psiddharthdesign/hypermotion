@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { TransitionsPanel } from './TransitionsPanel'
 
 import {
   useCallback,
@@ -24,6 +25,7 @@ import {
 import { AppIcon, type AppIconName } from '@/ui/AppIcon'
 import { useProjectAPI, type ProjectAPI } from '@/project'
 import { useUI } from '@/state/ui'
+import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
 import {
   MAX_CAMERA_SCROLL_SENSITIVITY,
   MAX_LAYER_Z_INDEX,
@@ -409,7 +411,7 @@ export function Inspector() {
               },
             }}
           >
-            {mode === 'animate' ? (
+            {mode === 'transitions' ? (<TransitionsPanel />) : mode === 'animate' ? (
               <PresetsPanel />
             ) : showScene ? (
               <SceneDetails api={api} project={project} />
@@ -432,7 +434,7 @@ export function Inspector() {
 function ModeTabs() {
   const mode = useUI((s) => s.inspectorMode)
   const setMode = useUI((s) => s.setInspectorMode)
-  const modes = ['properties', 'animate'] as const
+  const modes = ['properties', 'animate', 'transitions'] as const
 
   const moveFocus = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -474,7 +476,7 @@ function ModeTabs() {
               data-active={active}
               className="hm-inspector-segment focus-visible:outline-none"
             >
-              {m === 'properties' ? 'Properties' : 'Animate'}
+              {m === 'properties' ? 'Properties' : m === 'animate' ? 'Animate' : 'Transitions'}
             </button>
           )
         })}
@@ -9199,6 +9201,43 @@ function LayerBendSection({
   )
 }
 
+function MediaClipEditing({ node, api }: {
+  node: Extract<Node, { kind: 'audio' | 'video' }>
+  api: SceneAPI
+}) {
+  const playhead = useUI((s) => s.playhead)
+  const canCut = canSplitMediaClip(api, node.id, playhead)
+  const cut = (side?: 'start' | 'end') => {
+    const time = currentAnimationAuthorTime()
+    useUI.getState().setPlaying(false)
+    if (side) trimMediaClipAtPlayhead(api, node.id, time, side)
+    else {
+      const rightId = splitMediaClip(api, node.id, time)
+      if (rightId) useUI.getState().setSelection([rightId])
+    }
+  }
+  const buttonClass = 'rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:bg-panel-raised disabled:opacity-40 disabled:cursor-not-allowed'
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <div className="text-[11px] font-semibold">Edit clip</div>
+      <div className="flex flex-wrap gap-1">
+        <button type="button" className={buttonClass} disabled={!canCut} onClick={() => cut()}>Split at playhead</button>
+        <button type="button" className={buttonClass} disabled={!canCut} onClick={() => cut('start')}>Trim start to playhead</button>
+        <button type="button" className={buttonClass} disabled={!canCut} onClick={() => cut('end')}>Trim end to playhead</button>
+      </div>
+      <p className="text-[10px] leading-snug text-text-dim">
+        Split twice to isolate a section, then delete it. Move clips or drag their edges in the Media timeline. The original file stays unchanged.
+        {node.loop ? ' Turn off Loop before splitting.' : ''}
+      </p>
+      <button type="button" className={buttonClass} disabled={node.locked} onClick={() => {
+        useUI.getState().setPlaying(false)
+        api.doc.transact(() => api.deleteNode(node.id), UNDOABLE_GESTURE_ORIGIN)
+        useUI.getState().setSelection([])
+      }}>Delete clip</button>
+    </div>
+  )
+}
+
 function MediaSection({
   node,
   api,
@@ -9340,6 +9379,7 @@ function MediaSection({
           {formatSeconds(clipLength / playbackRate)}
         </div>
       </FieldRow>
+      <MediaClipEditing node={node} api={api} />
       {node.kind === 'video' ? (
         <>
           <FieldRow label="Fit">

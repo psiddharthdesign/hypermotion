@@ -230,7 +230,7 @@ describe('text animation track reconciliation', () => {
     }
 
     for (const preset of TEXT_ANIMATION_PRESETS.filter(
-      ({ id }) => id !== 'number-flow',
+      ({ id }) => id !== 'number-flow' && id !== 'shimmer',
     )) {
       current = applyTextAnimation(
         api,

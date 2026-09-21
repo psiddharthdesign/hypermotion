@@ -21,6 +21,8 @@ export type CameraCutId = string
  * id without pairing it with a scene id, and prevents ambiguous cut targets.
  */
 export interface CameraCut {
+  /** Seconds blending from the preceding camera after this cut. */
+  dissolveDuration?: number
   id: CameraCutId
   /** Composition-local time in seconds. */
   time: number

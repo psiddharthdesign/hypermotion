@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sceneToBytes } from '@/scene'
+import { prepareDesktopScene } from '@/scene/desktopTransfer'
 import { resolveDimensions, resolveFrameSegments } from './formats'
 import type { ExportSceneContext } from './orchestrator'
 import { useExportProgress } from './progressStore'
@@ -148,11 +148,6 @@ export async function runRenderWindowExport(
     0,
   )
 
-  // Serialize the scene to bytes — same format `.hype` files use.
-  // The render window applies these onto its own (empty) Y.Doc, which
-  // gives it a deep, deterministic copy of the editor's current state.
-  const seedBytes = sceneToBytes(ctx.api.doc)
-
   // Provisional filename — main's filename is informational; we re-derive
   // in the render window so the chapterTag etc. is consistent. Provide
   // here for the progress UI before any frames render.
@@ -164,6 +159,19 @@ export async function runRenderWindowExport(
 
   progress.start(ctx.format, totalFrames, provisionalFileName)
   const startToken = progress.cancelToken
+
+  // Serialize the scene to bytes — same format `.hype` files use.
+  // The render window applies these onto its own (empty) Y.Doc, which
+  // gives it a deep, deterministic copy of the editor's current state.
+  let seedBytes: Uint8Array
+  try {
+    seedBytes = (await prepareDesktopScene(ctx.api.doc)).bytes
+  } catch (error) {
+    progress.setError(`Could not prepare media for export: ${error instanceof Error ? error.message : String(error)}`)
+    return
+  }
+
+  if (useExportProgress.getState().cancelToken !== startToken) return
 
   const requestId = makeClientRequestId()
   // Subscribe before asking main to load the worker. A tiny scene can fail or

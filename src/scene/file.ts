@@ -40,6 +40,16 @@ export function sceneToBytes(doc: Y.Doc): Uint8Array {
   return Y.encodeStateAsUpdate(doc)
 }
 
+/** File/export snapshots need current state, not deleted media retained for undo. */
+export function createSceneSnapshot(doc: Y.Doc): Y.Doc {
+  const snapshot = new Y.Doc()
+  const target = snapshot.getMap('scene')
+  snapshot.transact(() => {
+    for (const [key, value] of doc.getMap('scene')) target.set(key, cloneY(value))
+  })
+  return snapshot
+}
+
 /**
  * Apply `.hype` bytes to a Y.Doc. The doc accumulates the update via
  * CRDT merge semantics — call this on a fresh empty Y.Doc to materialize
@@ -490,4 +500,16 @@ function ensureProjectArray<T>(
 function clonePlainValue<T>(value: T): T {
   if (typeof structuredClone === 'function') return structuredClone(value)
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+/** Read only source strings; avoid materializing large embedded media nodes. */
+export function projectMediaSources(doc: Y.Doc): string[] {
+  const nodes = doc.getMap('scene').get('nodes')
+  if (!(nodes instanceof Y.Map)) return []
+  const sources: string[] = []
+  for (const node of nodes.values()) {
+    const source = node.get('src')
+    if (typeof source === 'string' && source.startsWith('hm-media://')) sources.push(source)
+  }
+  return sources
 }

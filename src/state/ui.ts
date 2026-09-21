@@ -26,7 +26,7 @@ import {
 
 export type Tool = 'select' | 'rect' | 'ellipse' | 'text' | 'frame' | 'hand'
 export type PanelKey = 'scenes' | 'layers' | 'inspector' | 'timeline'
-export type InspectorMode = 'properties' | 'animate'
+export type InspectorMode = 'properties' | 'animate' | 'transitions'
 export type TimelineScope = 'scene' | 'sequence'
 export type PreviewScope = 'scene' | 'sequence'
 export type CameraView =

@@ -7,6 +7,11 @@ entry below for each corresponding tag.
 
 ### Video quality and playback
 
+- Restore video playback for older projects that store original media in a
+  neighboring `.hype.assets` folder, and preserve those assets on Save As.
+- Honor saved split-video visibility ranges so inactive clips cannot cover
+  the playing clip with a frozen frame.
+
 - Keep playable imported videos at their original quality and frame rate.
 - Use lossless video conversion when a codec requires conversion; remove the
   automatic 1080-pixel, 30 fps playback proxy.

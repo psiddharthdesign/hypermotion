@@ -1,3 +1,4 @@
+import { MediaAssetImports } from './mediaAssetImports'
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -23,6 +24,7 @@ import {
   ipcMain,
   Menu,
   Notification,
+  protocol,
   shell,
   webContents,
   type NativeImage,
@@ -32,6 +34,7 @@ import {
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
+import { MediaAssets, serveMediaAsset } from './mediaAssets'
 import { spawn, spawnSync } from 'node:child_process'
 import {
   prepareFigmaPlugin,
@@ -52,6 +55,17 @@ import {
 // always be allowed to start timeline audio, even if React applies the state
 // change just after Chromium's narrow "user gesture" window.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+const mediaImports = new MediaAssetImports(path.join(app.getPath('userData'), 'media-assets'))
+const mediaAssets = new MediaAssets(mediaImports.directory)
+ipcMain.handle('media:begin-import', (event, payload: { mime: string; size: number }) => mediaImports.begin(event.sender.id, payload.mime, payload.size))
+ipcMain.handle('media:append-import', (event, payload: { id: string; base64: string }) => mediaImports.append(event.sender.id, payload.id, payload.base64))
+ipcMain.handle('media:finish-import', (event, id: string) => mediaImports.finish(event.sender.id, id))
+ipcMain.handle('media:cancel-import', (event, id: string) => mediaImports.cancel(event.sender.id, id))
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'hm-media',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
+}])
 
 /**
  * Single-instance lock.
@@ -1989,6 +2003,7 @@ ipcMain.handle(
     const filePath = result.filePaths[0]
     try {
       const bytes = fs.readFileSync(filePath)
+      mediaAssets.registerProject(filePath)
       if (opts?.trackRecent !== false) addRecentProject(filePath)
       // Buffer → Uint8Array marshals across IPC.
       return { path: filePath, bytes: new Uint8Array(bytes) }
@@ -2011,9 +2026,11 @@ ipcMain.handle(
       path: string
       bytes: Uint8Array
       trackRecent?: boolean
+      mediaSources?: string[]
     },
   ): boolean => {
     try {
+      mediaAssets.copyToProject(payload.path, payload.mediaSources ?? [])
       fs.writeFileSync(payload.path, Buffer.from(payload.bytes))
       if (payload.trackRecent !== false) addRecentProject(payload.path)
       return true
@@ -2032,6 +2049,7 @@ ipcMain.handle(
   (_e, filePath: string): Uint8Array | null => {
     try {
       const bytes = fs.readFileSync(filePath)
+      mediaAssets.registerProject(filePath)
       addRecentProject(filePath)
       return new Uint8Array(bytes)
     } catch (err) {
@@ -2123,6 +2141,10 @@ ipcMain.handle('export:headless-error', (_e, message: string) => {
 // reopen. Other platforms quit on last window close, matching native
 // expectations.
 app.whenReady().then(() => {
+  loadRecentProjects()
+  for (const project of [...recentProjects].reverse()) mediaAssets.registerProject(project)
+  protocol.handle('hm-media', (request) => serveMediaAsset(mediaAssets, request))
+
   // Keep the Figma development plugin at one stable user-owned path. Figma
   // remembers that path after the user's one-time manifest import, while app
   // updates simply refresh the files in place on the next launch.
@@ -2152,7 +2174,6 @@ app.whenReady().then(() => {
     return
   }
 
-  loadRecentProjects()
   buildAppMenu()
   pendingOpenScenePath = parseOpenSceneArg(process.argv)
   createMainWindow()

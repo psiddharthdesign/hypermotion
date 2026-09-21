@@ -1,3 +1,4 @@
+import { normalizeTextShimmer } from '@/anim/textShimmerEffect'
 // SPDX-License-Identifier: Apache-2.0
 
 import * as Y from 'yjs'
@@ -264,6 +265,7 @@ export interface NodeBaseMutable {
   textDecoration: import('@/scene/types').TextDecoration
   color: string
   textAnimation: import('@/anim/textAnimations').TextAnimationConfig | null
+  textShimmer: import('@/anim/textAnimations').TextAnimationConfig | null
   // component / instance fields
   variants: import('@/scene/types').VariantAxis[]
   defaultSelection: import('@/scene/types').VariantSelection
@@ -307,6 +309,7 @@ export interface NodeBaseMutable {
   duration: number
   volume: number
   playbackRate: number
+  clipToRange: boolean
   muted: boolean
   startTime: number
   trimStart: number
@@ -838,6 +841,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (kind === 'video' ? true : false),
           ...(kind === 'video'
             ? {
+                clipToRange: (y.get('clipToRange') as boolean | undefined) ?? false,
                 poster: (y.get('poster') as string | undefined) ?? '',
                 fit: (y.get('fit') as 'cover' | 'contain' | 'fill' | 'none') ?? 'cover',
                 importWarning:
@@ -881,6 +885,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             'none',
           color: (y.get('color') as string) ?? '#0a0a0c',
           textAnimation: normalizeTextAnimation(y.get('textAnimation')),
+          ...(y.has('textShimmer') ? { textShimmer: normalizeTextShimmer(y.get('textShimmer')) } : {}),
         } as Node
       case 'component':
         return {
@@ -1345,7 +1350,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             playbackRate: number;
             startTime: number; trimStart: number; trimEnd: number; loop: boolean;
             fit: 'cover' | 'contain' | 'fill' | 'none'; muted: boolean;
-            importWarning: string;
+            importWarning: string; clipToRange: boolean;
             beatAnalysis: import('@/audio/beatSync').BeatAnalysis;
             beatGrid: import('@/audio/beatSync').AudioBeatGrid;
           }>
@@ -1369,6 +1374,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           }
           if (kind === 'video') {
             y.set('fit', mp.fit ?? 'cover')
+            y.set('clipToRange', mp.clipToRange ?? false)
             if (mp.importWarning) y.set('importWarning', mp.importWarning)
             // Motion tools are primarily visual — default to muted so
             // a dropped MP4 doesn't surprise the user with audio.
@@ -1419,6 +1425,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('textDecoration', tp?.textDecoration ?? 'none')
           y.set('color', tp?.color ?? '#0a0a0c')
           y.set('textAnimation', normalizeTextAnimation(tp?.textAnimation) ?? null)
+          if (tp?.textShimmer !== undefined) y.set('textShimmer', normalizeTextShimmer(tp.textShimmer))
         }
         if (kind === 'camera') {
           // Cameras carry no size / layout / fill. They exist at the

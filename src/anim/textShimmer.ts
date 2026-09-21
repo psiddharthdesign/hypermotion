@@ -1,3 +1,5 @@
+import { parseOklch } from './color'
+import { oklchToHex } from '@/ui/fields/colorConvert'
 import type { Fill } from '@/scene/types'
 import type { TextAnimationConfig } from './textAnimations'
 import { evaluator } from './easing'
@@ -14,9 +16,9 @@ export function textShimmerFill(config: TextAnimationConfig, time: number, baseC
     ? config.customEasing : findEasingPreset(config.easingPresetId).build(config.easingStrength)
   const width = config.shimmerWidth ?? 0.25
   const center = -width + evaluator(easing)(progress) * (1 + width * 2)
-  const base = rgb(baseColor)
-  const light = rgb(config.shimmerColor ?? '#ffffff')
-  const opacity = config.shimmerOpacity ?? 0.35
+  const base = rgba(baseColor)
+  const light = rgba(config.shimmerColor ?? '#ffffff')
+  const opacity = (config.shimmerOpacity ?? 0.35) * base[3]
   const softness = Math.max(0.001, config.shimmerBlur ?? 0.7)
   return {
     kind: 'linear', angle: config.direction === 'left' ? 270 : 90,
@@ -25,16 +27,25 @@ export function textShimmerFill(config: TextAnimationConfig, time: number, baseC
       const distance = Math.abs(at - center) / Math.max(0.01, width / 2)
       const edge = Math.max(0, Math.min(1, (1 - distance) / softness))
       const intensity = edge * edge * (3 - 2 * edge)
-      const alpha = opacity + (1 - opacity) * intensity
-      const color = base.map((v, j) => alpha === 0 ? 0 : Math.round((v * opacity * (1 - intensity) + light[j]! * intensity) / alpha))
+      const highlightAlpha = light[3] * intensity
+      const alpha = opacity * (1 - intensity) + highlightAlpha
+      const color = base.slice(0, 3).map((v, j) => alpha === 0 ? 0 : Math.round((v * opacity * (1 - intensity) + light[j]! * highlightAlpha) / alpha))
       return { at, color: '#' + [...color, Math.round(alpha * 255)].map(v => v.toString(16).padStart(2, '0')).join('') }
     }),
   }
 }
 
-function rgb(color: string): number[] {
-  let hex = color.replace('#', '')
-  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
-  if (!/^[0-9a-f]{6,8}$/i.test(hex)) hex = '111111'
-  return [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16))
+function rgba(color: string): [number, number, number, number] {
+  const oklch = parseOklch(color)
+  let hex = (oklch
+    ? oklchToHex({ l: oklch.L, c: oklch.C, h: oklch.H })
+    : color.trim()).replace('#', '')
+  if (hex.length === 3 || hex.length === 4) hex = hex.split('').map(c => c + c).join('')
+  if (!/^(?:[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex)) hex = '111111'
+  return [
+    parseInt(hex.slice(0, 2), 16),
+    parseInt(hex.slice(2, 4), 16),
+    parseInt(hex.slice(4, 6), 16),
+    Math.max(0, Math.min(1, oklch?.alpha ?? (hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1))),
+  ]
 }

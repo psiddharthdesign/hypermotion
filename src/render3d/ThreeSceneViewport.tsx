@@ -1,5 +1,11 @@
+import { resolveTextShimmer } from '@/anim/textShimmerEffect'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
+import { getProjectAPI } from '@/project'
+import { cameraDissolveAt } from '@/sequence/cameraDissolve'
+import { CameraDissolveRenderer } from './CameraDissolveRenderer'
+import { getAnimEngine } from '@/anim'
+import { isVideoVisibleAtTime } from '@/media/videoVisibility'
 import { programMediaRate } from '@/state/sequenceMediaClock'
 
 import {
@@ -512,6 +518,8 @@ export function ThreeSceneViewport({
 }: ThreeSceneViewportProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const dissolveRef = useRef<CameraDissolveRenderer | null>(null)
+  const dissolveEffectsRef = useRef<ScenePostEffectsRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const postEffectsRef = useRef<ScenePostEffectsRenderer | null>(null)
@@ -648,11 +656,12 @@ export function ThreeSceneViewport({
         }
         continue
       }
-      if (node?.kind !== 'text' || !node.textAnimation) continue
-      if (node.textAnimation.id === 'shimmer' || api.getTracksForNode(id).some(track => track.textAnimation?.id === 'shimmer')) {
+      if (node?.kind !== 'text') continue
+      if (node.textShimmer || node.textAnimation?.id === 'shimmer' || api.getTracksForNode(id).some(track => track.textAnimation?.id === 'shimmer')) {
         ranges.set(id, { start: 0, end: duration })
         continue
       }
+      if (!node.textAnimation) continue
       const engineDriven = api
         .getTracksForNode(id)
         .some(
@@ -765,6 +774,10 @@ export function ThreeSceneViewport({
       planeSyncRef.current = null
       publishRender3dVideos(planes)
       clearHelperGroup(helpers)
+      dissolveRef.current?.dispose()
+      dissolveRef.current = null
+      dissolveEffectsRef.current?.dispose()
+      dissolveEffectsRef.current = null
       renderer.dispose()
       // HMR and React development remounts can otherwise leave retired WebGL
       // contexts alive until Chromium's GC runs. After enough edits the dev
@@ -994,6 +1007,33 @@ export function ThreeSceneViewport({
         renderer.render(scene, perspective)
       }
     }
+    const composition = getProjectAPI(api).getScenes().find(s => s.rootNodeId === api.getRoot())
+    const dissolve = composition ? cameraDissolveAt(composition, playhead) : null
+    const outgoing = dissolve && dissolve.to === camera.id ? api.getNode(dissolve.from) : null
+    if (dissolve && outgoing?.kind === 'camera' && !showHelpers) {
+      const drawingSize = renderer.getDrawingBufferSize(new THREE.Vector2())
+      if (!dissolveRef.current?.matches(drawingSize.x, drawingSize.y)) {
+        dissolveRef.current?.dispose()
+        dissolveRef.current = new CameraDissolveRenderer(drawingSize.x, drawingSize.y)
+      }
+      dissolveRef.current.captureIncoming(renderer)
+      const outgoingAnimation = animated[outgoing.id] ?? (!finalRender ? getAnimEngine().getSnapshot()[outgoing.id] : undefined)
+      const target = outgoing.focusTargetNodeId ? planes.find(p => p.nodeId === outgoing.focusTargetNodeId)?.center : null
+      const outgoingCamera = resolveCamera3D(outgoing, outgoingAnimation, { width, height }, target)
+      syncThreeCamera(perspective, outgoingCamera, width, height)
+      syncPlanes(scene, planesRef.current, api, planeBuildContext, layout, planes, selectedIds, hiddenNodeIds,
+        outgoingCamera, renderer, perspective, animated, playing, playhead, textureRevision,
+        playheadDrivenTextureRanges, interactiveCameraPreview, finalRender, curvePreviewRevision, vectorEditPreview, stableTexturePixelRatio)
+      if (cameraPostEffectsActive(outgoingCamera)) {
+        if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, perspective, width, height, pixelRatio)
+        dissolveEffectsRef.current.configure(outgoingCamera, width, height, pixelRatio, playhead + (outgoing.proceduralTimeOffset ?? 0))
+        dissolveEffectsRef.current.render()
+      } else renderer.render(scene, perspective)
+      dissolveRef.current.blend(renderer, dissolve.progress)
+      syncThreeCamera(perspective, resolvedCamera, width, height)
+      // The outgoing render updated camera-dependent materials; resync next frame.
+      planeSyncRef.current = null
+    }
     // Keep this callback adjacent to the final renderer submission. Export
     // consumes the drawing buffer synchronously from this acknowledgement;
     // deferring it to a passive effect can observe a cleared/stale WebGL
@@ -1002,6 +1042,7 @@ export function ThreeSceneViewport({
       onFrameRendered?.(renderRequest, renderer.domElement)
     }
   }, [
+    camera.id,
     camera.proceduralTimeOffset,
     api,
     planeBuildContext,
@@ -1656,12 +1697,13 @@ function syncPlanes(
     }
     syncMaterialClipping(record, plane)
     record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
-    record.mesh.visible = plane.node.visible && !hidden.has(plane.nodeId)
+    const videoVisible = !videoNode || isVideoVisibleAtTime(videoNode, playhead)
+    record.mesh.visible = plane.node.visible && !hidden.has(plane.nodeId) && videoVisible
     record.outline.visible =
-      selected.has(plane.nodeId) && !hidden.has(plane.nodeId)
+      selected.has(plane.nodeId) && !hidden.has(plane.nodeId) && videoVisible
     if (record.referenceOutline) {
       record.referenceOutline.visible =
-        layerBends.some((bend) => bend.showOriginalGeometry) &&
+        videoVisible && layerBends.some((bend) => bend.showOriginalGeometry) &&
         selected.has(plane.nodeId) &&
         !hidden.has(plane.nodeId) &&
         !finalRender
@@ -2632,6 +2674,8 @@ function usesStaticLetterScrambleAtlas(
   config: TextAnimationConfig | null,
 ): boolean {
   if (config?.id !== 'scramble' || config.applyTo !== 'letters') return false
+  // A moving Shimmer gradient must be painted at each glyph's actual position.
+  if (resolveTextShimmer(node, config)) return false
   // A shared pre-baked glyph may be reused at every letter position only when
   // its paint is position-independent. Animated colors, legacy text colors,
   // and solid fills qualify; gradients/images retain the dynamic atlas path
@@ -2658,7 +2702,7 @@ function textSegmentTextureSignature(
     anim,
     config,
   )
-  let dynamicFrame: unknown = config?.id === 'shimmer' ? textShimmerFill(config, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) : null
+  let dynamicFrame: unknown = null
   if (config?.id === 'scramble' && !staticLetterScramble) {
     // Scramble changes glyph content, so it is the only segment effect that
     // needs frequent atlas uploads. Thirty texture updates per second keeps
@@ -2758,6 +2802,7 @@ function textSegmentTextureSignature(
     blurPadding,
     atlasScale: Number(atlasScale.toFixed(3)),
     dynamicFrame,
+    shimmer: resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) : null,
   })
 }
 
@@ -3461,7 +3506,7 @@ function paintTextSegmentAtlasCell(
       -(entry.y - entry.padding),
     )
     const effectGradient =
-      config?.id === 'shimmer' ? textShimmerFill(config, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) :
+      resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) :
       config?.id === 'gradient-reveal'
         ? config.mode === 'in'
           ? config.endGradient ?? config.startGradient
@@ -4512,7 +4557,9 @@ function paintNodeSource(
   const cornerSmoothing =
     node.kind === 'ellipse' ? 0 : appearanceCornerSmoothing(node)
   const paintContent = () => {
-    paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
+    if (!(node.kind === 'text' && node.textShimmer)) {
+      paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
+    }
     if (node.kind === 'image' && node.src) paintImageNode(ctx, node, w, h)
     if (node.kind === 'shader') paintPaperShaderNode(ctx, node, w, h)
   }
@@ -4537,6 +4584,13 @@ function paintNodeSource(
   }
   if (node.kind === 'text') {
     paintAnimatedTextNode(ctx, node, 0, 0, w, h, anim, playhead)
+    if (node.textShimmer) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-in'
+      paintFill(ctx, textShimmerFill(node.textShimmer, playhead,
+        anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)), w, h, true)
+      ctx.restore()
+    }
   }
   const stroke = node.appearance.stroke
   if (stroke && stroke.width > 0) {

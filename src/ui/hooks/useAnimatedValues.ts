@@ -344,7 +344,9 @@ export function hasNodeDrivenTextAnimation(
 ): boolean {
   for (const nodeId of nodeIds) {
     const node = api.getNode(nodeId)
-    if (node?.kind !== 'text' || !node.textAnimation) continue
+    if (node?.kind !== 'text') continue
+    if (node.textShimmer || node.textAnimation?.id === 'shimmer') return true
+    if (!node.textAnimation) continue
     const engineDriven = api.getTracksForNode(nodeId).some(
       (track) =>
         track.propertyId === 'text.progress' && track.keyframes.length >= 2,

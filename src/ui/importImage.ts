@@ -20,9 +20,9 @@ import type { NodeId, Transform } from '@/scene'
  *      a layer eight times the artboard. We scale any dimension larger
  *      than 80% of the artboard's matching side proportionally down.
  *      The user can still resize up via the handles.
- *   4. Create the node as a child of `parent` (usually the scene root)
- *      with its transform centered on `dropPos` if provided, otherwise
- *      on the artboard center.
+ *   4. Let Stack/Grid parents place ordinary imports in flow. Explicit
+ *      drops and free-canvas imports use absolute positioning, centered
+ *      on `dropPos` if provided, otherwise on the artboard center.
  *
  * Returns the new node's id so the caller can select it.
  *
@@ -54,12 +54,22 @@ export async function importImageFile(
     h = Math.round(h * ratio)
   }
 
-  // Center on dropPos (canvas-space), else on the artboard center.
+  // A flow child receives its position from Yoga. Adding a manual center
+  // offset as well would shift it a second time after Stack/Grid layout.
+  const parentNode = parent ? api.getNode(parent) : null
+  const useAutoLayout =
+    !opts?.dropPos &&
+    !opts?.workspaceOnly &&
+    !!parentNode &&
+    'layout' in parentNode &&
+    (parentNode.layout.mode === 'flex' || parentNode.layout.mode === 'grid')
+
+  // Explicit drop coordinates remain authoritative outside layout flow.
   const cx = opts?.dropPos?.x ?? meta.canvas.width / 2
   const cy = opts?.dropPos?.y ?? meta.canvas.height / 2
   const transform: Transform = {
-    x: Math.round(cx - w / 2),
-    y: Math.round(cy - h / 2),
+    x: useAutoLayout ? 0 : Math.round(cx - w / 2),
+    y: useAutoLayout ? 0 : Math.round(cy - h / 2),
     z: 0,
     rotation: 0,
     rotationX: 0,
@@ -71,6 +81,7 @@ export async function importImageFile(
   const id = api.createNode('image', parent, {
     name: file.name.replace(/\.[^.]+$/, '') || 'Image',
     size: { width: w, height: h },
+    position: useAutoLayout ? 'flow' : 'absolute',
     transform,
     src: dataUrl,
     fit: 'cover',
