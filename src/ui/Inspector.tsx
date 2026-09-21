@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: Apache-2.0
 import { TransitionsPanel } from './TransitionsPanel'
+// SPDX-License-Identifier: Apache-2.0
 
+import { useToast } from './toastStore'
 import {
   useCallback,
   useEffect,
@@ -100,14 +101,16 @@ import {
   decodeVideoMeta,
   isAudioFile,
   isVideoFile,
-  normalizeVideoFileForBrowser,
+  prepareVideoSource,
   readMediaFileAsDataUrl,
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
 import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
-import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
+import { useInspectorAnimatedValues } from '@/ui/hooks/useAnimatedValues'
+import { liveInspectorLayout, liveInspectorNode } from './inspectorLiveValues'
+import { resolveBendDeformation } from '@/render3d/bendDeformation'
 import {
   cameraPreviewStore,
   cameraTransformPreview,
@@ -649,16 +652,13 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
   }
   const rootId = api.getRoot()
   const root = rootId ? api.getNode(rootId) : null
-  const playing = useUI((state) => state.playing)
   const rootAnimationIds = useMemo(
-    () => (!playing && rootId ? [rootId] : []),
-    [playing, rootId],
+    () => (rootId ? [rootId] : []),
+    [rootId],
   )
-  const rootAnimated = useAnimatedValues(rootAnimationIds)
+  const rootAnimated = useInspectorAnimatedValues(rootAnimationIds)
   const rootAnim = rootId
-    ? playing
-      ? getAnimEngine().getSnapshot()[rootId]
-      : rootAnimated[rootId]
+    ? rootAnimated[rootId]
     : undefined
   const liveRootFill =
     rootAnim?.fill !== undefined
@@ -952,7 +952,7 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
 
           <LayoutSection
             nodeId={root.id}
-            layout={root.layout}
+            layout={liveInspectorLayout(root.layout, rootAnim)}
             onPatch={(patch) => {
               api.setNodeProperty(root.id, 'layout', {
                 ...root.layout,
@@ -1010,6 +1010,9 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
  *   - The Clip toggle appears only when every selected node is a frame.
  */
 function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
+  const animationIds = useMemo(() => nodes.map((node) => node.id), [nodes])
+  const animated = useInspectorAnimatedValues(animationIds)
+  const liveNodes = nodes.map((node) => liveInspectorNode(node, animated[node.id]))
   const setSelection = useUI((s) => s.setSelection)
   const selection = useUI((s) => s.selection)
   const recording = useUI((s) => s.recording)
@@ -1203,64 +1206,64 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   }
 
   // Shared values across the selection — `mixed` means they disagree.
-  const cVisible = common(nodes, (n) => n.visible)
-  const cLocked = common(nodes, (n) => n.locked)
-  const cZIndex = common(nodes, (n) => n.zIndex)
+  const cVisible = common(liveNodes, (n) => n.visible)
+  const cLocked = common(liveNodes, (n) => n.locked)
+  const cZIndex = common(liveNodes, (n) => n.zIndex)
 
-  const cX = common(nodes, (n) => n.transform.x)
-  const cY = common(nodes, (n) => n.transform.y)
-  const cZ = common(nodes, (n) => n.transform.z)
-  const cRot = common(nodes, (n) => n.transform.rotation)
-  const cRotX = common(nodes, (n) => n.transform.rotationX)
-  const cRotY = common(nodes, (n) => n.transform.rotationY)
-  const cSX = common(nodes, (n) => n.transform.scaleX)
-  const cSY = common(nodes, (n) => n.transform.scaleY)
-  const cSpace = common(nodes, (n) => n.transform.space ?? 'local')
+  const cX = common(liveNodes, (n) => n.transform.x)
+  const cY = common(liveNodes, (n) => n.transform.y)
+  const cZ = common(liveNodes, (n) => n.transform.z)
+  const cRot = common(liveNodes, (n) => n.transform.rotation)
+  const cRotX = common(liveNodes, (n) => n.transform.rotationX)
+  const cRotY = common(liveNodes, (n) => n.transform.rotationY)
+  const cSX = common(liveNodes, (n) => n.transform.scaleX)
+  const cSY = common(liveNodes, (n) => n.transform.scaleY)
+  const cSpace = common(liveNodes, (n) => n.transform.space ?? 'local')
   const cRenderMode =
     renderModeNodes.length > 0
       ? common(renderModeNodes, (n) => n.transform.renderMode ?? 'flat')
       : null
 
   const cW = allHaveSize
-    ? common(nodes, (n) => ('size' in n ? n.size.width : 0))
+    ? common(liveNodes, (n) => ('size' in n ? n.size.width : 0))
     : null
   const cH = allHaveSize
-    ? common(nodes, (n) => ('size' in n ? n.size.height : 0))
+    ? common(liveNodes, (n) => ('size' in n ? n.size.height : 0))
     : null
 
-  const cOpacity = common(nodes, (n) => n.appearance.opacity)
+  const cOpacity = common(liveNodes, (n) => n.appearance.opacity)
   const cBlendMode = common(
-    nodes,
+    liveNodes,
     (n) => n.appearance.blendMode ?? 'normal',
   )
   // Fill reads the full Fill shape — solid, linear, or radial. common()
   // does structural JSON equality so two nodes with the same gradient
   // stops + angle still resolve to a non-mixed value.
-  const cFill = common(nodes, (n) => n.appearance.fill)
-  const cStroke = common(nodes, (n) => n.appearance.stroke)
-  const cCorner = common(nodes, (n) => n.appearance.cornerRadius)
+  const cFill = common(liveNodes, (n) => n.appearance.fill)
+  const cStroke = common(liveNodes, (n) => n.appearance.stroke)
+  const cCorner = common(liveNodes, (n) => n.appearance.cornerRadius)
   const cClip = allFrames
-    ? common(nodes, (n) => (n.kind === 'frame' ? n.clipsContent : false))
+    ? common(liveNodes, (n) => (n.kind === 'frame' ? n.clipsContent : false))
     : null
 
   const cLayout = allHaveLayout
     ? {
-        mode: common(nodes, (n) => ('layout' in n ? n.layout.mode : 'none')),
-        direction: common(nodes, (n) =>
+        mode: common(liveNodes, (n) => ('layout' in n ? n.layout.mode : 'none')),
+        direction: common(liveNodes, (n) =>
           'layout' in n ? n.layout.direction : 'row',
         ),
-        justify: common(nodes, (n) =>
+        justify: common(liveNodes, (n) =>
           'layout' in n ? n.layout.justify : 'start',
         ),
-        align: common(nodes, (n) => ('layout' in n ? n.layout.align : 'start')),
-        gap: common(nodes, (n) => ('layout' in n ? n.layout.gap : 0)),
-        wrap: common(nodes, (n) => ('layout' in n ? n.layout.wrap : false)),
-        columns: common(nodes, (n) => ('layout' in n ? n.layout.columns : 1)),
-        rowGap: common(nodes, (n) => ('layout' in n ? n.layout.rowGap : 0)),
-        columnGap: common(nodes, (n) =>
+        align: common(liveNodes, (n) => ('layout' in n ? n.layout.align : 'start')),
+        gap: common(liveNodes, (n) => ('layout' in n ? n.layout.gap : 0)),
+        wrap: common(liveNodes, (n) => ('layout' in n ? n.layout.wrap : false)),
+        columns: common(liveNodes, (n) => ('layout' in n ? n.layout.columns : 1)),
+        rowGap: common(liveNodes, (n) => ('layout' in n ? n.layout.rowGap : 0)),
+        columnGap: common(liveNodes, (n) =>
           'layout' in n ? n.layout.columnGap : 0,
         ),
-        padding: common(nodes, (n) =>
+        padding: common(liveNodes, (n) =>
           'layout' in n
             ? n.layout.padding
             : { top: 0, right: 0, bottom: 0, left: 0 },
@@ -1864,7 +1867,11 @@ function MultiBendSection({
     const deformation = normalizeLayerDeformation(node.deformation)
     return deformation?.kind === 'bend' ? deformation : null
   }
-  const bendForNode = (node: Node) => storedBend(node) ?? freshBendDeformation()
+  const animationIds = useMemo(() => nodes.map((node) => node.id), [nodes])
+  const animated = useInspectorAnimatedValues(animationIds)
+  const bendForNode = (node: Node) =>
+    resolveBendDeformation(node.deformation, animated[node.id], 1, 1)
+      ?? freshBendDeformation()
   const bendPresence = common(nodes, (node) => storedBend(node) !== null)
   const hasAnyBend = nodes.some((node) => storedBend(node) !== null)
   const hasBendOnEveryLayer = nodes.every(
@@ -1995,7 +2002,7 @@ function MultiBendSection({
       for (const node of nodes) {
         const latest = api.getNode(node.id)
         if (!latest) continue
-        const current = bendForNode(latest)
+        const current = storedBend(latest) ?? freshBendDeformation()
         const resolved = typeof patch === 'function' ? patch(current) : patch
         const next = normalizeLayerDeformation({ ...current, ...resolved })
         if (next) api.setNodeProperty(node.id, 'deformation', next)
@@ -3118,7 +3125,6 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
-  const playing = useUI((state) => state.playing)
   const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
   const setFocusPickingCameraId = useUI(
     (state) => state.setFocusPickingCameraId,
@@ -3140,14 +3146,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   // Editing a value here still writes the static + stamps the active
   // track via `patchTransform` / `stampForPatch`, so types are
   // consistent in both directions.
+  // Keep this subscription during playback: a one-off getSnapshot()
+  // read does not notify React when the next animation frame arrives.
   const inspectorAnimationIds = useMemo(
-    () => (playing ? [] : [node.id]),
-    [node.id, playing],
+    () => [node.id],
+    [node.id],
   )
-  const animMap = useAnimatedValues(inspectorAnimationIds)
-  const anim = playing
-    ? getAnimEngine().getSnapshot()[node.id]
-    : animMap[node.id]
+  const animMap = useInspectorAnimatedValues(inspectorAnimationIds)
+  const anim = animMap[node.id]
   const liveX = anim?.x ?? node.transform.x
   const liveY = anim?.y ?? node.transform.y
   const liveZ = anim?.z ?? node.transform.z
@@ -4972,7 +4978,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {'layout' in node && (
         <LayoutSection
           nodeId={node.id}
-          layout={node.layout}
+          layout={liveInspectorLayout(node.layout, anim)}
           onPatch={patchLayout}
         />
       )}
@@ -7069,7 +7075,7 @@ function ComponentVariablesSection({
     () => (node.kind === 'instance' ? [node.id] : []),
     [node.id, node.kind],
   )
-  const animatedValues = useAnimatedValues(animationNodeIds)
+  const animatedValues = useInspectorAnimatedValues(animationNodeIds)
   const component =
     node.kind === 'component' ? node : api.getNode(node.componentId)
   if (!component || component.kind !== 'component') return null
@@ -9261,12 +9267,12 @@ function MediaSection({
       node.kind === 'video' ? isVideoFile(candidate) : isAudioFile(candidate),
     )
     if (!file) return
-    const normalized =
-      node.kind === 'video'
-        ? await normalizeVideoFileForBrowser(file)
-        : { file, normalized: false }
-    const sourceFile = normalized.file
-    const src = await readMediaFileAsDataUrl(sourceFile)
+    try {
+    const normalized = node.kind === 'video'
+      ? await prepareVideoSource(file)
+      : { src: window.hypermotion?.media?.importFile ? await window.hypermotion.media.importFile(file) : await readMediaFileAsDataUrl(file), normalized: false }
+    const sourceFile = file
+    const src = normalized.src
     const meta =
       node.kind === 'video' ? await decodeVideoMeta(src) : await decodeAudioMeta(src)
     const poster =
@@ -9302,6 +9308,10 @@ function MediaSection({
         api.setNodeProperty(node.id, 'beatGrid', undefined)
       }
     }, 'media-replace')
+    useToast.getState().show({ tone: 'success', title: 'Media replaced', durationMs: 3000 })
+    } catch (error) {
+      useToast.getState().show({ tone: 'error', title: 'Media could not be replaced', description: error instanceof Error ? error.message : 'Please try again.', durationMs: 10000 })
+    }
   }
 
   return (
@@ -9382,19 +9392,48 @@ function MediaSection({
       <MediaClipEditing node={node} api={api} />
       {node.kind === 'video' ? (
         <>
+          <FieldRow label="Hide outside clip">
+            <CheckboxField value={node.clipToRange ?? false}
+              onCommit={(value) => api.setNodeProperty(node.id, 'clipToRange', value)} />
+          </FieldRow>
+          <FieldRow label="Deform">
+            <input
+              type="checkbox"
+              aria-label="Deform video"
+              checked={node.fit === 'fill'}
+              onChange={(event) => api.setNodeProperty(node.id, 'fit', event.target.checked ? 'fill' : 'cover')}
+            />
+          </FieldRow>
+          <p className="mb-3 text-[11px] text-text-muted">
+            Off: corner handles preserve proportions; edge handles crop. On: allow stretching.
+          </p>
           <FieldRow label="Fit">
             <SelectField<Extract<Node, { kind: 'video' }>['fit']>
               value={node.fit}
               options={[
-                { value: 'cover', label: 'Cover' },
-                { value: 'contain', label: 'Contain' },
-                { value: 'fill', label: 'Fill' },
+                { value: 'cover', label: 'Crop to frame' },
+                { value: 'contain', label: 'Fit entire video' },
+                { value: 'fill', label: 'Stretch (Deform)' },
                 { value: 'none', label: 'None' },
               ]}
               onCommit={(fit) => api.setNodeProperty(node.id, 'fit', fit)}
               width="w-full"
             />
           </FieldRow>
+          <FieldRow label="Crop X">
+            <NumberField value={(node.crop?.x ?? 0.5) * 100} suffix="%"
+              onCommit={(v) => api.setNodeProperty(node.id, 'crop', { x: Math.max(0, Math.min(1, v / 100)), y: node.crop?.y ?? 0.5, zoom: node.crop?.zoom ?? 1 })} />
+          </FieldRow>
+          <FieldRow label="Crop Y">
+            <NumberField value={(node.crop?.y ?? 0.5) * 100} suffix="%"
+              onCommit={(v) => api.setNodeProperty(node.id, 'crop', { x: node.crop?.x ?? 0.5, y: Math.max(0, Math.min(1, v / 100)), zoom: node.crop?.zoom ?? 1 })} />
+          </FieldRow>
+          <FieldRow label="Crop zoom">
+            <NumberField value={(node.crop?.zoom ?? 1) * 100} suffix="%"
+              onCommit={(v) => api.setNodeProperty(node.id, 'crop', { x: node.crop?.x ?? 0.5, y: node.crop?.y ?? 0.5, zoom: Math.max(1, Math.min(10, v / 100)) })} />
+          </FieldRow>
+          <button type="button" className="mb-3 text-xs text-text-muted hover:text-text"
+            onClick={() => api.setNodeProperty(node.id, 'crop', { x: 0.5, y: 0.5, zoom: 1 })}>Reset crop</button>
           <FieldRow label="Size">
             <div className="flex min-w-0 flex-1 justify-end gap-1">
               <button

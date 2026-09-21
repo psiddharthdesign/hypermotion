@@ -17,6 +17,8 @@ describe('video source preservation', () => {
 
   function mockVideo(outcome: 'decoded' | 'unsupported' | 'timeout') {
     const video = {
+      readyState: 2,
+      duration: 0,
       videoWidth: 3776,
       videoHeight: 2160,
       onloadeddata: null as null | (() => void),
@@ -65,8 +67,9 @@ describe('video source preservation', () => {
     vi.useFakeTimers()
     const { video, revoke } = mockVideo('timeout')
     const result = canDecodeVideoFile(new File([''], 'stalled.mp4'))
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(await result).toBe(false)
+    const rejected = expect(result).rejects.toThrow('Video checking took too long')
+    await vi.advanceTimersByTimeAsync(30_000)
+    await rejected
     expect(video.pause).toHaveBeenCalled()
     expect(revoke).toHaveBeenCalledWith('blob:video-probe')
   })

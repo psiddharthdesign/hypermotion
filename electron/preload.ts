@@ -18,7 +18,7 @@
  *  - a generic invoke pinhole for registered IPC channels
  *  - an event subscription helper for headless export triggers
  */
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 const clipboard = {
   readTextSync: (): string =>
@@ -29,13 +29,30 @@ const clipboard = {
     ipcRenderer.invoke('clipboard:readText') as Promise<string>,
   writeText: (text: string): Promise<void> =>
     ipcRenderer.invoke('clipboard:writeText', text) as Promise<void>,
-  readFiles: (): Promise<Array<{ name: string; type: string; bytes: Uint8Array }>> =>
+  readFiles: (): Promise<Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>> =>
     ipcRenderer.invoke('clipboard:readFiles') as Promise<
-      Array<{ name: string; type: string; bytes: Uint8Array }>
+      Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>
     >,
 }
 
 const media = {
+  importFile: async (file: File): Promise<string> => {
+    const nativePath = webUtils.getPathForFile(file)
+    if (nativePath) return ipcRenderer.invoke('media:import-file', nativePath)
+    const src = await ipcRenderer.invoke('media:begin-upload', { name: file.name, size: file.size }) as string
+    try {
+      for (let offset = 0; offset < file.size; offset += 8 * 1024 * 1024) {
+        const bytes = new Uint8Array(await file.slice(offset, offset + 8 * 1024 * 1024).arrayBuffer())
+        await ipcRenderer.invoke('media:upload-chunk', { src, bytes })
+      }
+      await ipcRenderer.invoke('media:end-upload', { src })
+      return src
+    } catch (error) {
+      await ipcRenderer.invoke('media:end-upload', { src, abort: true }).catch(() => {})
+      throw error
+    }
+  },
+  normalizeFile: (src: string): Promise<string> => ipcRenderer.invoke('media:normalize-file', src),
   normalizeVideo: (payload: {
     name: string
     type: string
@@ -95,9 +112,11 @@ declare global {
         writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
-        readFiles: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+        readFiles: () => Promise<Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>>
       }
       media: {
+        importFile?: (file: File) => Promise<string>
+        normalizeFile?: (src: string) => Promise<string>
         normalizeVideo: (payload: {
           name: string
           type: string

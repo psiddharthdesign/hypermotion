@@ -45,6 +45,7 @@ import { importAudioFile } from '@/ui/importMedia'
 import { MasterTimeField } from '@/ui/MasterTimeField'
 import { masterTimelineRevealScrollLeft } from '@/ui/masterTimelineViewport'
 import { TimelineDurationControl } from '@/ui/TimelineDurationControl'
+import { masterPlaybackClock } from './masterPlaybackClock'
 
 const LABEL_COLUMN_WIDTH = 184
 const MIN_PIXELS_PER_SECOND = 72
@@ -174,15 +175,10 @@ export function MasterTimeline() {
   }, [syncRulerScroll, width])
 
   useEffect(() => {
-    return useUI.subscribe((state, previous) => {
-      if (
-        !state.playing ||
-        state.previewScope !== 'sequence' ||
-        state.playhead === previous.playhead
-      ) {
-        return
-      }
-      revealMasterTime(state.playhead)
+    return masterPlaybackClock.subscribe(() => {
+      const state = useUI.getState()
+      if (!state.playing || state.previewScope !== 'sequence') return
+      revealMasterTime(masterPlaybackClock.getSnapshot())
     })
   }, [revealMasterTime])
 
@@ -1007,14 +1003,29 @@ function MasterPlayheadLine({
   pixelsPerSecond: number
   rulerOnly?: boolean
 }) {
-  const playhead = useUI((state) => state.playhead)
+  const lineRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const update = () => {
+      const state = useUI.getState()
+      const time = state.playing && state.previewScope === 'sequence'
+        ? masterPlaybackClock.getSnapshot() : state.playhead
+      if (lineRef.current) {
+        lineRef.current.style.transform = `translate3d(${Math.max(0, time * pixelsPerSecond)}px, 0, 0)`
+      }
+    }
+    update()
+    const unsubscribeClock = masterPlaybackClock.subscribe(update)
+    const unsubscribeUI = useUI.subscribe(update)
+    return () => { unsubscribeClock(); unsubscribeUI() }
+  }, [pixelsPerSecond])
   return (
     <div
+      ref={lineRef}
       className={[
         'pointer-events-none absolute top-0 z-20 w-px bg-playhead',
         rulerOnly ? 'h-full' : 'h-full',
       ].join(' ')}
-      style={{ left: Math.max(0, playhead * pixelsPerSecond) }}
+      style={{ left: 0, willChange: 'transform' }}
     >
       {!rulerOnly ? (
         <span className="absolute -top-0.5 -left-1 h-2 w-2 rotate-45 bg-playhead" />

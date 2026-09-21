@@ -8,6 +8,7 @@ import { getAnimEngine } from '@/anim/engine'
 import { DEFAULT_TEXT_ANIMATION } from '@/anim/textAnimations'
 import { resolveProgramCamera } from '@/sequence'
 import { resolvePreviewAudioClock } from '@/audio/previewPlaybackClock'
+import { videoVisibleAtTime } from '@/scene/mediaClip'
 import { paperShaderFrame } from '@/render/paperShaderRegistry'
 import { createProjectAPI } from './doc'
 import { sceneSplitTime } from './splitScene'
@@ -68,7 +69,7 @@ describe('split scene', () => {
 
   it('continues looped and trimmed media, text effects, shaders and camera cuts', () => {
     const { api, root, project, source } = fixture()
-    const videoId = api.createNode('video', root, { name: 'Video', duration: 10, startTime: 1, trimStart: 2, trimEnd: 6, playbackRate: 2, loop: true })
+    const videoId = api.createNode('video', root, { name: 'Video', duration: 10, startTime: 1, trimStart: 2, trimEnd: 6, playbackRate: 2, loop: true, clipToRange: true })
     const textId = api.createNode('text', root, { name: 'Text', text: 'Hello', textAnimation: { ...DEFAULT_TEXT_ANIMATION, startTime: 1 } })
     const shaderId = api.createNode('shader', root, { name: 'Shader', speed: 1.2 })
     const camera = api.createNode('camera', null, { name: 'Close up' })
@@ -83,6 +84,7 @@ describe('split scene', () => {
     expect(copyVideo.startTime).toBe(-2)
     for (const time of [0, 0.5, 2, 4]) {
       expect(resolvePreviewAudioClock({ ...copyVideo, timelineTime: time })).toEqual(resolvePreviewAudioClock({ ...originalVideo, timelineTime: time + 3 }))
+      expect(videoVisibleAtTime(copyVideo, time)).toBe(videoVisibleAtTime(originalVideo, time + 3))
     }
     expect(children.find((node) => node.name === 'Text')).toMatchObject({ textAnimation: { startTime: -2 } })
     expect(api.getNode(textId)).toMatchObject({ textAnimation: { startTime: 1 } })

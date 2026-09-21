@@ -34,9 +34,11 @@ declare global {
         writeTextSync?: (text: string) => boolean
         readText: () => Promise<string>
         writeText: (text: string) => Promise<void>
-        readFiles?: () => Promise<Array<{ name: string; type: string; bytes: Uint8Array }>>
+        readFiles?: () => Promise<Array<{ name: string; type: string; bytes?: Uint8Array; src?: string }>>
       }
       media?: {
+        importFile?: (file: File) => Promise<string>
+        normalizeFile?: (src: string) => Promise<string>
         normalizeVideo?: (payload: {
           name: string
           type: string
@@ -139,6 +141,7 @@ export function useFileMenu(): void {
         })) as boolean
         if (!ok) throw new Error('The project could not be written. Check the destination folder and available storage.')
         setFile(path, Date.now())
+        reportSaveSuccess()
       })().catch(reportSaveError)
     })
 
@@ -157,6 +160,7 @@ export function useFileMenu(): void {
         })) as boolean
         if (!ok) throw new Error('The project could not be written. Check the destination folder and available storage.')
         setFile(chosen, Date.now())
+        reportSaveSuccess()
       })().catch(reportSaveError)
     })
 
@@ -196,4 +200,8 @@ function reportSaveError(error: unknown) {
   console.error('[save] Failed to save project', error)
   useToast.getState().show({ tone: 'error', title: 'Project could not be saved',
     description: error instanceof Error ? error.message : String(error), durationMs: 10000 })
+}
+
+function reportSaveSuccess() {
+  useToast.getState().show({ tone: 'success', title: 'Project saved', description: 'Keep the accompanying .assets folder beside the project when moving or sharing it.', durationMs: 7000 })
 }

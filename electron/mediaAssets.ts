@@ -14,8 +14,8 @@ export function mediaAssetName(source: string): string | null {
 export class MediaAssets {
   private directories: string[] = []
 
-  constructor(cacheDirectory?: string) {
-    if (cacheDirectory) this.directories.push(path.resolve(cacheDirectory))
+  constructor(...cacheDirectories: string[]) {
+    this.directories = cacheDirectories.map(directory => path.resolve(directory))
   }
 
   registerProject(projectPath: string): void {
@@ -82,9 +82,9 @@ export function serveMediaAsset(assets: MediaAssets, request: Request): Response
   }
   const size = fs.statSync(file).size
   const mimeTypes: Record<string, string> = {
-    '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+    '.m4v': 'video/mp4', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
     '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4',
-    '.ogg': 'audio/ogg', '.ogv': 'video/ogg', '.aac': 'audio/aac',
+    '.flac': 'audio/flac', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.ogg': 'audio/ogg', '.ogv': 'video/ogg', '.aac': 'audio/aac',
     '.png': 'image/png', '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   }

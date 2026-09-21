@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { attachMediaSource } from './mediaFileSource'
 import type { SceneAPI } from '@/scene/doc'
 import type { NodeId } from '@/scene'
 import { importImageFiles, isImageFile } from '@/ui/importImage'
@@ -8,7 +9,8 @@ import { importMediaFiles, isMediaFile } from '@/ui/importMedia'
 export interface ClipboardFilePayload {
   name: string
   type: string
-  bytes: Uint8Array | ArrayBuffer | number[]
+  bytes?: Uint8Array | ArrayBuffer | number[]
+  src?: string
 }
 
 export async function importClipboardFiles(
@@ -50,6 +52,8 @@ export async function readElectronClipboardFiles(): Promise<File[]> {
 
 function payloadsToFiles(payloads: ClipboardFilePayload[]): File[] {
   return payloads.map((payload) => {
+    if (payload.src) return attachMediaSource(new File([], payload.name, { type: payload.type }), payload.src)
+    if (!payload.bytes) throw new Error('Clipboard file contents are unavailable')
     const bytes =
       payload.bytes instanceof ArrayBuffer
         ? new Uint8Array(payload.bytes)

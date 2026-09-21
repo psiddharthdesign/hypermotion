@@ -8,6 +8,7 @@ import { FigmaPluginSetupButton } from '@/ui/FigmaPluginSetup'
 import { useExportProgress } from '@/export'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Minus, Plus } from 'lucide-react'
 
 /**
  * Top bar — two-zone layout, Apple HIG / Linear voice.
@@ -151,33 +152,33 @@ export function TopBar() {
           ============================================================ */}
       <div className="flex shrink-0 items-center gap-1">
         {/* Zoom — segmented control. Compact, single shape. */}
-        <div className="hm-control-surface flex h-[30px] items-center overflow-hidden">
+        <div className="hm-control-surface flex h-8 items-center overflow-hidden">
           <button
             title="Zoom out (Cmd −)"
             onClick={() => centerZoom(zoom / 1.25)}
-            className="flex h-[28px] w-7 items-center justify-center text-text-muted hover:text-text"
+            className="flex h-full w-8 items-center justify-center text-text-muted hover:bg-control hover:text-text"
           >
-            −
+            <Minus size={16} aria-hidden="true" />
           </button>
           <button
             title="Reset view (Cmd 0)"
             onClick={() => resetView()}
-            className="flex h-[28px] min-w-[44px] items-center justify-center px-1 font-mono text-[10px] tabular-nums text-text-muted hover:text-text"
+            className="flex h-full min-w-[44px] items-center justify-center px-1 text-[12px] font-medium tabular-nums text-text-muted hover:text-text"
           >
             {Math.round(zoom * 100)}%
           </button>
           <button
             title="Zoom in (Cmd +)"
             onClick={() => centerZoom(zoom * 1.25)}
-            className="flex h-[28px] w-7 items-center justify-center text-text-muted hover:text-text"
+            className="flex h-full w-8 items-center justify-center text-text-muted hover:bg-control hover:text-text"
           >
-            +
+            <Plus size={16} aria-hidden="true" />
           </button>
           <button
             type="button"
             title="Fit canvas to screen"
             onClick={fitToScreen}
-            className="flex h-[28px] items-center justify-center border-l border-border px-2.5 text-[10px] font-medium text-text-muted hover:text-text"
+            className="flex h-full items-center justify-center border-l border-border px-3 text-[12px] font-medium text-text-muted hover:text-text"
           >
             Fit to screen
           </button>
@@ -462,7 +463,14 @@ function ThemeToggle() {
 }
 
 function PreviewButton() {
+  const timelineScope = useUI((state) => state.timelineScope)
+  const setPreviewScope = useUI((state) => state.setPreviewScope)
+
   const openPreview = () => {
+    // Preview the surface the user is actually editing. `previewScope` can
+    // otherwise remain on Master after the user has returned to Scene (or the
+    // reverse), making Preview silently play a different clock/composition.
+    setPreviewScope(timelineScope)
     const url = new URL(window.location.href)
     url.searchParams.set('preview', '1')
     url.searchParams.delete('render-window')

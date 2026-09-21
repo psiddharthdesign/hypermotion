@@ -15,6 +15,7 @@ export interface DofSampleBudgetContext {
 }
 
 export interface PlaneDepthOfFieldShaderState {
+  clipMap?: boolean
   enabled: boolean
   blurPx: number
   minimumBlurPx: number
@@ -60,6 +61,7 @@ export interface PlaneBendShaderState {
 }
 
 interface DofShaderUniforms {
+  hmClipMap: { value: number }
   hmDofEnabled: { value: number }
   hmDofBlur: { value: number }
   hmDofMinBlur: { value: number }
@@ -93,7 +95,7 @@ interface DofShaderUniforms {
   hmBendRoughness: { value: number }
 }
 
-const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-stack-v14'
+const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-stack-v15'
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const kernelCache = new Map<string, THREE.Vector2[]>()
 
@@ -193,6 +195,7 @@ export function installDepthOfFieldShader(material: THREE.MeshBasicMaterial) {
     return
   }
   const uniforms: DofShaderUniforms = {
+    hmClipMap: { value: 0 },
     hmDofEnabled: { value: 0 },
     hmDofBlur: { value: 0 },
     hmDofMinBlur: { value: 0 },
@@ -258,6 +261,7 @@ export function installDepthOfFieldShader(material: THREE.MeshBasicMaterial) {
         `#include <map_pars_fragment>
 
 uniform float hmDofEnabled;
+uniform float hmClipMap;
 uniform float hmDofBlur;
 uniform float hmDofMinBlur;
 uniform vec2 hmPlaneSize;
@@ -386,6 +390,8 @@ varying vec3 hmBentViewPosition;`,
       vec3( hmBendSpecular * hmHighlight * sampledDiffuseColor.a );
   }
 
+  // Clip after derivative-based sampling so neighboring fragments stay valid.
+  if (hmClipMap > 0.5 && (any(lessThan(vMapUv, vec2(0.0))) || any(greaterThan(vMapUv, vec2(1.0))))) discard;
   diffuseColor *= sampledDiffuseColor;
 
 #endif`,
@@ -399,6 +405,7 @@ function hasCurrentUniformSchema(value: unknown): value is DofShaderUniforms {
   if (!value || typeof value !== 'object') return false
   const uniforms = value as Partial<Record<keyof DofShaderUniforms, unknown>>
   return [
+    'hmClipMap',
     'hmDofEnabled',
     'hmDofBlur',
     'hmDofMinBlur',
@@ -440,6 +447,7 @@ export function updateDepthOfFieldShader(
   installDepthOfFieldShader(material)
   const uniforms = material.userData.hyperMotionDofUniforms as DofShaderUniforms
   uniforms.hmDofEnabled.value = state.enabled && state.blurPx > 0.05 ? 1 : 0
+  uniforms.hmClipMap.value = state.clipMap ? 1 : 0
   uniforms.hmDofBlur.value = Math.max(0, state.blurPx)
   uniforms.hmDofMinBlur.value = Math.max(
     0,

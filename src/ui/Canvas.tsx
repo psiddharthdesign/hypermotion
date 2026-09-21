@@ -1,4 +1,4 @@
-import { isVideoVisibleAtTime } from '@/media/videoVisibility'
+import { syncMediaPlayback } from '@/media/syncPlayback'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
 import { useSequenceExportPreview } from '@/export/sequencePreview'
@@ -17,6 +17,8 @@ import {
   type CSSProperties,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { startVideoFrameLoop } from './videoFrameLoop'
+import { videoVisibleAtTime } from '@/scene/mediaClip'
 import {
   useSceneAPI,
   useSceneVersion,
@@ -35,7 +37,6 @@ import type {
   VectorNode,
 } from '@/scene'
 import type { Rect, SolvedLayout } from '@/layout'
-import { syncMediaPlayback } from '@/media/syncPlayback'
 import type { SceneAPI } from '@/scene/doc'
 import { useLayout } from '@/ui/hooks/useLayout'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
@@ -97,6 +98,7 @@ import {
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
 import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { resolveVideoCrop } from '@/render3d/videoFit'
 import {
   playbackPixelRatio,
   viewportPixelRatioForZoom,
@@ -326,7 +328,7 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     videoClockEnabled ||
     nodeTextClockEnabled ||
     paperShaderClockEnabled ||
-    temporalVhsEnabled
+    temporalVhsEnabled || props.playing === true
   const playbackClock = useAnimationPlaybackClock(playbackClockEnabled)
   const pausedPlayhead = useUI((state) =>
     state.playing ? null : state.playhead,
@@ -6342,7 +6344,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const inRange = playhead >= node.startTime && playhead < node.startTime + sceneClipLen
+    const inRange = playhead >= node.startTime && (node.loop || playhead < node.startTime + sceneClipLen)
     const shouldPlay = playing && inRange && clockRate > 0
     syncMediaPlayback(
       el,
@@ -6355,24 +6357,21 @@ function MediaVideoSource({ node }: MediaVideoProps) {
     const video = ref.current
     const canvas = canvasRef.current
     if (!video || !canvas) return
-    let raf = 0
-    const draw = () => {
+    return startVideoFrameLoop(video, () => {
       if (drawVideoToCanvas(video, canvas)) {
         setHasCanvasFrame(true)
       }
-      if (playing && !video.paused && !video.ended) {
-        raf = requestAnimationFrame(draw)
-      }
-    }
-    draw()
-    if (playing) raf = requestAnimationFrame(draw)
-    return () => {
-      if (raf) cancelAnimationFrame(raf)
-    }
+    }, playing)
   }, [playing, mediaReadyTick, playhead, node.src])
 
   if (!node.src) return null
   const poster = node.poster || localPoster || undefined
+  const crop = resolveVideoCrop(node.crop)
+  const cropStyle = {
+    objectPosition: `${crop.x * 100}% ${crop.y * 100}%`,
+    transform: `scale(${crop.zoom})`,
+    transformOrigin: `${crop.x * 100}% ${crop.y * 100}%`,
+  }
   const markVideoReady = () => {
     setDecodeError('')
     setMediaReadyTick((tick) => tick + 1)
@@ -6387,7 +6386,8 @@ function MediaVideoSource({ node }: MediaVideoProps) {
   }
 
   return (
-    <div style={{ position: 'absolute', inset: 0, visibility: isVideoVisibleAtTime(node, playhead) ? 'visible' : 'hidden' }}>
+    <>
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit', visibility: videoVisibleAtTime(node, playhead) ? 'visible' : 'hidden' }}>
       {poster ? (
         <img
           src={poster}
@@ -6402,6 +6402,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
             borderRadius: 'inherit',
             pointerEvents: 'none',
             zIndex: hasCanvasFrame ? 1 : 3,
+            ...cropStyle,
           }}
         />
       ) : null}
@@ -6416,6 +6417,7 @@ function MediaVideoSource({ node }: MediaVideoProps) {
           borderRadius: 'inherit',
           pointerEvents: 'none',
           zIndex: 2,
+          ...cropStyle,
         }}
       />
       <video
@@ -6429,7 +6431,6 @@ function MediaVideoSource({ node }: MediaVideoProps) {
         onLoadedData={markVideoReady}
         onCanPlay={markVideoReady}
         onSeeked={markVideoReady}
-        onTimeUpdate={markVideoReady}
         onError={() => {
           const el = ref.current
           setDecodeError(el?.error?.message || 'Video decode failed')
@@ -6453,7 +6454,8 @@ function MediaVideoSource({ node }: MediaVideoProps) {
           {decodeError}
         </div>
       ) : null}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -6506,6 +6508,9 @@ function clampLocal(
 ): number {
   const trimEnd = node.trimEnd || node.duration || 0
   if (t < node.trimStart) return node.trimStart
+  if (node.loop && trimEnd > node.trimStart) {
+    return node.trimStart + (t - node.trimStart) % (trimEnd - node.trimStart)
+  }
   if (t > trimEnd) return trimEnd
   return t
 }

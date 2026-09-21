@@ -2,6 +2,9 @@
 
 import type { SceneAPI } from '@/scene/doc'
 import type { NodeId, Transform } from '@/scene'
+import { mediaSourceForFile } from './mediaFileSource'
+import { useToast } from './toastStore'
+import { canDecodeVideoFile } from './videoCompatibility'
 
 /**
  * Import an audio / video file into the scene.
@@ -13,14 +16,9 @@ import type { NodeId, Transform } from '@/scene'
  * video) the natural display size. Different decode path, different
  * defaults, different Inspector surface — cleaner as its own module.
  *
- * MVP storage strategy: we stash the file as a base64 data URL on
- * `.src`. Heavy for big videos but keeps the Yjs doc self-contained
- * so "save → reopen" works with zero asset plumbing. Content-addressed
- * R2 storage lands with collab. Warn when files exceed a soft ceiling
- * so the user knows why their doc got slow.
+ * Desktop media lives in managed files; scenes retain small persistent references.
  */
 
-const DATA_URL_SOFT_CEILING_MB = 25
 export const VIDEO_PLAYBACK_PROXY_WARNING =
   'Video required conversion for playback. Its source resolution and frame rate were retained.'
 
@@ -31,14 +29,31 @@ export interface MediaImportOptions {
   startTime?: number
 }
 
+export async function prepareVideoSource(file: File): Promise<{ src: string; normalized: boolean }> {
+  const existing = mediaSourceForFile(file)
+  if (existing) return { src: existing, normalized: false }
+  const bridge = window.hypermotion?.media
+  let dataUrl: string
+  let normalized = false
+  if (bridge?.importFile) {
+    showImportStage(file, 'Copying video')
+    dataUrl = await bridge.importFile(file)
+  } else {
+    const result = await normalizeVideoFileForBrowser(file)
+    dataUrl = await readMediaFileAsDataUrl(result.file)
+    normalized = result.normalized
+  }
+  return { src: dataUrl, normalized }
+}
+
 export async function importVideoFile(
   file: File,
   api: SceneAPI,
   parent: NodeId | null,
   opts?: MediaImportOptions,
 ): Promise<NodeId> {
-  const normalized = await normalizeVideoFileForBrowser(file)
-  const dataUrl = await readMediaFileAsDataUrl(normalized.file)
+  const { src: dataUrl, normalized } = await prepareVideoSource(file)
+  showImportStage(file, 'Reading video details')
   const { width: natW, height: natH, duration } = await decodeVideoMeta(dataUrl)
   const poster = await captureVideoPoster(dataUrl, duration).catch(() => '')
 
@@ -68,10 +83,9 @@ export async function importVideoFile(
     scaleY: 1,
   }
 
-  warnIfLarge(file)
 
   const id = api.createNode('video', parent, {
-    name: normalized.file.name.replace(/\.[^.]+$/, '') || 'Video',
+    name: file.name.replace(/\.[^.]+$/, '') || 'Video',
     size: { width: w, height: h },
     position: 'absolute',
     transform,
@@ -93,7 +107,7 @@ export async function importVideoFile(
     startTime: 0,
     trimStart: 0,
     loop: false,
-    importWarning: normalized.normalized ? VIDEO_PLAYBACK_PROXY_WARNING : undefined,
+    importWarning: normalized ? VIDEO_PLAYBACK_PROXY_WARNING : undefined,
     workspaceOnly: opts?.workspaceOnly ?? false,
   } as Parameters<SceneAPI['createNode']>[2])
 
@@ -106,7 +120,9 @@ export async function importAudioFile(
   parent: NodeId | null,
   opts?: MediaImportOptions,
 ): Promise<NodeId> {
-  const dataUrl = await readMediaFileAsDataUrl(file)
+  const dataUrl = mediaSourceForFile(file) ?? (window.hypermotion?.media?.importFile
+    ? await window.hypermotion.media.importFile(file)
+    : await readMediaFileAsDataUrl(file))
   const { duration } = await decodeAudioMeta(dataUrl)
 
   const transform: Transform = {
@@ -123,7 +139,6 @@ export async function importAudioFile(
     scaleY: 1,
   }
 
-  warnIfLarge(file)
 
   const target = resolveAudioImportTarget(parent)
   const id = api.createNode('audio', target.parent, {
@@ -192,17 +207,22 @@ export async function importMediaFiles(
   opts?: MediaImportOptions,
 ): Promise<NodeId[]> {
   const ids: NodeId[] = []
+  const failures: string[] = []
   for (const file of Array.from(files)) {
     try {
       if (isVideoFile(file)) {
         ids.push(await importVideoFile(file, api, parent, opts))
       } else if (isAudioFile(file)) {
+        showImportStage(file, 'Importing audio')
         ids.push(await importAudioFile(file, api, parent, opts))
       }
     } catch (err) {
       console.warn('[importMediaFiles] failed to import', file.name, err)
+      failures.push(`${file.name}: ${err instanceof Error ? err.message : 'Import failed'}`)
     }
   }
+  if (failures.length) useToast.getState().show({ tone: 'error', title: 'Some media could not be imported', description: failures.join('\n'), durationMs: 15000 })
+  else if (ids.length) useToast.getState().show({ tone: 'success', title: 'Media imported', durationMs: 3000 })
   return ids
 }
 
@@ -225,6 +245,7 @@ export function isMediaFile(file: File): boolean {
 // ---------------------------------------------------------------------------
 
 export function readMediaFileAsDataUrl(file: File): Promise<string> {
+  if (file.size > 128 * 1024 * 1024) return Promise.reject(new Error('Open this file in the updated desktop app to import large media.'))
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
@@ -249,6 +270,7 @@ export async function normalizeVideoFileForBrowser(
     return { file, normalized: false }
   }
   try {
+    if (file.size > 128 * 1024 * 1024) throw new Error('Large video conversion requires file storage')
     const bytes = new Uint8Array(await file.arrayBuffer())
     console.info(
       `[importMedia] normalizing video ${file.name} (${file.size} bytes)`,
@@ -283,33 +305,7 @@ export async function normalizeVideoFileForBrowser(
   }
 }
 
-export function canDecodeVideoFile(file: File): Promise<boolean> {
-  return new Promise((resolve) => {
-    const video = document.createElement('video')
-    const url = URL.createObjectURL(file)
-    let settled = false
-    const finish = (decoded: boolean) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      video.onloadeddata = null
-      video.onerror = null
-      video.pause()
-      video.removeAttribute('src')
-      video.load()
-      URL.revokeObjectURL(url)
-      resolve(decoded)
-    }
-    const timeout = setTimeout(() => finish(false), 10_000)
-    video.preload = 'auto'
-    video.muted = true
-    video.playsInline = true
-    video.onloadeddata = () => finish(video.videoWidth > 0 && video.videoHeight > 0)
-    video.onerror = () => finish(false)
-    video.src = url
-    video.load()
-  })
-}
+export { canDecodeVideoFile } from './videoCompatibility'
 
 /**
  * Decode enough of a video to discover `videoWidth / videoHeight /
@@ -328,15 +324,18 @@ export function decodeVideoMeta(
 ): Promise<{ width: number; height: number; duration: number }> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
+    const cleanup = () => { clearTimeout(timer); video.onloadedmetadata = null; video.onerror = null; video.pause(); video.removeAttribute('src'); video.load() }
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Video details took too long to load. Please try again.')) }, 30000)
     video.preload = 'metadata'
     video.muted = true
     video.onloadedmetadata = () => {
       const width = video.videoWidth || 640
       const height = video.videoHeight || 360
       const duration = Number.isFinite(video.duration) ? video.duration : 0
+      cleanup()
       resolve({ width, height, duration })
     }
-    video.onerror = () => reject(new Error('video decode failed'))
+    video.onerror = () => { cleanup(); reject(new Error('This video could not be decoded.')) }
     video.src = dataUrl
   })
 }
@@ -344,12 +343,15 @@ export function decodeVideoMeta(
 export function decodeAudioMeta(dataUrl: string): Promise<{ duration: number }> {
   return new Promise((resolve, reject) => {
     const audio = document.createElement('audio')
+    const cleanup = () => { clearTimeout(timer); audio.onloadedmetadata = null; audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load() }
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Audio details took too long to load. Please try again.')) }, 30000)
     audio.preload = 'metadata'
     audio.onloadedmetadata = () => {
       const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+      cleanup()
       resolve({ duration })
     }
-    audio.onerror = () => reject(new Error('audio decode failed'))
+    audio.onerror = () => { cleanup(); reject(new Error('This audio could not be decoded.')) }
     audio.src = dataUrl
   })
 }
@@ -363,10 +365,15 @@ export function captureVideoPoster(
     video.preload = 'auto'
     video.muted = true
     video.playsInline = true
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Video thumbnail took too long to load')) }, 10000)
     const cleanup = () => {
+      clearTimeout(timer)
       video.onloadedmetadata = null
       video.onseeked = null
       video.onerror = null
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
     }
     video.onloadedmetadata = () => {
       try {
@@ -404,13 +411,6 @@ function previewTimeForDuration(duration: number): number {
   return Math.min(0.12, duration / 2)
 }
 
-function warnIfLarge(file: File): void {
-  const mb = file.size / (1024 * 1024)
-  if (mb > DATA_URL_SOFT_CEILING_MB) {
-    console.warn(
-      `[importMedia] ${file.name} is ${mb.toFixed(1)}MB. ` +
-        `The doc embeds media as base64 for MVP; expect slow saves. ` +
-        `Switch to an external asset store after collab lands.`,
-    )
-  }
+function showImportStage(file: File, title: string): void {
+  useToast.getState().show({ tone: 'loading', title, description: file.name })
 }

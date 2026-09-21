@@ -16,7 +16,7 @@ function fixture() {
     name: 'Interview', src: 'file:///original.mp4', duration: 20,
     trimStart: 2, trimEnd: 14, startTime: 1, playbackRate: 2,
     position: 'absolute', size: { width: 640, height: 360 },
-    fit: 'contain',
+    fit: 'contain', crop: { x: 0.2, y: 0.7, zoom: 1.4 },
   })
   api.setTrack({ id: 'motion', nodeId: id, propertyId: 'transform.y',
     defaultEasing: 'ease-in-out', keyframes: [
@@ -34,7 +34,7 @@ describe('non-destructive media editing', () => {
     expect(left).toMatchObject({ trimStart: 2, trimEnd: 8, startTime: 1 })
     expect(right).toMatchObject({ trimStart: 8, trimEnd: 14, startTime: 4,
       src: 'file:///original.mp4', playbackRate: 2, fit: 'contain',
-      size: { width: 640, height: 360 } })
+      size: { width: 640, height: 360 }, crop: { x: 0.2, y: 0.7, zoom: 1.4 } })
     if (left.kind !== 'video' || right.kind !== 'video') throw new Error('Expected videos')
     expect(mediaClipRange(left).duration + mediaClipRange(right).duration).toBe(6)
     expect(videoVisibleAtTime(left, 3.999)).toBe(true)

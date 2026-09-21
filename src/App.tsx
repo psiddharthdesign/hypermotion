@@ -52,6 +52,10 @@ import {
   resolvePreviewAudioClock,
   shouldSeekPreviewMediaElement,
 } from '@/audio/previewPlaybackClock'
+import {
+  previewDurationForScope,
+  previewWorkAreaForScope,
+} from '@/ui/previewTiming'
 
 /**
  * App shell for hyper-motion.
@@ -98,7 +102,13 @@ export default function App() {
       event.preventDefault()
       const url = new URL(window.location.href)
       if (isPreview) url.searchParams.delete('preview')
-      else url.searchParams.set('preview', '1')
+      else {
+        const ui = useUI.getState()
+        // Match the toolbar button: Cmd/Ctrl+P previews the currently visible
+        // Scene or Master timeline, never a stale preview scope.
+        ui.setPreviewScope(ui.timelineScope)
+        url.searchParams.set('preview', '1')
+      }
       url.searchParams.delete('render-window')
       url.searchParams.delete('requestId')
       window.history.pushState(null, '', url.toString())
@@ -780,15 +790,30 @@ function PreviewShell() {
   const sceneVersion = useSceneVersion()
   const meta = api.getMeta()
   const exportItemIds = useSequenceExportPreview((state) => state.itemIds)
-  const sequenceTimeMap = useMemo(() => {
-    void sceneVersion
-    return project.getSequenceTimeMap(exportItemIds)
-  }, [project, sceneVersion, exportItemIds])
-  const duration = previewScope === 'sequence' ? sequenceTimeMap.duration : Math.max(0.1, meta.duration)
+  const sequenceTimeMap = useMemo(
+    () => project.getSequenceTimeMap(exportItemIds),
+    // Scene activation during Master playback updates the compatibility
+    // projection. Rebuild from project data so the Master duration remains
+    // stable while the active scene changes underneath the preview.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project, sceneVersion, exportItemIds],
+  )
+  const duration = previewDurationForScope(
+    previewScope,
+    meta.duration,
+    sequenceTimeMap.duration,
+  )
   const frameStep = 1 / Math.max(1, meta.frameRate)
   const minWorkArea = Math.max(frameStep, 0.05)
+  // A scene work area belongs to that scene. Applying it to Master preview
+  // clips the sequence as soon as playback activates another composition.
+  const previewWorkArea = previewWorkAreaForScope(
+    previewScope,
+    storedWorkArea,
+    duration,
+  )
   const normalizedWorkArea = normalizePreviewWorkArea(
-    previewScope === 'sequence' ? { start: 0, end: duration } : storedWorkArea ?? { start: 0, end: duration },
+    previewWorkArea,
     duration,
     minWorkArea,
   )
@@ -854,7 +879,9 @@ function PreviewShell() {
     }
 
     clearSelection()
-    setPlayhead(0)
+    // Respect an authored Scene work area. Master starts at the beginning of
+    // the full sequence because scene-local work areas must not clip it.
+    setPlayhead(normalizedWorkArea.start)
     setPlaying(true)
     fitPreview()
     window.addEventListener('resize', fitPreview)
@@ -873,6 +900,7 @@ function PreviewShell() {
     setPlayhead,
     setPlaying,
     setView,
+    normalizedWorkArea.start,
   ])
 
   const seekPreview = (next: number) => {
@@ -893,6 +921,7 @@ function PreviewShell() {
   }
 
   useEffect(() => {
+    if (previewScope !== 'scene') return
     const next =
       compositionWorkAreaStart !== undefined &&
       compositionWorkAreaEnd !== undefined
@@ -905,12 +934,14 @@ function PreviewShell() {
   }, [
     compositionWorkAreaEnd,
     compositionWorkAreaStart,
+    previewScope,
     sceneVersion,
     setStoredWorkArea,
   ])
 
   useEffect(() => {
-    if (previewScope === 'sequence' || !storedWorkArea) return
+    if (previewScope !== 'scene') return
+    if (!storedWorkArea) return
     const next = normalizePreviewWorkArea(
       storedWorkArea,
       duration,
@@ -924,9 +955,9 @@ function PreviewShell() {
     }
   }, [
     commitPreviewWorkArea,
-    previewScope,
     duration,
     minWorkArea,
+    previewScope,
     storedWorkArea,
   ])
 

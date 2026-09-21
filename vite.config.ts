@@ -19,13 +19,12 @@ const dependencyRoot = realpathSync(new URL('./node_modules', import.meta.url))
  * Relative paths keep asset lookups happy whether served from the dev
  * server or loaded off the bundle.
  *
- * Why `build.lib` for the electron entries — without it, Vite runs in
- * app mode and silently ignores `output.format: 'cjs'`, emitting an ESM
- * bundle into a `.cjs` filename. Electron then fails with
- * "Cannot use import statement outside a module" because the file says
- * .cjs (so Node treats it as CJS) but the body is ES module syntax.
- * `lib` mode forces Rollup to honor `formats: ['cjs']`, which rewrites
- * the `import { app } from 'electron'` to `require('electron')`.
+ * Why `build.lib` plus an explicit output array for Electron entries — the
+ * plugin derives an ESM library format from this package's `type: module`.
+ * Vite concatenates that default with `formats: ['cjs']` during config merge,
+ * so both formats can race to write the same `.cjs` file in watch mode. A
+ * single explicit Rollup output bypasses format expansion and guarantees that
+ * Electron only ever sees a complete CommonJS entry.
  */
 export default defineConfig({
   base: './',
@@ -52,14 +51,19 @@ export default defineConfig({
             // can point at it.
             lib: {
               entry: 'electron/main.ts',
-              formats: ['cjs'],
-              fileName: () => 'main.cjs',
             },
             // `electron` is not bundled — it's resolved at runtime by
             // the Electron host. Same for built-in node modules like
             // `path`, `fs`, etc.
             rollupOptions: {
               external: ['electron'],
+              output: [
+                {
+                  format: 'cjs',
+                  entryFileNames: 'main.cjs',
+                  chunkFileNames: '[name]-[hash].cjs',
+                },
+              ],
             },
             emptyOutDir: false,
           },
@@ -72,11 +76,16 @@ export default defineConfig({
             outDir: 'dist-electron',
             lib: {
               entry: 'electron/preload.ts',
-              formats: ['cjs'],
-              fileName: () => 'preload.cjs',
             },
             rollupOptions: {
               external: ['electron'],
+              output: [
+                {
+                  format: 'cjs',
+                  entryFileNames: 'preload.cjs',
+                  chunkFileNames: '[name]-[hash].cjs',
+                },
+              ],
             },
             emptyOutDir: false,
           },

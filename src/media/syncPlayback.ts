@@ -19,7 +19,7 @@ export function syncMediaPlayback(
   if (!playing) {
     // Scrubbing and frame-by-frame export must be able to replace a pending
     // seek with the latest requested frame, without the playback throttle.
-    seek(media, localTime, 0.05)
+    seek(media, localTime, 0.0001)
     correctionTimes.delete(media)
     return
   }
@@ -30,7 +30,7 @@ export function syncMediaPlayback(
     // playhead and the video stays on its last decoded frame indefinitely.
     correctionTimes.set(media, now)
   } else if (media.paused) {
-    seek(media, localTime, 0.05)
+    seek(media, localTime, 0.0001)
     correctionTimes.set(media, now)
   } else if (
     media.readyState >= 2 &&

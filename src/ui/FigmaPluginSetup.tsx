@@ -57,8 +57,8 @@ export function FigmaPluginSetupButton() {
         aria-expanded={open}
         className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted hover:bg-panel-raised hover:text-text"
       >
-        <Puzzle size={15} />
-        <span className="uppercase">Figma import</span>
+        <Puzzle size={16} aria-hidden="true" />
+        <span>Figma import</span>
       </button>
       {open && <FigmaPluginSetupModal onClose={close} />}
     </>
