@@ -361,6 +361,7 @@ export interface NodeJson {
   projection?: '2d' | 'perspective'
   enabled?: boolean
   background?: FillJson | null
+  positionMode?: 'orbit' | 'free'
   focalLength?: number
   scrollSensitivity?: number
   fieldOfView?: number
@@ -1487,7 +1488,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('projection', node.projection ?? '2d')
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
-      y.set('focalLength', node.focalLength ?? 1000)
+      y.set('positionMode', node.positionMode ?? 'orbit')
+    y.set('focalLength', node.focalLength ?? 1000)
       y.set(
         'scrollSensitivity',
         normalizeCameraScrollSensitivity(node.scrollSensitivity),
@@ -3236,6 +3238,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'projection',
       'enabled',
       'background',
+      'positionMode',
       'focalLength',
       'scrollSensitivity',
       'fieldOfView',
@@ -3285,6 +3288,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('projection', node.projection ?? '2d')
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
+    y.set('positionMode', node.positionMode ?? 'orbit')
     y.set('focalLength', node.focalLength ?? 1000)
     y.set(
       'scrollSensitivity',

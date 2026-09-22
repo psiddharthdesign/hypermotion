@@ -4,6 +4,7 @@ import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 import type { AnimatedValue } from '@/anim/engine'
 import type { SceneAPI } from '@/scene/doc'
 import type { Node, NodeId, TransformParent } from '@/scene/types'
+import { resolveCameraPose } from '@/render3d/cameraPose'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 
 export function normalizeTransformMatrix(value: unknown): number[] | null {
@@ -92,6 +93,7 @@ export function setNullParent(
   // An inverse cannot preserve the pose while a controller has zero scale.
   if (parentWorld && Math.abs(parentWorld.determinant()) < 1e-10) return false
   api.doc.transact(() => {
+    if (nullId) makeNullCameraFree(api, nodeId, animated[nodeId])
     api.setNodeProperty(nodeId, 'transformOffset', offset)
     api.setNodeProperty(nodeId, 'transformParent', parentWorld && nullId
       ? { nodeId: nullId, inverseBind: parentWorld.clone().invert().toArray() } : null)
@@ -141,4 +143,68 @@ export function applyNullTransforms(
     if (!hasNullTransform(node)) continue
     animated[id] = { ...animated[id], parentMatrix: resolver.delta(node).toArray() }
   }
+}
+
+/** Convert the camera target/dolly coordinates to eye coordinates at the bind pose.
+ * Translation keys move by the same constant; ids, timing and easing are retained.
+ * Once free, disconnecting a camera keeps its own-pivot rotation semantics.
+ */
+export function makeNullCameraFree(api: SceneAPI, id: NodeId, animated?: AnimatedValue): void {
+  const camera = api.getNode(id)
+  if (camera?.kind !== 'camera' || camera.positionMode === 'free') return
+  const pose = resolveCameraPose(camera, animated, api.getMeta().canvas)
+  const offset = {
+    x: pose.position.x - (animated?.x ?? camera.transform.x),
+    y: pose.position.y - (animated?.y ?? camera.transform.y),
+    z: pose.position.z - (animated?.z ?? camera.transform.z),
+  }
+  api.setNodeProperty(id, 'positionMode', 'free')
+  api.setNodeProperty(id, 'transform', { ...camera.transform,
+    x: camera.transform.x + offset.x, y: camera.transform.y + offset.y, z: camera.transform.z + offset.z,
+  })
+  for (const track of api.getTracksForNode(id)) {
+    const key = track.propertyId.slice('transform.'.length)
+    if (!track.propertyId.startsWith('transform.') || (key !== 'x' && key !== 'y' && key !== 'z')) continue
+    api.setTrack({ ...track, keyframes: track.keyframes.map(k => ({ ...k, value: typeof k.value === 'number' ? k.value + offset[key] : k.value })) })
+  }
+}
+
+/** Upgrade earlier Null-connected cameras once, including scene activation/import. */
+export function migrateNullCameras(api: SceneAPI): void {
+  const cameras = api.getAllNodeIds().filter(id => {
+    const node = api.getNode(id)
+    return node?.kind === 'camera' && hasNullTransform(node) && node.positionMode !== 'free'
+  })
+  if (!cameras.length) return
+  api.doc.transact(() => { for (const id of cameras) makeNullCameraFree(api, id) }, 'migration')
+}
+
+/** Move the controller pivot to the camera eye without moving any connected object. */
+export function alignNullToCamera(
+  api: SceneAPI, cameraId: NodeId, animated: Record<NodeId, AnimatedValue> = {},
+): { id: NodeId; patch: { x: number; y: number; z: number } } | null {
+  const camera = api.getNode(cameraId)
+  const controller = camera?.transformParent ? api.getNode(camera.transformParent.nodeId) : null
+  if (camera?.kind !== 'camera' || camera.positionMode !== 'free' || camera.locked || controller?.kind !== 'null' || controller.locked) return null
+  const resolver = createNullResolver(id => api.getNode(id), animated)
+  const delta = resolver.delta(controller)
+  const world = resolver.world(controller)
+  if (Math.abs(delta.determinant()) < 1e-10 || Math.abs(world.determinant()) < 1e-10) return null
+  const eye = resolveCameraPose(camera, animated[cameraId], api.getMeta().canvas).position
+  const local = new Vector3(eye.x, eye.y, eye.z).applyMatrix4(resolver.delta(camera)).applyMatrix4(delta.clone().invert())
+  const patch = { x: local.x, y: local.y, z: local.z }
+  const dependents = api.getAllNodeIds().flatMap(id => {
+    const node = api.getNode(id)
+    return node?.transformParent?.nodeId === controller.id ? [{ id, offset: resolver.delta(node).toArray() }] : []
+  })
+  api.doc.transact(() => {
+    api.setNodeProperty(controller.id, 'transform', { ...controller.transform, ...patch })
+    const updated = { ...animated, [controller.id]: { ...animated[controller.id], ...patch } }
+    const inverseBind = createNullResolver(id => api.getNode(id), updated).world(api.getNode(controller.id)!).invert().toArray()
+    for (const child of dependents) {
+      api.setNodeProperty(child.id, 'transformOffset', child.offset)
+      api.setNodeProperty(child.id, 'transformParent', { nodeId: controller.id, inverseBind })
+    }
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return { id: controller.id, patch }
 }

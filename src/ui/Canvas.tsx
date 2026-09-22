@@ -2267,7 +2267,7 @@ export function Canvas() {
           effectiveCamera.focalLength /
           Math.max(
             1,
-            effectiveCamera.focalLength - cameraControl.transform.z,
+            (current.positionMode === 'free' ? 0 : effectiveCamera.focalLength) - cameraControl.transform.z,
           )
         const patch =
           cameraControl.mode === 'orbit'
@@ -2289,6 +2289,7 @@ export function Canvas() {
               : {
                   z: cameraZFromPointerDrag({
                     startZ: cameraControl.transform.z,
+                    positionMode: current.positionMode,
                     focalLength: effectiveCamera.focalLength,
                     deltaY: dy,
                     scrollSensitivity: current.scrollSensitivity,
@@ -2839,7 +2840,7 @@ export function Canvas() {
         )
         const cameraApparentScale =
           effectiveCamera.focalLength /
-          Math.max(1, effectiveCamera.focalLength - baseTransform.z)
+          Math.max(1, (current.positionMode === 'free' ? 0 : effectiveCamera.focalLength) - baseTransform.z)
         const patch =
           mode === 'orbit'
             ? cameraOrbitFromWheel({
@@ -2865,6 +2866,7 @@ export function Canvas() {
                 })
               : cameraDollyFromWheel({
                   currentZ: baseTransform.z,
+                  positionMode: current.positionMode,
                   focalLength: effectiveCamera.focalLength,
                   deltaY: e.deltaY,
                   deltaMode: e.deltaMode,

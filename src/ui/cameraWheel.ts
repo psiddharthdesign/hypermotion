@@ -39,6 +39,7 @@ export function normalizedWheelDeltaY(
 
 export interface CameraWheelDollyInput {
   currentZ: number
+  positionMode?: 'orbit' | 'free'
   focalLength: number
   deltaY: number
   deltaMode: number
@@ -92,8 +93,8 @@ export function cameraZFromWheel(input: CameraWheelDollyInput): number {
   // made the first wheel packet jump directly to the boundary. Expanding the
   // one-gesture bounds to include the current pose lets the user travel back
   // toward safety smoothly while still preventing movement farther outward.
-  const authoredDistance =
-    focalLength - (Number.isFinite(input.currentZ) ? input.currentZ : 0)
+  const currentZ = Number.isFinite(input.currentZ) ? input.currentZ : 0
+  const authoredDistance = input.positionMode === 'free' ? Math.abs(currentZ) : focalLength - currentZ
   const currentDistance = Math.max(
     minDistance,
     Number.isFinite(authoredDistance) ? authoredDistance : focalLength,
@@ -118,5 +119,6 @@ export function cameraZFromWheel(input: CameraWheelDollyInput): number {
     gestureMinDistance,
     gestureMaxDistance,
   )
-  return focalLength - nextDistance
+  // Free cameras may cross the scene plane; never snap their eye to -1.
+  return input.positionMode === 'free' ? currentZ + currentDistance - nextDistance : focalLength - nextDistance
 }

@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CameraNode, PropertyId, Track } from '@/scene'
 import { createSceneAPI, type SceneAPI } from '@/scene/doc'
+import { resolveCamera3D } from '@/render3d/scene3d'
 import { resetCameraTransformGroup } from '@/ui/cameraReset'
 
 function activeCamera(api: SceneAPI): CameraNode {
@@ -238,4 +239,15 @@ describe('camera transform group reset', () => {
     expect(api.getTracksForNode(rectId)).toEqual([])
     unsubscribe()
   })
+})
+
+
+it('resets a free camera to the same physical eye as a default orbit camera', () => {
+  const api = createSceneAPI()
+  const camera = activeCamera(api)
+  const defaultEye = resolveCamera3D(camera, undefined, api.getMeta().canvas).position
+  api.setNodeProperty(camera.id, 'positionMode', 'free')
+  api.setNodeProperty(camera.id, 'transform', { ...camera.transform, x: 50, y: 80, z: -240 })
+  resetCameraTransformGroup(api, camera.id, 'position', 0)
+  expect(resolveCamera3D(activeCamera(api), undefined, api.getMeta().canvas).position).toEqual(defaultEye)
 })

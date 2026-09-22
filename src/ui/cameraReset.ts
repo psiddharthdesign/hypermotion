@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveCameraPose } from '@/render3d/cameraPose'
 import { addKeyframe, findTrack } from '@/anim'
 import type { NodeId, PropertyId, Transform } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
@@ -90,7 +91,7 @@ export function resetCameraTransformGroup(
     const canvas = api.getMeta().canvas
     const patch =
       group === 'position'
-        ? { x: canvas.width / 2, y: canvas.height / 2, z: 0 }
+        ? { x: canvas.width / 2, y: canvas.height / 2, z: camera.positionMode === 'free' ? -resolveCameraPose(camera, undefined, canvas).focalLength : 0 }
         : { rotationX: 0, rotationY: 0, rotation: 0 }
 
     api.setNodeProperty(cameraId, 'transform', {

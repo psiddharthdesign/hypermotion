@@ -1016,6 +1016,8 @@ export function normalizeCameraScrollSensitivity(value: unknown): number {
 
 export interface CameraNode extends NodeBase {
   kind: 'camera'
+  /** Free cameras use actual eye XYZ and rotate in place; legacy cameras orbit. */
+  positionMode?: 'orbit' | 'free'
   /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
   projection: '2d' | 'perspective'
   /**

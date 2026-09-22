@@ -255,6 +255,13 @@ to `focalLength: 1000` unless the user explicitly requests a different
 camera/lens feel. An explicit `defaultCameraId: null` means no preference
 and falls back to the first enabled owned camera.
 
+Null-connected cameras use `positionMode: 'free'`: transform XYZ is the actual
+camera eye, and rotation turns around that eye. Connecting preserves the current
+view and converts legacy target/dolly coordinates (including translation keys).
+Unconnected legacy cameras keep `positionMode: 'orbit'`. To rotate a camera in
+place with a Null, align the Null's world pivot to the camera eye; the inspector's
+**Align Null to camera** action preserves all connected objects at the playhead.
+
 Sequence work-area constraint: a schema-v2 composition may include
 `workArea: { start, end }` in composition-local seconds. Omitting or clearing
 it means the complete composition. Every Master occurrence resolves the

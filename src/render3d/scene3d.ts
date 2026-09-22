@@ -2,6 +2,7 @@
 
 import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { Matrix4, Vector3 } from 'three'
+import { resolveCameraPose } from './cameraPose'
 import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
 
 import type { AnimatedValue } from '@/anim'
@@ -17,8 +18,6 @@ import {
   add3,
   cross3,
   dot3,
-  focalLengthToFov,
-  fovToFocalLength,
   len3,
   mul3,
   norm3,
@@ -463,39 +462,9 @@ export function resolveCamera3D(
     vhsColorBleed:
       animated?.vhsColorBleed ?? camera.vhsColorBleed,
   })
-  const fieldOfView =
-    animated?.fieldOfView ??
-    camera.fieldOfView ??
-    Math.max(
-      1,
-      Math.min(
-        175,
-        focalLengthToFov(
-          animated?.focalLength ?? camera.focalLength ?? 1000,
-          viewport.height,
-        ),
-      ),
-  )
-  const focalLength = Math.max(1, fovToFocalLength(fieldOfView, viewport.height))
-  const transformZ = animated?.z ?? camera.transform.z
-  const dolly = transformZ
-  const pointOfInterest = {
-    x: animated?.x ?? camera.transform.x,
-    y: animated?.y ?? camera.transform.y,
-    z: 0,
-  }
-  const rotation = {
-    x: animated?.rotationX ?? camera.transform.rotationX,
-    y: animated?.rotationY ?? camera.transform.rotationY,
-    z: animated?.rotation ?? camera.transform.rotation,
-  }
-  const basePosition = {
-    x: pointOfInterest.x,
-    y: pointOfInterest.y,
-    z: pointOfInterest.z - Math.max(1, focalLength - dolly),
-  }
-  const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
-  let position = add3(pointOfInterest, orbitOffset)
+  const pose = resolveCameraPose(camera, animated, viewport)
+  const { fieldOfView, focalLength, rotation, pointOfInterest } = pose
+  let position = pose.position
   let basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
   let rigDown: Vec3 | undefined
   const rig = animated?.parentMatrix ?? camera.transformOffset

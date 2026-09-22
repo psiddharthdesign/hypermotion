@@ -199,3 +199,13 @@ describe('camera dolly navigation', () => {
     ).toEqual({ z: expect.closeTo(14.888, 3) })
   })
 })
+
+
+describe('free camera pointer dolly', () => {
+  it('uses the real eye position for proportional dolly', () => {
+    expect(cameraZFromPointerDrag({ positionMode: 'free', startZ: -1000, focalLength: 1000, deltaY: -100 })).toBeCloseTo(-606.531, 3)
+  })
+  it.each([0, 0.5, 100, -0.5])('preserves an eye at z=%s when a drag starts', startZ => {
+    expect(cameraZFromPointerDrag({ positionMode: 'free', startZ, focalLength: 1000, deltaY: 0 })).toBeCloseTo(startZ)
+  })
+})

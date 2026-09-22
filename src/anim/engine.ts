@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { applyNullTransforms, hasNullTransform } from '@/scene/nullObject'
+import { applyNullTransforms, hasNullTransform, migrateNullCameras } from '@/scene/nullObject'
 
 import type {
   BlendMode,
@@ -285,6 +285,7 @@ function createAnimEngine(): AnimEngine {
   // Evaluator cache: keyed by track id. Invalidated on scene version
   // bump (the whole cache clears — simpler than diffing).
   const evaluatorCache = new Map<string, EasingEvaluator>()
+  let migratingNullCameras = false
   let cachedVersion = -1
   let compiledTracks: Track[] = []
   let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
@@ -351,6 +352,11 @@ function createAnimEngine(): AnimEngine {
     // Invalidate evaluator cache on any scene change. Easing definitions
     // live inside track/keyframe objects, so the set of evaluators
     // changes when tracks do. Fine to clear wholesale — rebuild is cheap.
+    if (migratingNullCameras) return
+    if (api.getVersion() !== cachedVersion) {
+      migratingNullCameras = true
+      try { migrateNullCameras(api) } finally { migratingNullCameras = false }
+    }
     const v = api.getVersion()
     if (v !== cachedVersion) {
       evaluatorCache.clear()

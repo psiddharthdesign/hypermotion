@@ -177,3 +177,13 @@ describe('camera wheel dolly', () => {
     expect(blockedFartherZ).toBe(currentZ)
   })
 })
+
+
+describe('free camera wheel dolly', () => {
+  it('uses eye coordinates without adding the lens offset', () => {
+    expect(cameraZFromWheel({ positionMode: 'free', currentZ: -1000, focalLength: 1000, deltaY: -12, deltaMode: 0, pageHeight: 900 })).toBeCloseTo(-985.112, 3)
+  })
+  it.each([0, 0.5, 100, -0.5])('does not snap an eye at z=%s to the scene-front side', currentZ => {
+    expect(cameraZFromWheel({ positionMode: 'free', currentZ, focalLength: 1000, deltaY: 0, deltaMode: 0, pageHeight: 900 })).toBeCloseTo(currentZ)
+  })
+})

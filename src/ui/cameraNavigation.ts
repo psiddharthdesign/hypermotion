@@ -220,6 +220,7 @@ export function cameraPanFromWheel(
 
 export interface CameraZFromPointerDragInput {
   startZ: number
+  positionMode?: 'orbit' | 'free'
   focalLength: number
   deltaY: number
   scrollSensitivity?: number
@@ -236,7 +237,8 @@ export function cameraZFromPointerDrag(
   input: CameraZFromPointerDragInput,
 ): number {
   const focalLength = Math.max(1, finiteOr(input.focalLength, 1000))
-  const authoredDistance = focalLength - finiteOr(input.startZ, 0)
+  const startZ = finiteOr(input.startZ, 0)
+  const authoredDistance = input.positionMode === 'free' ? Math.abs(startZ) : focalLength - startZ
   const currentDistance = Math.max(
     MIN_CAMERA_DISTANCE,
     finiteOr(authoredDistance, focalLength),
@@ -255,7 +257,7 @@ export function cameraZFromPointerDrag(
     gestureMinDistance,
     gestureMaxDistance,
   )
-  return focalLength - nextDistance
+  return input.positionMode === 'free' ? startZ + currentDistance - nextDistance : focalLength - nextDistance
 }
 
 /** Return the Z-only patch used by a wheel/trackpad dolly gesture. */

@@ -325,6 +325,7 @@ export interface NodeBaseMutable {
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
+  positionMode: 'orbit' | 'free'
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
    *  scale and the CSS perspective wrapper. */
   focalLength: number
@@ -956,6 +957,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // the camera viewport," matching old behavior.
           background:
             (y.get('background') as CameraNode['background']) ?? null,
+          positionMode: y.get('positionMode') === 'free' ? 'free' : 'orbit',
           focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
           scrollSensitivity: normalizeCameraScrollSensitivity(
             y.get('scrollSensitivity') ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
@@ -1449,6 +1451,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // view transform — inverse-applied to the artboard so
           // "camera x=100" pans the viewport right by 100px.
           const cp = props as Partial<CameraNode> | undefined
+          y.set('positionMode', cp?.positionMode ?? 'orbit')
           y.set('projection', cp?.projection ?? '2d')
           y.set('enabled', cp?.enabled ?? true)
           // Background defaults to null — the camera's viewport falls

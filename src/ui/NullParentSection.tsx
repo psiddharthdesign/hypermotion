@@ -3,7 +3,10 @@ import { useState } from 'react'
 import { Link2, Unlink } from 'lucide-react'
 import type { Node, SceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
-import { canParentToNull, setNullParent } from '@/scene/nullObject'
+import { alignNullToCamera, canParentToNull, setNullParent } from '@/scene/nullObject'
+import { recordKeyframesForPatch, stampToActiveTracksForPatch } from '@/anim/recordKeyframes'
+import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useUI } from '@/state/ui'
 
 export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) {
@@ -30,6 +33,17 @@ export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) 
         <option value="">None</option>
         {nulls.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
+      {node.kind === 'camera' && node.transformParent && <>
+        <p className="text-[11px] text-text-dim">Position is the camera’s actual location. Rotation turns it in place.</p>
+        <button type="button" disabled={node.locked} className="w-full rounded-md border border-border px-2 py-1.5 text-[12px]"
+          onClick={() => api.doc.transact(() => {
+            const result = alignNullToCamera(api, node.id, getAnimEngine().getSnapshot())
+            if (!result) { setError('Unlock the camera and Null, and use non-zero Null scale to align.'); return }
+            const stamp = useUI.getState().recording ? recordKeyframesForPatch : stampToActiveTracksForPatch
+            stamp(api, result.id, currentAnimationAuthorTime(), 'transform', result.patch)
+            setError('')
+          }, UNDOABLE_GESTURE_ORIGIN)}>Align Null to camera</button>
+      </>}
       {error && <p role="alert" className="text-[11px] text-red-400">{error}</p>}
       {node.kind === 'null' && <>
         <p className="text-[11px] text-text-dim">Invisible in exports. Animate this Null to move, rotate, or scale its connected layers and cameras.</p>
