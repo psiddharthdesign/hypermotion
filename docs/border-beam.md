@@ -80,7 +80,9 @@ entry and exit, and layer transform/opacity tracks for additional animation.
 The shared Canvas painter combines the library's palettes and pulse oscillators
 with a continuous colored perimeter, travelling mask, and a separate broad glow.
 Keeping the edge independent of blur prevents large glow settings from washing
-out the border on light fills. DOM previews and WebGL/export textures use
+out the border on light fills. Beam uses the same corner curves as the layer,
+including continuous smoothing and per-corner radii, and clips its crisp edge to
+the exact layer boundary. DOM and Pixi paths follow their circular corner model. DOM previews and WebGL/export textures use
 this painter instead of CSS animations. Native video retains its decoder texture
 and receives a separate transparent Beam plane with matching transforms,
 clipping and depth of field. Animated text uses the canvas painter when Beam is
@@ -98,5 +100,5 @@ pixel-identical output to a browser embedding of the React component.
 
 With the development server running, open `/tests/fixtures/beam.html`. The fixture
 checks all 80 style/palette/theme combinations for visible output, motion, and
-identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, strength above 1, high numeric values, non-uniform motion/seek parity, and retained canvas
+identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, strength above 1, high numeric values, non-uniform motion/seek parity, exact corner alignment, and retained canvas
 state, and displays all five styles on three fills.

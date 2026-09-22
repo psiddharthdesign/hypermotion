@@ -157,6 +157,7 @@ import {
 } from '@/render/ellipseShape'
 import {
   cornerShapePath,
+  traceQuadraticRoundedRect,
   needsCornerShapePath,
   normalizeCornerSmoothing,
   type CornerRadiiLike,
@@ -1751,7 +1752,10 @@ function syncPlanes(
       const fill = videoNode.appearance.fill
       for (const effect of beams) paintBorderBeam(context, effect, {
         width: plane.rect.width, height: plane.rect.height,
-        radius: animated[plane.nodeId]?.cornerRadius ?? videoNode.appearance.cornerRadius,
+        radius: videoNode.appearance.cornerRadii
+          ? [videoNode.appearance.cornerRadii.tl, videoNode.appearance.cornerRadii.tr, videoNode.appearance.cornerRadii.br, videoNode.appearance.cornerRadii.bl]
+          : animated[plane.nodeId]?.cornerRadius ?? videoNode.appearance.cornerRadius,
+        cornerSmoothing: appearanceCornerSmoothing(videoNode),
         fill: fill?.kind === 'solid' ? fill.color : undefined,
       }, playhead + (videoNode.proceduralTimeOffset ?? 0))
       let overlay = record.beamOverlay
@@ -4626,6 +4630,7 @@ function paintNodeBeam(ctx: CanvasRenderingContext2D, node: Node, w: number, h: 
     if (effect.kind !== 'border-beam') continue
     paintBorderBeam(ctx, effect, { width: w, height: h,
       radius: corners ? [corners.tl, corners.tr, corners.br, corners.bl] : anim?.cornerRadius ?? node.appearance.cornerRadius,
+      cornerSmoothing: appearanceCornerSmoothing(node),
       ellipse: node.kind === 'ellipse', fill: typeof fill === 'string' ? fill : fill?.kind === 'solid' ? fill.color : undefined,
     }, playhead + (node.proceduralTimeOffset ?? 0))
   }
@@ -4956,18 +4961,8 @@ function roundedRectPath(
   height: number,
   radius: number,
 ) {
-  const r = Math.max(0, Math.min(radius, width / 2, height / 2))
   ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.lineTo(x + width - r, y)
-  ctx.quadraticCurveTo(x + width, y, x + width, y + r)
-  ctx.lineTo(x + width, y + height - r)
-  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
-  ctx.lineTo(x + r, y + height)
-  ctx.quadraticCurveTo(x, y + height, x, y + height - r)
-  ctx.lineTo(x, y + r)
-  ctx.quadraticCurveTo(x, y, x + r, y)
-  ctx.closePath()
+  traceQuadraticRoundedRect(ctx, x, y, width, height, radius)
 }
 
 function clipEllipseShape(

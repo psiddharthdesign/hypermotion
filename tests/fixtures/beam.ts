@@ -1,4 +1,5 @@
 import './beamControls'
+import { checkBeamCorners } from './beamCorners'
 import { paintBorderBeam } from '../../src/render/beam/paintBorderBeam'
 import { BEAM_STYLES, BEAM_PALETTES } from '../../src/scene/borderBeam'
 let time=1
@@ -101,6 +102,7 @@ function paint(){
   label.textContent=`Non-uniform · ${size}`;figure.append(canvas,label);host.append(figure)
   ctx.clearRect(-80,-80,640,440);ctx.fillStyle='#fff';ctx.beginPath();ctx.roundRect(0,0,480,240,32);ctx.fill();paintBorderBeam(ctx,effect,shape,time)
  }
- output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, canvas state, intensity above 1, and non-uniform styles pass. Time: ${time}s`
+ errors.push(...checkBeamCorners(host))
+ output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, canvas state, intensity above 1, non-uniform styles, and corner alignment pass. Time: ${time}s`
 }
 paint();document.querySelector('#advance')!.addEventListener('click',()=>{time+=.5;paint()})

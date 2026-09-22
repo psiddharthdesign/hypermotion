@@ -1094,7 +1094,10 @@ export class PixiExportRenderer {
         ctx.save(); ctx.scale(scale, scale); ctx.translate(padding, padding)
         const fill = node.appearance.fill
         paintBorderBeam(ctx, e, { width: rect.width, height: rect.height,
-          radius: animated.cornerRadius ?? node.appearance.cornerRadius, ellipse: node.kind === 'ellipse',
+          radius: node.appearance.cornerRadii
+            ? [node.appearance.cornerRadii.tl,node.appearance.cornerRadii.tr,node.appearance.cornerRadii.br,node.appearance.cornerRadii.bl].map(r=>Math.min(r,rect.width/2,rect.height/2))
+            : animated.cornerRadius ?? node.appearance.cornerRadius,
+          cornerCurve: 'circular', ellipse: node.kind === 'ellipse',
           fill: fill?.kind === 'solid' ? fill.color : undefined,
         }, time + (node.proceduralTimeOffset ?? 0))
         ctx.restore(); raster.texture.source.update()

@@ -24,7 +24,7 @@ export function BorderBeamOverlay({ node, width, height, radius, effects }: {
     ctx.scale(scale, scale); ctx.translate(padding, padding)
     const fill = node.appearance.fill
     for (const effect of beams) paintBorderBeam(ctx, effect, {
-      width, height, radius, ellipse: node.kind === 'ellipse', fill: fill?.kind === 'solid' ? fill.color : undefined,
+      width, height, radius, cornerCurve: 'circular', ellipse: node.kind === 'ellipse', fill: fill?.kind === 'solid' ? fill.color : undefined,
     }, time + (node.proceduralTimeOffset ?? 0))
   }, [beams, width, height, radius, padding, node, time])
   if (!beams.length) return null
