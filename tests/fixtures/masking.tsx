@@ -1,5 +1,7 @@
 import '../../src/index.css'
 import { useState } from 'react'
+import { nodeTransformPreviewStore } from '../../src/ui/nodeTransformPreviewStore'
+import { useNodeTransformPreviews } from '../../src/ui/hooks/useAnimatedValues'
 import { createRoot } from 'react-dom/client'
 import { createSceneAPI } from '../../src/scene/doc'
 import { SceneContext } from '../../src/scene/internals'
@@ -27,7 +29,9 @@ function fixture(ellipse = false, nested = false) {
   return { api, root, mask, content, layout, camera: api.getActiveCamera()! }
 }
 const fixtures = [fixture(), fixture(true), fixture(false, true)]
+const previewIds = fixtures.flatMap(f => Object.keys(f.layout))
 export function App() {
+  const previews = useNodeTransformPreviews(previewIds)
   const [fallback, setFallback] = useState(false)
   const [contentX, setContentX] = useState(0)
   const [maskX, setMaskX] = useState(0)
@@ -46,14 +50,19 @@ export function App() {
     <button onClick={() => setBlur(v => v ? 0 : 16)}>Toggle mask blur</button>
     <button onClick={() => setOpacity(v => v === 1 ? 0.4 : 1)}>Toggle mask opacity</button>
     <button onClick={() => setFinal(v => !v)}>Toggle export quality</button>
+    <button onClick={() => nodeTransformPreviewStore.preview(Object.fromEntries(fixtures.map(f => [f.mask, { x: 90 }])))}>Hold live mask preview</button>
+    <button onClick={() => nodeTransformPreviewStore.clear()}>Cancel live preview</button>
+    <label>Drag mask <input aria-label="Live mask position" type="range" min="-80" max="140" defaultValue="0"
+      onChange={event => nodeTransformPreviewStore.preview(Object.fromEntries(fixtures.map(f => [f.mask, { x: Number(event.target.value) }])))} /></label>
+    <p>Live preview: {previews[fixtures[0]!.mask]?.x ?? 'none'} (document position remains 0)</p>
     <p>Content X: {contentX} · Mask X: {maskX} · Mask rotation: {rotation} · Blur: {blur} · Opacity: {opacity} · {final ? 'Export' : 'Preview'} · {fallback ? 'DOM' : 'GPU'} {fallback || available ? 'ready' : 'loading'}</p>
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
       {fixtures.map((f, i) => <section key={i}><h2>{['Rectangle', 'Ellipse', 'Nested rectangle'][i]}</h2>
         <div style={{ position: 'relative', width: 400, height: 260, background: '#fff', border: '1px solid #ddd' }}>
           {fallback ? <SceneContext.Provider value={f.api}><SceneLayer sceneApi={f.api} rootId={f.root}
-            solved={f.layout} order={Object.keys(f.layout)} animated={{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur}}}}
-            inherited={composeInheritedAnim(f.api,f.root,{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur}}},f.layout)} /></SceneContext.Provider> : <ThreeSceneViewport api={f.api} layout={f.layout} camera={f.camera} cameraAnim={{x:200,y:130,z:0}}
-            animated={{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur}}}} width={400} height={260}
+            solved={f.layout} order={Object.keys(f.layout)} animated={{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur},...previews[f.mask]}}}
+            inherited={composeInheritedAnim(f.api,f.root,{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur},...previews[f.mask]}},f.layout)} /></SceneContext.Provider> : <ThreeSceneViewport api={f.api} layout={f.layout} camera={f.camera} cameraAnim={{x:200,y:130,z:0}}
+            animated={{[f.content]:{x:contentX},[f.mask]:{x:maskX,rotation,opacity,effectBlur:{'mask-blur':blur},...previews[f.mask]}}} width={400} height={260}
             sceneFill="#ffffff" selectedIds={[]} sceneVersion={0} playing={false} playhead={0}
             showPlanes finalRender={final} exportable onAvailabilityChange={setAvailable} />}
         </div>

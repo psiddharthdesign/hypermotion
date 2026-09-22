@@ -28,6 +28,30 @@ function setup() {
 }
 
 describe('sibling shape masks', () => {
+  it('moves grouped alpha masks on the GPU without changing the content bitmap bounds', () => {
+    const { api, root, mask, card, layout, build } = setup()
+    const group = api.createNode('frame', root, {
+      clipsContent: false, size: { width: 300, height: 240 },
+      appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 0, effects: [] },
+    })
+    api.appendChild(group, card)
+    api.appendChild(group, mask)
+    api.setNodeProperty(mask, 'maskMode', 'alpha')
+    api.moveChild(group, mask, 1)
+    layout[group] = { x: 0, y: 0, width: 300, height: 240 }
+    const first = build().find(p => p.nodeId === group)!
+    const moved = build({ [mask]: { x: 900, rotation: 35, opacity: 0.4, effectBlur: { blur: 40 } } }).find(p => p.nodeId === group)!
+    expect(first.textureMaskIds).toEqual([mask])
+    expect(moved.textureRect).toEqual(first.textureRect)
+    expect(moved.clips![0]!.center.x).toBeCloseTo(first.clips![0]!.center.x + 900)
+    expect(moved.clips![0]!.mask?.anim?.opacity).toBe(0.4)
+    expect(moved.clips![0]!.mask?.anim?.effectBlur).toEqual({ blur: 40 })
+    // A group-level blur must still run after masking its content.
+    api.setNodeProperty(group, 'appearance', { ...api.getNode(group)!.appearance,
+      effects: [{ id: 'group-blur', kind: 'blur', amount: 10, visible: true }] })
+    expect(build().find(p => p.nodeId === group)!.textureMaskIds).toBeUndefined()
+  })
+
   it('hides the mask and clips only its authored next sibling regardless of paint order', () => {
     const { api, mask, card, other, build } = setup()
     api.setNodeProperty(mask, 'zIndex', 99)

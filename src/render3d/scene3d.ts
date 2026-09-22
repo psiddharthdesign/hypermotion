@@ -137,6 +137,8 @@ export interface Plane3D {
     rect: Rect
   }>
   extractedFromParent?: boolean
+  /** Masks applied after the combined subtree bitmap, directly by the GPU. */
+  textureMaskIds?: NodeId[]
   clips?: PlaneClip3D[]
 }
 
@@ -822,7 +824,7 @@ export function buildWorldPlanes(
     const scan = (id: NodeId, parentMatrix: Matrix2D) => {
       const child = getNode(id)
       const childRect = layout[id]
-      if (!child || !childRect || !child.visible || child.kind === 'camera') {
+      if (!child || !childRect || !child.visible || child.kind === 'camera' || child.isMask) {
         return
       }
       // A separately emitted plane owns its complete raster subtree. Including
@@ -1048,6 +1050,34 @@ export function buildWorldPlanes(
           renderMode === 'group3d')
           ? 'self'
           : 'subtree'
+      // A plain mask group paints all its content together, then applies one
+      // alpha mask. Keep that last step on the GPU so moving the mask only
+      // updates its sampling matrix, never rerasterizing the content/blur.
+      // Effects, Bend, and extracted planes retain their compositing order.
+      const children = node.children.map(getNode).filter((child): child is Node => !!child)
+      const groupMask = children.find(child => child.isMask && child.visible)
+      const contentChildren = children.filter(child => !child.isMask && child.visible)
+      const textureMaskIds: NodeId[] = []
+      let planeClips = activeClips
+      if (
+        contentMode === 'subtree' && !independentNodes &&
+        node.kind === 'frame' && !node.clipsContent &&
+        !node.appearance.fill && !node.appearance.stroke &&
+        !node.appearance.effects.some(effect => effect.visible !== false) &&
+        bendSources.length === 0 && !containsExplicit3DDescendant &&
+        !hasVideoDescendant(id) && groupMask && layout[groupMask.id] &&
+        contentChildren.length > 0 &&
+        contentChildren.every(child => siblingMask(child, getNode)?.id === groupMask.id)
+      ) {
+        const maskRect = layout[groupMask.id]!
+        const maskTransform = nodeTransform(groupMask, maskRect, nextInherited)
+        const clip = clipFromFrame(maskRect, maskTransform)
+        clip.mask = { node: groupMask, anim: animated[groupMask.id] }
+        clip.outline = maskOutline(groupMask, maskRect, animated[groupMask.id]).map(point =>
+          mapPoint(maskTransform, { x: maskRect.x + point.x, y: maskRect.y + point.y, z: 0 }))
+        planeClips = [...activeClips, clip]
+        textureMaskIds.push(groupMask.id)
+      }
       const center = mapPoint(nextInherited, {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
@@ -1101,7 +1131,8 @@ export function buildWorldPlanes(
           segmentStackSibling ||
           videoStackSibling ||
           node.kind === 'video',
-        clips: activeClips.length ? [...activeClips] : undefined,
+        textureMaskIds: textureMaskIds.length ? textureMaskIds : undefined,
+        clips: planeClips.length ? [...planeClips] : undefined,
       })
     }
 

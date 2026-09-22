@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createMaskRasterCache, maskRasterKey } from './maskRasterCache'
+
 import { siblingMask } from '@/render/maskShape'
 import { clipBoundaries } from './planeClipping'
 import { syncAlphaMasks, copyAlphaMasks, type AlphaMaskSample } from './alphaMaskShader'
@@ -706,7 +708,7 @@ export function ThreeSceneViewport({
 
   useEffect(() => {
     const onImageLoaded = () => {
-      maskRasterCache = new WeakMap()
+      maskRasterCache.clear()
       setImageRevision((revision) => revision + 1)
     }
     const onVideoReady = () => setVideoRevision((revision) => revision + 1)
@@ -1216,6 +1218,7 @@ function planeTextureAnimationSignature(
 ): string {
   const parts: string[] = []
   const visit = (id: NodeId, isRoot: boolean) => {
+    if (plane.textureMaskIds?.includes(id)) return
     const node = context.nodesById.get(id)
     if (!node) return
     if (!isRoot && emittedPlaneNodeIds.has(id)) return
@@ -1470,6 +1473,7 @@ function syncPlanes(
         )
     const textureSignature = [
       plane.contentMode,
+      plane.textureMaskIds?.join(',') ?? '',
       Number(textureRect.x.toFixed(3)),
       Number(textureRect.y.toFixed(3)),
       Number(textureRect.width.toFixed(3)),
@@ -3800,6 +3804,7 @@ function renderSharpPlaneCanvas(
       animated,
       playhead,
       textureScale,
+      plane.textureMaskIds,
     ) ??
     renderPlaneTexture(
       plane.node,
@@ -4228,7 +4233,7 @@ function clearHelperGroup(group: THREE.Group) {
   helperBundles.delete(group)
 }
 
-let maskRasterCache = new WeakMap<Node, { key: string; canvas: HTMLCanvasElement; bounds: Rect }>()
+const maskRasterCache = createMaskRasterCache<{ key: string; canvas: HTMLCanvasElement; bounds: Rect }>()
 
 /** Rasterize the actual painted alpha, including effect overflow, in mask-local pixels. */
 // Shared with the DOM fallback to keep the exact painted mask alpha identical.
@@ -4236,15 +4241,13 @@ let maskRasterCache = new WeakMap<Node, { key: string; canvas: HTMLCanvasElement
 export function renderMaskTexture(node: Node, rect: Rect, anim?: AnimatedValue, playhead = 0) {
   const effects = resolveAnimatedLayerEffects(node.appearance.effects, anim?.effectBlur)
   const bounds = expandRectForLayerEffects({ x: 0, y: 0, width: rect.width, height: rect.height }, effects)
-  const paintAnimation = { ...anim }
-  for (const property of ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY', 'anchorX', 'anchorY', 'anchorZ', 'opacity'] as const) delete paintAnimation[property]
-  const key = JSON.stringify([rect.width, rect.height, paintAnimation, hasAnimatedBeam(effects) ? playhead : 0])
-  const cached = maskRasterCache.get(node)
-  if (cached?.key === key) return cached
+  const key = maskRasterKey(node, rect, anim, hasAnimatedBeam(effects) ? playhead : 0)
+  const cached = maskRasterCache.get(node.id, key)
+  if (cached) return cached
   const paintedNode = anim?.fill ? { ...node, appearance: { ...node.appearance, fill: { kind: 'solid' as const, color: anim.fill } } } : node
   const canvas = renderPlaneTexture(paintedNode, { x: 0, y: 0, width: rect.width, height: rect.height }, anim, playhead, bounds, Math.min(2, 4096 / Math.max(bounds.width, bounds.height)))
   const result = { key, canvas, bounds }
-  maskRasterCache.set(node, result)
+  maskRasterCache.set(node.id, key, result, canvas.width * canvas.height)
   return result
 }
 
@@ -4288,6 +4291,7 @@ function renderSubtreeTexture(
   animated: Record<NodeId, AnimatedValue> = {},
   playhead = 0,
   textureScale = textureScaleForRect(rootRect),
+  textureMaskIds: readonly NodeId[] = [],
 ): HTMLCanvasElement | null {
   if (typeof document === 'undefined') return null
   const width = Math.max(1, Math.ceil(rootRect.width))
@@ -4414,7 +4418,7 @@ function renderSubtreeTexture(
         if (painted.has(child.id) || child.isMask) continue
         const mask = siblingMask(child, id => api.getNode(id))
         const maskRect = mask ? layout[mask.id] : undefined
-        if (mask && maskRect) {
+        if (mask && maskRect && !textureMaskIds.includes(mask.id)) {
           const members = children.filter(candidate => !candidate.isMask && siblingMask(candidate, id => api.getNode(id))?.id === mask.id)
           members.forEach(member => painted.add(member.id))
           paintMasked(layer, mask, maskRect, childContext, destination => {
@@ -4445,7 +4449,7 @@ function renderSubtreeTexture(
     }
     const mask = id !== rootId && !skipSiblingMask ? siblingMask(node, (id) => api.getNode(id)) : null
     const maskRect = mask ? layout[mask.id] : undefined
-    if (mask && maskRect) {
+    if (mask && maskRect && !textureMaskIds.includes(mask.id)) {
       paintMasked(target, mask, maskRect, context, paintContent)
     } else paintContent()
   }
