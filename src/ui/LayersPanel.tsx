@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { addNull } from '@/scene/nullObject'
-
 import {
   memo,
   useMemo,
@@ -230,12 +228,7 @@ export function LayersPanel() {
           />
           {root ? (
             <>
-              <div className="flex items-center justify-between pr-3">
-                <PanelSectionLabel label="Scene layers" />
-                <button type="button" className="text-[11px] text-text-muted hover:text-text"
-                  onClick={() => { const id = addNull(api); if (id) useUI.getState().setSelection([id]) }}
-                  title="Add an invisible controller for layers and cameras">+ Null</button>
-              </div>
+              <PanelSectionLabel label="Scene layers" />
               <Row node={root} depth={0} rootId={rootId} />
             </>
           ) : (
@@ -1402,7 +1395,6 @@ function MaskGlyph() {
 }
 
 const KIND_ICONS: Record<NodeKind, AppIconName> = {
-  null: 'null',
   frame: 'frame',
   rect: 'square',
   ellipse: 'circle',

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { applyNullTransforms, hasNullTransform, migrateNullCameras } from '@/scene/nullObject'
-
 import type {
   BlendMode,
   FlexDirection,
@@ -81,8 +79,6 @@ import {
  * after animating in from x=580.
  */
 export interface AnimatedValue {
-  /** World-space controller delta, resolved after keyframes. */
-  parentMatrix?: number[]
   x?: number
   y?: number
   /** Z depth on the camera's optical axis. 0 = focal plane. */
@@ -208,7 +204,6 @@ const EMPTY_VALUE: AnimatedValue = {}
 
 export interface AnimEngine {
   attach(api: SceneAPI): void
-  getSceneAPI(): SceneAPI | null
   play(): void
   pause(): void
   isPlaying(): boolean
@@ -285,12 +280,10 @@ function createAnimEngine(): AnimEngine {
   // Evaluator cache: keyed by track id. Invalidated on scene version
   // bump (the whole cache clears — simpler than diffing).
   const evaluatorCache = new Map<string, EasingEvaluator>()
-  let migratingNullCameras = false
   let cachedVersion = -1
   let compiledTracks: Track[] = []
   let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
   let compiledLayerMotionPaths: CompiledLayerMotionPath[] = []
-  let compiledNullNodes = new Map<NodeId, import('@/scene/types').Node>()
   let compiledCursorVariantBindings: CompiledCursorVariantBinding[] = []
   let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
@@ -352,11 +345,6 @@ function createAnimEngine(): AnimEngine {
     // Invalidate evaluator cache on any scene change. Easing definitions
     // live inside track/keyframe objects, so the set of evaluators
     // changes when tracks do. Fine to clear wholesale — rebuild is cheap.
-    if (migratingNullCameras) return
-    if (api.getVersion() !== cachedVersion) {
-      migratingNullCameras = true
-      try { migrateNullCameras(api) } finally { migratingNullCameras = false }
-    }
     const v = api.getVersion()
     if (v !== cachedVersion) {
       evaluatorCache.clear()
@@ -400,10 +388,8 @@ function createAnimEngine(): AnimEngine {
         compiledTextTrackGroups.push({ nodeId, tracks })
       }
       compiledLayerMotionPaths = []
-      compiledNullNodes = new Map()
       for (const nodeId of api.getAllNodeIds()) {
         const node = api.getNode(nodeId)
-        if (node && (node.kind === 'null' || hasNullTransform(node))) compiledNullNodes.set(nodeId, node)
         if (
           !node?.motionPath ||
           (node.kind === 'instance' &&
@@ -452,13 +438,11 @@ function createAnimEngine(): AnimEngine {
       out[binding.nodeId] = value
     }
     applyCursorVariantBindings(out, compiledCursorVariantBindings)
-    applyNullTransforms(api, out, compiledNullNodes)
     snapshot = out
     notify()
   }
 
   return {
-    getSceneAPI: () => api,
     attach(a) {
       // Fast Refresh and provider remounts can reattach the singleton. Keep
       // exactly one scene listener; leaked subscriptions multiply every

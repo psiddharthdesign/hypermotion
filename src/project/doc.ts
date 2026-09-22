@@ -505,12 +505,6 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
           cloneTracks(api, camera.id, duplicateId)
           newCameraIds.push(duplicateId)
         }
-        for (const [sourceId, targetId] of nodeMap) {
-          const link = api.getNode(sourceId)?.transformParent
-          if (!link) continue
-          const parentId = nodeMap.get(link.nodeId)
-          api.setNodeProperty(targetId, 'transformParent', parentId ? { ...link, nodeId: parentId } : null)
-        }
       }, 'scene-duplicate')
 
       const newId = uniqueId('scene')

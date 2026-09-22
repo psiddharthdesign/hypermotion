@@ -2,10 +2,9 @@
 import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
 import { BorderBeamOverlay } from './BorderBeamOverlay'
-import { NullObjectOverlay } from '@/ui/NullObjectOverlay'
-import { hasNullTransform } from '@/scene/nullObject'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { textShimmerFill } from '@/anim/textShimmer'
+// SPDX-License-Identifier: Apache-2.0
 import { useSequenceExportPreview } from '@/export/sequencePreview'
 import { useSequenceMediaClock } from '@/state/sequenceMediaClock'
 
@@ -713,10 +712,6 @@ export function Canvas() {
     setLastSolvedLayout(solved)
   }, [solved])
 
-  const nullObjectIds = useMemo(() => {
-    void version
-    return api.getAllNodeIds().filter((id) => { const node = api.getNode(id); return node?.kind === 'null' && node.parent === rootId })
-  }, [api, version, rootId])
   const renderOrder = useMemo<NodeId[]>(() => {
     void version
     if (!rootId) return []
@@ -2267,7 +2262,7 @@ export function Canvas() {
           effectiveCamera.focalLength /
           Math.max(
             1,
-            (current.positionMode === 'free' ? 0 : effectiveCamera.focalLength) - cameraControl.transform.z,
+            effectiveCamera.focalLength - cameraControl.transform.z,
           )
         const patch =
           cameraControl.mode === 'orbit'
@@ -2289,7 +2284,6 @@ export function Canvas() {
               : {
                   z: cameraZFromPointerDrag({
                     startZ: cameraControl.transform.z,
-                    positionMode: current.positionMode,
                     focalLength: effectiveCamera.focalLength,
                     deltaY: dy,
                     scrollSensitivity: current.scrollSensitivity,
@@ -2840,7 +2834,7 @@ export function Canvas() {
         )
         const cameraApparentScale =
           effectiveCamera.focalLength /
-          Math.max(1, (current.positionMode === 'free' ? 0 : effectiveCamera.focalLength) - baseTransform.z)
+          Math.max(1, effectiveCamera.focalLength - baseTransform.z)
         const patch =
           mode === 'orbit'
             ? cameraOrbitFromWheel({
@@ -2866,7 +2860,6 @@ export function Canvas() {
                 })
               : cameraDollyFromWheel({
                   currentZ: baseTransform.z,
-                  positionMode: current.positionMode,
                   focalLength: effectiveCamera.focalLength,
                   deltaY: e.deltaY,
                   deltaMode: e.deltaMode,
@@ -3352,8 +3345,6 @@ export function Canvas() {
           )}
         </div>
 
-        <NullObjectOverlay api={api} camera={camera?.kind === 'camera' ? camera : null}
-          ids={nullObjectIds} width={canvasWidth} height={canvasHeight} zoom={view.zoom} />
         <WorkspaceLayer
           sceneApi={api}
           order={workspaceOrder}
@@ -3998,29 +3989,6 @@ export function SceneLayer({
     return map
   }, [api, rootId, solved, sceneVersion])
 
-  const controllerTransforms = useMemo(() => {
-    void sceneVersion
-    if (!order.some((id) => { const node = api.getNode(id); return node && hasNullTransform(node) })) return {}
-    const camera = api.getActiveCamera()
-    if (!camera) return {}
-    const viewport = api.getMeta().canvas
-    const resolved = resolveCamera3D(camera, animated[camera.id], viewport)
-    const planes = buildWorldPlanes(api, solved, animated, resolved, { independentNodes: true })
-    return Object.fromEntries(planes.map((plane) => {
-      const x = { x: plane.right.x * plane.scaleX, y: plane.right.y * plane.scaleX, z: plane.right.z * plane.scaleX }
-      const y = { x: plane.down.x * plane.scaleY, y: plane.down.y * plane.scaleY, z: plane.down.z * plane.scaleY }
-      const w = plane.rect.width / 2
-      const h = plane.rect.height / 2
-      return [plane.nodeId, `matrix3d(${[
-        x.x, x.y, x.z, 0, y.x, y.y, y.z, 0,
-        plane.normal.x, plane.normal.y, plane.normal.z, 0,
-        plane.center.x - x.x * w - y.x * h - plane.rect.x,
-        plane.center.y - x.y * w - y.y * h - plane.rect.y,
-        plane.center.z - x.z * w - y.z * h, 1,
-      ].join(',')})`]
-    }))
-  }, [api, order, solved, animated, sceneVersion])
-
   const compositingOrder = partitionAlwaysOnTopSubtrees(api, order)
   const renderNode = (id: NodeId) => {
     const node = api.getNode(id)
@@ -4034,7 +4002,6 @@ export function SceneLayer({
         rect={rect}
         anim={animated[id]}
         inherit={inherit}
-        worldTransform={controllerTransforms[id]}
         isRoot={id === rootId}
         isSelected={selection.includes(id)}
         ancestorClip={ancestorClip[id]}
@@ -4060,7 +4027,6 @@ export function SceneLayer({
     return (
       <ClippedFrameStrokeOverlay
         key={`stroke-${id}`}
-        worldTransform={controllerTransforms[id]}
         node={node}
         rect={rect}
         anim={animated[id]}
@@ -4091,14 +4057,12 @@ export function SceneLayer({
  */
 function ClippedFrameStrokeOverlay({
   node,
-  worldTransform,
   rect,
   anim,
   inherit,
   isRoot,
 }: {
   node: SceneNode
-  worldTransform?: string
   rect: Rect
   anim: AnimatedValue | undefined
   inherit: InheritedAnim
@@ -4154,8 +4118,8 @@ function ClippedFrameStrokeOverlay({
         width: rect.width,
         height: rect.height,
         opacity,
-        transform: worldTransform ?? (parts.length > 0 ? parts.join(' ') : undefined),
-        transformOrigin: worldTransform ? '0 0' : transformOrigin,
+        transform: parts.length > 0 ? parts.join(' ') : undefined,
+        transformOrigin,
         transformStyle: 'preserve-3d',
       }}
     >
@@ -4577,7 +4541,6 @@ function DomFocusPlaneOverlay({
  * onto other frames. Matches Figma / Jitter.
  */
 type NodeViewProps = {
-  worldTransform?: string
   node: SceneNode
   rect: Rect
   anim: AnimatedValue | undefined
@@ -4593,12 +4556,11 @@ type NodeViewProps = {
 }
 
 function NodeView(props: NodeViewProps) {
-  if (props.node.kind === 'audio' || props.node.kind === 'null') return null
+  if (props.node.kind === 'audio') return null
   return <VisualNodeView {...props} />
 }
 
 function VisualNodeView({
-  worldTransform,
   node,
   rect,
   anim,
@@ -5037,8 +4999,8 @@ function VisualNodeView({
         borderRadius: wrapperBorderRadius,
         boxShadow: composedBoxShadow || undefined,
         ...(strokeBorderCss ?? {}),
-        transform: worldTransform ?? transform,
-        transformOrigin: worldTransform ? '0 0' : transformOrigin,
+        transform,
+        transformOrigin,
         transformStyle: 'preserve-3d',
         // Frames act as design-tool compositing groups. Without isolation,
         // a child using mix-blend-mode can blend against unrelated canvas

@@ -577,12 +577,6 @@ function remapNodeReferences(
   const targetId = nodeMap.get(sourceId)
   if (!sourceNode || !targetId) return
 
-  if (sourceNode.transformParent) {
-    target.setNodeProperty(targetId, 'transformParent', {
-      ...sourceNode.transformParent,
-      nodeId: requiredMappedNode(sourceNode.transformParent.nodeId, nodeMap),
-    })
-  }
   if (sourceNode.componentSourceId) {
     target.setNodeProperty(
       targetId,
@@ -702,7 +696,6 @@ function remapComposition(
 function nodeReferences(node: Node): NodeId[] {
   const references: NodeId[] = []
   if (node.componentSourceId) references.push(node.componentSourceId)
-  if (node.transformParent) references.push(node.transformParent.nodeId)
   if (node.kind === 'shader' && node.sourceNodeId) {
     references.push(node.sourceNodeId)
   }

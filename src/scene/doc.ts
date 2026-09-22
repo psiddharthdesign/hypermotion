@@ -1,7 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0
-
-import { detachNullDependents, normalizeTransformMatrix, normalizeTransformParent } from '@/scene/nullObject'
 import { normalizeTextShimmer } from '@/anim/textShimmerEffect'
+// SPDX-License-Identifier: Apache-2.0
 
 import * as Y from 'yjs'
 import type {
@@ -240,8 +238,6 @@ export interface NodeBaseMutable {
   componentSourceId: NodeId | null
   componentId: NodeId
   transform: Transform
-  transformParent: import('@/scene/types').TransformParent | null
-  transformOffset: number[] | null
   appearance: Appearance
   layout: Layout
   size: Size
@@ -325,7 +321,6 @@ export interface NodeBaseMutable {
   // camera-kind fields — settable via Inspector on CameraNode.
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
-  positionMode: 'orbit' | 'free'
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
    *  scale and the CSS perspective wrapper. */
   focalLength: number
@@ -454,7 +449,7 @@ const VECTOR_DEFAULT_APPEARANCE: Appearance = {
 function defaultAppearanceForKind(kind: NodeKind): Appearance {
   if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
   if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
-  if (kind === 'null' || kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
+  if (kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
   return DEFAULT_APPEARANCE
 }
 
@@ -661,8 +656,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       kind,
       parent: (y.get('parent') as NodeId | null) ?? null,
       children,
-      transformParent: normalizeTransformParent(y.get('transformParent')),
-      transformOffset: normalizeTransformMatrix(y.get('transformOffset')),
       // Ensure `z` exists on every read — older docs predate the
       // 3D-camera era and persisted Transform without `z`. Spread
       // defaults under the persisted shape so the field is always
@@ -694,8 +687,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       layerBend: normalizeLayerBend(y.get('layerBend')),
     }
     switch (kind) {
-      case 'null':
-        return { ...base, kind }
       case 'frame':
         return {
           ...base,
@@ -957,7 +948,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // the camera viewport," matching old behavior.
           background:
             (y.get('background') as CameraNode['background']) ?? null,
-          positionMode: y.get('positionMode') === 'free' ? 'free' : 'orbit',
           focalLength: (y.get('focalLength') as number | undefined) ?? 1000,
           scrollSensitivity: normalizeCameraScrollSensitivity(
             y.get('scrollSensitivity') ?? DEFAULT_CAMERA_SCROLL_SENSITIVITY,
@@ -1193,8 +1183,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('kind', kind)
         y.set('name', props?.name ?? generatedName)
         y.set('parent', parent)
-        y.set('transformParent', normalizeTransformParent(props?.transformParent))
-        y.set('transformOffset', normalizeTransformMatrix(props?.transformOffset))
         y.set('children', new Y.Array<NodeId>())
         y.set('transform', {
           ...DEFAULT_TRANSFORM,
@@ -1219,7 +1207,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         // auto layout. Callers can override via props (e.g. drawn-into
         // a flex parent might want 'absolute' so the user's drop point
         // is honored — see Step 3.66 follow-up).
-        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? (kind === 'null' ? 'absolute' : 'flow'))
+        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? 'flow')
         y.set(
           'zIndex',
           normalizeLayerZIndex((props as { zIndex?: number })?.zIndex),
@@ -1451,7 +1439,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // view transform — inverse-applied to the artboard so
           // "camera x=100" pans the viewport right by 100px.
           const cp = props as Partial<CameraNode> | undefined
-          y.set('positionMode', cp?.positionMode ?? 'orbit')
           y.set('projection', cp?.projection ?? '2d')
           y.set('enabled', cp?.enabled ?? true)
           // Background defaults to null — the camera's viewport falls
@@ -1532,7 +1519,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           arr.push([id])
         } else if (
           !scene.get('root') &&
-          kind !== 'camera' && kind !== 'null' &&
+          kind !== 'camera' &&
           !((props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
         ) {
           // First parentless non-camera node becomes the root. Cameras
@@ -1548,8 +1535,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       const y = nodes.get(id)
       if (!y) return
       doc.transact(() => {
-        // A controller never owns its linked layers; deletion only detaches links.
-        if (y.get('kind') === 'null') detachNullDependents(api, id)
         // Detach from parent
         const parent = y.get('parent') as NodeId | null
         if (parent) {
@@ -1681,7 +1666,6 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     appendChild: (parent, child) => {
       const p = ensureNode(parent)
       const c = ensureNode(child)
-      if (c.get('kind') === 'null' && parent !== api.getRoot()) return
       doc.transact(() => {
         const oldParent = c.get('parent') as NodeId | null
         if (oldParent) {
@@ -2052,7 +2036,6 @@ function defaultName(kind: NodeKind): string {
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
-    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }

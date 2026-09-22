@@ -240,7 +240,7 @@ export function createComponentFromSelection(
   const nodes = ids
     .map((id) => api.getNode(id))
     .filter((n): n is SceneNode => !!n)
-    .filter((n) => n.parent != null && n.kind !== 'camera' && n.kind !== 'null')
+    .filter((n) => n.parent != null && n.kind !== 'camera')
   if (nodes.length === 0) return null
 
   if (nodes.length === 1 && nodes[0]!.kind === 'component') {
@@ -1405,7 +1405,7 @@ function wrapInContainer(
 
   // Filter out the root and any orphan camera — those can never be
   // wrapped. If nothing wrappable remains, bail.
-  const wrappable = nodes.filter((n) => n.parent != null && n.kind !== 'camera' && n.kind !== 'null')
+  const wrappable = nodes.filter((n) => n.parent != null && n.kind !== 'camera')
   if (wrappable.length === 0) return null
 
   // Pick a target parent. If everything already shares one, use it

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { hasAnimatedBeam } from '@/scene/borderBeam'
-import { Matrix4, Vector3 } from 'three'
-import { resolveCameraPose } from './cameraPose'
-import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
-
 import type { AnimatedValue } from '@/anim'
 import { evaluateLayerMotionPath } from '@/anim/layerMotionPath'
 import type { Rect, SolvedLayout } from '@/layout'
@@ -18,6 +14,8 @@ import {
   add3,
   cross3,
   dot3,
+  focalLengthToFov,
+  fovToFocalLength,
   len3,
   mul3,
   norm3,
@@ -47,7 +45,6 @@ export interface ViewportSize {
 
 export interface ResolvedCamera3D extends CameraPostEffectsState {
   nodeId: NodeId
-  rigDown?: Vec3
   position: Vec3
   rotation: Vec3
   pointOfInterest: Vec3
@@ -74,8 +71,6 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 }
 
 export interface Plane3D {
-  /** Exact affine basis for a Null rig, including inherited nonuniform scale. */
-  transformMatrix?: number[]
   nodeId: NodeId
   node: Node
   /** Authored node bounds used for selection, hit testing, and outlines. */
@@ -228,7 +223,6 @@ const IDENTITY_INHERITED = {
 }
 
 interface Inherited3D {
-  nullRig?: boolean
   origin: Vec3
   anchor: Vec3
   basisX: Vec3
@@ -346,7 +340,6 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       if (!child) continue
       const childRenderMode = child.transform.renderMode ?? 'flat'
       if (
-        hasNullTransform(child) ||
         segmentTextNodeIds.has(childId) ||
         layerHasBendDeformation(child) ||
         isAlwaysOnTopNode(child) ||
@@ -394,7 +387,6 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       if (!child) continue
       const renderMode = child.transform.renderMode ?? 'flat'
       if (
-        hasNullTransform(child) ||
         child.kind === 'video' ||
         layerHasBendDeformation(child) ||
         isAlwaysOnTopNode(child) ||
@@ -462,24 +454,40 @@ export function resolveCamera3D(
     vhsColorBleed:
       animated?.vhsColorBleed ?? camera.vhsColorBleed,
   })
-  const pose = resolveCameraPose(camera, animated, viewport)
-  const { fieldOfView, focalLength, rotation, pointOfInterest } = pose
-  let position = pose.position
-  let basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
-  let rigDown: Vec3 | undefined
-  const rig = animated?.parentMatrix ?? camera.transformOffset
-  if (rig) {
-    const matrix = new Matrix4().fromArray(rig)
-    const mapPoint = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(matrix)
-    const origin = mapPoint({ x: 0, y: 0, z: 0 })
-    const transformedDown = mapPoint(basis.down).sub(origin).normalize()
-    position = mapPoint(position)
-    Object.assign(pointOfInterest, mapPoint(pointOfInterest))
-    const forward = norm3(sub3(pointOfInterest, position))
-    const right = norm3(cross3(transformedDown, forward))
-    rigDown = norm3(cross3(forward, right))
-    basis = { right, down: rigDown, forward }
+  const fieldOfView =
+    animated?.fieldOfView ??
+    camera.fieldOfView ??
+    Math.max(
+      1,
+      Math.min(
+        175,
+        focalLengthToFov(
+          animated?.focalLength ?? camera.focalLength ?? 1000,
+          viewport.height,
+        ),
+      ),
+  )
+  const focalLength = Math.max(1, fovToFocalLength(fieldOfView, viewport.height))
+  const transformZ = animated?.z ?? camera.transform.z
+  const dolly = transformZ
+  const pointOfInterest = {
+    x: animated?.x ?? camera.transform.x,
+    y: animated?.y ?? camera.transform.y,
+    z: 0,
   }
+  const rotation = {
+    x: animated?.rotationX ?? camera.transform.rotationX,
+    y: animated?.rotationY ?? camera.transform.rotationY,
+    z: animated?.rotation ?? camera.transform.rotation,
+  }
+  const basePosition = {
+    x: pointOfInterest.x,
+    y: pointOfInterest.y,
+    z: pointOfInterest.z - Math.max(1, focalLength - dolly),
+  }
+  const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
+  const position = add3(pointOfInterest, orbitOffset)
+  const basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
   const focusScreen = {
@@ -541,7 +549,6 @@ export function resolveCamera3D(
   return {
     ...postEffects,
     nodeId: camera.id,
-    rigDown,
     position,
     rotation,
     pointOfInterest,
@@ -610,10 +617,6 @@ function cameraBasisFromPosition(
 }
 
 function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
-  if (camera.rigDown) {
-    const forward = norm3(sub3(camera.pointOfInterest, camera.position))
-    return { forward, down: camera.rigDown, right: norm3(cross3(camera.rigDown, forward)) }
-  }
   return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
 }
 
@@ -885,8 +888,6 @@ export function buildWorldPlanes(
     }
   }
 
-  const nullResolver = createNullResolver(getNode, animated)
-
   const visit = (
     id: NodeId,
     inherited: Inherited3D,
@@ -897,7 +898,7 @@ export function buildWorldPlanes(
     if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
     const rect = layout[id]
-    if (!node || !rect || node.kind === 'camera' || node.kind === 'null') return
+    if (!node || !rect || node.kind === 'camera') return
     // Visibility is hierarchical. The WebGL compositor emits some descendants
     // as independent planes (group3d children, videos, and explicit planes),
     // so checking only each emitted plane's own `visible` flag lets those
@@ -943,7 +944,6 @@ export function buildWorldPlanes(
     const localBasisY = rotateEuler({ x: 0, y: isRoot ? 1 : scaleY, z: 0 }, rotationX, rotationY, rotation)
     const localBasisZ = rotateEuler({ x: 0, y: 0, z: 1 }, rotationX, rotationY, rotation)
     const nextInherited: Inherited3D = {
-      nullRig: inherited.nullRig || hasNullTransform(node),
       origin: add3(mapPoint(inherited, anchorPoint), translation),
       anchor: anchorPoint,
       basisX: mapLocalVector(inherited, localBasisX),
@@ -955,18 +955,6 @@ export function buildWorldPlanes(
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
-    }
-
-    if (hasNullTransform(node)) {
-      const delta = a?.parentMatrix ? new Matrix4().fromArray(a.parentMatrix) : nullResolver.delta(node)
-      const point = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(delta)
-      const vector = (v: Vec3) => point(v).sub(point({ x: 0, y: 0, z: 0 }))
-      nextInherited.origin = point(nextInherited.origin)
-      nextInherited.basisX = vector(nextInherited.basisX)
-      nextInherited.basisY = vector(nextInherited.basisY)
-      nextInherited.basisZ = vector(nextInherited.basisZ)
-      nextInherited.scaleX = len3(nextInherited.basisX)
-      nextInherited.scaleY = len3(nextInherited.basisY)
     }
 
     const parent = node.parent ? getNode(node.parent) : null
@@ -995,8 +983,7 @@ export function buildWorldPlanes(
     const shouldEmitPlane =
       isRequestedNode &&
       !isRoot &&
-      (hasNullTransform(node) ||
-        segmentText ||
+      (segmentText ||
         deformedNode ||
         isAlwaysOnTopNode(node) ||
         independentNodes ||
@@ -1053,12 +1040,6 @@ export function buildWorldPlanes(
       )
       planes.push({
         nodeId: id,
-        transformMatrix: nextInherited.nullRig ? [
-          nextInherited.basisX.x, nextInherited.basisX.y, nextInherited.basisX.z, 0,
-          nextInherited.basisY.x, nextInherited.basisY.y, nextInherited.basisY.z, 0,
-          nextInherited.basisZ.x, nextInherited.basisZ.y, nextInherited.basisZ.z, 0,
-          center.x, center.y, center.z, 1,
-        ] : undefined,
         node,
         rect,
         renderKind: segmentText ? 'segment-text' : 'canvas',

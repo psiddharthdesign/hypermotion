@@ -11,7 +11,6 @@ import type { NodeId } from '@/scene'
  * the complete scene plane tree on every glyph-animation frame.
  */
 const WORLD_PLANE_ANIMATION_PROPERTIES = [
-  'parentMatrix',
   'x',
   'y',
   'z',

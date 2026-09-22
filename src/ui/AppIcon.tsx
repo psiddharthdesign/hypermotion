@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SVGProps } from 'react'
-import { SquareDashed } from 'lucide-react'
 
 export type AppIconName =
-  | 'null'
   | 'align-bottom'
   | 'align-center-x'
   | 'align-center-y'
@@ -33,7 +31,7 @@ export type AppIconName =
   | 'vector'
   | 'video'
 
-const ICONS: Record<Exclude<AppIconName, 'null'>, string> = {
+const ICONS: Record<AppIconName, string> = {
   'align-bottom': `
     <line x1="1.75" y1="15.25" x2="16.25" y2="15.25" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
     <rect x="3.75" y="2.75" width="3.5" height="9.5" rx="1" ry="1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
@@ -142,7 +140,6 @@ export function AppIcon({
   size = 18,
   ...props
 }: { name: AppIconName; size?: number } & Omit<SVGProps<SVGSVGElement>, 'name'>) {
-  if (name === 'null') return <SquareDashed {...props} aria-hidden="true" width={size} height={size} />
   return (
     <svg
       {...props}

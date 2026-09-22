@@ -2942,7 +2942,6 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     projection: '2d',
     enabled: true,
     background: null,
-    positionMode: 'orbit',
     focalLength: 1000,
     scrollSensitivity: 1,
     fieldOfView: 35,
@@ -3923,19 +3922,4 @@ test('Beam styles and advanced controls survive CLI authoring and validation', (
   const nodes = data.nodes as PlainSceneMap
   assert.deepEqual((nodes.root.appearance as PlainSceneObject).effects, effects)
   assert.equal(validateScene(bytes).ok, true)
-})
-
-test('scene creation and patching retain free camera eye coordinates', () => {
-  const scene = sampleScene()
-  const camera = scene.nodes!.camera!
-  camera.positionMode = 'free'
-  camera.transform = { x: 640, y: 360, z: -1000, rotationY: 30, rotation: 0, scaleX: 1, scaleY: 1 }
-  const bytes = buildSceneBytes(scene)
-  const created = inspectScene(bytes).nodes as PlainSceneMap
-  assert.equal(created.camera.positionMode, 'free')
-  assert.equal((created.camera.transform as PlainSceneObject).z, -1000)
-  const patched = applyScenePatch(bytes, [{ op: 'createNode', node: { ...camera, id: 'free-copy' } }])
-  const nodes = inspectScene(patched).nodes as PlainSceneMap
-  assert.equal(nodes['free-copy'].positionMode, 'free')
-  assert.equal((nodes['free-copy'].transform as PlainSceneObject).z, -1000)
 })

@@ -113,7 +113,6 @@ export const PAPER_SHADER_TYPES = [
 export type PaperShaderTypeJson = (typeof PAPER_SHADER_TYPES)[number]
 
 export type NodeKindJson =
-  | 'null'
   | 'frame'
   | 'rect'
   | 'ellipse'
@@ -127,7 +126,6 @@ export type NodeKindJson =
   | 'camera'
 
 export const NODE_KINDS = [
-  'null',
   'frame',
   'rect',
   'ellipse',
@@ -256,8 +254,6 @@ export interface NodeJson {
   isMask?: boolean
   componentSourceId?: string | null
   workspaceOnly?: boolean
-  transformParent?: { nodeId: string; inverseBind: number[] } | null
-  transformOffset?: number[] | null
   /** Optional pixel-space Bézier rail followed by this layer. */
   motionPath?: LayerMotionPathJson | null
   /** Optional non-destructive layer deformation. */
@@ -361,7 +357,6 @@ export interface NodeJson {
   projection?: '2d' | 'perspective'
   enabled?: boolean
   background?: FillJson | null
-  positionMode?: 'orbit' | 'free'
   focalLength?: number
   scrollSensitivity?: number
   fieldOfView?: number
@@ -1352,13 +1347,11 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     )
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
-    y.set('position', node.position ?? (node.kind === 'null' ? 'absolute' : 'flow'))
+    y.set('position', node.position ?? 'flow')
     y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
-    if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
-    if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
     // Keep older scene snapshots byte-compatible when no layer rail was
     // supplied. The desktop reader already treats a missing value as null.
     if (node.motionPath !== undefined) {
@@ -1488,8 +1481,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('projection', node.projection ?? '2d')
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
-      y.set('positionMode', node.positionMode ?? 'orbit')
-    y.set('focalLength', node.focalLength ?? 1000)
+      y.set('focalLength', node.focalLength ?? 1000)
       y.set(
         'scrollSensitivity',
         normalizeCameraScrollSensitivity(node.scrollSensitivity),
@@ -1835,27 +1827,6 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       errors.push(
         `node ${id} zIndex must be an integer between ${MIN_LAYER_Z_INDEX} and ${MAX_LAYER_Z_INDEX}`,
       )
-    }
-    if (node.kind === 'null' && (!node.parent || id === root)) {
-      errors.push(`null node ${id} must belong to a composition root`)
-    }
-    const validMatrix = (value: unknown) => Array.isArray(value) && value.length === 16 && value.every((n) => typeof n === 'number' && Number.isFinite(n))
-    if (node.transformOffset != null && !validMatrix(node.transformOffset)) {
-      errors.push(`node ${id} transformOffset must be a finite 4x4 matrix`)
-    }
-    if (node.transformParent != null) {
-      const link = asRecord(node.transformParent)
-      if (typeof link.nodeId !== 'string' || asRecord(nodes[String(link.nodeId)]).kind !== 'null') {
-        errors.push(`node ${id} transformParent must reference a Null`)
-      }
-      if (!validMatrix(link.inverseBind)) errors.push(`node ${id} transformParent.inverseBind must be a finite 4x4 matrix`)
-      const visited = new Set([id])
-      let parentId = link.nodeId
-      while (typeof parentId === 'string') {
-        if (visited.has(parentId)) { errors.push(`node ${id} has a cyclic Null connection`); break }
-        visited.add(parentId)
-        parentId = asRecord(asRecord(nodes[parentId]).transformParent).nodeId
-      }
     }
     validateLayerMotionPath(id, node, root, errors)
     validateLayerDeformation(id, node, root, errors)
@@ -3092,13 +3063,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
-  y.set('position', node.position ?? (node.kind === 'null' ? 'absolute' : 'flow'))
+  y.set('position', node.position ?? 'flow')
   y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
-  if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
-  if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
   if (node.motionPath !== undefined) y.set('motionPath', node.motionPath)
   if (node.deformation !== undefined) {
     y.set('deformation', node.deformation)
@@ -3238,7 +3207,6 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'projection',
       'enabled',
       'background',
-      'positionMode',
       'focalLength',
       'scrollSensitivity',
       'fieldOfView',
@@ -3288,7 +3256,6 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('projection', node.projection ?? '2d')
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
-    y.set('positionMode', node.positionMode ?? 'orbit')
     y.set('focalLength', node.focalLength ?? 1000)
     y.set(
       'scrollSensitivity',
@@ -3609,14 +3576,12 @@ function defaultName(
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
-    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
   if (
-    kind === 'null' ||
     kind === 'text' ||
     kind === 'video' ||
     kind === 'audio' ||

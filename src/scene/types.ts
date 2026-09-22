@@ -527,21 +527,12 @@ export interface BendDeformation {
 
 export type LayerDeformation = BendDeformation
 
-/** A transform-only link, independent of the layout tree. Matrices are column-major. */
-export interface TransformParent {
-  nodeId: NodeId
-  inverseBind: number[]
-}
-
 interface NodeBase {
   id: NodeId
   name: string
   parent: NodeId | null
   children: NodeId[]
   transform: Transform
-  transformParent?: TransformParent | null
-  /** Retains the current pose when changing or removing a transform parent. */
-  transformOffset?: number[] | null
   appearance: Appearance
   visible: boolean
   locked: boolean
@@ -623,10 +614,6 @@ export interface FrameNode extends NodeBase {
    * default. See {@link LayoutGuide} for the per-entry shape.
    */
   layoutGuides: LayoutGuide[]
-}
-
-export interface NullNode extends NodeBase {
-  kind: 'null'
 }
 
 export interface RectNode extends NodeBase {
@@ -1016,8 +1003,6 @@ export function normalizeCameraScrollSensitivity(value: unknown): number {
 
 export interface CameraNode extends NodeBase {
   kind: 'camera'
-  /** Free cameras use actual eye XYZ and rotate in place; legacy cameras orbit. */
-  positionMode?: 'orbit' | 'free'
   /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
   projection: '2d' | 'perspective'
   /**
@@ -1194,7 +1179,6 @@ export interface InstanceNode extends NodeBase {
 }
 
 export type Node =
-  | NullNode
   | FrameNode
   | RectNode
   | EllipseNode

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { detachNullDependents } from '@/scene/nullObject'
-
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
@@ -811,10 +809,7 @@ export function useKeyboardShortcuts() {
             }
             continue
           }
-          if (n.parent || n.workspaceOnly) api.doc.transact(() => {
-            if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
-            api.deleteNode(id)
-          }, UNDOABLE_GESTURE_ORIGIN)
+          if (n.parent || n.workspaceOnly) api.deleteNode(id)
         }
         if (fallbackCameraId) setSelection([fallbackCameraId])
         else if (retainedCameraId) setSelection([retainedCameraId])

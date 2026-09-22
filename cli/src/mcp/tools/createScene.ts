@@ -97,7 +97,7 @@ export const createSceneTool: Tool = {
     "tracks with keyframes), passes it here, and gets a .hype file the desktop app " +
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
     "SceneJson shape (top level): { meta?, root?, activeCameraId?, compositionScenes?, sequenceItems?, sequenceOrder?, activeCompositionId?, sequenceSchemaVersion?, cameraIds?, defaultCameraId?, cameraCuts?, nodes, tracks?, sections? }\n" +
-    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera'|'null', " +
+    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, motionPath?, deformation?, ...kind-specific }\n" +
     "Ellipse nodes can include arc: { startAngle, sweep, innerRadius } for pie and donut charts. " +
     "startAngle is expressed in degrees (0 points right and positive angles turn clockwise); sweep and innerRadius are ratios in 0..1. " +

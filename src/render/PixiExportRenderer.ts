@@ -655,7 +655,7 @@ export class PixiExportRenderer {
       // resolved tree. For now, paint the appearance fill rect so the
       // export still produces something visible.
       this.paintRectShape(g, localX, localY, w, h, node, animated)
-    } else if (node.kind === 'camera' || node.kind === 'audio' || node.kind === 'null') {
+    } else if (node.kind === 'camera' || node.kind === 'audio') {
       // Cameras and audio nodes don't paint anything. The camera's
       // transform is applied to the root in a later phase. Audio is invisible.
     }
