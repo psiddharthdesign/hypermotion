@@ -17,7 +17,7 @@ const nodeId = api.createNode('rect', api.getRoot(), { size: { width: 240, heigh
 const nodeIds = [nodeId]
 const engine = getAnimEngine()
 engine.attach(api)
-function Check() {
+export function Check() {
   const [version, setVersion] = useState(0)
   const [time, setTime] = useState(0)
   const canvas = useRef<HTMLCanvasElement>(null)

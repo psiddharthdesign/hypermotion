@@ -40,11 +40,6 @@ import {
   nodeEffectsWrapSubtree,
   resolveAnimatedLayerEffects,
 } from '@/render/layerEffects'
-import {
-  layerBendIsActive,
-  resolvedLayerBend,
-  type ParentBendField,
-} from '@/render3d/layerBendMesh'
 
 export interface ViewportSize {
   width: number
@@ -147,8 +142,6 @@ export interface Plane3D {
   }>
   extractedFromParent?: boolean
   clips?: PlaneClip3D[]
-  bend?: import('@/scene/types').LayerBend
-  parentBendFields?: ParentBendField[]
 }
 
 export interface PlaneClip3D {
@@ -233,7 +226,6 @@ const IDENTITY_INHERITED = {
   scaleX: 1,
   scaleY: 1,
   opacity: 1,
-  bendFields: [] as ParentBendField[],
 }
 
 interface Inherited3D {
@@ -249,7 +241,6 @@ interface Inherited3D {
   scaleX: number
   scaleY: number
   opacity: number
-  bendFields: ParentBendField[]
 }
 
 interface BendSource3D {
@@ -995,7 +986,6 @@ export function buildWorldPlanes(
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
-      bendFields: inherited.bendFields,
     }
 
     if (hasNullTransform(node)) {
@@ -1139,50 +1129,7 @@ export function buildWorldPlanes(
           videoStackSibling ||
           node.kind === 'video',
         clips: activeClips.length ? [...activeClips] : undefined,
-        bend: resolvedLayerBend(node, a),
-        parentBendFields: inherited.bendFields.length
-          ? [...inherited.bendFields]
-          : undefined,
       })
-      const ownBend = resolvedLayerBend(node, a)
-      if (layerBendIsActive(ownBend)) {
-        nextInherited.bendFields = [
-          ...inherited.bendFields,
-          {
-            center,
-            right,
-            down,
-            normal,
-            width: rect.width * Math.abs(nextInherited.scaleX),
-            height: rect.height * Math.abs(nextInherited.scaleY),
-            bend: ownBend,
-          },
-        ]
-      }
-    } else {
-      const ownBend = resolvedLayerBend(node, a)
-      if (layerBendIsActive(ownBend)) {
-        const right = norm3(nextInherited.basisX)
-        const down = norm3(nextInherited.basisY)
-        const normal = norm3(nextInherited.basisZ)
-        const center = mapPoint(nextInherited, {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-          z: 0,
-        })
-        nextInherited.bendFields = [
-          ...inherited.bendFields,
-          {
-            center,
-            right,
-            down,
-            normal,
-            width: rect.width * Math.abs(nextInherited.scaleX),
-            height: rect.height * Math.abs(nextInherited.scaleY),
-            bend: ownBend,
-          },
-        ]
-      }
     }
 
     const nextClips =

@@ -597,6 +597,7 @@ interface NodeBase {
    * composition pixels. Children sample the same field so they follow the
    * parent surface.
    */
+  /** @deprecated Retained only to read older scenes. Use deformation instead. */
   layerBend?: LayerBend
 }
 

@@ -469,6 +469,16 @@ square becomes a circle and a rectangle becomes a pill. Both switches use
 **numeric 0/1 keyframes with discrete interpolation**; smoothing interpolates
 continuously. Manual radius values remain saved when Full radius is enabled.
 
+### Deform effects
+
+Use the original `deformation` object with `kind: 'bend'` for bending layers.
+The inspector exposes it as **Deform → Add bend**, with capture axes, origin,
+length, angle/factor, dimensional lighting, geometry detail, and reset. Its
+`deformation.bend.*` tracks support animation and staggered groups; parent
+and child bend modifiers compose. The later `layerBend` corner/edge deformation
+is retired and no longer rendered. Do not author `layerBend` or `bend.*` tracks.
+Existing legacy values remain readable so opening a scene does not delete data.
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local
@@ -537,7 +547,13 @@ appearance.cornerSmoothingEnabled, appearance.fullRadius, appearance.cornerRadii
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
 vector.fill, vector.geometry,
-bend.tl, bend.tr, bend.br, bend.bl, bend.top, bend.right, bend.bottom, bend.left,
+deformation.bend.angle, deformation.bend.factor, deformation.bend.captureLength,
+deformation.bend.captureDirectionX, deformation.bend.captureDirectionY, deformation.bend.captureDirectionZ,
+deformation.bend.upDirectionX, deformation.bend.upDirectionY, deformation.bend.upDirectionZ,
+deformation.bend.captureRotation, deformation.bend.upRotation, deformation.bend.bendRotation,
+deformation.bend.captureOriginX, deformation.bend.captureOriginY, deformation.bend.captureOriginZ,
+deformation.bend.lightAzimuth, deformation.bend.lightElevation, deformation.bend.ambient,
+deformation.bend.diffuse, deformation.bend.specular, deformation.bend.roughness,
 text.progress, motionPath.progress, layout.gap, layout.padding.top, layout.padding.right,
 layout.padding.bottom, layout.padding.left, layout.direction,
 size.width, size.height, variant

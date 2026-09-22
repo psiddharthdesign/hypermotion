@@ -43,7 +43,6 @@ import {
   effectBlurPropertyId,
   effectStableId,
   isEditableVectorNode,
-  mergeLayerBend,
   normalizeCameraScrollSensitivity,
   normalizeEllipseArc,
   normalizeLayerZIndex,
@@ -95,7 +94,6 @@ import type {
   VectorStroke,
   Track,
   Keyframe,
-  LayerBend,
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
 import {
@@ -5235,10 +5233,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && node.kind !== 'audio' && node.kind !== 'null' ? (
-        <LayerBendSection node={node} api={api} />
-      ) : null}
-
       {node.kind !== 'camera' && node.kind !== 'null' && (
         <EffectsSection
           nodeId={node.id}
@@ -9158,71 +9152,6 @@ function VectorSection({
           </div>
         </FieldRow>
       ) : null}
-    </Section>
-  )
-}
-
-function LayerBendSection({
-  node,
-  api,
-}: {
-  node: Node
-  api: SceneAPI
-}) {
-  const anim = getAnimEngine().getSnapshot()[node.id]
-  const bend = mergeLayerBend(node.layerBend, {
-    tl: anim?.bendTl,
-    tr: anim?.bendTr,
-    br: anim?.bendBr,
-    bl: anim?.bendBl,
-    top: anim?.bendTop,
-    right: anim?.bendRight,
-    bottom: anim?.bendBottom,
-    left: anim?.bendLeft,
-  })
-  const patchBend = (patch: Partial<LayerBend>) => {
-    const next = mergeLayerBend(node.layerBend, patch)
-    const ui = useUI.getState()
-    api.doc.transact(() => {
-      api.setNodeProperty(node.id, 'layerBend', next)
-      if (ui.recording) {
-        recordKeyframesForPatch(api, node.id, ui.playhead, 'bend', patch)
-      } else {
-        stampToActiveTracksForPatch(api, node.id, ui.playhead, 'bend', patch)
-      }
-    }, UNDOABLE_GESTURE_ORIGIN)
-  }
-  const rows: Array<{ label: string; key: keyof LayerBend; propertyId: 'bend.tl' | 'bend.tr' | 'bend.br' | 'bend.bl' | 'bend.top' | 'bend.right' | 'bend.bottom' | 'bend.left' }> = [
-    { label: 'Top left', key: 'tl', propertyId: 'bend.tl' },
-    { label: 'Top right', key: 'tr', propertyId: 'bend.tr' },
-    { label: 'Bottom right', key: 'br', propertyId: 'bend.br' },
-    { label: 'Bottom left', key: 'bl', propertyId: 'bend.bl' },
-    { label: 'Top', key: 'top', propertyId: 'bend.top' },
-    { label: 'Right', key: 'right', propertyId: 'bend.right' },
-    { label: 'Bottom', key: 'bottom', propertyId: 'bend.bottom' },
-    { label: 'Left', key: 'left', propertyId: 'bend.left' },
-  ]
-  return (
-    <Section title="Layer bend">
-      {rows.map((row) => (
-        <KeyframeSliderRow
-          key={row.key}
-          label={row.label}
-          value={bend[row.key]}
-          onCommit={(value) => patchBend({ [row.key]: value })}
-          min={-400}
-          max={400}
-          step={1}
-          suffix="px"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId={row.propertyId}
-              currentValue={bend[row.key]}
-            />
-          }
-        />
-      ))}
     </Section>
   )
 }

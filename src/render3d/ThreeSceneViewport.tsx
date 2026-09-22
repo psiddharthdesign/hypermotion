@@ -134,11 +134,6 @@ import {
   textureScaleForRect,
 } from '@/render3d/texturePolicy'
 import {
-  applyPlaneBendGeometry,
-  LAYER_BEND_SEGMENTS,
-  planeNeedsBendMesh,
-} from '@/render3d/layerBendMesh'
-import {
   layoutCanvasTextAnimationSegments as computeCanvasTextAnimationSegments,
   layoutCanvasTextLines as computeCanvasTextLines,
   trackedGlyphOffsets,
@@ -1507,7 +1502,7 @@ function syncPlanes(
         )
       : null
     if (!record) {
-      const geometry = createPlaneGeometry(textureRect, plane, geometryDetail)
+      const geometry = createPlaneGeometry(textureRect, geometryDetail)
       const texture = videoNode
         ? createVideoTexture(createVideoElement(videoNode))
         : createPlaneTexture(canvas!, renderer)
@@ -1558,10 +1553,7 @@ function syncPlanes(
         scene.add(record.referenceOutline)
       }
       const current = (record.mesh.geometry as THREE.PlaneGeometry).parameters
-      const wantSegments = Math.max(
-        geometryDetail,
-        planeNeedsBendMesh(plane) ? LAYER_BEND_SEGMENTS : 1,
-      )
+      const wantSegments = geometryDetail
       if (
         current.width !== textureRect.width ||
         current.height !== textureRect.height ||
@@ -1569,7 +1561,7 @@ function syncPlanes(
         current.heightSegments !== wantSegments
       ) {
         record.mesh.geometry.dispose()
-        record.mesh.geometry = createPlaneGeometry(textureRect, plane, geometryDetail)
+        record.mesh.geometry = createPlaneGeometry(textureRect, geometryDetail)
       }
       const outlineSize = record.outline.userData
         .hyperMotionOutlineSize as
@@ -1700,12 +1692,6 @@ function syncPlanes(
       record.textureSignature = textureSignature
     }
     applyPlaneTextureTransform(record.mesh, plane)
-    if (planeNeedsBendMesh(plane)) {
-      applyPlaneBendGeometry(
-        record.mesh.geometry as unknown as Parameters<typeof applyPlaneBendGeometry>[0],
-        plane,
-      )
-    }
     applyPlaneTransform(record.outline, plane)
     if (record.referenceOutline) {
       applyPlaneTransform(record.referenceOutline, plane)
@@ -1765,7 +1751,7 @@ function syncPlanes(
       if (!overlay) {
         const beamMaterial = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
         installDepthOfFieldShader(beamMaterial)
-        overlay = new THREE.Mesh(createPlaneGeometry(beamRect, beamPlane, geometryDetail), beamMaterial)
+        overlay = new THREE.Mesh(createPlaneGeometry(beamRect, geometryDetail), beamMaterial)
         record.beamOverlay = overlay
         scene.add(overlay)
       }
@@ -1777,13 +1763,12 @@ function syncPlanes(
       } else { oldMap.image = beamCanvas; oldMap.needsUpdate = true }
       if (overlay.geometry.parameters.width !== beamRect.width || overlay.geometry.parameters.height !== beamRect.height || overlay.geometry.parameters.widthSegments !== geometryDetail) {
         overlay.geometry.dispose()
-        overlay.geometry = createPlaneGeometry(beamRect, beamPlane, geometryDetail)
+        overlay.geometry = createPlaneGeometry(beamRect, geometryDetail)
       }
       updateDepthOfFieldShader(overlay.material, { ...depthOfFieldOptions, clipMap: false, planeWidth: beamRect.width, planeHeight: beamRect.height,
         bends: layerBends.map(b => bendDeformationInTargetSpace(b, plane.rect, beamRect)),
       })
       applyPlaneTextureTransform(overlay, beamPlane)
-      if (planeNeedsBendMesh(plane)) applyPlaneBendGeometry(overlay.geometry as unknown as Parameters<typeof applyPlaneBendGeometry>[0], beamPlane)
       overlay.visible = record.mesh.visible
       overlay.renderOrder = record.mesh.renderOrder + .01
       overlay.material.opacity = material.opacity
@@ -6371,33 +6356,17 @@ function paintImageNode(
   }
 }
 
-/**
- * `minDetail` lets a caller with its own subdivision requirement (GPU layer
- * deformation's `geometryDetail`) fold it in — the plane needs whichever of
- * that or the simple layer-bend mesh's fixed segment count is higher.
- */
+/** Subdivision is controlled exclusively by the original Deform effect. */
 function createPlaneGeometry(
   textureRect: { width: number; height: number },
-  plane: Plane3D,
-  minDetail = 1,
+  geometryDetail = 1,
 ): THREE.PlaneGeometry {
-  const segments = Math.max(
-    minDetail,
-    planeNeedsBendMesh(plane) ? LAYER_BEND_SEGMENTS : 1,
-  )
-  const geometry = new THREE.PlaneGeometry(
+  return new THREE.PlaneGeometry(
     textureRect.width,
     textureRect.height,
-    segments,
-    segments,
+    geometryDetail,
+    geometryDetail,
   )
-  if (segments > 1) {
-    applyPlaneBendGeometry(
-      geometry as unknown as Parameters<typeof applyPlaneBendGeometry>[0],
-      plane,
-    )
-  }
-  return geometry
 }
 
 function paintVectorLayerToCanvas(
