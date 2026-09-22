@@ -18,17 +18,23 @@ in `src/render/beam/LICENSE` and the shipped `NOTICE`.
   exported result is independent of the operating system theme; non-solid fills
   use Dark. Select Light/Dark explicitly for media or gradient backgrounds.
 - **Active / visibility:** disable the effect while retaining its settings.
-- **Strength:** 0–1. **Duration:** 0.1–120 seconds per cycle. Defaults are 1.96s
+- **Strength:** a nonnegative intensity multiplier. 1 is the preset, values
+  below 1 fade it down, and values above 1 increase color coverage in the edge
+  and glow. **Duration:** at least 0.01 seconds per cycle. Defaults are 1.96s
   for Border/Compact, 3.1s for Bottom line, and 2.3s for pulses.
-- **Edge width:** 0.25–6×. The crisp edge and soft glow automatically scale to
+- **Edge width:** a nonnegative multiplier; 0 hides the crisp edge. The crisp edge and soft glow automatically scale to
   the layer dimensions, so large frames remain readable at reduced zoom. The
   glow works on light, dark, and colored fills without changing the layer fill.
-- **Glow size:** 0–4, scaling the preset's glow widths. **Static colors** stops
+- **Glow size:** a nonnegative multiplier, scaling the preset's glow widths. **Static colors** stops
   hue shifting while preserving movement. Mono stays monochromatic.
-- **Color and timing:** preset or custom brightness/saturation (0–4), hue range
-  (0–360 degrees), layer corners or a custom radius, start/end time, and entry/exit
+- **Color and timing:** preset or custom brightness/saturation, hue range
+  (degrees), layer corners or a custom radius, start/end time, and entry/exit
   fades. Default entry/exit fades are 0.6s/0.5s. An omitted end keeps the effect
   active through the scene; set an end time to fade it out before that time.
+
+Numeric controls have no arbitrary upper authoring limit. Negative values and
+non-finite inputs are rejected or normalized. Large outer glows reduce raster
+density to fit the texture budget while preserving their authored size.
 
 Animation follows composition time, including scrubbing, repeated scenes,
 scene splitting, and frame-by-frame exports. Beam settings persist in `.hype`
@@ -85,5 +91,5 @@ pixel-identical output to a browser embedding of the React component.
 
 With the development server running, open `/tests/fixtures/beam.html`. The fixture
 checks all 80 style/palette/theme combinations for visible output, motion, and
-identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, and retained canvas
+identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, strength above 1, high numeric values, and retained canvas
 state, and displays all five styles on three fills.

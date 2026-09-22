@@ -12,7 +12,7 @@ describe('Beam layer effect', () => {
     const api = createSceneAPI()
     const root = api.createNode('frame', null)
     for (const size of BEAM_STYLES) for (const colorVariant of BEAM_PALETTES) {
-      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 2.5, duration: 3, strength: .6, glowSize: 2, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 2, saturation: .8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
+      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 12, duration: 300, strength: 8, glowSize: 12, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 6, saturation: 8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
     }
     const bytes = await sceneToBytes(api.doc)
     const restored = await readScene(bytes)
@@ -21,17 +21,23 @@ describe('Beam layer effect', () => {
   })
   it('bounds malformed inputs and preserves auto preset defaults', () => {
     const e = normalizeBorderBeam({kind:'border-beam', strength: 9, duration:0, glowSize:Infinity, hueRange:-4, brightness:NaN})
-    expect(e).toMatchObject({strength:1,duration:.1,glowSize:1,hueRange:0,brightness:1.3})
+    expect(e).toMatchObject({strength:9,duration:.01,glowSize:1,hueRange:0,brightness:1.3})
     expect(normalizeBorderBeam({kind:'border-beam'}).brightness).toBeUndefined()
   })
   it('bounds custom palettes and scales the edge/glow with large layers', () => {
     const normalized = normalizeBorderBeam({kind:'border-beam',colors:['invalid','#f00','#00ff00','oklch(0.7 0.2 280)'],edgeWidth:20})
-    expect(normalized).toMatchObject({colors:['#f00','#00ff00','oklch(0.7 0.2 280)'],edgeWidth:6,theme:'auto'})
+    expect(normalized).toMatchObject({colors:['#f00','#00ff00','oklch(0.7 0.2 280)'],edgeWidth:20,theme:'auto'})
     expect(normalizeBorderBeam({kind:'border-beam',colors:['#f00','invalid']}).colors).toBeUndefined()
     expect(normalizeBorderBeam({kind:'border-beam',colors:Array(20).fill('#abc')}).colors).toHaveLength(8)
     expect(beamSpatialScale(2400,1200)).toBe(5)
     expect(beamSpatialScale(120,48,'sm')).toBe(1)
     expect(beamPadding({kind:'border-beam',size:'pulse-outside',glowSize:4},2400,1200)).toBe(1360)
+  })
+  it('preserves intensity and all positive numeric values beyond the old UI caps', () => {
+    const effect = {kind:'border-beam' as const,strength:20,glowSize:12,brightness:8,saturation:9,edgeWidth:16,duration:300,hueRange:720,borderRadius:20000,startTime:90000,endTime:100000,fadeIn:60,fadeOut:90}
+    expect(normalizeBorderBeam(effect)).toMatchObject(effect)
+    expect(beamTiming({...effect,startTime:0,endTime:10,fadeIn:2,fadeOut:0},1).opacity).toBe(.5)
+    expect(beamTiming({...effect,startTime:0,endTime:10,fadeIn:0,fadeOut:0},1).opacity).toBe(1)
   })
   it('uses deterministic fades and handles disabled/zero-strength effects', () => {
     const e = {kind:'border-beam' as const, startTime:1, endTime:5, fadeIn:1, fadeOut:1}

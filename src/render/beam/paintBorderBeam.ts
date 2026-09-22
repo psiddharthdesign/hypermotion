@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Scene-time Canvas rendering using Border Beam's MIT palettes and oscillators.
 import type { BorderBeamEffect } from '@/scene/borderBeam'
-import { beamDuration, beamSpatialScale, beamTiming, normalizeBorderBeam } from '@/scene/borderBeam'
+import { beamDuration, beamPadding, beamSpatialScale, beamTiming, normalizeBorderBeam } from '@/scene/borderBeam'
+import { amplifyBeamAlpha, beamRasterScale } from './raster'
 import { colorPalettes } from './presets'
 import { pulseParams, pulseOscillatorDefs } from './motion'
 
@@ -44,6 +45,31 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   const e = normalizeBorderBeam(effect)
   const timing = beamTiming(e, sceneTime)
   if (!timing.opacity || !ctx.globalAlpha || input.width <= 0 || input.height <= 0) return
+  if (e.strength! > 1 || timing.opacity < 1 || ctx.globalAlpha < 1) {
+    // Render the fully entered effect, boost its actual pixel coverage, then
+    // apply timeline/layer opacity once. Canvas globalAlpha rejects values >1.
+    const padding = beamPadding(e, input.width, input.height)
+    const width = input.width + padding * 2, height = input.height + padding * 2
+    const transform = ctx.getTransform()
+    const scale = beamRasterScale(width, height, Math.hypot(transform.a, transform.b) || 1)
+    const boosted = ctx.canvas.ownerDocument.createElement('canvas')
+    boosted.width = Math.max(1, Math.ceil(width * scale))
+    boosted.height = Math.max(1, Math.ceil(height * scale))
+    const target = boosted.getContext('2d', { willReadFrequently: e.strength! > 1 })!
+    target.scale(scale, scale)
+    target.translate(padding, padding)
+    paintBorderBeam(target, { ...e, strength: 1, fadeIn: 0, fadeOut: 0 }, input, sceneTime)
+    if (e.strength! > 1) {
+      const image = target.getImageData(0, 0, boosted.width, boosted.height)
+      amplifyBeamAlpha(image.data, e.strength!)
+      target.putImageData(image, 0, 0)
+    }
+    ctx.save()
+    ctx.globalAlpha *= timing.opacity
+    ctx.drawImage(boosted, -padding, -padding, width, height)
+    ctx.restore()
+    return
+  }
   const size = e.size!
   const unit = beamSpatialScale(input.width, input.height, size)
   const radius = e.borderRadius ?? input.radius
@@ -71,14 +97,14 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   const hue = e.staticColors || mono ? 0 : -e.hueRange! * Math.cos(timing.time / 12 * Math.PI * 2)
   const filter = `hue-rotate(${hue}deg) brightness(${brightness}) saturate(${saturation})`
   const alpha = ctx.globalAlpha * timing.opacity
-  const edge = (size === 'sm' ? 1.2 : 1.6) * e.edgeWidth!
-  const pad = outside ? 64 * e.glowSize! + 16 : 0
+  const edge = Math.min(w, h, (size === 'sm' ? 1.2 : 1.6) * e.edgeWidth!)
+  const pad = beamPadding(e, input.width, input.height) / unit
   ctx.save()
   ctx.scale(unit, unit)
   const transform = ctx.getTransform()
-  const pixelScale = Math.max(.125, Math.hypot(transform.a, transform.b))
+  const pixelScale = Math.max(Number.EPSILON, Math.hypot(transform.a, transform.b))
   // Respect the caller's raster resolution, including downscaled 4K previews.
-  const rasterScale = Math.min(4, pixelScale)
+  const rasterScale = beamRasterScale(w + 2 * pad, h + 2 * pad, Math.min(4, pixelScale))
   const canvas = ctx.canvas.ownerDocument.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil((w + 2 * pad) * rasterScale))
   canvas.height = Math.max(1, Math.ceil((h + 2 * pad) * rasterScale))
@@ -94,6 +120,7 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
     field.resetTransform()
     field.clearRect(0, 0, canvas.width, canvas.height)
     field.restore()
+    if (width <= 0) return
     field.strokeStyle = palette
     field.lineWidth = width
     if (size === 'line') {

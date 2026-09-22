@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { beamRasterScale } from '@/render/beam/raster'
 import { expandRectForLayerEffects } from '@/render/layerEffects'
 import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
@@ -1741,7 +1742,7 @@ function syncPlanes(
       const beamRect = expandRectForLayerEffects(plane.rect, beams)
       const beamPlane = { ...plane, textureRect: beamRect }
       const beamCanvas = document.createElement('canvas')
-      const beamScale = Math.min(4, Math.max(1, texturePixelRatio))
+      const beamScale = beamRasterScale(beamRect.width, beamRect.height, Math.min(4, Math.max(1, texturePixelRatio)))
       beamCanvas.width = Math.ceil(beamRect.width * beamScale)
       beamCanvas.height = Math.ceil(beamRect.height * beamScale)
       const context = beamCanvas.getContext('2d')!
@@ -4219,7 +4220,7 @@ function renderPlaneTexture(
   const h = Math.max(1, Math.ceil(rect.height))
   const canvasWidth = Math.max(1, Math.ceil(textureRect.width))
   const canvasHeight = Math.max(1, Math.ceil(textureRect.height))
-  const scale = textureScale
+  const scale = hasAnimatedBeam(node.appearance.effects) ? beamRasterScale(canvasWidth, canvasHeight, textureScale) : textureScale
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(canvasWidth * scale))
   canvas.height = Math.max(1, Math.ceil(canvasHeight * scale))
@@ -4251,7 +4252,7 @@ function renderSubtreeTexture(
   if (typeof document === 'undefined') return null
   const width = Math.max(1, Math.ceil(rootRect.width))
   const height = Math.max(1, Math.ceil(rootRect.height))
-  const scale = textureScale
+  const scale = hasAnimatedBeam(api.getNode(rootId)?.appearance.effects) ? beamRasterScale(width, height, textureScale) : textureScale
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))

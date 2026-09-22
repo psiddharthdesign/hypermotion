@@ -2,6 +2,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { Effect, Node } from '@/scene'
 import { beamPadding, hasAnimatedBeam } from '@/scene/borderBeam'
+import { beamRasterScale } from '@/render/beam/raster'
 import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
 import { useAnimationPlaybackClock } from '@/ui/hooks/useAnimatedValues'
 
@@ -15,7 +16,7 @@ export function BorderBeamOverlay({ node, width, height, radius, effects }: {
   useLayoutEffect(() => {
     const canvas = ref.current
     if (!canvas) return
-    const scale = Math.min(2, window.devicePixelRatio || 1)
+    const scale = beamRasterScale(width + padding * 2, height + padding * 2, Math.min(2, window.devicePixelRatio || 1))
     canvas.width = Math.ceil((width + padding * 2) * scale)
     canvas.height = Math.ceil((height + padding * 2) * scale)
     const ctx = canvas.getContext('2d')

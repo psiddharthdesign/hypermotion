@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { paintBorderBeam } from './beam/paintBorderBeam'
+import { beamRasterScale } from './beam/raster'
 import { beamPadding } from '@/scene/borderBeam'
 /**
  * Pixi-backed offscreen renderer for the export pipeline.
@@ -1086,10 +1087,11 @@ export class PixiExportRenderer {
       if (e.visible === false) continue
       if (e.kind === 'border-beam') {
         const padding = beamPadding(e, rect.width, rect.height)
-        const raster = this.vectorRaster(`beam:${node.id}:${i}`, Math.ceil(rect.width + padding * 2), Math.ceil(rect.height + padding * 2))
+        const scale = beamRasterScale(rect.width + padding * 2, rect.height + padding * 2)
+        const raster = this.vectorRaster(`beam:${node.id}:${i}`, Math.ceil((rect.width + padding * 2) * scale), Math.ceil((rect.height + padding * 2) * scale))
         const ctx = raster.context
         ctx.clearRect(0, 0, raster.width, raster.height)
-        ctx.save(); ctx.translate(padding, padding)
+        ctx.save(); ctx.scale(scale, scale); ctx.translate(padding, padding)
         const fill = node.appearance.fill
         paintBorderBeam(ctx, e, { width: rect.width, height: rect.height,
           radius: animated.cornerRadius ?? node.appearance.cornerRadius, ellipse: node.kind === 'ellipse',
@@ -1098,6 +1100,7 @@ export class PixiExportRenderer {
         ctx.restore(); raster.texture.source.update()
         const sprite = new Sprite(raster.texture)
         sprite.position.set(-padding, -padding)
+        sprite.scale.set(1 / scale)
         container.addChild(sprite)
       } else if (e.kind === 'shadow') {
         this.appendDropShadow(e, node, rect, container, animated)

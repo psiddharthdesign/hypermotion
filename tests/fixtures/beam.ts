@@ -1,3 +1,4 @@
+import './beamControls'
 import { paintBorderBeam } from '../../src/render/beam/paintBorderBeam'
 import { BEAM_STYLES, BEAM_PALETTES } from '../../src/scene/borderBeam'
 let time=1
@@ -63,6 +64,23 @@ function paint(){
    if(ctx.globalAlpha!==.75 || ctx.filter!=='none' || ctx.getTransform().toString()!==matrix)errors.push('Canvas state leaked')
   } catch(e) {errors.push(`Custom palette: ${String(e)}`)}
  }
- output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, and canvas state pass. Time: ${time}s`
+ // Values above the old caps must visibly affect actual pixels. Opacity
+ // alone cannot exercise this: Canvas silently ignores globalAlpha > 1.
+ const intensityTotals:number[]=[]
+ for(const strength of [1,2,8]) {
+  const canvas=document.createElement('canvas');canvas.width=240;canvas.height=140
+  const ctx=canvas.getContext('2d')!
+  paintBorderBeam(ctx,{kind:'border-beam',size:'pulse-inner',strength,fadeIn:0,staticColors:true},{width:240,height:140,radius:16,fill:'#fff'},1.2)
+  const data=ctx.getImageData(0,0,240,140).data
+  intensityTotals.push(data.reduce((sum,value,i)=>sum+(i%4===3?value:0),0))
+ }
+ if(!(intensityTotals[0]<intensityTotals[1] && intensityTotals[1]<intensityTotals[2]))errors.push(`Strength gain not increasing: ${intensityTotals}`)
+ const wide=document.createElement('canvas');wide.width=640;wide.height=480
+ const wc=wide.getContext('2d')!;wc.translate(200,170)
+ try {
+  paintBorderBeam(wc,{kind:'border-beam',size:'pulse-outside',strength:8,glowSize:12,edgeWidth:8,brightness:6,saturation:8,fadeIn:0},{width:240,height:140,radius:16},1.2)
+  if(!wc.getImageData(0,0,640,480).data.some((v,i)=>i%4===3&&v>0))errors.push('Expanded values rendered blank')
+ } catch(e) {errors.push(`Expanded values: ${String(e)}`)}
+ output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, canvas state, and intensity above 1 pass. Time: ${time}s`
 }
 paint();document.querySelector('#advance')!.addEventListener('click',()=>{time+=.5;paint()})
