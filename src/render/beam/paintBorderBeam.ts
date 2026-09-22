@@ -4,6 +4,7 @@ import type { BorderBeamEffect } from '@/scene/borderBeam'
 import { beamDuration, beamPadding, beamSpatialScale, beamTiming, normalizeBorderBeam } from '@/scene/borderBeam'
 import { amplifyBeamAlpha, beamRasterScale } from './raster'
 import { beamColorPositions, beamDistribution } from './distribution'
+import { cornerShapePath, needsCornerShapePath, traceQuadraticRoundedRect } from '@/render/cornerShape'
 import { colorPalettes } from './presets'
 import { pulseParams, pulseOscillatorDefs } from './motion'
 
@@ -12,6 +13,9 @@ export interface BeamShape {
   height: number
   radius: number | readonly number[]
   ellipse?: boolean
+  cornerSmoothing?: number
+  /** DOM/Pixi use circular arcs; scene textures use the layer's corner path. */
+  cornerCurve?: 'layer' | 'circular'
   fill?: string
 }
 
@@ -32,8 +36,18 @@ function outline(shape: BeamShape, inset: number): Path2D {
   const w = Math.max(0, shape.width - inset * 2)
   const h = Math.max(0, shape.height - inset * 2)
   if (shape.ellipse) path.ellipse(shape.width / 2, shape.height / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
-  else path.roundRect(inset, inset, w, h,
-    (typeof shape.radius === 'number' ? [shape.radius] : [...shape.radius]).map(r => Math.max(0, r - inset)))
+  else if (shape.cornerCurve === 'circular') path.roundRect(inset, inset, w, h,
+    (typeof shape.radius === 'number' ? [Math.min(shape.radius,shape.width/2,shape.height/2)] : [...shape.radius]).map(r => Math.max(0, r - inset)))
+  else {
+    const radii = typeof shape.radius === 'number' ? undefined : {
+      tl:shape.radius[0],tr:shape.radius[1],br:shape.radius[2],bl:shape.radius[3],
+    }
+    const radius = typeof shape.radius === 'number' ? Math.min(shape.radius,shape.width/2,shape.height/2) : 0
+    if (needsCornerShapePath(shape.cornerSmoothing,radii)) {
+      path.addPath(new Path2D(cornerShapePath({width:shape.width,height:shape.height,
+        cornerRadius:radius,cornerRadii:radii,cornerSmoothing:shape.cornerSmoothing,inset})),new DOMMatrix().translate(inset,inset))
+    } else traceQuadraticRoundedRect(path,inset,inset,w,h,Math.max(0,radius-inset))
+  }
   return path
 }
 
@@ -125,8 +139,12 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
     field.clearRect(0, 0, canvas.width, canvas.height)
     field.restore()
     if (width <= 0) return
+    field.save()
+    // Clip a stroke centered on the actual boundary. Reconstructing an inset
+    // curve is only approximately parallel, especially on smoothed corners.
+    if (crisp) field.clip(outline(shape,0))
     field.strokeStyle = palette
-    field.lineWidth = width
+    field.lineWidth = crisp ? width*2 : width
     if (uneven) {
       // Sector clips retain the exact rounded outline while varying width.
       // A small overlap prevents antialiased cracks between adjacent sectors.
@@ -147,18 +165,19 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
           field.closePath()
         }
         field.clip()
-        field.lineWidth = localWidth
+        field.lineWidth = crisp ? localWidth*2 : localWidth
         if (size === 'line') {
-          field.beginPath();field.moveTo(0,h-(crisp?localWidth:edge)/2);field.lineTo(w,h-(crisp?localWidth:edge)/2);field.stroke()
-        } else field.stroke(crisp ? outline(shape,localWidth/2) : rim)
+          field.beginPath();field.moveTo(0,h-(crisp?0:edge)/2);field.lineTo(w,h-(crisp?0:edge)/2);field.stroke()
+        } else field.stroke(crisp ? outline(shape,0) : rim)
         field.restore()
       }
     } else if (size === 'line') {
       field.beginPath()
-      field.moveTo(edge / 2, h - edge / 2)
-      field.lineTo(w - edge / 2, h - edge / 2)
+      field.moveTo(0, h - (crisp ? 0 : edge / 2))
+      field.lineTo(w, h - (crisp ? 0 : edge / 2))
       field.stroke()
-    } else field.stroke(rim)
+    } else field.stroke(crisp ? outline(shape,0) : rim)
+    field.restore()
 
     // Pulse styles breathe in several regions; border styles carry a defined
     // head and long fading tail. Both glow and rim share this angular mask.

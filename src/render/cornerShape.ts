@@ -127,3 +127,23 @@ export function cornerShapePath({
     ...radii,
   })
 }
+
+/** The legacy uniform-corner curve shared by layer fills, strokes, and Beam.
+ * A quadratic corner is deliberately not a circular arc at the same radius.
+ */
+export function traceQuadraticRoundedRect(
+  path: Pick<CanvasRenderingContext2D, 'moveTo' | 'lineTo' | 'quadraticCurveTo' | 'closePath'>,
+  x: number, y: number, width: number, height: number, radius: number,
+): void {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2))
+  path.moveTo(x + r, y)
+  path.lineTo(x + width - r, y)
+  path.quadraticCurveTo(x + width, y, x + width, y + r)
+  path.lineTo(x + width, y + height - r)
+  path.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
+  path.lineTo(x + r, y + height)
+  path.quadraticCurveTo(x, y + height, x, y + height - r)
+  path.lineTo(x, y + r)
+  path.quadraticCurveTo(x, y, x + r, y)
+  path.closePath()
+}
