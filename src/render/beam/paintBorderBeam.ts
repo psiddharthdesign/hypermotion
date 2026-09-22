@@ -3,6 +3,7 @@
 import type { BorderBeamEffect } from '@/scene/borderBeam'
 import { beamDuration, beamPadding, beamSpatialScale, beamTiming, normalizeBorderBeam } from '@/scene/borderBeam'
 import { amplifyBeamAlpha, beamRasterScale } from './raster'
+import { beamColorPositions, beamDistribution } from './distribution'
 import { colorPalettes } from './presets'
 import { pulseParams, pulseOscillatorDefs } from './motion'
 
@@ -112,10 +113,13 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   field.scale(rasterScale, rasterScale)
   field.translate(pad, pad)
   const rim = outline(shape, edge / 2)
-  const palette = field.createConicGradient(-Math.PI / 2, w / 2, h / 2)
-  colors.forEach((color, i) => palette.addColorStop(i / colors.length, color))
+  const uneven = e.nonUniform && e.variation! > 0
+  const distribution = beamDistribution(e, timing.phase)
+  const palette = uneven && size === 'line' ? field.createLinearGradient(0,0,w,0) : field.createConicGradient(-Math.PI / 2, w / 2, h / 2)
+  const positions = beamColorPositions(colors.length,e)
+  colors.forEach((color, i) => palette.addColorStop(positions[i], color))
   palette.addColorStop(1, colors[0])
-  const stroke = (width: number) => {
+  const stroke = (width: number, crisp = false) => {
     field.save()
     field.resetTransform()
     field.clearRect(0, 0, canvas.width, canvas.height)
@@ -123,7 +127,33 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
     if (width <= 0) return
     field.strokeStyle = palette
     field.lineWidth = width
-    if (size === 'line') {
+    if (uneven) {
+      // Sector clips retain the exact rounded outline while varying width.
+      // A small overlap prevents antialiased cracks between adjacent sectors.
+      const segments = 128
+      const reach = Math.hypot(w,h) + pad * 2 + width
+      for (let i=0;i<segments;i++) {
+        const value = distribution((i+.5)/segments)
+        const localWidth = width * (.12 + .88 * value)
+        field.save()
+        field.beginPath()
+        if (size === 'line') field.rect(i*w/segments-.25, -pad, w/segments+.5, h+pad*2)
+        else {
+          const start = i/segments*Math.PI*2-Math.PI/2-.001
+          const end = (i+1)/segments*Math.PI*2-Math.PI/2+.001
+          field.moveTo(w/2,h/2)
+          field.lineTo(w/2+Math.cos(start)*reach,h/2+Math.sin(start)*reach)
+          field.lineTo(w/2+Math.cos(end)*reach,h/2+Math.sin(end)*reach)
+          field.closePath()
+        }
+        field.clip()
+        field.lineWidth = localWidth
+        if (size === 'line') {
+          field.beginPath();field.moveTo(0,h-(crisp?localWidth:edge)/2);field.lineTo(w,h-(crisp?localWidth:edge)/2);field.stroke()
+        } else field.stroke(crisp ? outline(shape,localWidth/2) : rim)
+        field.restore()
+      }
+    } else if (size === 'line') {
       field.beginPath()
       field.moveTo(edge / 2, h - edge / 2)
       field.lineTo(w - edge / 2, h - edge / 2)
@@ -133,7 +163,11 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
     // Pulse styles breathe in several regions; border styles carry a defined
     // head and long fading tail. Both glow and rim share this angular mask.
     field.globalCompositeOperation = 'destination-in'
-    if (size === 'line') {
+    if (uneven) {
+      const mask = size === 'line' ? field.createLinearGradient(0,0,w,0) : field.createConicGradient(-Math.PI/2,w/2,h/2)
+      for(let i=0;i<=128;i++) mask.addColorStop(i/128,`rgba(255,255,255,${distribution(i/128)})`)
+      field.fillStyle = mask
+    } else if (size === 'line') {
       const center = timing.phase * (w * 1.8) - w * .4
       const mask = field.createLinearGradient(center - w * .4, 0, center + w * .4, 0)
       mask.addColorStop(0, 'transparent')
@@ -178,7 +212,7 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   ctx.restore()
   // Both inner and outer styles have a crisp colored edge. This stays readable
   // over white, saturated fills, and transparent media without altering content.
-  stroke(edge)
+  stroke(edge, true)
   draw(mono && theme === 'light' ? .9 : 1, 0)
   ctx.restore()
 }

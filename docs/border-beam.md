@@ -27,6 +27,13 @@ in `src/render/beam/LICENSE` and the shipped `NOTICE`.
   glow works on light, dark, and colored fills without changing the layer fill.
 - **Glow size:** a nonnegative multiplier, scaling the preset's glow widths. **Static colors** stops
   hue shifting while preserving movement. Mono stays monochromatic.
+- **Non-uniform:** opt into uneven color spacing, tapered edge thickness, and
+  concentrated glow highlights with asymmetric tails. **Variation** increases
+  the difference between bright and quiet sections (0 restores even spacing and
+  thickness). **Spread** widens the highlights. **Pattern seed** chooses a
+  repeatable arrangement. **Moving highlights** moves that arrangement around
+  the border; disabling it holds the highlights in place. Hue shifts and pulse
+  breathing remain independent. All of these settings persist with the effect.
 - **Color and timing:** preset or custom brightness/saturation, hue range
   (degrees), layer corners or a custom radius, start/end time, and entry/exit
   fades. Default entry/exit fades are 0.6s/0.5s. An omitted end keeps the effect
@@ -91,5 +98,5 @@ pixel-identical output to a browser embedding of the React component.
 
 With the development server running, open `/tests/fixtures/beam.html`. The fixture
 checks all 80 style/palette/theme combinations for visible output, motion, and
-identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, strength above 1, high numeric values, and retained canvas
+identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, strength above 1, high numeric values, non-uniform motion/seek parity, and retained canvas
 state, and displays all five styles on three fills.

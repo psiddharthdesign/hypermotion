@@ -17,6 +17,12 @@ export interface BorderBeamEffect {
   colors?: string[]
   /** Multiplier for the automatically scaled crisp border. */
   edgeWidth?: number
+  /** Opt-in uneven color spans, tapered widths, and localized highlights. */
+  nonUniform?: boolean
+  variation?: number
+  spread?: number
+  seed?: number
+  animatePattern?: boolean
   active?: boolean
   /** Intensity multiplier: 1 is the preset, higher values intensify its color. */
   strength?: number
@@ -62,6 +68,11 @@ export function normalizeBorderBeam(effect: BorderBeamEffect): BorderBeamEffect 
     colors: Array.isArray(effect.colors) && effect.colors.filter(c => typeof c === 'string' && BEAM_COLOR.test(c)).length >= 2
       ? effect.colors.filter(c => typeof c === 'string' && BEAM_COLOR.test(c)).slice(0, 8) : undefined,
     edgeWidth: bounded(effect.edgeWidth, 1, 0),
+    nonUniform: effect.nonUniform === true,
+    variation: bounded(effect.variation, 1, 0),
+    spread: bounded(effect.spread, 1, 0),
+    seed: Math.round(bounded(effect.seed, 1, 0)),
+    animatePattern: effect.animatePattern !== false,
     active: effect.active !== false, staticColors: effect.staticColors === true,
     strength: bounded(effect.strength, 1, 0),
     duration: effect.duration === undefined ? undefined : bounded(effect.duration, beamDuration(size), 0.01),

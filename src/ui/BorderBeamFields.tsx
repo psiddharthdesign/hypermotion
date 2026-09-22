@@ -7,7 +7,7 @@ import { FieldRow, SelectField, NumberField, CheckboxField, ColorField } from '@
 export function BorderBeamFields({ effect, onChange }: { effect: BorderBeamEffect; onChange: (patch: Partial<BorderBeamEffect>) => void }) {
   const e = normalizeBorderBeam(effect)
   const numeric = (label: string, key: keyof BorderBeamEffect, value: number, min: number, step = .1) => (
-    <FieldRow label={label}><NumberField suffix={['strength', 'edgeWidth', 'glowSize', 'brightness', 'saturation'].includes(key) ? '×' : undefined} ariaLabel={label} value={value} min={min} step={step} onCommit={v => onChange({ [key]: v })} /></FieldRow>
+    <FieldRow label={label}><NumberField suffix={['strength', 'edgeWidth', 'glowSize', 'brightness', 'saturation', 'variation', 'spread'].includes(key) ? '×' : undefined} ariaLabel={label} value={value} min={min} step={step} onCommit={v => onChange({ [key]: v })} /></FieldRow>
   )
   return <div className="space-y-1.5">
     <FieldRow label="Style"><SelectField value={e.size!} options={[
@@ -34,6 +34,14 @@ export function BorderBeamFields({ effect, onChange }: { effect: BorderBeamEffec
     {numeric('Duration (s)', 'duration', e.duration ?? beamDuration(e.size!), .01)}
     {numeric('Edge width', 'edgeWidth', e.edgeWidth!, 0, .25)}
     {numeric('Glow size', 'glowSize', e.glowSize!, 0)}
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Non-uniform<CheckboxField value={e.nonUniform!} onCommit={nonUniform => onChange({ nonUniform })} /></label>
+    {e.nonUniform && <div className="space-y-1.5">
+      {numeric('Variation', 'variation', e.variation!, 0)}
+      {numeric('Spread', 'spread', e.spread!, 0)}
+      {numeric('Pattern seed', 'seed', e.seed!, 0, 1)}
+      <label className="flex items-center justify-between text-[11px] text-text-muted">Moving highlights<CheckboxField value={e.animatePattern!} onCommit={animatePattern => onChange({ animatePattern })} /></label>
+      <p className="text-[10px] text-text-muted">Variation tapers the edge and glow. Spread widens the highlights. Change the seed for another arrangement.</p>
+    </div>}
     <label className="flex items-center justify-between text-[11px] text-text-muted">Static colors<CheckboxField value={e.staticColors!} onCommit={staticColors => onChange({ staticColors })} /></label>
     <details className="text-[11px] text-text-muted"><summary className="cursor-pointer py-1">Color and timing</summary><div className="space-y-1.5 pt-1">
       <label className="flex items-center justify-between">Preset brightness<CheckboxField value={e.brightness === undefined} onCommit={auto => onChange({ brightness: auto ? undefined : 1.3 })} /></label>

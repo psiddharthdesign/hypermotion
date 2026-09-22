@@ -81,6 +81,26 @@ function paint(){
   paintBorderBeam(wc,{kind:'border-beam',size:'pulse-outside',strength:8,glowSize:12,edgeWidth:8,brightness:6,saturation:8,fadeIn:0},{width:240,height:140,radius:16},1.2)
   if(!wc.getImageData(0,0,640,480).data.some((v,i)=>i%4===3&&v>0))errors.push('Expanded values rendered blank')
  } catch(e) {errors.push(`Expanded values: ${String(e)}`)}
- output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, canvas state, and intensity above 1 pass. Time: ${time}s`
+ // All five styles support non-uniform color spans, widths, and glow. A
+ // repeat seek must reconstruct the same pattern, including its random seed.
+ for(const size of BEAM_STYLES) {
+  const canvas=document.createElement('canvas');canvas.width=640;canvas.height=440
+  const ctx=canvas.getContext('2d')!;ctx.translate(80,80)
+  const effect={kind:'border-beam' as const,size,nonUniform:true,variation:1.5,spread:1,seed:7,fadeIn:0,staticColors:true}
+  const shape={width:480,height:240,radius:32,fill:'#fff'}
+  const render=(t:number,patch={})=>{ctx.clearRect(-80,-80,640,440);paintBorderBeam(ctx,{...effect,...patch},shape,t);return canvas.toDataURL()}
+  const first=render(1.2)
+  if(render(2.1)===first)errors.push(`${size}: uneven pattern frozen`)
+  if(render(1.2)!==first)errors.push(`${size}: uneven seek mismatch`)
+  if(render(1.2,{nonUniform:false})===first)errors.push(`${size}: uneven pattern not applied`)
+  if(render(1.2,{seed:8})===first)errors.push(`${size}: pattern seed ignored`)
+  if(render(1.2,{variation:0})!==render(1.2,{nonUniform:false}))errors.push(`${size}: zero variation does not restore even distribution`)
+  if(render(1.2,{animatePattern:false,glowSize:0})!==render(2.1,{animatePattern:false,glowSize:0}))errors.push(`${size}: fixed highlights moved`)
+
+  const figure=document.createElement('figure'),label=document.createElement('figcaption')
+  label.textContent=`Non-uniform · ${size}`;figure.append(canvas,label);host.append(figure)
+  ctx.clearRect(-80,-80,640,440);ctx.fillStyle='#fff';ctx.beginPath();ctx.roundRect(0,0,480,240,32);ctx.fill();paintBorderBeam(ctx,effect,shape,time)
+ }
+ output.textContent=errors.length?errors.join('\n'):`PASS: ${cases} combinations render, animate, and reproduce exact pixels after seeking; large-frame contrast, custom colors, canvas state, intensity above 1, and non-uniform styles pass. Time: ${time}s`
 }
 paint();document.querySelector('#advance')!.addEventListener('click',()=>{time+=.5;paint()})

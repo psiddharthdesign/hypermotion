@@ -12,7 +12,7 @@ describe('Beam layer effect', () => {
     const api = createSceneAPI()
     const root = api.createNode('frame', null)
     for (const size of BEAM_STYLES) for (const colorVariant of BEAM_PALETTES) {
-      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 12, duration: 300, strength: 8, glowSize: 12, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 6, saturation: 8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
+      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 12, duration: 300, strength: 8, glowSize: 12, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 6, saturation: 8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
     }
     const bytes = await sceneToBytes(api.doc)
     const restored = await readScene(bytes)
@@ -38,6 +38,10 @@ describe('Beam layer effect', () => {
     expect(normalizeBorderBeam(effect)).toMatchObject(effect)
     expect(beamTiming({...effect,startTime:0,endTime:10,fadeIn:2,fadeOut:0},1).opacity).toBe(.5)
     expect(beamTiming({...effect,startTime:0,endTime:10,fadeIn:0,fadeOut:0},1).opacity).toBe(1)
+  })
+  it('defaults to the existing distribution and normalizes non-uniform settings', () => {
+    expect(normalizeBorderBeam({kind:'border-beam'})).toMatchObject({nonUniform:false,variation:1,spread:1,seed:1,animatePattern:true})
+    expect(normalizeBorderBeam({kind:'border-beam',nonUniform:true,variation:-1,spread:Infinity,seed:2.7,animatePattern:false})).toMatchObject({nonUniform:true,variation:0,spread:1,seed:3,animatePattern:false})
   })
   it('uses deterministic fades and handles disabled/zero-strength effects', () => {
     const e = {kind:'border-beam' as const, startTime:1, endTime:5, fadeIn:1, fadeOut:1}

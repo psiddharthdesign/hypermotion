@@ -3910,6 +3910,7 @@ test('Beam styles and advanced controls survive CLI authoring and validation', (
   const scene = sampleScene()
   const effects = ['sm', 'md', 'line', 'pulse-outside', 'pulse-inner'].map((size, index) => ({
     id: `beam-${index}`, kind: 'border-beam', size, colorVariant: 'ocean', theme: 'auto',
+    nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false,
     active: true, strength: 8, duration: 300, glowSize: 12, brightness: 6,
     colors: ['#ff3264', '#6446ff', '#32c850'], edgeWidth: 12,
     saturation: 1.2, hueRange: 60, staticColors: false, borderRadius: 12,
