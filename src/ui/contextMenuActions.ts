@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { getAnimEngine } from '@/anim'
+import { detachNullDependents } from '@/scene/nullObject'
+
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import type { ContextMenuItem } from '@/state/ui'
@@ -39,7 +43,7 @@ export function buildNodeContextMenu(
       (n) =>
         n!.parent === nodes[0]!.parent &&
         n!.parent !== null &&
-        n!.kind !== 'camera',
+        n!.kind !== 'camera' && n!.kind !== 'null',
     )
   const singleFrame =
     ids.length === 1 && nodes[0] && nodes[0].kind === 'frame'
@@ -197,7 +201,10 @@ export function buildNodeContextMenu(
     onClick: () => {
       for (const id of ids) {
         const node = api.getNode(id)
-        if (node && node.parent) api.deleteNode(id)
+        if (node && node.parent) api.doc.transact(() => {
+          if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+          api.deleteNode(id)
+        }, UNDOABLE_GESTURE_ORIGIN)
       }
       useUI.getState().clearSelection()
     },

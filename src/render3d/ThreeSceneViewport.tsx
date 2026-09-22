@@ -4,10 +4,10 @@ import { beamRasterScale } from '@/render/beam/raster'
 import { expandRectForLayerEffects } from '@/render/layerEffects'
 import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
+import { applyNullPlaneMatrix } from '@/render3d/nullPlaneMatrix'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { resolveTextShimmer } from '@/anim/textShimmerEffect'
 import { textShimmerFill } from '@/anim/textShimmer'
-// SPDX-License-Identifier: Apache-2.0
 import { getProjectAPI } from '@/project'
 import { cameraDissolveAt } from '@/sequence/cameraDissolve'
 import { CameraDissolveRenderer } from './CameraDissolveRenderer'
@@ -1153,13 +1153,14 @@ function syncThreeCamera(
   camera.near = resolved.nearClip
   camera.far = resolved.farClip
   camera.position.set(resolved.position.x, resolved.position.y, resolved.position.z)
-  camera.up.set(0, -1, 0)
+  if (resolved.rigDown) camera.up.set(-resolved.rigDown.x, -resolved.rigDown.y, -resolved.rigDown.z)
+  else camera.up.set(0, -1, 0)
   camera.lookAt(
     resolved.pointOfInterest.x,
     resolved.pointOfInterest.y,
     resolved.pointOfInterest.z,
   )
-  if (resolved.rotation.z !== 0) {
+  if (!resolved.rigDown && resolved.rotation.z !== 0) {
     camera.rotateZ(THREE.MathUtils.degToRad(-resolved.rotation.z))
   }
   camera.updateProjectionMatrix()
@@ -3813,6 +3814,7 @@ function renderSharpPlaneCanvas(
 }
 
 function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
+  if (applyNullPlaneMatrix(object, plane)) return
   object.position.set(plane.center.x, plane.center.y, plane.center.z)
   object.rotation.set(
     THREE.MathUtils.degToRad(plane.rotation.x),
@@ -3824,6 +3826,7 @@ function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
 }
 
 function applyPlaneTextureTransform(object: THREE.Object3D, plane: Plane3D) {
+  if (applyNullPlaneMatrix(object, plane, true)) return
   const textureCenter = plane.textureCenter ?? plane.center
   object.position.set(textureCenter.x, textureCenter.y, textureCenter.z)
   object.rotation.set(

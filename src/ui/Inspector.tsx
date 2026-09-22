@@ -2,6 +2,8 @@
 
 import { BorderBeamFields } from './BorderBeamFields'
 import { TransitionsPanel } from './TransitionsPanel'
+import { NullParentSection } from '@/ui/NullParentSection'
+
 import { useToast } from './toastStore'
 import {
   useCallback,
@@ -528,6 +530,8 @@ function formatInspectorSizeAxis(value: Size['width']): string {
 
 function inspectorIconForNode(node: Node): AppIconName {
   switch (node.kind) {
+    case 'null':
+      return 'null'
     case 'camera':
       return 'camera'
     case 'text':
@@ -3190,6 +3194,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       : node.appearance.fill
   const cursorInstance = isCursorInstance(api, node)
   const supportsMotionPath =
+    node.kind !== 'null' &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
@@ -3199,6 +3204,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveMotionPathProgress =
     anim?.motionPathProgress ?? motionPath?.progress ?? 0
   const supportsBend =
+    node.kind !== 'null' &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio'
@@ -3916,6 +3922,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       if (isAutoLayout) {
         api.doc.transact(() => {
           for (const child of api.getChildren(node.id)) {
+            if (child.kind === 'null') continue
             if (child.position !== 'flow') {
               api.setNodeProperty(child.id, 'position', 'flow')
             }
@@ -3992,7 +3999,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ExposeComponentPropertiesSection node={node} api={api} />
       )}
 
-      {node.kind !== 'audio' && <PositionSection node={node} api={api} />}
+      <NullParentSection node={node} api={api} />
+
+      {node.kind !== 'audio' && node.kind !== 'null' && <PositionSection node={node} api={api} />}
 
       {node.kind === 'camera' && (
         <>
@@ -4177,7 +4186,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {node.kind !== 'camera' && node.kind !== 'audio' && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
-        <AlignTools api={api} selection={[node.id]} />
+        {node.kind !== 'null' && <AlignTools api={api} selection={[node.id]} />}
         <KeyframeSliderRow
           label="Position X"
           value={liveX}
@@ -4309,6 +4318,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
           onScrubCancel={cancelNodeVisualPreview}
         />
+        {node.kind !== 'null' && (
         <InspectorDisclosure
           storageKey="advanced-transform"
           title="Advanced transform"
@@ -4457,6 +4467,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             }
           />
         </InspectorDisclosure>
+        )}
       </Section>
       )}
 
@@ -4996,7 +5007,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           apply to a viewpoint. A camera-specific section with
           projection + a future "enabled" toggle slots in here when we
           expand the camera feature surface. */}
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' && node.kind !== 'null' ? (
         <Section title="Appearance">
           <KeyframeSliderRow
             label="Opacity"
@@ -5222,11 +5233,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' && node.kind !== 'null' ? (
         <LayerBendSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && (
+      {node.kind !== 'camera' && node.kind !== 'null' && (
         <EffectsSection
           nodeId={node.id}
           value={node.appearance.effects ?? []}

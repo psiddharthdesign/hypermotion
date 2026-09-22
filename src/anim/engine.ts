@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyNullTransforms, hasNullTransform } from '@/scene/nullObject'
+
 import type {
   BlendMode,
   FlexDirection,
@@ -79,6 +81,8 @@ import {
  * after animating in from x=580.
  */
 export interface AnimatedValue {
+  /** World-space controller delta, resolved after keyframes. */
+  parentMatrix?: number[]
   x?: number
   y?: number
   /** Z depth on the camera's optical axis. 0 = focal plane. */
@@ -201,6 +205,7 @@ const EMPTY_VALUE: AnimatedValue = {}
 
 export interface AnimEngine {
   attach(api: SceneAPI): void
+  getSceneAPI(): SceneAPI | null
   play(): void
   pause(): void
   isPlaying(): boolean
@@ -281,6 +286,7 @@ function createAnimEngine(): AnimEngine {
   let compiledTracks: Track[] = []
   let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
   let compiledLayerMotionPaths: CompiledLayerMotionPath[] = []
+  let compiledNullNodes = new Map<NodeId, import('@/scene/types').Node>()
   let compiledCursorVariantBindings: CompiledCursorVariantBinding[] = []
   let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
@@ -385,8 +391,10 @@ function createAnimEngine(): AnimEngine {
         compiledTextTrackGroups.push({ nodeId, tracks })
       }
       compiledLayerMotionPaths = []
+      compiledNullNodes = new Map()
       for (const nodeId of api.getAllNodeIds()) {
         const node = api.getNode(nodeId)
+        if (node && (node.kind === 'null' || hasNullTransform(node))) compiledNullNodes.set(nodeId, node)
         if (
           !node?.motionPath ||
           (node.kind === 'instance' &&
@@ -435,11 +443,13 @@ function createAnimEngine(): AnimEngine {
       out[binding.nodeId] = value
     }
     applyCursorVariantBindings(out, compiledCursorVariantBindings)
+    applyNullTransforms(api, out, compiledNullNodes)
     snapshot = out
     notify()
   }
 
   return {
+    getSceneAPI: () => api,
     attach(a) {
       // Fast Refresh and provider remounts can reattach the singleton. Keep
       // exactly one scene listener; leaked subscriptions multiply every

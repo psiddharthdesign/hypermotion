@@ -54,7 +54,7 @@ export function solveLayout(
     // Keeping them in Yoga made invisible flow children reserve space and
     // shift every visible sibling. Returning before creating a Yoga node also
     // drops the entire hidden subtree from layout, rendering, and hit testing.
-    if (!node || !node.visible) return null
+    if (!node || !node.visible || node.kind === 'null') return null
 
     const yNode = yoga.Node.create()
     created.push(yNode)
@@ -82,7 +82,7 @@ export function solveLayout(
       }
     }
 
-    const children = api.getChildren(id).filter((child) => child.visible)
+    const children = api.getChildren(id).filter((child) => child.visible && child.kind !== 'null')
     children.forEach((child, i) => {
       // For children: we pass the parent's inner width as the child's
       // "known outer width" floor — it can further narrow to its own
@@ -143,7 +143,7 @@ export function solveLayout(
 
     // `build` inserts only visible children, so the scene/Yoga indexes must
     // use the same filtered list during the result walk.
-    const children = api.getChildren(sceneId).filter((child) => child.visible)
+    const children = api.getChildren(sceneId).filter((child) => child.visible && child.kind !== 'null')
     children.forEach((child, i) => {
       walk(yNode.getChild(i), child.id, x, y)
     })
@@ -179,7 +179,7 @@ function measureAbsoluteChildren(
 ): { width: number; height: number } | null {
   // Hidden absolute children must not keep a hug-sized component expanded.
   // This mirrors the main Yoga tree's display-none visibility semantics.
-  const children = api.getChildren(parentId).filter((child) => child.visible)
+  const children = api.getChildren(parentId).filter((child) => child.visible && child.kind !== 'null')
   if (children.length === 0) return null
   let maxX = 0
   let maxY = 0

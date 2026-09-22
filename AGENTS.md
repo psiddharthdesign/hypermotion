@@ -358,6 +358,7 @@ A single-frame artboard with a title:
 | `text`      | `text`, `fontFamily`, `fontSize` (default Inter / 16 / weight 400)                 |
 | `image`     | `src` (data URL or absolute path), `size`, `fit`                                   |
 | `shader`    | `size`, `shaderType`, `colors`, `speed`, `scale`, `params`; optional `sourceNodeId` / `sourceImage`; legacy Mesh Gradient `distortion`, `swirl`, `grain` |
+| `null`      | Transform-only controller; place under the composition root. No painted content or layout footprint. |
 | `camera`    | `transform` (scene-level only; `parent: null`; multiple cameras and timed cuts are supported) |
 | `video` / `audio` | `src`, `duration`, `volume` — for sequences with media; rarely used by agents |
 
@@ -436,6 +437,28 @@ Bottom line, Pulse outside, and Pulse inside styles. All eight palettes and
 color, glow, timing, and fade controls are documented in
 [docs/border-beam.md](./docs/border-beam.md). Beam animation uses composition
 time and survives scene splitting.
+### Null objects and transform parenting
+
+Use **+ Null** in Scene layers to create an invisible controller. Select any
+visual layer or camera and choose it under **Parent to Null** in Properties.
+Move its dashed canvas handle or keyframe its XYZ position, XYZ rotation,
+and XY scale. The controller never paints or consumes auto-layout space.
+Its inspector lists connected objects and provides a disconnect button.
+Connections and disconnections preserve the current pose and existing tracks;
+deleting a Null detaches its dependents without deleting them. Nulls can also
+connect to other Nulls; cyclic connections are rejected.
+
+In scene JSON, a controller has `kind: 'null'`, `parent` set to the composition
+root, and an ordinary `transform`. Connections use a separate
+`transformParent: { nodeId, inverseBind }` field, leaving the layer hierarchy
+and scene-level camera ownership intact. `inverseBind` is a 16-number,
+column-major inverse of the controller's world matrix at connection time.
+For a controller at the origin with no rotation and unit scale, use the
+identity matrix `[1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]`. The optional
+`transformOffset` is another column-major matrix retained on reconnect or
+disconnect. The effective world delta is
+`controllerWorld * inverseBind * transformOffset` (identity offset if omitted).
+Opacity, visibility, and effects do not propagate through Null connections.
 
 ### Layer motion paths
 
