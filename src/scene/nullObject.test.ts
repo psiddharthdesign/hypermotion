@@ -5,7 +5,7 @@ import { Matrix4, Object3D, Vector3 } from 'three'
 import { getProjectAPI } from '@/project/doc'
 import { createSceneAPI, snapshotScene } from '@/scene/doc'
 import { applyBytesToScene, applyJsonToScene, sceneToBytes } from '@/scene/file'
-import { addNull, applyNullTransforms, canParentToNull, createNullResolver, detachNullDependents, setNullParent } from '@/scene/nullObject'
+import { addNull, applyNullTransforms, canParentToNull, createNullResolver, detachNullDependents, resetNullConnectionOffset, setNullParent } from '@/scene/nullObject'
 import { buildWorldPlanes, resolveCamera3D } from '@/render3d/scene3d'
 import { applyNullPlaneMatrix } from '@/render3d/nullPlaneMatrix'
 import { solveLayout, yogaReady } from '@/layout/engine'
@@ -200,5 +200,46 @@ describe('Null controllers', () => {
     const rect = jsonRestored.getAllNodeIds().map((id) => jsonRestored.getNode(id)!).find((node) => node.kind === 'rect')!
     expect(rect.transformParent?.nodeId).toBe(nullNode.id)
     expectMatrix(matrix(jsonRestored, rect.id), matrix(api, layer))
+  })
+})
+
+
+describe('reset retained Null connection offsets', () => {
+  it('clears a bind-time rotation that remains when both displayed rotations are zero', () => {
+    const { api, controller, layer } = setup()
+    move(api, controller, { rotationX: 24 })
+    setNullParent(api, layer, controller)
+    move(api, controller, { rotationX: 0 })
+    const authored = api.getNode(layer)!.transform
+    expect(matrix(api, layer).elements[6]).not.toBeCloseTo(0)
+    expect(resetNullConnectionOffset(api, layer)).toBe(true)
+    expectMatrix(matrix(api, layer), new Matrix4())
+    expect(api.getNode(layer)!.transformParent?.nodeId).toBe(controller)
+    expect(api.getNode(layer)!.transform).toEqual(authored)
+    move(api, controller, { x: 580 })
+    expect(matrix(api, layer).elements[12]).toBeCloseTo(100)
+  })
+
+  it('rebases at the current animated parent pose and is undoable', () => {
+    const { api, controller, layer } = setup()
+    setNullParent(api, layer, controller)
+    const animated = { [controller]: { rotationX: 24, x: 600 } }
+    const before = matrix(api, layer, animated)
+    const undo = new Y.UndoManager(api.doc.getMap('scene'), { trackedOrigins: new Set([UNDOABLE_GESTURE_ORIGIN]) })
+    expect(resetNullConnectionOffset(api, layer, animated)).toBe(true)
+    expectMatrix(matrix(api, layer, animated), new Matrix4())
+    undo.undo()
+    expectMatrix(matrix(api, layer, animated), before)
+    undo.destroy()
+  })
+
+  it('refuses to reset a singular or locked connection', () => {
+    const { api, controller, layer } = setup()
+    setNullParent(api, layer, controller)
+    move(api, controller, { scaleX: 0 })
+    expect(resetNullConnectionOffset(api, layer)).toBe(false)
+    move(api, controller, { scaleX: 1 })
+    api.setNodeProperty(layer, 'locked', true)
+    expect(resetNullConnectionOffset(api, layer)).toBe(false)
   })
 })

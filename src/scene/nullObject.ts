@@ -208,3 +208,23 @@ export function alignNullToCamera(
   }, UNDOABLE_GESTURE_ORIGIN)
   return { id: controller.id, patch }
 }
+
+/** Restore authored transforms and use the parent's current pose as the new bind.
+ * This intentionally clears retained translation, rotation and scale, while
+ * keeping the connection and every authored property/keyframe intact.
+ */
+export function resetNullConnectionOffset(
+  api: SceneAPI, nodeId: NodeId, animated: Record<NodeId, AnimatedValue> = {},
+): boolean {
+  const node = api.getNode(nodeId)
+  if (!node || node.locked || !hasNullTransform(node)) return false
+  const parent = node.transformParent ? api.getNode(node.transformParent.nodeId) : null
+  const world = parent?.kind === 'null' ? createNullResolver(id => api.getNode(id), animated).world(parent) : null
+  if (world && Math.abs(world.determinant()) < 1e-10) return false
+  api.doc.transact(() => {
+    api.setNodeProperty(nodeId, 'transformOffset', null)
+    api.setNodeProperty(nodeId, 'transformParent', world && parent
+      ? { nodeId: parent.id, inverseBind: world.clone().invert().toArray() } : null)
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return true
+}

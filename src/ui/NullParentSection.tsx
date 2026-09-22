@@ -3,12 +3,12 @@ import { useState, useSyncExternalStore } from 'react'
 import { Link2, Unlink } from 'lucide-react'
 import type { Node, SceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
-import { alignNullToCamera, canParentToNull, createNullResolver, setNullParent } from '@/scene/nullObject'
+import { alignNullToCamera, canParentToNull, createNullResolver, hasNullTransform, resetNullConnectionOffset, setNullParent } from '@/scene/nullObject'
 import { recordKeyframesForPatch, stampToActiveTracksForPatch } from '@/anim/recordKeyframes'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useUI } from '@/state/ui'
-import { Vector3 } from 'three'
+import { Euler, Matrix4, Vector3 } from 'three'
 import { resolveCameraPose } from '@/render3d/cameraPose'
 import type { CameraNode } from '@/scene/types'
 
@@ -47,6 +47,7 @@ export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) 
             setError('')
           }, UNDOABLE_GESTURE_ORIGIN)}>Align Null to camera</button>
       </>}
+      <InheritedRotation node={node} api={api} onError={setError} />
       {error && <p role="alert" className="text-[11px] text-red-400">{error}</p>}
       {node.kind === 'null' && <>
         <p className="text-[11px] text-text-dim">Invisible in exports. Animate this Null to move, rotate, or scale its connected layers and cameras.</p>
@@ -78,4 +79,20 @@ function CameraNullPosition({ node, api }: { node: CameraNode; api: SceneAPI }) 
     <p>Null world pivot: {point(pivot)}</p>
     <p>{distance < 0.01 ? 'Camera and Null pivots coincide.' : `Camera is ${distance.toFixed(1)} px from the Null pivot.`}</p>
   </div>
+}
+
+
+function InheritedRotation({ node, api, onError }: { node: Node; api: SceneAPI; onError: (message: string) => void }) {
+  const engine = getAnimEngine()
+  const animated = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot)
+  if (!hasNullTransform(node)) return null
+  const delta = createNullResolver(id => api.getNode(id), animated).delta(node)
+  const rotation = new Euler().setFromRotationMatrix(new Matrix4().extractRotation(delta), 'ZYX')
+  const degrees = (value: number) => (value * 180 / Math.PI).toFixed(1)
+  return <details className="text-[11px] text-text-dim">
+    <summary>Inherited rotation: X {degrees(rotation.x)}°, Y {degrees(rotation.y)}°, Z {degrees(rotation.z)}°</summary>
+    <p className="my-2">Connections can retain movement, rotation, and scale from an earlier pose. Reset restores the layer’s own transform values and keeps it connected.</p>
+    <button type="button" disabled={node.locked} className="w-full rounded-md border border-border px-2 py-1.5 text-[12px]"
+      onClick={() => onError(resetNullConnectionOffset(api, node.id, engine.getSnapshot()) ? '' : 'Unlock the layer and use non-zero Null scale to reset.')}>Reset connection offset</button>
+  </details>
 }
