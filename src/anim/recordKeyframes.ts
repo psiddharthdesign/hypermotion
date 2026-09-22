@@ -50,6 +50,9 @@ const TRANSFORM_PROP_IDS: Partial<Record<string, PropertyId>> = {
 const APPEARANCE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   opacity: 'appearance.opacity',
   cornerRadius: 'appearance.cornerRadius',
+  cornerSmoothing: 'appearance.cornerSmoothing',
+  cornerSmoothingEnabled: 'appearance.cornerSmoothingEnabled',
+  fullRadius: 'appearance.fullRadius',
   fill: 'appearance.fill',
   blendMode: 'appearance.blendMode',
 }
@@ -248,6 +251,9 @@ function keyframeValueForPatch(
   propertyId: PropertyId,
   value: unknown,
 ): KeyframeValue | null | undefined {
+  if (propertyId === 'appearance.fullRadius' || propertyId === 'appearance.cornerSmoothingEnabled') {
+    return typeof value === 'boolean' ? Number(value) : value as KeyframeValue
+  }
   if (propertyId === 'vector.fill') {
     return value &&
       typeof value === 'object' &&

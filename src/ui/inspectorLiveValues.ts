@@ -34,6 +34,9 @@ export function liveInspectorNode(node: Node, anim?: AnimatedValue): Node {
       ...node.appearance,
       opacity: anim.opacity ?? node.appearance.opacity,
       cornerRadius: anim.cornerRadius ?? node.appearance.cornerRadius,
+      cornerSmoothing: anim.cornerSmoothing ?? node.appearance.cornerSmoothing,
+      cornerSmoothingEnabled: anim.cornerSmoothingEnabled !== undefined ? anim.cornerSmoothingEnabled >= 0.5 : node.appearance.cornerSmoothingEnabled,
+      fullRadius: anim.fullRadius !== undefined ? anim.fullRadius >= 0.5 : node.appearance.fullRadius,
       blendMode: anim.blendMode ?? node.appearance.blendMode,
       fill: anim.fill !== undefined
         ? { kind: 'solid', color: anim.fill }

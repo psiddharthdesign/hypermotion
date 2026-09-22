@@ -424,6 +424,10 @@ export interface Appearance {
    * values from legacy scenes are treated as `0`.
    */
   cornerSmoothing?: number
+  /** Enable smooth squircle corners without losing the smoothing amount. */
+  cornerSmoothingEnabled?: boolean
+  /** Resolve the radius to half the smaller current layout dimension. */
+  fullRadius?: boolean
   /** CSS-compatible compositing mode for this layer. */
   blendMode?: BlendMode
   effects: Effect[]
@@ -1397,6 +1401,9 @@ export type PropertyId =
   // appearance group — post-layout, cheap
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
+  | 'appearance.cornerSmoothing'
+  | 'appearance.cornerSmoothingEnabled'
+  | 'appearance.fullRadius'
   | 'appearance.fill'
   | 'appearance.blendMode'
   | EffectBlurPropertyId

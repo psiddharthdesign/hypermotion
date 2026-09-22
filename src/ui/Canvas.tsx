@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
 import { BorderBeamOverlay } from './BorderBeamOverlay'
 import { NullObjectOverlay } from '@/ui/NullObjectOverlay'
@@ -4720,17 +4721,9 @@ function VisualNodeView({
   const sx = isRoot ? 1 : ownSX * inherit.scaleX
   const sy = isRoot ? 1 : ownSY * inherit.scaleY
   const opacity = ownOp * inherit.opacity
-  // cornerRadius from the engine REPLACES the static value when a track
-  // is active; static is the fallback for the no-track case. See the
-  // `AnimatedValue.cornerRadius` docstring for why this differs from
-  // the additive/multiplicative composition used for transform/opacity.
-  const cornerRadius = anim?.cornerRadius ?? node.appearance.cornerRadius
-  // Per-corner override. When `appearance.cornerRadii` is set, write the
-  // four-value CSS shorthand `tl tr br bl`. We deliberately ignore the
-  // animated uniform `cornerRadius` here — once a designer promotes to
-  // per-corner, the uniform track stops applying. This trade-off keeps
-  // the data model honest: there is one source of truth at any time.
-  const cornerRadii = node.appearance.cornerRadii
+  const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, rect.width, rect.height)
+  const cornerClipPath = node.kind !== 'ellipse' && cornerSmoothing > 0
+    ? `path("${cornerShapePath({ width: rect.width, height: rect.height, cornerRadius, cornerRadii, cornerSmoothing })}")` : undefined
   // Ellipses are always circles/ellipses by definition — the
   // cornerRadius property on ellipse nodes doesn't mean anything. Paint
   // the wrapper with percentage radii so horizontal and vertical radii
@@ -5069,7 +5062,7 @@ function VisualNodeView({
         outlineOffset: node.isMask || needsDashedOutline ? '-1px' : undefined,
         // Apply the sibling-mask clip-path. See maskedBy / maskInfo
         // for derivation. No-op when this node isn't being masked.
-        clipPath: maskClipPath,
+        clipPath: maskClipPath ?? cornerClipPath,
         // Re-enable pointer events: the clip wrapper above sets
         // pointer-events:none, so we have to reinstate them here for
         // clicks / drags to reach the node.
@@ -5146,7 +5139,7 @@ function VisualNodeView({
         />
       ) : null}
       <BorderBeamOverlay node={node} width={rect.width} height={rect.height}
-        radius={cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius} effects={effects} />
+        radius={cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius} cornerSmoothing={cornerSmoothing} effects={effects} />
       {shouldRenderStrokeOverlay ? (
         <StrokeOverlay
           stroke={stroke}

@@ -157,6 +157,7 @@ import { PresetsPanel } from '@/ui/PresetsPanel'
 import { PaperShaderInspector } from '@/ui/PaperShaderInspector'
 import { AlignTools } from '@/ui/AlignTools'
 import { EasingPicker } from '@/ui/EasingPicker'
+import { CornerShapeFields } from './CornerShapeFields'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import {
   applyRenderModeToSelection,
@@ -5214,6 +5215,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           )) : null}
+          {node.kind !== 'ellipse' && node.kind !== 'text' ? <CornerShapeFields node={node} animated={anim} /> : null}
           {node.kind === 'frame' ? (
             <SectionToggleRow
               label="Clip"

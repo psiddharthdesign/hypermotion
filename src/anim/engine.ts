@@ -100,6 +100,9 @@ export interface AnimatedValue {
   opacity?: number
   /** Override for `node.appearance.cornerRadius`. */
   cornerRadius?: number
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: number
+  fullRadius?: number
   /** Override for the node's `appearance.fill` solid color. */
   fill?: string
   /** Discrete override for `node.appearance.blendMode`. */
@@ -856,6 +859,9 @@ function writeProperty(
     case 'appearance.opacity':
       into.opacity = value
       break
+    case 'appearance.cornerSmoothing': into.cornerSmoothing = value; break
+    case 'appearance.cornerSmoothingEnabled': into.cornerSmoothingEnabled = value; break
+    case 'appearance.fullRadius': into.fullRadius = value; break
     case 'appearance.cornerRadius':
       into.cornerRadius = value
       break

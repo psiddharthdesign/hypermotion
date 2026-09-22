@@ -54,6 +54,9 @@ export interface AnimatedValue {
   anchorZ?: number
   opacity?: number
   cornerRadius?: number
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: number
+  fullRadius?: number
   fill?: string
   blendMode?: BlendMode
   /** Per-effect blur overrides keyed by the effect row's stable id. */

@@ -32,7 +32,7 @@ export function normalizeCornerSmoothing(value: unknown): number {
  * Return whether a rounded rectangle needs the continuous-corner path.
  *
  * A per-corner rectangle also uses the shared path because Canvas2D's current
- * quadratic fast path only supports one uniform radius.
+ * circular fast path only supports one uniform radius.
  */
 export function needsCornerShapePath(
   cornerSmoothing: unknown,
@@ -73,9 +73,8 @@ function fitCornerRadii(
 /**
  * Build the canonical SVG path used by both clipping and strokes.
  *
- * Callers deliberately keep their old quadratic path when smoothing is zero
- * and radii are uniform. That preserves the hot-path behavior for existing
- * documents while this function handles continuous and per-corner curves.
+ * Uniform, unsmoothed corners use the circular Canvas fast path. This
+ * function handles continuous and per-corner curves.
  */
 export function cornerShapePath({
   width,
@@ -128,22 +127,48 @@ export function cornerShapePath({
   })
 }
 
-/** The legacy uniform-corner curve shared by layer fills, strokes, and Beam.
- * A quadratic corner is deliberately not a circular arc at the same radius.
- */
-export function traceQuadraticRoundedRect(
-  path: Pick<CanvasRenderingContext2D, 'moveTo' | 'lineTo' | 'quadraticCurveTo' | 'closePath'>,
+/** Exact circular corners, shared by layer fills, strokes, and Beam. */
+export function traceCircularRoundedRect(
+  path: Pick<CanvasRenderingContext2D, 'roundRect' | 'ellipse'>,
   x: number, y: number, width: number, height: number, radius: number,
 ): void {
   const r = Math.max(0, Math.min(radius, width / 2, height / 2))
-  path.moveTo(x + r, y)
-  path.lineTo(x + width - r, y)
-  path.quadraticCurveTo(x + width, y, x + width, y + r)
-  path.lineTo(x + width, y + height - r)
-  path.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
-  path.lineTo(x + r, y + height)
-  path.quadraticCurveTo(x, y + height, x, y + height - r)
-  path.lineTo(x, y + r)
-  path.quadraticCurveTo(x, y, x + r, y)
-  path.closePath()
+  if (width === height && r === width / 2) {
+    path.ellipse(x + r, y + r, r, r, 0, 0, Math.PI * 2)
+  } else {
+    path.roundRect(x, y, width, height, r)
+  }
+}
+
+interface CornerAppearance {
+  cornerRadius: number
+  cornerRadii?: CornerRadiiLike
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: boolean
+  fullRadius?: boolean
+}
+interface AnimatedCorners {
+  cornerRadius?: number
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: number
+  fullRadius?: number
+}
+
+/** Resolve once against the current layout, so Full radius follows size animation. */
+export function resolveCornerAppearance(
+  appearance: CornerAppearance,
+  animated: AnimatedCorners | undefined,
+  width: number,
+  height: number,
+) {
+  const full = animated?.fullRadius !== undefined
+    ? animated.fullRadius >= 0.5 : appearance.fullRadius === true
+  const smoothingEnabled = animated?.cornerSmoothingEnabled !== undefined
+    ? animated.cornerSmoothingEnabled >= 0.5 : appearance.cornerSmoothingEnabled !== false
+  return {
+    cornerRadius: full ? Math.min(width, height) / 2 : animated?.cornerRadius ?? appearance.cornerRadius,
+    cornerRadii: full ? undefined : appearance.cornerRadii,
+    cornerSmoothing: smoothingEnabled
+      ? normalizeCornerSmoothing(animated?.cornerSmoothing ?? appearance.cornerSmoothing) : 0,
+  }
 }

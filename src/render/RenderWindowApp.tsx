@@ -1241,6 +1241,9 @@ const ROOT_COMPOSITING_PROPERTY_IDS = new Set([
   'appearance.opacity',
   'appearance.fill',
   'appearance.cornerRadius',
+  'appearance.cornerSmoothing',
+  'appearance.cornerSmoothingEnabled',
+  'appearance.fullRadius',
   'appearance.blendMode',
 ])
 

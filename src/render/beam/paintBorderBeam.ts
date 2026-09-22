@@ -4,7 +4,7 @@ import type { BorderBeamEffect } from '@/scene/borderBeam'
 import { beamDuration, beamPadding, beamSpatialScale, beamTiming, normalizeBorderBeam } from '@/scene/borderBeam'
 import { amplifyBeamAlpha, beamRasterScale } from './raster'
 import { beamColorPositions, beamDistribution } from './distribution'
-import { cornerShapePath, needsCornerShapePath, traceQuadraticRoundedRect } from '@/render/cornerShape'
+import { cornerShapePath, needsCornerShapePath, traceCircularRoundedRect } from '@/render/cornerShape'
 import { colorPalettes } from './presets'
 import { pulseParams, pulseOscillatorDefs } from './motion'
 
@@ -14,7 +14,7 @@ export interface BeamShape {
   radius: number | readonly number[]
   ellipse?: boolean
   cornerSmoothing?: number
-  /** DOM/Pixi use circular arcs; scene textures use the layer's corner path. */
+  /** Optional circular override; default follows the shared layer geometry. */
   cornerCurve?: 'layer' | 'circular'
   fill?: string
 }
@@ -46,7 +46,7 @@ function outline(shape: BeamShape, inset: number): Path2D {
     if (needsCornerShapePath(shape.cornerSmoothing,radii)) {
       path.addPath(new Path2D(cornerShapePath({width:shape.width,height:shape.height,
         cornerRadius:radius,cornerRadii:radii,cornerSmoothing:shape.cornerSmoothing,inset})),new DOMMatrix().translate(inset,inset))
-    } else traceQuadraticRoundedRect(path,inset,inset,w,h,Math.max(0,radius-inset))
+    } else traceCircularRoundedRect(path,inset,inset,w,h,Math.max(0,radius-inset))
   }
   return path
 }

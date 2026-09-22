@@ -527,6 +527,9 @@ export interface AppearanceJson {
   fill?: FillJson | null
   stroke?: StrokeJson | null
   cornerRadius?: number
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: boolean
+  fullRadius?: boolean
   blendMode?: BlendModeJson
   cornerRadii?: {
     tl: number
@@ -583,6 +586,9 @@ export const PROPERTY_IDS = [
   'camera.vhsColorBleed',
   'appearance.opacity',
   'appearance.cornerRadius',
+  'appearance.cornerSmoothing',
+  'appearance.cornerSmoothingEnabled',
+  'appearance.fullRadius',
   'appearance.cornerRadii',
   'appearance.cornerRadii.tl',
   'appearance.cornerRadii.tr',

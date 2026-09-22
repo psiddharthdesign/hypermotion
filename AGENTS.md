@@ -460,6 +460,15 @@ disconnect. The effective world delta is
 `controllerWorld * inverseBind * transformOffset` (identity offset if omitted).
 Opacity, visibility, and effects do not propagate through Null connections.
 
+Corner controls: `appearance.cornerSmoothing` is a normalized `0..1` amount.
+`appearance.cornerSmoothingEnabled: false` disables smoothing without losing
+its amount; legacy scenes infer it from the amount. `appearance.fullRadius:
+true` resolves the uniform radius to half the smaller current layout dimension,
+overriding independent corners without deleting them. With smoothing off, a
+square becomes a circle and a rectangle becomes a pill. Both switches use
+**numeric 0/1 keyframes with discrete interpolation**; smoothing interpolates
+continuously. Manual radius values remain saved when Full radius is enabled.
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local
@@ -523,7 +532,8 @@ camera.chromaticAberrationAmount, camera.chromaticAberrationAngle,
 camera.bloomStrength, camera.bloomRadius, camera.bloomThreshold,
 camera.vhsIntensity, camera.vhsNoise, camera.vhsScanlines,
 camera.vhsColorBleed,
-appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
+appearance.opacity, appearance.cornerRadius, appearance.cornerSmoothing,
+appearance.cornerSmoothingEnabled, appearance.fullRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
 vector.fill, vector.geometry,

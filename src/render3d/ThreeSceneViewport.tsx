@@ -157,9 +157,9 @@ import {
 } from '@/render/ellipseShape'
 import {
   cornerShapePath,
-  traceQuadraticRoundedRect,
+  traceCircularRoundedRect,
   needsCornerShapePath,
-  normalizeCornerSmoothing,
+  resolveCornerAppearance,
   type CornerRadiiLike,
 } from '@/render/cornerShape'
 import {
@@ -1181,6 +1181,9 @@ function syncBackground(scene: THREE.Scene, sceneFill: string | null) {
 
 const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
   'cornerRadius',
+  'cornerSmoothing',
+  'cornerSmoothingEnabled',
+  'fullRadius',
   'fill',
   'effectBlur',
   'arcStart',
@@ -1750,13 +1753,12 @@ function syncPlanes(
       const context = beamCanvas.getContext('2d')!
       context.scale(beamScale, beamScale)
       context.translate(plane.rect.x - beamRect.x, plane.rect.y - beamRect.y)
+      const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(videoNode.appearance, animated[plane.nodeId], plane.rect.width, plane.rect.height)
       const fill = videoNode.appearance.fill
       for (const effect of beams) paintBorderBeam(context, effect, {
         width: plane.rect.width, height: plane.rect.height,
-        radius: videoNode.appearance.cornerRadii
-          ? [videoNode.appearance.cornerRadii.tl, videoNode.appearance.cornerRadii.tr, videoNode.appearance.cornerRadii.br, videoNode.appearance.cornerRadii.bl]
-          : animated[plane.nodeId]?.cornerRadius ?? videoNode.appearance.cornerRadius,
-        cornerSmoothing: appearanceCornerSmoothing(videoNode),
+        radius: cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius,
+        cornerSmoothing,
         fill: fill?.kind === 'solid' ? fill.color : undefined,
       }, playhead + (videoNode.proceduralTimeOffset ?? 0))
       let overlay = record.beamOverlay
@@ -4555,14 +4557,7 @@ function withNodeClipInSubtree(
   const y = rect.y - rootRect.y
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
-  const cornerRadius =
-    node.kind === 'ellipse'
-      ? Math.min(w, h) / 2
-      : Math.max(0, Math.min(anim?.cornerRadius ?? node.appearance.cornerRadius ?? 0, Math.min(w, h) / 2))
-  const cornerRadii =
-    node.kind === 'ellipse' ? undefined : node.appearance.cornerRadii
-  const cornerSmoothing =
-    node.kind === 'ellipse' ? 0 : appearanceCornerSmoothing(node)
+  const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
   const currentTransform = ctx.getTransform()
   ctx.save()
   const tx = applyOwnTransform ? anim?.x ?? node.transform.x : 0
@@ -4628,12 +4623,12 @@ function paintNodeBeam(ctx: CanvasRenderingContext2D, node: Node, w: number, h: 
   // Beam follows the frame boundary rather than its children's alpha mask.
   // Read the authored stack even when a frame's other effects wrap its subtree.
   const fill = anim?.fill ?? node.appearance.fill
-  const corners = node.appearance.cornerRadii
+  const { cornerRadius, cornerRadii: corners, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
   for (const effect of node.appearance.effects ?? []) {
     if (effect.kind !== 'border-beam') continue
     paintBorderBeam(ctx, effect, { width: w, height: h,
-      radius: corners ? [corners.tl, corners.tr, corners.br, corners.bl] : anim?.cornerRadius ?? node.appearance.cornerRadius,
-      cornerSmoothing: appearanceCornerSmoothing(node),
+      radius: corners ? [corners.tl, corners.tr, corners.br, corners.bl] : cornerRadius,
+      cornerSmoothing,
       ellipse: node.kind === 'ellipse', fill: typeof fill === 'string' ? fill : fill?.kind === 'solid' ? fill.color : undefined,
     }, playhead + (node.proceduralTimeOffset ?? 0))
   }
@@ -4652,20 +4647,7 @@ function paintNodeSource(
     paintVectorLayerToCanvas(ctx, node, w, h, anim)
     return
   }
-  const cornerRadius =
-    node.kind === 'ellipse'
-      ? Math.min(w, h) / 2
-      : Math.max(
-          0,
-          Math.min(
-            anim?.cornerRadius ?? node.appearance.cornerRadius ?? 0,
-            Math.min(w, h) / 2,
-          ),
-        )
-  const cornerRadii =
-    node.kind === 'ellipse' ? undefined : node.appearance.cornerRadii
-  const cornerSmoothing =
-    node.kind === 'ellipse' ? 0 : appearanceCornerSmoothing(node)
+  const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
   const paintContent = () => {
     if (!(node.kind === 'text' && node.textShimmer)) {
       paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
@@ -4965,7 +4947,7 @@ function roundedRectPath(
   radius: number,
 ) {
   ctx.beginPath()
-  traceQuadraticRoundedRect(ctx, x, y, width, height, radius)
+  traceCircularRoundedRect(ctx, x, y, width, height, radius)
 }
 
 function clipEllipseShape(
@@ -4992,11 +4974,11 @@ function strokeEllipseShape(
 }
 
 function appearanceCornerSmoothing(node: Node): number {
-  return normalizeCornerSmoothing(node.appearance.cornerSmoothing)
+  return resolveCornerAppearance(node.appearance, undefined, 0, 0).cornerSmoothing
 }
 
 /**
- * Clip with the established quadratic path unless continuous/per-corner
+ * Clip with exact circular arcs unless continuous/per-corner
  * geometry is actually required. The translate/inverse-translate pair keeps
  * the clip in the caller's transformed coordinate system without restoring
  * (and therefore accidentally discarding) the new clipping region.

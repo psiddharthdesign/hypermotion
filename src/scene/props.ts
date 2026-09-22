@@ -312,6 +312,18 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'appearance.opacity', group: 'appearance', label: 'Opacity',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
   },
+  'appearance.cornerSmoothing': {
+    id: 'appearance.cornerSmoothing', group: 'appearance', label: 'Corner Smoothing',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'appearance.cornerSmoothingEnabled': {
+    id: 'appearance.cornerSmoothingEnabled', group: 'appearance', label: 'Squircle',
+    layoutAffecting: false, interpolation: 'discrete', defaultValue: 0,
+  },
+  'appearance.fullRadius': {
+    id: 'appearance.fullRadius', group: 'appearance', label: 'Full Radius',
+    layoutAffecting: false, interpolation: 'discrete', defaultValue: 0,
+  },
   'appearance.cornerRadius': {
     id: 'appearance.cornerRadius', group: 'appearance', label: 'Corner Radius',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,

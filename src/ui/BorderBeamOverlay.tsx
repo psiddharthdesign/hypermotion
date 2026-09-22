@@ -6,8 +6,8 @@ import { beamRasterScale } from '@/render/beam/raster'
 import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
 import { useAnimationPlaybackClock } from '@/ui/hooks/useAnimatedValues'
 
-export function BorderBeamOverlay({ node, width, height, radius, effects }: {
-  node: Node; width: number; height: number; radius: number | readonly number[]; effects: readonly Effect[]
+export function BorderBeamOverlay({ node, width, height, radius, cornerSmoothing = 0, effects }: {
+  node: Node; width: number; height: number; radius: number | readonly number[]; cornerSmoothing?: number; effects: readonly Effect[]
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const time = useAnimationPlaybackClock(hasAnimatedBeam(effects))
@@ -24,9 +24,9 @@ export function BorderBeamOverlay({ node, width, height, radius, effects }: {
     ctx.scale(scale, scale); ctx.translate(padding, padding)
     const fill = node.appearance.fill
     for (const effect of beams) paintBorderBeam(ctx, effect, {
-      width, height, radius, cornerCurve: 'circular', ellipse: node.kind === 'ellipse', fill: fill?.kind === 'solid' ? fill.color : undefined,
+      width, height, radius, cornerSmoothing, ellipse: node.kind === 'ellipse', fill: fill?.kind === 'solid' ? fill.color : undefined,
     }, time + (node.proceduralTimeOffset ?? 0))
-  }, [beams, width, height, radius, padding, node, time])
+  }, [beams, width, height, radius, cornerSmoothing, padding, node, time])
   if (!beams.length) return null
   return <canvas ref={ref} aria-hidden data-border-beam style={{ position: 'absolute', pointerEvents: 'none', left: -padding, top: -padding, width: width + padding * 2, height: height + padding * 2 }} />
 }
