@@ -31,6 +31,7 @@ const ZERO_EFFECT_INSETS: LayerEffectInsets = Object.freeze({
  */
 export function layerEffectInsets(
   effects: readonly Effect[] | null | undefined,
+  size?: Pick<Rect, 'width' | 'height'>,
 ): LayerEffectInsets {
   if (!effects?.length) return ZERO_EFFECT_INSETS
 
@@ -41,7 +42,7 @@ export function layerEffectInsets(
   for (const effect of effects) {
     if (effect.visible === false || effect.kind === 'inner-shadow') continue
     if (effect.kind === 'border-beam') {
-      const padding = beamPadding(effect)
+      const padding = beamPadding(effect, size?.width, size?.height)
       top = Math.max(top, padding)
       right = Math.max(right, padding)
       bottom = Math.max(bottom, padding)
@@ -74,7 +75,7 @@ export function expandRectForLayerEffects(
   rect: Rect,
   effects: readonly Effect[] | null | undefined,
 ): Rect {
-  const insets = layerEffectInsets(effects)
+  const insets = layerEffectInsets(effects, rect)
   return {
     x: rect.x - insets.left,
     y: rect.y - insets.top,

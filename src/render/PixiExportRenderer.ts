@@ -1085,7 +1085,7 @@ export class PixiExportRenderer {
       // for legacy rows that lack the explicit `visible` flag.
       if (e.visible === false) continue
       if (e.kind === 'border-beam') {
-        const padding = beamPadding(e)
+        const padding = beamPadding(e, rect.width, rect.height)
         const raster = this.vectorRaster(`beam:${node.id}:${i}`, Math.ceil(rect.width + padding * 2), Math.ceil(rect.height + padding * 2))
         const ctx = raster.context
         ctx.clearRect(0, 0, raster.width, raster.height)

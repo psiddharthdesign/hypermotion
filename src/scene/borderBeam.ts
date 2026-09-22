@@ -13,6 +13,10 @@ export interface BorderBeamEffect {
   colorVariant?: BorderBeamPalette
   /** Auto follows the layer's fill, making renders independent of OS theme. */
   theme?: 'dark' | 'light' | 'auto'
+  /** Optional user palette, overriding the named palette. */
+  colors?: string[]
+  /** Multiplier for the automatically scaled crisp border. */
+  edgeWidth?: number
   active?: boolean
   strength?: number
   duration?: number
@@ -39,12 +43,24 @@ function bounded(value: unknown, fallback: number, min: number, max: number): nu
     ? Math.min(max, Math.max(min, value)) : fallback
 }
 
+export const DEFAULT_BEAM_COLORS = ['#ff3264', '#ff9b32', '#be28f0', '#6446ff', '#288cff', '#32c850']
+
+export function beamSpatialScale(width: number, height: number, size: BorderBeamStyle = 'md'): number {
+  const reference = size === 'sm' ? { width: 120, height: 48 } : { width: 480, height: 240 }
+  return Math.max(1, Math.min(32, width / reference.width, height / reference.height))
+}
+
+const BEAM_COLOR = /^(?:#[\da-f]{3,4}|#[\da-f]{6}(?:[\da-f]{2})?|(?:rgb|rgba|hsl|hsla|oklch|oklab)\([\d.eE+%/,\s-]+\))$/i
+
 export function normalizeBorderBeam(effect: BorderBeamEffect): BorderBeamEffect {
   const size = BEAM_STYLES.includes(effect.size!) ? effect.size! : 'md'
   return {
     ...effect, kind: 'border-beam', size,
     colorVariant: BEAM_PALETTES.includes(effect.colorVariant!) ? effect.colorVariant : 'colorful',
-    theme: effect.theme === 'light' || effect.theme === 'auto' ? effect.theme : 'dark',
+    theme: effect.theme === 'light' || effect.theme === 'dark' ? effect.theme : 'auto',
+    colors: Array.isArray(effect.colors) && effect.colors.filter(c => typeof c === 'string' && BEAM_COLOR.test(c)).length >= 2
+      ? effect.colors.filter(c => typeof c === 'string' && BEAM_COLOR.test(c)).slice(0, 8) : undefined,
+    edgeWidth: bounded(effect.edgeWidth, 1, 0.25, 6),
     active: effect.active !== false, staticColors: effect.staticColors === true,
     strength: bounded(effect.strength, 1, 0, 1),
     duration: effect.duration === undefined ? undefined : bounded(effect.duration, beamDuration(size), 0.1, 120),
@@ -77,7 +93,7 @@ export function hasAnimatedBeam(effects: readonly { kind: string; visible?: bool
   return !!effects?.some(e => e.kind === 'border-beam' && e.visible !== false && e.active !== false)
 }
 
-export function beamPadding(effect: BorderBeamEffect): number {
+export function beamPadding(effect: BorderBeamEffect, width = 480, height = 240): number {
   const e = normalizeBorderBeam(effect)
-  return e.size === 'pulse-outside' && e.active && e.visible !== false ? Math.ceil(64 * e.glowSize! + 16) : 0
+  return e.size === 'pulse-outside' && e.active && e.visible !== false ? Math.ceil((64 * e.glowSize! + 16) * beamSpatialScale(width, height, e.size)) : 0
 }

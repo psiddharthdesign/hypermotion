@@ -13,12 +13,16 @@ in `src/render/beam/LICENSE` and the shipped `NOTICE`.
 - **Style:** Border (`md`), Compact (`sm`), Bottom line (`line`), Pulse outside,
   and Pulse inside (`pulse-inner`). Compact is tuned for small controls.
 - **Colors:** Colorful, Mono, Ocean, Sunset, Forest, Candy, Ice, and Gold.
-- **Theme:** Dark, Light, or Auto. Auto follows the layer's solid fill so the
+  Enable **Custom colors** to edit a palette of 2–8 colors.
+- **Theme:** Dark, Light, or Auto (default). Auto follows the layer's solid fill so the
   exported result is independent of the operating system theme; non-solid fills
   use Dark. Select Light/Dark explicitly for media or gradient backgrounds.
 - **Active / visibility:** disable the effect while retaining its settings.
 - **Strength:** 0–1. **Duration:** 0.1–120 seconds per cycle. Defaults are 1.96s
   for Border/Compact, 3.1s for Bottom line, and 2.3s for pulses.
+- **Edge width:** 0.25–6×. The crisp edge and soft glow automatically scale to
+  the layer dimensions, so large frames remain readable at reduced zoom. The
+  glow works on light, dark, and colored fills without changing the layer fill.
 - **Glow size:** 0–4, scaling the preset's glow widths. **Static colors** stops
   hue shifting while preserving movement. Mono stays monochromatic.
 - **Color and timing:** preset or custom brightness/saturation (0–4), hue range
@@ -36,7 +40,7 @@ entry and exit, and layer transform/opacity tracks for additional animation.
 {
   "appearance": {
     "opacity": 1,
-    "fill": { "kind": "solid", "color": "#18181b" },
+    "fill": { "kind": "solid", "color": "#ffffff" },
     "stroke": null,
     "cornerRadius": 16,
     "effects": [{
@@ -44,7 +48,7 @@ entry and exit, and layer transform/opacity tracks for additional animation.
       "kind": "border-beam",
       "size": "pulse-outside",
       "colorVariant": "ocean",
-      "theme": "dark",
+      "theme": "auto",
       "strength": 1,
       "duration": 2.3,
       "glowSize": 1,
@@ -60,8 +64,10 @@ entry and exit, and layer transform/opacity tracks for additional animation.
 
 ## Rendering adaptation
 
-The shared Canvas painter recreates the library's layered gradients, travelling
-mask, highlight, and breathing glow. DOM previews and WebGL/export textures use
+The shared Canvas painter combines the library's palettes and pulse oscillators
+with a continuous colored perimeter, travelling mask, and a separate broad glow.
+Keeping the edge independent of blur prevents large glow settings from washing
+out the border on light fills. DOM previews and WebGL/export textures use
 this painter instead of CSS animations. Native video retains its decoder texture
 and receives a separate transparent Beam plane with matching transforms,
 clipping and depth of field. Animated text uses the canvas painter when Beam is
@@ -79,4 +85,5 @@ pixel-identical output to a browser embedding of the React component.
 
 With the development server running, open `/tests/fixtures/beam.html`. The fixture
 checks all 80 style/palette/theme combinations for visible output, motion, and
-identical pixels after out-of-order seeking, and displays all five styles.
+identical pixels after out-of-order seeking, checks large white/dark/colored frames, custom palettes, and retained canvas
+state, and displays all five styles on three fills.

@@ -1,23 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
+import { X } from 'lucide-react'
 import type { BorderBeamEffect } from '@/scene/borderBeam'
-import { BEAM_PALETTES, beamDuration, normalizeBorderBeam } from '@/scene/borderBeam'
-import { FieldRow, SelectField, NumberField, CheckboxField } from '@/ui/fields'
+import { BEAM_PALETTES, DEFAULT_BEAM_COLORS, beamDuration, normalizeBorderBeam } from '@/scene/borderBeam'
+import { FieldRow, SelectField, NumberField, CheckboxField, ColorField } from '@/ui/fields'
 
 export function BorderBeamFields({ effect, onChange }: { effect: BorderBeamEffect; onChange: (patch: Partial<BorderBeamEffect>) => void }) {
   const e = normalizeBorderBeam(effect)
   const numeric = (label: string, key: keyof BorderBeamEffect, value: number, min: number, max: number, step = .1) => (
-    <FieldRow label={label}><NumberField ariaLabel={label} value={value} min={min} max={max} step={step} onCommit={v => onChange({ [key]: v })} /></FieldRow>
+    <FieldRow label={label}><NumberField suffix={key === 'edgeWidth' ? '×' : undefined} ariaLabel={label} value={value} min={min} max={max} step={step} onCommit={v => onChange({ [key]: v })} /></FieldRow>
   )
   return <div className="space-y-1.5">
     <FieldRow label="Style"><SelectField value={e.size!} options={[
       { value: 'md', label: 'Border' }, { value: 'sm', label: 'Compact' }, { value: 'line', label: 'Bottom line' },
       { value: 'pulse-outside', label: 'Pulse outside' }, { value: 'pulse-inner', label: 'Pulse inside' },
     ]} onCommit={size => onChange({ size })} /></FieldRow>
-    <FieldRow label="Colors"><SelectField value={e.colorVariant!} options={BEAM_PALETTES.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onCommit={colorVariant => onChange({ colorVariant })} /></FieldRow>
+    <FieldRow label="Colors"><SelectField value={e.colorVariant!} options={BEAM_PALETTES.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onCommit={colorVariant => onChange({ colorVariant, colors: undefined })} /></FieldRow>
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Custom colors<CheckboxField value={!!e.colors} onCommit={custom => onChange({ colors: custom ? [...DEFAULT_BEAM_COLORS] : undefined })} /></label>
+    {e.colors && <div className="space-y-1.5">
+      {e.colors.map((color, index) => <FieldRow key={index} label={`Color ${index + 1}`}>
+        <ColorField value={color} onCommit={next => {
+          if (!next) return
+          onChange({ colors: e.colors!.map((c, i) => i === index ? next : c) })
+        }} />
+        <button type="button" aria-label={`Remove color ${index + 1}`} disabled={e.colors!.length <= 2}
+          className="px-1 text-text-muted disabled:opacity-30" onClick={() => onChange({ colors: e.colors!.filter((_, i) => i !== index) })}><X size={12} /></button>
+      </FieldRow>)}
+      <button type="button" disabled={e.colors.length >= 8} className="text-[11px] text-text-muted disabled:opacity-30"
+        onClick={() => onChange({ colors: [...e.colors!, '#ff9b32'] })}>Add color</button>
+    </div>}
     <FieldRow label="Theme"><SelectField value={e.theme!} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }, { value: 'auto', label: 'Auto · layer fill' }]} onCommit={theme => onChange({ theme })} /></FieldRow>
     <label className="flex items-center justify-between text-[11px] text-text-muted">Active<CheckboxField value={e.active!} onCommit={active => onChange({ active })} /></label>
     {numeric('Strength', 'strength', e.strength!, 0, 1, .01)}
     {numeric('Duration (s)', 'duration', e.duration ?? beamDuration(e.size!), .1, 120)}
+    {numeric('Edge width', 'edgeWidth', e.edgeWidth!, .25, 6, .25)}
     {numeric('Glow size', 'glowSize', e.glowSize!, 0, 4)}
     <label className="flex items-center justify-between text-[11px] text-text-muted">Static colors<CheckboxField value={e.staticColors!} onCommit={staticColors => onChange({ staticColors })} /></label>
     <details className="text-[11px] text-text-muted"><summary className="cursor-pointer py-1">Color and timing</summary><div className="space-y-1.5 pt-1">

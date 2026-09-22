@@ -11,7 +11,7 @@ export function BorderBeamOverlay({ node, width, height, radius, effects }: {
   const ref = useRef<HTMLCanvasElement>(null)
   const time = useAnimationPlaybackClock(hasAnimatedBeam(effects))
   const beams = effects.filter(e => e.kind === 'border-beam')
-  const padding = Math.max(0, ...beams.map(beamPadding))
+  const padding = Math.max(0, ...beams.map(e => beamPadding(e, width, height)))
   useLayoutEffect(() => {
     const canvas = ref.current
     if (!canvas) return
