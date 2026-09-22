@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { maskOutline, siblingMask, intersectMaskPolygons, type MaskPoint } from '@/render/maskShape'
 import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
 import { BorderBeamOverlay } from './BorderBeamOverlay'
@@ -3844,7 +3845,7 @@ export function SceneLayer({
     const walk = (id: NodeId, parentHidden: boolean) => {
       const n = api.getNode(id)
       if (!n) return
-      const eff = parentHidden || !n.visible
+      const eff = parentHidden || !n.visible || n.isMask
       if (eff) hidden.add(id)
       for (const c of api.getChildren(id)) walk(c.id, eff)
     }
@@ -3935,59 +3936,26 @@ export function SceneLayer({
     return map
   }, [api, rootId, solved, order, sceneVersion, animated, inherited])
 
-  // Mask info — for each node whose previous sibling carries
-  // `isMask: true`, record the mask shape's solved rect + kind + corner
-  // radius so NodeView can derive a CSS clip-path.
-  //
-  // Mask convention: sibling[i] with isMask=true clips sibling[i+1].
-  // Only the immediate next sibling is masked (Figma's MVP behavior).
-  // Multi-layer masking ("clip everything above") is a follow-up if
-  // users ask for it — most motion-graphics masks are 1:1.
-  //
-  // Limitation in this MVP: clip-path is applied to the masked node's
-  // own box in box-local coords. That means animating the masked
-  // node's transform also drags the clip with it — fine for static
-  // masks (avatar circles, container reveals where mask + content
-  // share a parent that animates as a unit), wrong for "content
-  // slides through a stationary mask" reveals. Real reveal behavior
-  // needs a world-space clip wrapper; defer until requested.
-  type MaskHit = {
-    rect: Rect
-    kind: NodeKind
-    corner: number
-  }
+  // Keep each mask in its own coordinate system, including inherited masks
+  // on flattened descendants. Moving content must not move its reveal window.
   const maskInfo = useMemo(() => {
     void sceneVersion
-    const map: Record<NodeId, MaskHit> = {}
-    if (!rootId) return map
-    const visit = (id: NodeId) => {
-      const kids = api.getChildren(id)
-      for (let i = 0; i < kids.length - 1; i++) {
-        const masker = kids[i]!
-        if (!masker.isMask) continue
-        const masked = kids[i + 1]!
-        const maskerRect = solved[masker.id]
-        if (!maskerRect) continue
-        // Corner radius — frames carry it on appearance.cornerRadius; rect
-        // and ellipse don't have a separate field. For ellipse we let
-        // the kind drive the clip path (clip-path: ellipse(...)) and
-        // corner is unused; for rect/frame we read appearance.cornerRadius
-        // when present.
-        const corner = maxCornerRadius(
-          masker.appearance.cornerRadius,
-          masker.appearance.cornerRadii,
-        )
-        map[masked.id] = {
-          rect: maskerRect,
-          kind: masker.kind,
-          corner,
-        }
-      }
-      for (const k of kids) visit(k.id)
+    const map: Record<NodeId, DomMask[]> = {}
+    const visit = (id: NodeId, ancestors: DomMask[] = []) => {
+      const node = api.getNode(id)
+      if (!node) return
+      const mask = siblingMask(node, (id) => api.getNode(id))
+      const maskRect = mask ? solved[mask.id] : undefined
+      const masks = mask && maskRect ? [...ancestors, {
+        node: mask, rect: maskRect, anim: animated[mask.id],
+        inherit: inherited[mask.id] ?? IDENTITY_INHERITED,
+      }] : ancestors
+      if (masks.length) map[id] = masks
+      for (const child of node.children) visit(child, masks)
     }
-    visit(rootId)
+    if (rootId) visit(rootId)
     return map
-  }, [api, rootId, solved, sceneVersion])
+  }, [api, rootId, solved, sceneVersion, animated, inherited])
 
   const compositingOrder = partitionAlwaysOnTopSubtrees(api, order)
   const renderNode = (id: NodeId) => {
@@ -4027,6 +3995,7 @@ export function SceneLayer({
     return (
       <ClippedFrameStrokeOverlay
         key={`stroke-${id}`}
+        maskedBy={maskInfo[id]}
         node={node}
         rect={rect}
         anim={animated[id]}
@@ -4056,12 +4025,14 @@ export function SceneLayer({
  * ordering for clipped frames without changing layout.
  */
 function ClippedFrameStrokeOverlay({
+  maskedBy,
   node,
   rect,
   anim,
   inherit,
   isRoot,
 }: {
+  maskedBy?: DomMask[]
   node: SceneNode
   rect: Rect
   anim: AnimatedValue | undefined
@@ -4121,6 +4092,7 @@ function ClippedFrameStrokeOverlay({
         transform: parts.length > 0 ? parts.join(' ') : undefined,
         transformOrigin,
         transformStyle: 'preserve-3d',
+        clipPath: domMaskClipPath(node, rect, anim, inherit, maskedBy),
       }}
     >
       <StrokeOverlay
@@ -4550,7 +4522,7 @@ type NodeViewProps = {
   /** Closest clipping ancestor in world space, if one exists. */
   ancestorClip?: ClipHit
   /** Previous sibling mask applied to this node. */
-  maskedBy?: { rect: Rect; kind: NodeKind; corner: number }
+  maskedBy?: DomMask[]
   onClick: (e: React.MouseEvent<HTMLDivElement>) => void
   onContextMenu: (e: React.MouseEvent<HTMLDivElement>) => void
 }
@@ -4558,6 +4530,47 @@ type NodeViewProps = {
 function NodeView(props: NodeViewProps) {
   if (props.node.kind === 'audio') return null
   return <VisualNodeView {...props} />
+}
+
+interface DomMask {
+  node: SceneNode
+  rect: Rect
+  anim: AnimatedValue | undefined
+  inherit: InheritedAnim
+}
+
+function domLayerMatrix(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim): DOMMatrix {
+  const t = node.transform
+  const x = (anim?.x ?? t.x) + inherit.x, y = (anim?.y ?? t.y) + inherit.y
+  const z = (anim?.z ?? t.z) + inherit.z
+  const ax = (anim?.anchorX ?? t.anchorX ?? 0.5) * rect.width
+  const ay = (anim?.anchorY ?? t.anchorY ?? 0.5) * rect.height
+  const az = anim?.anchorZ ?? t.anchorZ ?? 0
+  let matrix = new DOMMatrix().translate(rect.x + x + ax, rect.y + y + ay, az)
+  if (t.space === 'world') matrix = matrix.translate(0, 0, z)
+  matrix = matrix.rotateAxisAngle(1, 0, 0, (anim?.rotationX ?? t.rotationX) + inherit.rotationX)
+    .rotateAxisAngle(0, 1, 0, (anim?.rotationY ?? t.rotationY) + inherit.rotationY)
+    .rotateAxisAngle(0, 0, 1, (anim?.rotation ?? t.rotation) + inherit.rotation)
+  if (t.space !== 'world') matrix = matrix.translate(0, 0, z)
+  return matrix.scale((anim?.scaleX ?? t.scaleX) * inherit.scaleX, (anim?.scaleY ?? t.scaleY) * inherit.scaleY)
+    .translate(-ax, -ay, -az)
+}
+
+function domMaskClipPath(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim, masks?: DomMask[]): string | undefined {
+  if (!masks?.length) return undefined
+  const inverse = domLayerMatrix(node, rect, anim, inherit).inverse()
+  let polygon: MaskPoint[] | undefined
+  for (const mask of masks) {
+    const matrix = inverse.multiply(domLayerMatrix(mask.node, mask.rect, mask.anim, mask.inherit))
+    const outline = maskOutline(mask.node, mask.rect, mask.anim).map((point) => {
+      const local = matrix.transformPoint(new DOMPoint(point.x, point.y))
+      return { x: local.x, y: local.y }
+    })
+    polygon = polygon ? intersectMaskPolygons(polygon, outline) : outline
+  }
+  return polygon?.length && polygon.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+    ? `polygon(${polygon.map(p => `${p.x}px ${p.y}px`).join(',')})`
+    : 'polygon(0 0,0 0,0 0)'
 }
 
 function VisualNodeView({
@@ -4715,53 +4728,8 @@ function VisualNodeView({
   // (the frame itself is an invisible container). Non-empty frames and
   // every other node kind keep the wrapper opacity so their fill / text
   // / image content fades normally.
-  // Mask shapes paint at reduced opacity so the user can still see and
-  // edit them on the canvas — Figma hides them entirely once the
-  // selection moves elsewhere, but for our DOM renderer that's
-  // confusing because the mask shape still has fields in the
-  // Inspector. 0.35 keeps it visible without competing with the
-  // masked content.
-  const baseWrapperOpacity = isEmptyFrame ? 1 : opacity
-  const wrapperOpacity = node.isMask ? baseWrapperOpacity * 0.35 : baseWrapperOpacity
-
-  // Mask clip-path. When this node is masked by a sibling, derive a
-  // CSS clip-path string from the mask shape's local rect (relative
-  // to this node's own box) and apply it to the styled inner box.
-  //
-  // Kind-specific shapes:
-  //   - 'ellipse' → CSS ellipse(rx ry at cx cy), giving a true round
-  //     mask matching the mask shape's bounding box.
-  //   - 'rect' / 'frame' / everything else → inset(t r b l) optionally
-  //     with `round Npx` when the masker carries a corner radius. This
-  //     covers rounded-rectangle reveals.
-  //
-  // Coordinates are in the masked node's local box space (top-left of
-  // the box is 0,0). World-coord clipping needs a wrapper layer; see
-  // the maskInfo comment in SceneLayer for why MVP punts on that.
-  let maskClipPath: string | undefined
-  if (maskedBy) {
-    const localX = maskedBy.rect.x - rect.x
-    const localY = maskedBy.rect.y - rect.y
-    const w = maskedBy.rect.width
-    const h = maskedBy.rect.height
-    if (maskedBy.kind === 'ellipse') {
-      const rx = w / 2
-      const ry = h / 2
-      const cx = localX + rx
-      const cy = localY + ry
-      maskClipPath = `ellipse(${rx}px ${ry}px at ${cx}px ${cy}px)`
-    } else {
-      // inset insets are: top / right / bottom / left
-      const t = localY
-      const l = localX
-      const r = rect.width - (localX + w)
-      const b = rect.height - (localY + h)
-      maskClipPath =
-        maskedBy.corner > 0
-          ? `inset(${t}px ${r}px ${b}px ${l}px round ${maskedBy.corner}px)`
-          : `inset(${t}px ${r}px ${b}px ${l}px)`
-    }
-  }
+  const wrapperOpacity = isEmptyFrame ? 1 : opacity
+  const maskClipPath = domMaskClipPath(node, rect, anim, inherit, maskedBy)
 
   const parts: string[] = []
   const transformSpace = node.transform.space ?? 'local'

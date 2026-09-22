@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { siblingMask } from '@/render/maskShape'
+import { clipBoundaries } from './planeClipping'
 import { beamRasterScale } from '@/render/beam/raster'
 import { expandRectForLayerEffects } from '@/render/layerEffects'
 import { hasAnimatedBeam } from '@/scene/borderBeam'
@@ -581,7 +583,7 @@ export function ThreeSceneViewport({
     () => createWorldPlaneAnimationSelector(),
     [],
   )
-  const worldPlaneAnimation = selectWorldPlaneAnimation(animated)
+  const worldPlaneAnimation = selectWorldPlaneAnimation(animated, planeBuildContext.nodesById)
 
   const baseCamera = useMemo(
     // Plane topology/world transforms are camera-independent. Keep a static
@@ -3920,6 +3922,7 @@ function clippingSignatureForClips(
       clip.down.z,
       clip.width,
       clip.height,
+      ...(clip.outline?.flatMap((point) => [point.x, point.y, point.z]) ?? []),
     ].map((value) => Number(value.toFixed(4))).join(','))
     .join('|')
 }
@@ -3936,21 +3939,8 @@ function clippingPlanesForClips(
 }
 
 function clippingPlanesForClip(clip: PlaneClip3D): THREE.Plane[] {
-  const right = toThreeVector(clip.right).normalize()
-  const down = toThreeVector(clip.down).normalize()
-  const center = toThreeVector(clip.center)
-  const halfW = clip.width / 2
-  const halfH = clip.height / 2
-  const leftPoint = center.clone().addScaledVector(right, -halfW)
-  const rightPoint = center.clone().addScaledVector(right, halfW)
-  const topPoint = center.clone().addScaledVector(down, -halfH)
-  const bottomPoint = center.clone().addScaledVector(down, halfH)
-  return [
-    new THREE.Plane().setFromNormalAndCoplanarPoint(right, leftPoint),
-    new THREE.Plane().setFromNormalAndCoplanarPoint(right.clone().negate(), rightPoint),
-    new THREE.Plane().setFromNormalAndCoplanarPoint(down, topPoint),
-    new THREE.Plane().setFromNormalAndCoplanarPoint(down.clone().negate(), bottomPoint),
-  ]
+  return clipBoundaries(clip).map(({ normal, point }) =>
+    new THREE.Plane().setFromNormalAndCoplanarPoint(toThreeVector(normal), toThreeVector(point)))
 }
 
 function makePlaneOutline(
@@ -4259,7 +4249,7 @@ function renderSubtreeTexture(
   ) => {
     const node = api.getNode(id)
     const rect = layout[id]
-    if (!node || !rect || node.kind === 'camera' || !node.visible) return
+    if (!node || !rect || node.kind === 'camera' || !node.visible || node.isMask) return
     if (id !== rootId && emittedPlaneNodeIds.has(id)) return
     const applyOwnTransform = id !== rootId
     const inherited = subtreeInheritedForNode(rect, context)
@@ -4330,22 +4320,30 @@ function renderSubtreeTexture(
       paintDecoration()
     }
 
-    if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
-      // A frame is a compositing group. Rasterize its complete clipped subtree
-      // first, then apply the frame's effect stack to that result. Previously
-      // only the frame fill was blurred/shadowed and its children were painted
-      // afterward, so blur appeared to do nothing on transparent frames.
-      paintLayerWithEffects(
-        target,
-        width,
-        height,
-        resolvedEffects,
-        (source) => paintNodeAndChildren(source, []),
-      )
-      return
-    }
+    const paintContent = () => {
+      if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
+        // A frame is a compositing group. Rasterize its complete clipped subtree
+        // first, then apply the frame's effect stack to that result. Previously
+        // only the frame fill was blurred/shadowed and its children were painted
+        // afterward, so blur appeared to do nothing on transparent frames.
+        paintLayerWithEffects(
+          target,
+          width,
+          height,
+          resolvedEffects,
+          (source) => paintNodeAndChildren(source, []),
+        )
+        return
+      }
 
-    paintNodeAndChildren(target)
+      paintNodeAndChildren(target)
+    }
+    const mask = id !== rootId ? siblingMask(node, (id) => api.getNode(id)) : null
+    const maskRect = mask ? layout[mask.id] : undefined
+    if (mask && maskRect) {
+      withNodeClipInSubtree(target, mask, maskRect, rootRect, animated[mask.id], true,
+        subtreeInheritedForNode(maskRect, context), paintContent)
+    } else paintContent()
   }
   paint(ctx, rootId, IDENTITY_SUBTREE_TRANSFORM)
   return canvas
@@ -4535,22 +4533,21 @@ function withNodeClipInSubtree(
   inherited: SubtreeTransformContext,
   paint: () => void,
 ) {
-  const x = rect.x - rootRect.x
-  const y = rect.y - rootRect.y
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
   const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
   const currentTransform = ctx.getTransform()
   ctx.save()
-  const tx = applyOwnTransform ? anim?.x ?? node.transform.x : 0
-  const ty = applyOwnTransform ? anim?.y ?? node.transform.y : 0
-  const rot = applyOwnTransform ? anim?.rotation ?? node.transform.rotation ?? 0 : 0
-  const scaleX = applyOwnTransform ? anim?.scaleX ?? node.transform.scaleX ?? 1 : 1
-  const scaleY = applyOwnTransform ? anim?.scaleY ?? node.transform.scaleY ?? 1 : 1
-  ctx.translate(x + inherited.x + tx + w / 2, y + inherited.y + ty + h / 2)
-  const inheritedRotation = inherited.rotation + rot
-  if (inheritedRotation !== 0) ctx.rotate(THREE.MathUtils.degToRad(inheritedRotation))
-  ctx.scale(inherited.scaleX * scaleX, inherited.scaleY * scaleY)
+  const matrix = applyOwnTransform
+    ? multiplyMatrix2D(inherited.matrix, nodeMatrix2D(rect,
+      anim?.x ?? node.transform.x, anim?.y ?? node.transform.y,
+      anim?.rotation ?? node.transform.rotation,
+      anim?.scaleX ?? node.transform.scaleX, anim?.scaleY ?? node.transform.scaleY,
+      anim?.anchorX ?? node.transform.anchorX ?? 0.5, anim?.anchorY ?? node.transform.anchorY ?? 0.5))
+    : inherited.matrix
+  ctx.translate(-rootRect.x, -rootRect.y)
+  ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+  ctx.translate(rect.x + w / 2, rect.y + h / 2)
   if (node.kind === 'ellipse') {
     clipEllipseShape(
       ctx,
