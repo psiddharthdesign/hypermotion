@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { Link2, Unlink } from 'lucide-react'
 import type { Node, SceneAPI } from '@/scene'
 import { getAnimEngine } from '@/anim'
-import { alignNullToCamera, canParentToNull, setNullParent } from '@/scene/nullObject'
+import { alignNullToCamera, canParentToNull, createNullResolver, setNullParent } from '@/scene/nullObject'
 import { recordKeyframesForPatch, stampToActiveTracksForPatch } from '@/anim/recordKeyframes'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { useUI } from '@/state/ui'
+import { Vector3 } from 'three'
+import { resolveCameraPose } from '@/render3d/cameraPose'
+import type { CameraNode } from '@/scene/types'
 
 export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) {
   const [error, setError] = useState('')
@@ -34,7 +37,7 @@ export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) 
         {nulls.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
       {node.kind === 'camera' && node.transformParent && <>
-        <p className="text-[11px] text-text-dim">Position is the camera’s actual location. Rotation turns it in place.</p>
+        <CameraNullPosition node={node} api={api} />
         <button type="button" disabled={node.locked} className="w-full rounded-md border border-border px-2 py-1.5 text-[12px]"
           onClick={() => api.doc.transact(() => {
             const result = alignNullToCamera(api, node.id, getAnimEngine().getSnapshot())
@@ -55,4 +58,24 @@ export function NullParentSection({ node, api }: { node: Node; api: SceneAPI }) 
       </>}
     </section>
   )
+}
+
+
+function CameraNullPosition({ node, api }: { node: CameraNode; api: SceneAPI }) {
+  const engine = getAnimEngine()
+  const animated = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot)
+  const parent = node.transformParent && api.getNode(node.transformParent.nodeId)
+  if (parent?.kind !== 'null') return null
+  const resolver = createNullResolver(id => api.getNode(id), animated)
+  const localEye = resolveCameraPose(node, animated[node.id], api.getMeta().canvas).position
+  const eye = new Vector3(localEye.x, localEye.y, localEye.z).applyMatrix4(resolver.delta(node))
+  const pivot = new Vector3().applyMatrix4(resolver.world(parent))
+  const distance = eye.distanceTo(pivot)
+  const point = (v: Vector3) => `X ${v.x.toFixed(1)}, Y ${v.y.toFixed(1)}, Z ${v.z.toFixed(1)}`
+  return <div className="space-y-1 text-[11px] text-text-dim">
+    <p>Parenting preserves spacing. Rotating the Null uses its pivot; rotating the camera turns it in place.</p>
+    <p>Camera world position: {point(eye)}</p>
+    <p>Null world pivot: {point(pivot)}</p>
+    <p>{distance < 0.01 ? 'Camera and Null pivots coincide.' : `Camera is ${distance.toFixed(1)} px from the Null pivot.`}</p>
+  </div>
 }
