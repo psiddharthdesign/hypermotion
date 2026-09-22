@@ -23,6 +23,7 @@ import {
   createComponentFromSelection,
   instantiateComponent,
   ungroupFrame,
+  applyMaskToSelection,
   wrapInAutoLayout,
   wrapInGroup,
 } from '@/ui/actions'
@@ -535,65 +536,11 @@ export function useKeyboardShortcuts() {
         return
       }
 
-      // Mask — Cmd/Ctrl + Alt/Opt + M. Mirrors Figma's "Use as mask"
-      // shortcut. The bottom-most node (lowest z-order, earliest in
-      // parent's children array) becomes the mask; the next sibling
-      // above it gets clipped to its silhouette in the renderer.
-      //
-      // Selection rules:
-      //   - 0 selected: no-op.
-      //   - 1 selected: toggle isMask on it. If a higher sibling exists
-      //     it'll be clipped; if not, the flag still lives on the node
-      //     and takes effect once a sibling lands above.
-      //   - 2+ selected: among the selection, pick the one with the
-      //     lowest index in its parent's children array (the visually
-      //     bottom-most). Set isMask=true on it; clear isMask on the
-      //     others (so users can't accidentally chain masks via the
-      //     same shortcut).
-      //
-      // Selected nodes that don't share a parent are handled per-parent:
-      // we still pick the bottom-most within each parent. This is the
-      // pragmatic Figma behavior; users mostly mask siblings, but a
-      // multi-parent selection shouldn't error out.
+      // Use the same atomic mask-group action as the context menu.
       if (meta && e.altKey && e.key.toLowerCase() === 'm') {
         e.preventDefault()
         const sel = useUI.getState().selection
-        if (sel.length === 0) return
-        if (sel.length === 1) {
-          const n = api.getNode(sel[0]!)
-          if (!n) return
-          api.setNodeProperty(n.id, 'isMask', !n.isMask)
-          return
-        }
-        // Bucket selected ids by parent, then pick the lowest-index
-        // child within each bucket. setNodeProperty calls are batched
-        // into one transact so undo treats the whole mask op atomically.
-        const byParent = new Map<NodeId, NodeId[]>()
-        for (const id of sel) {
-          const node = api.getNode(id)
-          if (!node || !node.parent) continue
-          const list = byParent.get(node.parent) ?? []
-          list.push(id)
-          byParent.set(node.parent, list)
-        }
-        api.doc.transact(() => {
-          for (const [parentId, ids] of byParent) {
-            const parent = api.getNode(parentId)
-            if (!parent) continue
-            // Sort by parent.children order, take the first (lowest z).
-            const siblingOrder = parent.children
-            const sortedIds = ids.slice().sort(
-              (a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b),
-            )
-            const maskId = sortedIds[0]!
-            // Mask the bottom; clear isMask on every other selected
-            // sibling so a mistaken double-press doesn't end up
-            // marking multiple masks.
-            for (const id of sortedIds) {
-              api.setNodeProperty(id, 'isMask', id === maskId)
-            }
-          }
-        })
+        if (sel.length) setSelection(applyMaskToSelection(api, sel))
         return
       }
 

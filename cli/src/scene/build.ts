@@ -252,6 +252,7 @@ export interface NodeJson {
   /** Sibling paint order. Larger values render in front; default 0. */
   zIndex?: number
   isMask?: boolean
+  maskMode?: 'alpha'
   componentSourceId?: string | null
   workspaceOnly?: boolean
   /** Optional pixel-space Bézier rail followed by this layer. */
@@ -1350,6 +1351,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set('position', node.position ?? 'flow')
     y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
+    if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
     // Keep older scene snapshots byte-compatible when no layer rail was
@@ -3040,6 +3042,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'position',
     'zIndex',
     'isMask',
+    'maskMode',
     'componentSourceId',
     'workspaceOnly',
     'motionPath',
@@ -3066,6 +3069,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set('position', node.position ?? 'flow')
   y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
+  if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
   if (node.motionPath !== undefined) y.set('motionPath', node.motionPath)

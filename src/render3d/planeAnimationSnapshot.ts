@@ -26,7 +26,7 @@ const WORLD_PLANE_ANIMATION_PROPERTIES = [
   'effectBlur',
 ] as const satisfies readonly (keyof AnimatedValue)[]
 
-const MASK_SHAPE_PROPERTIES = ['cornerRadius', 'cornerSmoothing', 'cornerSmoothingEnabled', 'fullRadius'] as const satisfies readonly (keyof AnimatedValue)[]
+const MASK_SHAPE_PROPERTIES = ['fill', 'cornerRadius', 'cornerSmoothing', 'cornerSmoothingEnabled', 'fullRadius'] as const satisfies readonly (keyof AnimatedValue)[]
 
 const EMPTY_WORLD_PLANE_ANIMATION = Object.freeze({}) as Record<
   NodeId,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three'
+import { alphaMaskProgramKey, injectAlphaMasks } from './alphaMaskShader'
 
 export const MAX_DOF_KERNEL_SAMPLES = 48
 /** Fixed shader budget for local + inherited Bend modifier composition. */
@@ -95,7 +96,7 @@ interface DofShaderUniforms {
   hmBendRoughness: { value: number }
 }
 
-const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-stack-v15'
+const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-stack-alpha-v16'
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const kernelCache = new Map<string, THREE.Vector2[]>()
 
@@ -397,7 +398,12 @@ varying vec3 hmBentViewPosition;`,
 #endif`,
       )
   }
-  material.customProgramCacheKey = () => DOF_SHADER_KEY
+  const compile = material.onBeforeCompile
+  material.onBeforeCompile = (shader, renderer) => {
+    compile(shader, renderer)
+    injectAlphaMasks(material, shader)
+  }
+  material.customProgramCacheKey = () => `${DOF_SHADER_KEY}:${alphaMaskProgramKey(material)}`
   material.needsUpdate = true
 }
 

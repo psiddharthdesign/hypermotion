@@ -8,6 +8,7 @@ import {
   createComponentFromSelection,
   instantiateComponent,
   ungroupFrame,
+  applyMaskToSelection,
   wrapInAutoLayout,
   wrapInGroup,
   wrapInGrid,
@@ -97,11 +98,7 @@ export function buildNodeContextMenu(
 
   items.push({ kind: 'separator' })
 
-  // Mask — toggles isMask on the bottom-most node in the selection.
-  // Same logic as the Cmd+Opt+M keyboard shortcut. Single selection
-  // with isMask=true gets a "Release mask" label; everything else
-  // says "Use as mask". Disabled when the selection has no parent
-  // (root is selected) since masks need a sibling above them.
+  // Masks are grouped with their content, below it in the Layers list.
   const allRoots = nodes.every((n) => n!.parent === null)
   if (!allRoots) {
     const singleAlreadyMask =
@@ -110,34 +107,7 @@ export function buildNodeContextMenu(
       label: singleAlreadyMask ? 'Release mask' : 'Use as mask',
       shortcut: '⌥⌘M',
       onClick: () => {
-        if (ids.length === 1) {
-          const n = nodes[0]!
-          api.setNodeProperty(n.id, 'isMask', !n.isMask)
-          return
-        }
-        // Multi-select: bucket by parent, mark bottom-most as mask
-        // and clear the others. Mirrors the keyboard handler so the
-        // two surfaces stay consistent.
-        const byParent = new Map<NodeId, NodeId[]>()
-        for (const n of nodes) {
-          if (!n!.parent) continue
-          const list = byParent.get(n!.parent) ?? []
-          list.push(n!.id)
-          byParent.set(n!.parent, list)
-        }
-        api.doc.transact(() => {
-          for (const [parentId, ns] of byParent) {
-            const parent = api.getNode(parentId)
-            if (!parent) continue
-            const order = parent.children
-            const sorted = ns
-              .slice()
-              .sort((a, b) => order.indexOf(a) - order.indexOf(b))
-            const maskId = sorted[0]!
-            for (const id of sorted)
-              api.setNodeProperty(id, 'isMask', id === maskId)
-          }
-        })
+        useUI.getState().setSelection(applyMaskToSelection(api, ids))
       },
     })
     items.push({ kind: 'separator' })

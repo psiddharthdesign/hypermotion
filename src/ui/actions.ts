@@ -224,6 +224,46 @@ export function wrapInGroup(api: SceneAPI, ids: NodeId[]): NodeId | null {
   return groupId
 }
 
+/** Create one undoable mask group, with the mask below its content in Layers. */
+export function applyMaskToSelection(api: SceneAPI, ids: NodeId[]): NodeId[] {
+  const nodes = ids.map(id => api.getNode(id)).filter((n): n is SceneNode => !!n && !!n.parent && n.kind !== 'camera')
+  if (nodes.length === 1 && nodes[0]!.isMask) {
+    api.setNodeProperty(nodes[0]!.id, 'isMask', false)
+    return ids
+  }
+  const groups: NodeId[] = []
+  const parents = new Set(nodes.map(n => n.parent!))
+  api.doc.transact(() => {
+    for (const parentId of parents) {
+      const siblings = api.getChildren(parentId)
+      const selected = siblings.filter(n => ids.includes(n.id))
+      // With multiple layers selected the lowest row supplies the mask.
+      // A single selected shape masks its adjacent content layer.
+      const mask = selected.at(-1)
+      if (!mask) continue
+      const index = siblings.findIndex(n => n.id === mask.id)
+      const targets = selected.length > 1 ? selected.slice(0, -1)
+        : [siblings[index - 1] ?? siblings[index + 1]].filter((n): n is SceneNode => !!n && !n.isMask)
+      if (!targets.length) continue
+      const parent = api.getNode(parentId)
+      if (selected.length === 1 && mask.maskMode === 'alpha' && parent?.parent && siblings.at(-1)?.id === mask.id) {
+        api.setNodeProperty(mask.id, 'isMask', true)
+        groups.push(parentId)
+        continue
+      }
+      const group = wrapInGroup(api, [...targets.map(n => n.id), mask.id])
+      if (!group) continue
+      api.setNodeProperty(group, 'name', 'Mask group')
+      for (const target of targets) api.setNodeProperty(target.id, 'isMask', false)
+      api.setNodeProperty(mask.id, 'isMask', true)
+      api.setNodeProperty(mask.id, 'maskMode', 'alpha')
+      api.moveChild(group, mask.id, targets.length)
+      groups.push(group)
+    }
+  }, UNDOABLE_GESTURE_ORIGIN)
+  return groups.length ? groups : ids
+}
+
 /**
  * Create a master component from the current selection.
  *

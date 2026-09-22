@@ -5,7 +5,7 @@ import * as Y from 'yjs'
 import { createSceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
-import { ungroupFrame, wrapInGroup } from './actions'
+import { ungroupFrame, wrapInGroup, applyMaskToSelection } from './actions'
 
 const transform = (x: number, y: number) => ({
   x,
@@ -181,6 +181,49 @@ describe('wrapInGroup', () => {
       second,
       third,
     ])
+    undo.destroy()
+    api.doc.destroy()
+  })
+})
+
+describe('mask groups', () => {
+  it('groups content above the mask and preserves positions and tracks', () => {
+    const { api, root, first, second, third } = fixture()
+    api.setTrack({ id: 'mask-x', nodeId: third, propertyId: 'transform.x', defaultEasing: 'linear', keyframes: [{ id: 'key', time: 0, value: 80 }] })
+    const [group] = applyMaskToSelection(api, [third, first, second])
+    expect(api.getNode(group!)?.name).toBe('Mask group')
+    expect(api.getChildren(root).map(n => n.id)).toEqual([group])
+    expect(api.getChildren(group!).map(n => n.id)).toEqual([first, second, third])
+    expect(api.getNode(third)).toMatchObject({ isMask: true, maskMode: 'alpha' })
+    expect(api.getNode(first)?.isMask).toBe(false)
+    const groupX = api.getNode(group!)!.transform.x
+    expect(api.getNode(third)!.transform.x + groupX).toBe(80)
+    expect(Number(api.getTrack('mask-x')!.keyframes[0]!.value) + groupX).toBe(80)
+    api.doc.destroy()
+  })
+  it('groups a single mask with adjacent content and releases it without deleting layers', () => {
+    const { api, root, first, second, third } = fixture()
+    const [group] = applyMaskToSelection(api, [first])
+    expect(api.getChildren(group!).map(n => n.id)).toEqual([second, first])
+    expect(api.getChildren(root).map(n => n.id)).toEqual([group, third])
+    applyMaskToSelection(api, [first])
+    expect(api.getNode(first)?.isMask).toBe(false)
+    expect(api.getChildren(group!).length).toBe(2)
+    expect(applyMaskToSelection(api, [first])).toEqual([group])
+    expect(api.getChildren(group!).map(n => n.id)).toEqual([second, first])
+    api.doc.destroy()
+  })
+  it('undoes and redoes grouping, ordering and mask ownership atomically', () => {
+    const { api, root, first, second, third } = fixture()
+    const undo = new Y.UndoManager(api.doc.getMap('scene'), { trackedOrigins: new Set([null, UNDOABLE_GESTURE_ORIGIN]) })
+    const [group] = applyMaskToSelection(api, [second, third])
+    undo.undo()
+    expect(api.getNode(group!)).toBeNull()
+    expect(api.getChildren(root).map(n => n.id)).toEqual([first, second, third])
+    expect(api.getNode(third)?.isMask).toBe(false)
+    undo.redo()
+    expect(api.getChildren(group!).map(n => n.id)).toEqual([second, third])
+    expect(api.getNode(third)?.maskMode).toBe('alpha')
     undo.destroy()
     api.doc.destroy()
   })

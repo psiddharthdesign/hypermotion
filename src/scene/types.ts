@@ -559,22 +559,14 @@ interface NodeBase {
   /** Original timeline origin retained by procedural effects after a scene split. */
   proceduralTimeOffset?: number
   /**
-   * When true, this node acts as a mask for the layer immediately
-   * above it among its parent's children — Figma's mask convention,
-   * where the bottom shape clips everything stacked above it within
-   * the same parent. The mask shape itself does not paint normally;
-   * its silhouette becomes the visible region of the masked layer(s).
-   *
-   * MVP scope: only the immediate next sibling is masked, and the
-   * mask is treated as a clip-path on the masked layer. This covers
-   * "rectangle reveal" / "circle avatar" / "rounded-frame container"
-   * — the 90% of motion-graphics mask uses. Multi-layer masking
-   * ("mask all upper siblings") and chained masks land later if
-   * users ask for them.
-   *
-   * Default false. Toggle via Cmd+Opt+M (matches Figma).
+   * This layer's painted alpha controls the visibility of its masked content.
+   * Its fill, opacity and effects (including blur) contribute to the reveal.
+   * New masks sit below their content in a Mask group. Legacy ungrouped masks
+   * retain their immediate-next-sibling pairing until regrouped.
    */
   isMask: boolean
+  /** Alpha masks sit after their content inside an automatically created group. */
+  maskMode?: 'alpha'
   /**
    * Optional layer-local spatial rail. Every node kind may follow one; the
    * animation engine resolves it into the normal transform snapshot so

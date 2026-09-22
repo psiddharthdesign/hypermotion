@@ -141,6 +141,7 @@ export interface Plane3D {
 }
 
 export interface PlaneClip3D {
+  mask?: { node: Node; anim?: AnimatedValue }
   /** World-space convex mask boundary; absent for ordinary frame clips. */
   outline?: Vec3[]
   rect: Rect
@@ -973,6 +974,7 @@ export function buildWorldPlanes(
     if (mask && maskRect) {
       const maskTransform = nodeTransform(mask, maskRect, inherited)
       const clip = clipFromFrame(maskRect, maskTransform)
+      clip.mask = { node: mask, anim: animated[mask.id] }
       clip.outline = maskOutline(mask, maskRect, animated[mask.id]).map((point) =>
         mapPoint(maskTransform, { x: maskRect.x + point.x, y: maskRect.y + point.y, z: 0 }))
       activeClips = [...activeClips, clip]

@@ -2,6 +2,7 @@
 
 import { siblingMask } from '@/render/maskShape'
 import { clipBoundaries } from './planeClipping'
+import { syncAlphaMasks, copyAlphaMasks, type AlphaMaskSample } from './alphaMaskShader'
 import { beamRasterScale } from '@/render/beam/raster'
 import { expandRectForLayerEffects } from '@/render/layerEffects'
 import { hasAnimatedBeam } from '@/scene/borderBeam'
@@ -247,6 +248,7 @@ interface PlaneRecord {
   textureRevision: PlaneTextureRevision | null
   textureSignature: string
   clipSignature: string
+  maskTextures?: Map<HTMLCanvasElement, THREE.CanvasTexture>
   beamOverlay?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   textSegments?: TextSegmentRecord
 }
@@ -419,6 +421,7 @@ function disposeBeamOverlay(record: PlaneRecord) {
 
 function disposePlaneRecord(record: PlaneRecord) {
   disposeBeamOverlay(record)
+  for (const texture of record.maskTextures?.values() ?? []) texture.dispose()
   record.video?.pause()
   record.video?.removeAttribute('src')
   record.video?.load()
@@ -702,7 +705,10 @@ export function ThreeSceneViewport({
   )
 
   useEffect(() => {
-    const onImageLoaded = () => setImageRevision((revision) => revision + 1)
+    const onImageLoaded = () => {
+      maskRasterCache = new WeakMap()
+      setImageRevision((revision) => revision + 1)
+    }
     const onVideoReady = () => setVideoRevision((revision) => revision + 1)
     window.addEventListener(VIDEO_READY_EVENT, onVideoReady)
     const paperShaderEvent = paperShaderSourceEventName()
@@ -1714,7 +1720,7 @@ function syncPlanes(
     } else {
       applyMaterialBlendMode(record.mesh.material, blendMode)
     }
-    syncMaterialClipping(record, plane)
+    syncMaterialClipping(record, plane, playhead)
     record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
     const videoVisible = !videoNode || videoVisibleAtTime(videoNode, playhead)
     record.mesh.visible = plane.node.visible && !hidden.has(plane.nodeId) && videoVisible
@@ -1774,6 +1780,7 @@ function syncPlanes(
       overlay.renderOrder = record.mesh.renderOrder + .01
       overlay.material.opacity = material.opacity
       overlay.material.clippingPlanes = material.clippingPlanes
+      copyAlphaMasks(material, overlay.material)
       overlay.material.clipIntersection = material.clipIntersection
       applyMaterialBlendMode(overlay.material, blendMode)
     } else disposeBeamOverlay(record)
@@ -2164,7 +2171,7 @@ function syncTextSegmentPlane({
     record.mesh.material,
     anim?.blendMode ?? plane.node.appearance.blendMode,
   )
-  syncMaterialClipping(record, plane)
+  syncMaterialClipping(record, plane, playhead)
   record.mesh.material.opacity = Math.max(0, Math.min(1, plane.opacity))
   record.mesh.visible = plane.node.visible && !hidden
   record.outline.visible = selected && !hidden
@@ -3882,7 +3889,8 @@ function applyMaterialBlendMode(
   material.needsUpdate = true
 }
 
-function syncMaterialClipping(record: PlaneRecord, plane: Plane3D) {
+function syncMaterialClipping(record: PlaneRecord, plane: Plane3D, playhead: number) {
+  syncPlaneAlphaMasks(record, plane, playhead)
   const signature = clippingSignatureForPlane(plane)
   const material = record.mesh.material
   // A clip rectangle is the intersection of its four inward half-spaces, so
@@ -3899,6 +3907,37 @@ function syncMaterialClipping(record: PlaneRecord, plane: Plane3D) {
   if (previousCount !== (clippingPlanes?.length ?? 0)) {
     material.needsUpdate = true
   }
+}
+
+function syncPlaneAlphaMasks(record: PlaneRecord, plane: Plane3D, playhead: number) {
+  const textures = record.maskTextures ??= new Map()
+  const used = new Set<HTMLCanvasElement>()
+  const samples: AlphaMaskSample[] = []
+  for (const clip of plane.clips ?? []) {
+    if (!clip.mask) continue
+    const { canvas, bounds } = renderMaskTexture(clip.mask.node, clip.rect, clip.mask.anim, playhead)
+    used.add(canvas)
+    let texture = textures.get(canvas)
+    if (!texture) {
+      texture = new THREE.CanvasTexture(canvas)
+      texture.generateMipmaps = false
+      texture.minFilter = THREE.LinearFilter
+      textures.set(canvas, texture)
+    }
+    const sx = clip.width / Math.max(1e-6, clip.rect.width)
+    const sy = clip.height / Math.max(1e-6, clip.rect.height)
+    const right = toThreeVector(clip.right).multiplyScalar(sx)
+    const down = toThreeVector(clip.down).multiplyScalar(sy)
+    const normal = right.clone().cross(down).normalize()
+    const origin = toThreeVector(clip.center).addScaledVector(right, -clip.rect.width / 2).addScaledVector(down, -clip.rect.height / 2)
+    const world = new THREE.Matrix4().makeBasis(right, down, normal).setPosition(origin)
+    const matrix = new THREE.Matrix4().makeScale(1 / bounds.width, 1 / bounds.height, 1)
+      .multiply(new THREE.Matrix4().makeTranslation(-bounds.x, -bounds.y, 0)).multiply(world.clone().invert())
+    samples.push({ texture, matrix, opacity: sx * sy < 1e-10 ? 0 : Math.max(0, Math.min(1, clip.mask.anim?.opacity ?? clip.mask.node.appearance.opacity)) })
+  }
+  for (const [canvas, texture] of textures) if (!used.has(canvas)) { texture.dispose(); textures.delete(canvas) }
+  syncAlphaMasks(record.mesh.material, samples)
+  if (record.beamOverlay) syncAlphaMasks(record.beamOverlay.material, samples)
 }
 
 function clippingSignatureForPlane(plane: Plane3D): string {
@@ -3935,7 +3974,7 @@ function clippingPlanesForClips(
   clips: readonly PlaneClip3D[] | undefined,
 ): THREE.Plane[] | null {
   if (!clips?.length) return null
-  return clips.flatMap((clip) => clippingPlanesForClip(clip))
+  return clips.filter(clip => !clip.mask).flatMap((clip) => clippingPlanesForClip(clip))
 }
 
 function clippingPlanesForClip(clip: PlaneClip3D): THREE.Plane[] {
@@ -4189,6 +4228,26 @@ function clearHelperGroup(group: THREE.Group) {
   helperBundles.delete(group)
 }
 
+let maskRasterCache = new WeakMap<Node, { key: string; canvas: HTMLCanvasElement; bounds: Rect }>()
+
+/** Rasterize the actual painted alpha, including effect overflow, in mask-local pixels. */
+// Shared with the DOM fallback to keep the exact painted mask alpha identical.
+// eslint-disable-next-line react-refresh/only-export-components
+export function renderMaskTexture(node: Node, rect: Rect, anim?: AnimatedValue, playhead = 0) {
+  const effects = resolveAnimatedLayerEffects(node.appearance.effects, anim?.effectBlur)
+  const bounds = expandRectForLayerEffects({ x: 0, y: 0, width: rect.width, height: rect.height }, effects)
+  const paintAnimation = { ...anim }
+  for (const property of ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY', 'anchorX', 'anchorY', 'anchorZ', 'opacity'] as const) delete paintAnimation[property]
+  const key = JSON.stringify([rect.width, rect.height, paintAnimation, hasAnimatedBeam(effects) ? playhead : 0])
+  const cached = maskRasterCache.get(node)
+  if (cached?.key === key) return cached
+  const paintedNode = anim?.fill ? { ...node, appearance: { ...node.appearance, fill: { kind: 'solid' as const, color: anim.fill } } } : node
+  const canvas = renderPlaneTexture(paintedNode, { x: 0, y: 0, width: rect.width, height: rect.height }, anim, playhead, bounds, Math.min(2, 4096 / Math.max(bounds.width, bounds.height)))
+  const result = { key, canvas, bounds }
+  maskRasterCache.set(node, result)
+  return result
+}
+
 function renderPlaneTexture(
   node: Node,
   rect: Rect,
@@ -4242,10 +4301,46 @@ function renderSubtreeTexture(
   if (!ctx) return null
   ctx.scale(scale, scale)
   ctx.clearRect(0, 0, width, height)
+  const paintMasked = (
+    target: CanvasRenderingContext2D, mask: Node, maskRect: Rect,
+    context: SubtreeTransformContext, paintContent: (destination: CanvasRenderingContext2D) => void,
+  ) => {
+    const content = document.createElement('canvas')
+    content.width = target.canvas.width
+    content.height = target.canvas.height
+    const contentContext = content.getContext('2d')!
+    contentContext.setTransform(target.getTransform())
+    paintContent(contentContext)
+    const alpha = document.createElement('canvas')
+    alpha.width = content.width
+    alpha.height = content.height
+    const alphaContext = alpha.getContext('2d')!
+    alphaContext.setTransform(target.getTransform())
+    const maskAnim = animated[mask.id]
+    const raster = renderMaskTexture(mask, maskRect, maskAnim, playhead)
+    const inheritedMask = subtreeInheritedForNode(maskRect, context)
+    const matrix = multiplyMatrix2D(inheritedMask.matrix, nodeMatrix2D(maskRect,
+      maskAnim?.x ?? mask.transform.x, maskAnim?.y ?? mask.transform.y,
+      maskAnim?.rotation ?? mask.transform.rotation, maskAnim?.scaleX ?? mask.transform.scaleX,
+      maskAnim?.scaleY ?? mask.transform.scaleY, maskAnim?.anchorX ?? mask.transform.anchorX ?? 0.5,
+      maskAnim?.anchorY ?? mask.transform.anchorY ?? 0.5))
+    alphaContext.translate(-rootRect.x, -rootRect.y)
+    alphaContext.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+    alphaContext.globalAlpha = maskAnim?.opacity ?? mask.appearance.opacity
+    alphaContext.drawImage(raster.canvas, maskRect.x + raster.bounds.x, maskRect.y + raster.bounds.y, raster.bounds.width, raster.bounds.height)
+    contentContext.setTransform(1, 0, 0, 1, 0, 0)
+    contentContext.globalCompositeOperation = 'destination-in'
+    contentContext.drawImage(alpha, 0, 0)
+    target.save()
+    target.setTransform(1, 0, 0, 1, 0, 0)
+    target.drawImage(content, 0, 0)
+    target.restore()
+  }
   const paint = (
     target: CanvasRenderingContext2D,
     id: NodeId,
     context: SubtreeTransformContext,
+    skipSiblingMask = false,
   ) => {
     const node = api.getNode(id)
     const rect = layout[id]
@@ -4314,20 +4409,30 @@ function renderSubtreeTexture(
           .map((childId) => api.getNode(childId))
           .filter((child): child is Node => !!child),
       )
+      const painted = new Set<NodeId>()
       for (const child of children) {
-        paint(layer, child.id, childContext)
+        if (painted.has(child.id) || child.isMask) continue
+        const mask = siblingMask(child, id => api.getNode(id))
+        const maskRect = mask ? layout[mask.id] : undefined
+        if (mask && maskRect) {
+          const members = children.filter(candidate => !candidate.isMask && siblingMask(candidate, id => api.getNode(id))?.id === mask.id)
+          members.forEach(member => painted.add(member.id))
+          paintMasked(layer, mask, maskRect, childContext, destination => {
+            for (const member of members) paint(destination, member.id, childContext, true)
+          })
+        } else paint(layer, child.id, childContext)
       }
       paintDecoration()
     }
 
-    const paintContent = () => {
+    const paintContent = (destination = target) => {
       if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
         // A frame is a compositing group. Rasterize its complete clipped subtree
         // first, then apply the frame's effect stack to that result. Previously
         // only the frame fill was blurred/shadowed and its children were painted
         // afterward, so blur appeared to do nothing on transparent frames.
         paintLayerWithEffects(
-          target,
+          destination,
           width,
           height,
           resolvedEffects,
@@ -4336,13 +4441,12 @@ function renderSubtreeTexture(
         return
       }
 
-      paintNodeAndChildren(target)
+      paintNodeAndChildren(destination)
     }
-    const mask = id !== rootId ? siblingMask(node, (id) => api.getNode(id)) : null
+    const mask = id !== rootId && !skipSiblingMask ? siblingMask(node, (id) => api.getNode(id)) : null
     const maskRect = mask ? layout[mask.id] : undefined
     if (mask && maskRect) {
-      withNodeClipInSubtree(target, mask, maskRect, rootRect, animated[mask.id], true,
-        subtreeInheritedForNode(maskRect, context), paintContent)
+      paintMasked(target, mask, maskRect, context, paintContent)
     } else paintContent()
   }
   paint(ctx, rootId, IDENTITY_SUBTREE_TRANSFORM)

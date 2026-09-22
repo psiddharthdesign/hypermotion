@@ -249,6 +249,7 @@ export interface NodeBaseMutable {
   position: import('@/scene/types').Position
   zIndex: number
   isMask: boolean
+  maskMode: 'alpha' | undefined
   motionPath: LayerMotionPath | null
   deformation: LayerDeformation | null
   layerBend: LayerBend
@@ -678,6 +679,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       // mask feature. createNode writes false explicitly so newly-
       // created nodes are also non-masks until the user opts in.
       isMask: ((y.get('isMask') as boolean | undefined) ?? false),
+      maskMode: y.get('maskMode') === 'alpha' ? 'alpha' : undefined,
       componentSourceId:
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
@@ -1214,6 +1216,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         )
         // Mask flag — see NodeBase.isMask for semantics. Default false.
         y.set('isMask', (props as { isMask?: boolean })?.isMask ?? false)
+        if (props?.maskMode === 'alpha') y.set('maskMode', 'alpha')
         y.set(
           'componentSourceId',
           (props as { componentSourceId?: NodeId | null })?.componentSourceId ?? null,

@@ -11,8 +11,10 @@ export interface MaskPoint { x: number; y: number }
 export function siblingMask(node: Node, getNode: (id: NodeId) => Node | null): Node | null {
   const parent = node.parent ? getNode(node.parent) : null
   const index = parent?.children.indexOf(node.id) ?? -1
+  const below = parent?.children.slice(index + 1).map(getNode).find(n => n?.isMask)
+  if (below?.maskMode === 'alpha') return below.visible ? below : null
   const previous = parent && index > 0 ? getNode(parent.children[index - 1]!) : null
-  return previous?.isMask && previous.visible ? previous : null
+  return previous?.isMask && previous.maskMode !== 'alpha' && previous.visible ? previous : null
 }
 
 /** Convex silhouettes shared by GPU clipping, hit testing, and DOM fallback. */

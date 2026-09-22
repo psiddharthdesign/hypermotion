@@ -3923,3 +3923,23 @@ test('Beam styles and advanced controls survive CLI authoring and validation', (
   assert.deepEqual((nodes.root.appearance as PlainSceneObject).effects, effects)
   assert.equal(validateScene(bytes).ok, true)
 })
+
+test('alpha masks preserve their mode, effects and sibling order through scene files and patches', () => {
+  const scene = sampleScene()
+  scene.nodes!.root!.children = ['title', 'mask']
+  scene.nodes!.mask = {
+    id: 'mask', kind: 'rect', parent: 'root', isMask: true, maskMode: 'alpha',
+    size: { width: 160, height: 140 },
+    appearance: { opacity: 0.4, effects: [{ kind: 'blur', amount: 16 }] },
+  }
+  for (const bytes of [buildSceneBytes(scene), applyScenePatch(buildSceneBytes(sampleScene()), [{ op: 'createNode', node: scene.nodes!.mask }])]) {
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, bytes)
+    const nodes = doc.getMap('scene').get('nodes') as Y.Map<Y.Map<unknown>>
+    assert.equal(nodes.get('mask')!.get('maskMode'), 'alpha')
+    assert.equal(nodes.get('mask')!.get('isMask'), true)
+    assert.equal((nodes.get('mask')!.get('appearance') as { opacity: number }).opacity, 0.4)
+    assert.deepEqual((nodes.get('root')!.get('children') as Y.Array<string>).toArray(), ['title', 'mask'])
+    doc.destroy()
+  }
+})

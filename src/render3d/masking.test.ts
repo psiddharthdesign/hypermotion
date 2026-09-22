@@ -39,6 +39,16 @@ describe('sibling shape masks', () => {
     expect(planes.find(p => p.nodeId === other)!.clips).toBeUndefined()
   })
 
+  it('uses a bottom alpha mask for all content above it without masking later siblings', () => {
+    const { api, root, mask, card, child, other, build } = setup()
+    api.setNodeProperty(mask, 'maskMode', 'alpha')
+    api.moveChild(root, mask, 1)
+    const planes = build({}, true)
+    expect(planes.find(p => p.nodeId === card)!.clips![0]!.mask?.node.id).toBe(mask)
+    expect(planes.find(p => p.nodeId === child)!.clips![0]!.mask?.node.id).toBe(mask)
+    expect(planes.find(p => p.nodeId === other)!.clips).toBeUndefined()
+  })
+
   it('keeps a stationary mask fixed while the content translates and rotates', () => {
     const { card, build } = setup()
     const first = build().find(p => p.nodeId === card)!

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { maskOutline, siblingMask, intersectMaskPolygons, type MaskPoint } from '@/render/maskShape'
+import { siblingMask } from '@/render/maskShape'
 import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
 import { BorderBeamOverlay } from './BorderBeamOverlay'
@@ -102,7 +102,7 @@ import {
 } from '@/render/layerCompositing'
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
-import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { ThreeSceneViewport, renderMaskTexture } from '@/render3d/ThreeSceneViewport'
 import { resolveVideoCrop } from '@/render3d/videoFit'
 import {
   playbackPixelRatio,
@@ -3973,7 +3973,6 @@ export function SceneLayer({
         isRoot={id === rootId}
         isSelected={selection.includes(id)}
         ancestorClip={ancestorClip[id]}
-        maskedBy={maskInfo[id]}
         onClick={(e) => {
           e.stopPropagation()
         }}
@@ -3995,7 +3994,6 @@ export function SceneLayer({
     return (
       <ClippedFrameStrokeOverlay
         key={`stroke-${id}`}
-        maskedBy={maskInfo[id]}
         node={node}
         rect={rect}
         anim={animated[id]}
@@ -4005,14 +4003,29 @@ export function SceneLayer({
     )
   }
 
-  return (
-    <>
-      {compositingOrder.normal.map(renderNode)}
-      {compositingOrder.normal.map(renderStroke)}
-      {compositingOrder.overlay.map(renderNode)}
-      {compositingOrder.overlay.map(renderStroke)}
-    </>
-  )
+  // Composite each masked subtree first, then apply its alpha once. Applying
+  // 40% alpha separately to a frame and its children leaks the frame through
+  // opaque children and makes overlapping content more opaque than the mask.
+  const renderMaskedScope = (ids: NodeId[], depth = 0): React.ReactNode => {
+    const painted = new Set<NodeId>()
+    const scope: React.ReactNode[] = []
+    const unmasked: NodeId[] = []
+    for (const id of ids) {
+      if (painted.has(id) || hiddenIds.has(id)) continue
+      const mask = maskInfo[id]?.[depth]
+      if (!mask) { scope.push(renderNode(id)); unmasked.push(id); continue }
+      const members = ids.filter(candidate => maskInfo[candidate]?.[depth]?.node.id === mask.node.id)
+      members.forEach(member => painted.add(member))
+      const rootRect = rootId ? solved[rootId] : undefined
+      const width = rootRect?.width ?? 1, height = rootRect?.height ?? 1
+      scope.push(<div key={`mask-${mask.node.id}`} style={{ position: 'absolute', left: 0, top: 0, width, height,
+        ...domMaskStyleForMatrix(width, height, new DOMMatrix(), [mask]),
+      }}>{renderMaskedScope(members, depth + 1)}</div>)
+    }
+    return <>{scope}{unmasked.map(renderStroke)}</>
+  }
+  return <>{renderMaskedScope(compositingOrder.normal)}{renderMaskedScope(compositingOrder.overlay)}</>
+
 }
 
 /**
@@ -4092,7 +4105,7 @@ function ClippedFrameStrokeOverlay({
         transform: parts.length > 0 ? parts.join(' ') : undefined,
         transformOrigin,
         transformStyle: 'preserve-3d',
-        clipPath: domMaskClipPath(node, rect, anim, inherit, maskedBy),
+        ...domMaskStyle(node, rect, anim, inherit, maskedBy),
       }}
     >
       <StrokeOverlay
@@ -4556,21 +4569,25 @@ function domLayerMatrix(node: SceneNode, rect: Rect, anim: AnimatedValue | undef
     .translate(-ax, -ay, -az)
 }
 
-function domMaskClipPath(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim, masks?: DomMask[]): string | undefined {
-  if (!masks?.length) return undefined
-  const inverse = domLayerMatrix(node, rect, anim, inherit).inverse()
-  let polygon: MaskPoint[] | undefined
-  for (const mask of masks) {
+const maskDataUrls = new WeakMap<HTMLCanvasElement, string>()
+function domMaskStyle(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim, masks?: DomMask[]): CSSProperties {
+  if (!masks?.length) return {}
+  return domMaskStyleForMatrix(rect.width, rect.height, domLayerMatrix(node, rect, anim, inherit).inverse(), masks)
+}
+function domMaskStyleForMatrix(width: number, height: number, inverse: DOMMatrix, masks: DomMask[]): CSSProperties {
+  const images = masks.map(mask => {
+    const raster = renderMaskTexture(mask.node, mask.rect, mask.anim)
+    let url = maskDataUrls.get(raster.canvas)
+    if (!url) { url = raster.canvas.toDataURL(); maskDataUrls.set(raster.canvas, url) }
     const matrix = inverse.multiply(domLayerMatrix(mask.node, mask.rect, mask.anim, mask.inherit))
-    const outline = maskOutline(mask.node, mask.rect, mask.anim).map((point) => {
-      const local = matrix.transformPoint(new DOMPoint(point.x, point.y))
-      return { x: local.x, y: local.y }
-    })
-    polygon = polygon ? intersectMaskPolygons(polygon, outline) : outline
-  }
-  return polygon?.length && polygon.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))
-    ? `polygon(${polygon.map(p => `${p.x}px ${p.y}px`).join(',')})`
-    : 'polygon(0 0,0 0,0 0)'
+    const values = [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f]
+    if (!values.every(Number.isFinite)) return 'linear-gradient(transparent,transparent)'
+    const { x, y, width: imageWidth, height: imageHeight } = raster.bounds
+    const opacity = mask.anim?.opacity ?? mask.node.appearance.opacity
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><image href="${url}" x="${x}" y="${y}" width="${imageWidth}" height="${imageHeight}" opacity="${opacity}" transform="matrix(${values.join(' ')})"/></svg>`
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+  })
+  return { maskImage: images.join(','), maskSize: '100% 100%', maskRepeat: 'no-repeat', maskMode: 'alpha', maskComposite: 'intersect' }
 }
 
 function VisualNodeView({
@@ -4729,7 +4746,7 @@ function VisualNodeView({
   // every other node kind keep the wrapper opacity so their fill / text
   // / image content fades normally.
   const wrapperOpacity = isEmptyFrame ? 1 : opacity
-  const maskClipPath = domMaskClipPath(node, rect, anim, inherit, maskedBy)
+  const maskStyle = domMaskStyle(node, rect, anim, inherit, maskedBy)
 
   const parts: string[] = []
   const transformSpace = node.transform.space ?? 'local'
@@ -4994,7 +5011,8 @@ function VisualNodeView({
         outlineOffset: node.isMask || needsDashedOutline ? '-1px' : undefined,
         // Apply the sibling-mask clip-path. See maskedBy / maskInfo
         // for derivation. No-op when this node isn't being masked.
-        clipPath: maskClipPath ?? cornerClipPath,
+        clipPath: cornerClipPath,
+        ...maskStyle,
         // Re-enable pointer events: the clip wrapper above sets
         // pointer-events:none, so we have to reinstate them here for
         // clicks / drags to reach the node.
