@@ -243,3 +243,29 @@ describe('reset retained Null connection offsets', () => {
     expect(resetNullConnectionOffset(api, layer)).toBe(false)
   })
 })
+
+
+it('uses the offset Null pivot for controller rotation and the Card anchor for its own rotation', () => {
+  const { api, root, layer, controller, camera } = setup()
+  const layout = {
+    [root]: { x: 0, y: 0, width: 3840, height: 2400 },
+    [layer]: { x: 1168, y: 875.5, width: 1504, height: 649 },
+  }
+  move(api, controller, { x: 1920, y: 1000, z: 199.58 })
+  setNullParent(api, layer, controller)
+  const resolvedCamera = resolveCamera3D(camera, undefined, { width: 3840, height: 2400 })
+  const center = () => buildWorldPlanes(api, layout, {}, resolvedCamera).find(plane => plane.nodeId === layer)!.center
+  const before = center()
+  const pivot = new Vector3(1920, 1000, 199.58)
+  const radius = new Vector3(before.x, before.y, before.z).distanceTo(pivot)
+  expect(radius).toBeGreaterThan(280)
+  move(api, controller, { rotationX: -47.95, rotationY: 40.62 })
+  const orbit = center()
+  expect(new Vector3(orbit.x, orbit.y, orbit.z).distanceTo(pivot)).toBeCloseTo(radius, 7)
+  expect(new Vector3(orbit.x, orbit.y, orbit.z).distanceTo(new Vector3(before.x, before.y, before.z))).toBeGreaterThan(100)
+  move(api, layer, { rotationX: 16 })
+  const ownRotation = center()
+  expect(ownRotation.x).toBeCloseTo(orbit.x, 7)
+  expect(ownRotation.y).toBeCloseTo(orbit.y, 7)
+  expect(ownRotation.z).toBeCloseTo(orbit.z, 7)
+})
