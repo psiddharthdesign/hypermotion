@@ -1,0 +1,82 @@
+# Beam layer effect
+
+Select a layer, open **Properties → Effects**, add an effect, and choose **Beam**.
+Beam decorates the layer's bounds without changing its layout or the opacity of
+its children. It works on frames, shapes, text, images, shaders, and video.
+
+The integration adapts [Border Beam](https://libraries.dev/beam)'s public MIT
+library (1.4.0, commit `2015f0ba79a9faec351719c4a6d590a1e6bfa243`). Its palette data and pulse oscillators retain the original license
+in `src/render/beam/LICENSE` and the shipped `NOTICE`.
+
+## Controls
+
+- **Style:** Border (`md`), Compact (`sm`), Bottom line (`line`), Pulse outside,
+  and Pulse inside (`pulse-inner`). Compact is tuned for small controls.
+- **Colors:** Colorful, Mono, Ocean, Sunset, Forest, Candy, Ice, and Gold.
+- **Theme:** Dark, Light, or Auto. Auto follows the layer's solid fill so the
+  exported result is independent of the operating system theme; non-solid fills
+  use Dark. Select Light/Dark explicitly for media or gradient backgrounds.
+- **Active / visibility:** disable the effect while retaining its settings.
+- **Strength:** 0–1. **Duration:** 0.1–120 seconds per cycle. Defaults are 1.96s
+  for Border/Compact, 3.1s for Bottom line, and 2.3s for pulses.
+- **Glow size:** 0–4, scaling the preset's glow widths. **Static colors** stops
+  hue shifting while preserving movement. Mono stays monochromatic.
+- **Color and timing:** preset or custom brightness/saturation (0–4), hue range
+  (0–360 degrees), layer corners or a custom radius, start/end time, and entry/exit
+  fades. Default entry/exit fades are 0.6s/0.5s. An omitted end keeps the effect
+  active through the scene; set an end time to fade it out before that time.
+
+Animation follows composition time, including scrubbing, repeated scenes,
+scene splitting, and frame-by-frame exports. Beam settings persist in `.hype`
+files, support undo/redo, and can be authored through CLI/MCP `appearance.effects`.
+Numeric Beam controls are static settings; use the start/end/fade controls for
+entry and exit, and layer transform/opacity tracks for additional animation.
+
+```json
+{
+  "appearance": {
+    "opacity": 1,
+    "fill": { "kind": "solid", "color": "#18181b" },
+    "stroke": null,
+    "cornerRadius": 16,
+    "effects": [{
+      "id": "card-beam",
+      "kind": "border-beam",
+      "size": "pulse-outside",
+      "colorVariant": "ocean",
+      "theme": "dark",
+      "strength": 1,
+      "duration": 2.3,
+      "glowSize": 1,
+      "staticColors": false,
+      "startTime": 0,
+      "endTime": 5,
+      "fadeIn": 0.6,
+      "fadeOut": 0.5
+    }]
+  }
+}
+```
+
+## Rendering adaptation
+
+The shared Canvas painter recreates the library's layered gradients, travelling
+mask, highlight, and breathing glow. DOM previews and WebGL/export textures use
+this painter instead of CSS animations. Native video retains its decoder texture
+and receives a separate transparent Beam plane with matching transforms,
+clipping and depth of field. Animated text uses the canvas painter when Beam is
+active. Pulse outside reserves texture padding; other styles remain inside the
+layer outline. Parent clipping still applies.
+
+This is a scene effect, so React wrapper attributes, injected CSS, browser hover
+triggers, and lifecycle callbacks are represented by native layer styling and
+explicit timeline controls rather than persisted executable CSS or JavaScript.
+It does not include separately licensed Studio Pro recipes. Canvas blur and
+compositing are an adaptation of the CSS implementation, not a promise of
+pixel-identical output to a browser embedding of the React component.
+
+## Browser regression fixture
+
+With the development server running, open `/tests/fixtures/beam.html`. The fixture
+checks all 80 style/palette/theme combinations for visible output, motion, and
+identical pixels after out-of-order seeking, and displays all five styles.

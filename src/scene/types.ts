@@ -358,6 +358,7 @@ export type LayoutGuide =
  * effects, so older documents continue to render correctly.
  */
 export type Effect =
+  | import('./borderBeam').BorderBeamEffect
   | {
       /** Stable row identity used by per-effect animation tracks. */
       id?: string

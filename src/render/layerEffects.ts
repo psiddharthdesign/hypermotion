@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { beamPadding } from '@/scene/borderBeam'
 import type { Rect } from '@/layout'
 import type { Effect, Node } from '@/scene'
 import {
@@ -39,6 +40,14 @@ export function layerEffectInsets(
   let left = 0
   for (const effect of effects) {
     if (effect.visible === false || effect.kind === 'inner-shadow') continue
+    if (effect.kind === 'border-beam') {
+      const padding = beamPadding(effect)
+      top = Math.max(top, padding)
+      right = Math.max(right, padding)
+      bottom = Math.max(bottom, padding)
+      left = Math.max(left, padding)
+      continue
+    }
     if (effect.kind === 'blur') {
       const padding = clampLayerBlurAmount(effect.amount) * 2
       top = Math.max(top, padding)
@@ -91,6 +100,7 @@ export function resolveAnimatedLayerEffects(
   if (!effects?.length || !animatedBlur) return effects ?? []
   let changed = false
   const resolved = effects.map((effect, index) => {
+    if (effect.kind === 'border-beam') return effect
     const value = animatedBlur[effectStableId(effect, index)]
     if (value === undefined || !Number.isFinite(value)) return effect
     changed = true
@@ -113,7 +123,7 @@ export function nodeEffectsWrapSubtree(
   return (
     node.kind === 'frame' &&
     node.children.length > 0 &&
-    hasVisibleLayerEffects(effects)
+    !!effects?.some(e => e.visible !== false && e.kind !== 'border-beam')
   )
 }
 
@@ -130,7 +140,7 @@ export function paintLayerWithEffects(
   effects: readonly Effect[] | null | undefined,
   paintSource: (source: CanvasRenderingContext2D) => void,
 ): void {
-  const visible = effects?.filter((effect) => effect.visible !== false) ?? []
+  const visible = effects?.filter((effect) => effect.visible !== false && effect.kind !== 'border-beam') ?? []
   if (visible.length === 0) {
     paintSource(ctx)
     return

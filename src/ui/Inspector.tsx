@@ -1,6 +1,7 @@
-import { TransitionsPanel } from './TransitionsPanel'
 // SPDX-License-Identifier: Apache-2.0
 
+import { BorderBeamFields } from './BorderBeamFields'
+import { TransitionsPanel } from './TransitionsPanel'
 import { useToast } from './toastStore'
 import {
   useCallback,
@@ -3496,7 +3497,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         effectStableId(effect, effectIndex) === effectId,
     )
     const effect = effects[index]
-    if (!effect) return
+    if (!effect || effect.kind === 'border-beam') return
     const value = normalizedEffectBlur(effect, rawValue)
     effects[index] =
       effect.kind === 'blur'
@@ -6638,15 +6639,14 @@ function EffectsSection({
     >
       {value.length === 0 ? (
         <div className="text-[11px] text-text-dim">
-          No effects. Click + to add a drop shadow, inner shadow, or
-          layer blur.
+          No effects. Click + to add a shadow, blur, or Beam.
         </div>
       ) : (
         <div className="space-y-2">
           {value.map((effect, i) => {
             const effectId = effectStableId(effect, i)
             const staticBlur =
-              effect.kind === 'blur' ? effect.amount : effect.blur
+              effect.kind === 'blur' ? effect.amount : effect.kind === 'border-beam' ? 0 : effect.blur
             const liveBlur = normalizedEffectBlur(
               effect,
               animatedBlur?.[effectId] ?? staticBlur,
@@ -6716,6 +6716,10 @@ function EffectRow({
   // dangling `amount` field along, etc.
   const setKind = (kind: Effect['kind']) => {
     if (effect.kind === kind) return
+    if (kind === 'border-beam') {
+      onChange({ kind: 'border-beam', size: 'md', colorVariant: 'colorful', visible })
+      return
+    }
     if (kind === 'shadow') {
       onChange({
         kind: 'shadow',
@@ -6752,6 +6756,7 @@ function EffectRow({
             { value: 'shadow', label: 'Drop shadow' },
             { value: 'inner-shadow', label: 'Inner shadow' },
             { value: 'blur', label: 'Layer blur' },
+            { value: 'border-beam', label: 'Beam' },
           ]}
           onCommit={setKind}
           width="flex-1"
@@ -6796,7 +6801,9 @@ function EffectRow({
           ×
         </button>
       </div>
-      {effect.kind === 'blur' ? (
+      {effect.kind === 'border-beam' ? (
+        <BorderBeamFields effect={effect} onChange={onChange} />
+      ) : effect.kind === 'blur' ? (
         <EffectBlurSlider
           nodeId={nodeId}
           effectId={effectId}

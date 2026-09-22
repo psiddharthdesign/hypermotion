@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { paintBorderBeam } from './beam/paintBorderBeam'
+import { beamPadding } from '@/scene/borderBeam'
 /**
  * Pixi-backed offscreen renderer for the export pipeline.
  *
@@ -96,6 +98,8 @@ interface VectorRasterEntry {
  * from a 1920×1080 comp without distortion.
  */
 export interface RenderFrameInput {
+  /** Composition-local seconds for procedural effects. */
+  time?: number
   /** Scene API — used to read the tree from the root down. */
   api: SceneAPI
   /** Computed rects per node. Output of solveLayout. */
@@ -535,7 +539,7 @@ export class PixiExportRenderer {
     // attach to the container's filter chain so they apply to the
     // shape and any later children of this container.
     if (rect) {
-      this.applyEffects(node, rect, container, animated)
+      this.applyEffects(node, rect, container, animated, input.time ?? 0)
     }
 
     // Recurse into children. Children's rects are already in scene
@@ -1066,6 +1070,7 @@ export class PixiExportRenderer {
     rect: Rect,
     container: Container,
     animated: AnimatedValue,
+    time: number,
   ): void {
     const effects = resolveAnimatedLayerEffects(
       node.appearance.effects,
@@ -1079,7 +1084,22 @@ export class PixiExportRenderer {
       // Hidden effects render as if they weren't there. Default-true
       // for legacy rows that lack the explicit `visible` flag.
       if (e.visible === false) continue
-      if (e.kind === 'shadow') {
+      if (e.kind === 'border-beam') {
+        const padding = beamPadding(e)
+        const raster = this.vectorRaster(`beam:${node.id}:${i}`, Math.ceil(rect.width + padding * 2), Math.ceil(rect.height + padding * 2))
+        const ctx = raster.context
+        ctx.clearRect(0, 0, raster.width, raster.height)
+        ctx.save(); ctx.translate(padding, padding)
+        const fill = node.appearance.fill
+        paintBorderBeam(ctx, e, { width: rect.width, height: rect.height,
+          radius: animated.cornerRadius ?? node.appearance.cornerRadius, ellipse: node.kind === 'ellipse',
+          fill: fill?.kind === 'solid' ? fill.color : undefined,
+        }, time + (node.proceduralTimeOffset ?? 0))
+        ctx.restore(); raster.texture.source.update()
+        const sprite = new Sprite(raster.texture)
+        sprite.position.set(-padding, -padding)
+        container.addChild(sprite)
+      } else if (e.kind === 'shadow') {
         this.appendDropShadow(e, node, rect, container, animated)
       } else if (e.kind === 'blur') {
         // Pixi v8 BlurFilter strength is roughly 1px ≈ 1 unit but

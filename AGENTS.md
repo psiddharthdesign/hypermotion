@@ -429,6 +429,14 @@ Every paintable node carries:
 Backwards-compatible with the desktop app's inspector — the same
 schema renders inside the editor exactly as it does in the saved file.
 
+### Beam layer effect
+
+`appearance.effects` accepts `kind: "border-beam"` for the Border, Compact,
+Bottom line, Pulse outside, and Pulse inside styles. All eight palettes and
+color, glow, timing, and fade controls are documented in
+[docs/border-beam.md](./docs/border-beam.md). Beam animation uses composition
+time and survives scene splitting.
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local

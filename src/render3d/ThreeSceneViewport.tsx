@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { expandRectForLayerEffects } from '@/render/layerEffects'
+import { hasAnimatedBeam } from '@/scene/borderBeam'
+import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { resolveTextShimmer } from '@/anim/textShimmerEffect'
 import { textShimmerFill } from '@/anim/textShimmer'
@@ -243,6 +248,7 @@ interface PlaneRecord {
   textureRevision: PlaneTextureRevision | null
   textureSignature: string
   clipSignature: string
+  beamOverlay?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   textSegments?: TextSegmentRecord
 }
 
@@ -403,7 +409,17 @@ function createVideoElement(node: Extract<Node, { kind: 'video' }>): HTMLVideoEl
   return masterVideoPrewarm.take(node) ?? createPlaybackVideo(node.src)
 }
 
+function disposeBeamOverlay(record: PlaneRecord) {
+  if (!record.beamOverlay) return
+  record.beamOverlay.removeFromParent()
+  record.beamOverlay.geometry.dispose()
+  record.beamOverlay.material.map?.dispose()
+  record.beamOverlay.material.dispose()
+  record.beamOverlay = undefined
+}
+
 function disposePlaneRecord(record: PlaneRecord) {
+  disposeBeamOverlay(record)
   record.video?.pause()
   record.video?.removeAttribute('src')
   record.video?.load()
@@ -636,6 +652,10 @@ export function ThreeSceneViewport({
     const duration = Math.max(0, api.getMeta().duration)
     for (const id of api.getAllNodeIds()) {
       const node = api.getNode(id)
+      if (hasAnimatedBeam(node?.appearance.effects)) {
+        ranges.set(id, { start: 0, end: duration })
+        continue
+      }
       if (node?.kind === 'shader') {
         if (node.speed > 0.0001) {
           ranges.set(id, { start: 0, end: duration })
@@ -1606,7 +1626,7 @@ function syncPlanes(
     material.polygonOffset = depthAwareBend && inheritsBend
     material.polygonOffsetFactor = material.polygonOffset ? -1 : 0
     material.polygonOffsetUnits = material.polygonOffset ? -1 : 0
-    updateDepthOfFieldShader(material, {
+    const depthOfFieldOptions = {
       enabled: camera.depthOfField && apertureStrength > 0,
       blurPx: blur,
       minimumBlurPx: minimumBlur,
@@ -1626,7 +1646,8 @@ function syncPlanes(
       bokehRatio: camera.bokehRatio,
       bends: textureBends,
       clipMap: !!videoNode,
-    })
+    }
+    updateDepthOfFieldShader(material, depthOfFieldOptions)
     if (videoNode) {
       if (ensureVideoTexture(record, videoNode.src, () => createVideoElement(videoNode))) {
         material.map = record.texture
@@ -1713,6 +1734,55 @@ function syncPlanes(
         !hidden.has(plane.nodeId) &&
         !finalRender
     }
+    // Video stays on its native GPU decoder; only its transparent decoration
+    // gets a timeline-driven canvas. It shares clipping, opacity, bend, and DOF.
+    if (videoNode && hasAnimatedBeam(videoNode.appearance.effects)) {
+      const beams = videoNode.appearance.effects.filter(e => e.kind === 'border-beam')
+      const beamRect = expandRectForLayerEffects(plane.rect, beams)
+      const beamPlane = { ...plane, textureRect: beamRect }
+      const beamCanvas = document.createElement('canvas')
+      const beamScale = Math.min(4, Math.max(1, texturePixelRatio))
+      beamCanvas.width = Math.ceil(beamRect.width * beamScale)
+      beamCanvas.height = Math.ceil(beamRect.height * beamScale)
+      const context = beamCanvas.getContext('2d')!
+      context.scale(beamScale, beamScale)
+      context.translate(plane.rect.x - beamRect.x, plane.rect.y - beamRect.y)
+      const fill = videoNode.appearance.fill
+      for (const effect of beams) paintBorderBeam(context, effect, {
+        width: plane.rect.width, height: plane.rect.height,
+        radius: animated[plane.nodeId]?.cornerRadius ?? videoNode.appearance.cornerRadius,
+        fill: fill?.kind === 'solid' ? fill.color : undefined,
+      }, playhead + (videoNode.proceduralTimeOffset ?? 0))
+      let overlay = record.beamOverlay
+      if (!overlay) {
+        const beamMaterial = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
+        installDepthOfFieldShader(beamMaterial)
+        overlay = new THREE.Mesh(createPlaneGeometry(beamRect, beamPlane, geometryDetail), beamMaterial)
+        record.beamOverlay = overlay
+        scene.add(overlay)
+      }
+      const oldMap = overlay.material.map
+      if (!oldMap || (oldMap.image as HTMLCanvasElement).width !== beamCanvas.width || (oldMap.image as HTMLCanvasElement).height !== beamCanvas.height) {
+        oldMap?.dispose()
+        overlay.material.map = createPlaneTexture(beamCanvas, renderer)
+        overlay.material.needsUpdate = true
+      } else { oldMap.image = beamCanvas; oldMap.needsUpdate = true }
+      if (overlay.geometry.parameters.width !== beamRect.width || overlay.geometry.parameters.height !== beamRect.height || overlay.geometry.parameters.widthSegments !== geometryDetail) {
+        overlay.geometry.dispose()
+        overlay.geometry = createPlaneGeometry(beamRect, beamPlane, geometryDetail)
+      }
+      updateDepthOfFieldShader(overlay.material, { ...depthOfFieldOptions, clipMap: false, planeWidth: beamRect.width, planeHeight: beamRect.height,
+        bends: layerBends.map(b => bendDeformationInTargetSpace(b, plane.rect, beamRect)),
+      })
+      applyPlaneTextureTransform(overlay, beamPlane)
+      if (planeNeedsBendMesh(plane)) applyPlaneBendGeometry(overlay.geometry as unknown as Parameters<typeof applyPlaneBendGeometry>[0], beamPlane)
+      overlay.visible = record.mesh.visible
+      overlay.renderOrder = record.mesh.renderOrder + .01
+      overlay.material.opacity = material.opacity
+      overlay.material.clippingPlanes = material.clippingPlanes
+      overlay.material.clipIntersection = material.clipIntersection
+      applyMaterialBlendMode(overlay.material, blendMode)
+    } else disposeBeamOverlay(record)
     // Keep the deterministic scene-data texture as the source of truth.
     // The DOM foreignObject snapshot path can drop nested text in Chrome
     // when the texture source lives under an invisible compositor source.
@@ -4220,7 +4290,13 @@ function renderSubtreeTexture(
         applyOwnTransform,
         inherited,
         effects,
+        'content',
       )
+      const paintDecoration = () => {
+        if (!hasAnimatedBeam(node.appearance.effects)) return
+        paintNodeIntoSubtree(layer, node, rect, rootRect, animated[id], playhead,
+          applyOwnTransform, inherited, [], 'beam')
+      }
       const childContext = subtreeChildContext(
         node,
         rect,
@@ -4248,6 +4324,7 @@ function renderSubtreeTexture(
             }
           },
         )
+        paintDecoration()
         return
       }
       const children = nodesInBackToFrontPaintOrder(
@@ -4258,6 +4335,7 @@ function renderSubtreeTexture(
       for (const child of children) {
         paint(layer, child.id, childContext)
       }
+      paintDecoration()
     }
 
     if (nodeEffectsWrapSubtree(node, resolvedEffects)) {
@@ -4393,6 +4471,7 @@ function paintNodeIntoSubtree(
     node.appearance.effects,
     anim?.effectBlur,
   ),
+  paintMode: 'all' | 'content' | 'beam' = 'all',
 ) {
   const x = rect.x - rootRect.x
   const y = rect.y - rootRect.y
@@ -4423,7 +4502,8 @@ function paintNodeIntoSubtree(
   ctx.translate(-w / 2, -h / 2)
   const localRect = { x: 0, y: 0, width: w, height: h }
   const nodeForPaint = node
-  renderNodePaint(ctx, nodeForPaint, localRect, anim, playhead, effects)
+  if (paintMode === 'beam') paintNodeBeam(ctx, nodeForPaint, w, h, anim, playhead)
+  else renderNodePaint(ctx, nodeForPaint, localRect, anim, playhead, effects, paintMode === 'all')
   ctx.globalCompositeOperation = previousComposite
   ctx.restore()
 }
@@ -4522,6 +4602,7 @@ function renderNodePaint(
     node.appearance.effects,
     anim?.effectBlur,
   ),
+  includeBeam = true,
 ) {
   const w = Math.max(1, rect.width)
   const h = Math.max(1, rect.height)
@@ -4532,6 +4613,21 @@ function renderNodePaint(
     effects,
     (source) => paintNodeSource(source, node, rect, anim, playhead),
   )
+  if (includeBeam) paintNodeBeam(ctx, node, w, h, anim, playhead)
+}
+
+function paintNodeBeam(ctx: CanvasRenderingContext2D, node: Node, w: number, h: number, anim: AnimatedValue | undefined, playhead: number) {
+  // Beam follows the frame boundary rather than its children's alpha mask.
+  // Read the authored stack even when a frame's other effects wrap its subtree.
+  const fill = anim?.fill ?? node.appearance.fill
+  const corners = node.appearance.cornerRadii
+  for (const effect of node.appearance.effects ?? []) {
+    if (effect.kind !== 'border-beam') continue
+    paintBorderBeam(ctx, effect, { width: w, height: h,
+      radius: corners ? [corners.tl, corners.tr, corners.br, corners.bl] : anim?.cornerRadius ?? node.appearance.cornerRadius,
+      ellipse: node.kind === 'ellipse', fill: typeof fill === 'string' ? fill : fill?.kind === 'solid' ? fill.color : undefined,
+    }, playhead + (node.proceduralTimeOffset ?? 0))
+  }
 }
 
 function paintNodeSource(

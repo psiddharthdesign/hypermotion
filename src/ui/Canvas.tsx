@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { BorderBeamOverlay } from './BorderBeamOverlay'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
@@ -5106,6 +5109,8 @@ function VisualNodeView({
           anim={anim}
         />
       ) : null}
+      <BorderBeamOverlay node={node} width={rect.width} height={rect.height}
+        radius={cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius} effects={effects} />
       {shouldRenderStrokeOverlay ? (
         <StrokeOverlay
           stroke={stroke}

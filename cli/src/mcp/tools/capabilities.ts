@@ -41,7 +41,17 @@ export const QUERY_TOOLS = [
 ] as const satisfies readonly McpToolName[]
 export type QueryToolName = (typeof QUERY_TOOLS)[number]
 
+const BEAM_SUPPORT = {
+  kind: 'border-beam',
+  styles: ['sm', 'md', 'line', 'pulse-outside', 'pulse-inner'],
+  palettes: ['colorful', 'mono', 'ocean', 'sunset', 'forest', 'candy', 'ice', 'gold'],
+  themes: ['dark', 'light', 'auto'],
+  timelineDriven: true,
+  controls: ['active', 'strength', 'duration', 'glowSize', 'brightness', 'saturation', 'hueRange', 'staticColors', 'borderRadius', 'startTime', 'endTime', 'fadeIn', 'fadeOut'],
+} as const
+
 type CapabilitiesPayload = {
+  readonly borderBeam: typeof BEAM_SUPPORT
   readonly sceneExtension: '.hype'
   readonly mcpTools: readonly McpToolName[]
   readonly nodeKinds: typeof NODE_KINDS
@@ -103,6 +113,7 @@ export async function handleGetCapabilities(args: McpToolArgs = {}): Promise<Cal
   if (invalidArgsMessage !== null) return text(invalidArgsMessage, true)
 
   const payload: CapabilitiesPayload = {
+    borderBeam: BEAM_SUPPORT,
     sceneExtension: '.hype',
     mcpTools: MCP_TOOLS,
     nodeKinds: NODE_KINDS,
