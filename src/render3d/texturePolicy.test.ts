@@ -99,4 +99,35 @@ describe('WebGL plane texture policy', () => {
       false,
     )
   })
+
+  it('defers re-rasterizing an existing canvas texture during an active size-preview drag', () => {
+    const revision = {}
+    const cached = {
+      textureKind: 'canvas' as const,
+      textureRevision: revision,
+      textureSignature: 'subtree:1104:908:0:no-focus-mask',
+    }
+
+    // A size-changing signature would normally force a re-raster...
+    expect(
+      shouldRasterizePlaneTexture(false, cached, revision, 'subtree:1200:908:0:no-focus-mask'),
+    ).toBe(true)
+    // ...but mid-drag, the stale bitmap is left to stretch across the
+    // plane's new geometry extent instead of paying a full canvas
+    // reallocation + re-raster on every frame.
+    expect(
+      shouldRasterizePlaneTexture(
+        false,
+        cached,
+        revision,
+        'subtree:1200:908:0:no-focus-mask',
+        true,
+      ),
+    ).toBe(false)
+    // A brand-new (never-rasterized) plane still gets its first paint even
+    // mid-drag — there's no bitmap yet to stretch.
+    expect(
+      shouldRasterizePlaneTexture(false, undefined, revision, cached.textureSignature, true),
+    ).toBe(true)
+  })
 })

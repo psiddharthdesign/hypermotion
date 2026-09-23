@@ -10,9 +10,12 @@ export {
 } from './model'
 export type { CreateVectorItemOptions } from './model'
 export {
+  appendVectorPenPoint,
   applyVectorFill,
   applyVectorStroke,
+  closeVectorPenPath,
   cloneVectorDocument,
+  dragVectorPenAnchor,
   isEditableVectorNode,
   lerpVectorDocuments,
   lerpVectorPaint,
@@ -27,7 +30,7 @@ export {
   vectorLocalToViewBox,
   vectorViewBoxToLocal,
 } from './edit'
-export type { VectorEditPart } from './edit'
+export type { VectorEditPart, VectorPenAppendResult, VectorPenDragResult } from './edit'
 export {
   applyMorphTarget,
   fitGeometryToViewBox,

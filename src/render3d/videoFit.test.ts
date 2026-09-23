@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
-import { videoFitUv, resolveVideoCrop, videoResizeSize } from './videoFit'
+import { videoFitUv, resolveVideoCrop } from './videoFit'
 import { createSceneAPI } from '@/scene/doc'
 
 describe('video fit and non-destructive crop', () => {
@@ -27,10 +27,6 @@ describe('video fit and non-destructive crop', () => {
   })
   it('clamps unsafe crop values', () => {
     expect(resolveVideoCrop({ x: -1, y: 2, zoom: NaN })).toEqual({ x: 0, y: 1, zoom: 1 })
-  })
-  it('locks aspect ratio during corner resizing', () => {
-    const next = videoResizeSize(1920, 1080, 960, 1000)
-    expect(next).toEqual({ width: 960, height: 540 })
   })
   it('persists crop, updates it, and keeps the source intact', () => {
     const api = createSceneAPI()

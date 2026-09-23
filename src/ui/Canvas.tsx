@@ -42,6 +42,13 @@ import { useLayout } from '@/ui/hooks/useLayout'
 import { setLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { useUI } from '@/state/ui'
 import { vectorEditPreviewStore } from '@/ui/vectorEditPreviewStore'
+import { penToolStore, type PenSession } from '@/ui/penToolStore'
+import { PenToolOverlay } from '@/ui/PenToolOverlay'
+import {
+  appendVectorPenPoint,
+  closeVectorPenPath,
+  dragVectorPenAnchor,
+} from '@/scene/vector'
 import type { Tool } from '@/state/ui'
 import { getProjectAPI, useProjectAPI } from '@/project'
 import { resolveMasterTime } from '@/sequence'
@@ -279,6 +286,40 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
       ),
     [geometryPreviewNodeIds, props.api],
   )
+  // A resize drag on an absolute-positioned node never reflows anything
+  // else — Yoga excludes it from flow — so its live rect can be patched
+  // straight into the paint layout instead of waiting for the deferred
+  // authoritative solve ResizeHandles commits on release (see
+  // useLayout's "Dirty policy" doc comment). Subscribing to the preview
+  // store HERE — inside this already-`memo()`-isolated leaf, which
+  // already re-renders on every preview frame for the text-hiding logic
+  // above — keeps the high-frequency re-render contained to this one
+  // small component. An earlier attempt subscribed at the top of the
+  // whole Canvas() component instead; that made the entire (enormous)
+  // component re-render on every drag frame, which corrupted the resize
+  // gesture itself (the committed width/height came out wrong once
+  // released, not just a stale live preview).
+  const geometryPreview = useSyncExternalStore(
+    nodeGeometryPreviewStore.subscribe,
+    nodeGeometryPreviewStore.getSnapshot,
+    nodeGeometryPreviewStore.getSnapshot,
+  )
+  const paintLayout = useMemo(() => {
+    if (geometryPreviewNodeIds.length === 0) return props.layout
+    let patched: SolvedLayout | null = null
+    for (const nodeId of geometryPreviewNodeIds) {
+      const preview = geometryPreview[nodeId]
+      const base = props.layout[nodeId]
+      const node = props.api.getNode(nodeId)
+      // Text already gets its own dedicated live proxy
+      // (NodeGeometryPreviewOverlay) — patching its layout rect here
+      // too would double-apply the same width/height preview.
+      if (!preview || !base || !node || node.kind === 'text') continue
+      if (!patched) patched = { ...props.layout }
+      patched[nodeId] = nodeGeometryPreviewRect(node, base, preview)
+    }
+    return patched ?? props.layout
+  }, [props.layout, geometryPreviewNodeIds, geometryPreview, props.api])
   const rootId = props.api.getRoot()
   const liveSceneFill =
     rootId && sceneAnimated[rootId]?.fill !== undefined
@@ -345,6 +386,7 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
     <>
       <MemoizedThreeSceneViewport
         {...props}
+        layout={paintLayout}
         camera={camera}
         animated={sceneAnimated}
         cameraAnim={cameraAnim}
@@ -683,6 +725,11 @@ export function Canvas() {
     vectorEditPreviewStore.getSnapshot,
   )
   void vectorEditPreview
+  const penSession = useSyncExternalStore(
+    penToolStore.subscribe,
+    penToolStore.getSnapshot,
+    penToolStore.getSnapshot,
+  )
   const isEditingText = editingTextId !== null
   const pausedPlayhead = useUI((s) => (s.playing ? null : s.playhead))
   const playhead = playing
@@ -1452,6 +1499,15 @@ export function Canvas() {
 
   const onCanvasDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
+      if (tool === 'pen') {
+        const session = penToolStore.getSnapshot()
+        if (session) {
+          e.preventDefault()
+          e.stopPropagation()
+          finishPenSession(session)
+        }
+        return
+      }
       if (tool !== 'select' || editingTextId || editingVectorId) return
       const hit = hitTestCanvas3D(e.clientX, e.clientY, true)
       if (!hit) return
@@ -1933,6 +1989,204 @@ export function Canvas() {
     [],
   )
 
+  const PEN_CLOSE_HIT_RADIUS_PX = 8
+  const penDragRef = useRef<{ pointerId: number; dragging: boolean } | null>(
+    null,
+  )
+
+  /** Commit the in-progress pen session as a real `vector` node, select it, and switch back to Select — matching the other draw tools' finish sequence. Fewer than 2 points isn't a usable path, so that's treated like a cancel. */
+  const finishPenSession = useCallback(
+    (session: PenSession) => {
+      const item = session.document.items[0]
+      const points = item ? Object.values(item.geometry.points) : []
+      if (!item || points.length < 2) {
+        penToolStore.clear()
+        return
+      }
+      const minX = Math.min(...points.map((p) => p.x))
+      const minY = Math.min(...points.map((p) => p.y))
+      const maxX = Math.max(...points.map((p) => p.x))
+      const maxY = Math.max(...points.map((p) => p.y))
+      const width = Math.max(1, maxX - minX)
+      const height = Math.max(1, maxY - minY)
+      const shift = (p: { x: number; y: number }) => ({
+        x: p.x - minX,
+        y: p.y - minY,
+      })
+      const localItem = {
+        ...item,
+        geometry: {
+          ...item.geometry,
+          points: Object.fromEntries(
+            Object.entries(item.geometry.points).map(([id, p]) => [
+              id,
+              { ...p, ...shift(p) },
+            ]),
+          ),
+          segments: Object.fromEntries(
+            Object.entries(item.geometry.segments).map(([id, s]) => [
+              id,
+              {
+                ...s,
+                ...(s.controlStart ? { controlStart: shift(s.controlStart) } : {}),
+                ...(s.controlEnd ? { controlEnd: shift(s.controlEnd) } : {}),
+              },
+            ]),
+          ),
+        },
+      }
+      const liveRootId = api.getRoot()
+      const newId = api.createNode('vector', liveRootId, {
+        position: 'absolute',
+        size: { width, height },
+        viewBox: { x: 0, y: 0, width, height },
+        vector: { version: 1 as const, items: [localItem] },
+        importFidelity: 'editable' as const,
+        transform: {
+          x: minX,
+          y: minY,
+          z: 0,
+          rotation: 0,
+          rotationX: 0,
+          rotationY: 0,
+          scaleX: 1,
+          scaleY: 1,
+        },
+      } as never)
+      penToolStore.clear()
+      setSelection([newId])
+      setTool('select')
+    },
+    [api, setSelection, setTool],
+  )
+
+  const cancelPenSession = useCallback(() => {
+    penToolStore.clear()
+  }, [])
+
+  // Switching to a different tool mid-path — including clicking Select in
+  // the toolbar — COMMITS whatever's been drawn so far (same as pressing
+  // Enter) rather than discarding it. Only Escape discards; everything
+  // else preserves work in progress, matching how Illustrator/Figma
+  // handle a tool switch mid-path.
+  useEffect(() => {
+    if (tool === 'pen') return
+    const session = penToolStore.getSnapshot()
+    if (session) finishPenSession(session)
+  }, [tool, finishPenSession])
+
+  /** Pen tool click: place a point, or close the path if this lands on the first point. Mirrors DRAW_TOOLS' single-drag gesture with a multi-click state machine instead — see penToolStore.ts. */
+  const onPenPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      const point = clientToCanvas(e.clientX, e.clientY)
+      if (!point) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      const session = penToolStore.getSnapshot()
+      if (session) {
+        const item = session.document.items[0]
+        const firstPoint = item?.geometry.points[session.firstPointId]
+        const canClose = session.lastPointId !== session.firstPointId && firstPoint
+        const closeHitRadius = PEN_CLOSE_HIT_RADIUS_PX / Math.max(view.zoom, 0.001)
+        if (
+          canClose &&
+          firstPoint &&
+          Math.hypot(point.x - firstPoint.x, point.y - firstPoint.y) <= closeHitRadius
+        ) {
+          const closedDoc = closeVectorPenPath(
+            session.document,
+            session.itemId,
+            session.lastPointId,
+            session.firstPointId,
+            session.pendingOutgoingHandle ?? undefined,
+          )
+          finishPenSession({ ...session, document: closedDoc })
+          return
+        }
+      }
+
+      const { document, itemId, pointId } = appendVectorPenPoint(
+        session?.document ?? null,
+        session?.itemId ?? null,
+        session?.lastPointId ?? null,
+        point,
+        session?.pendingOutgoingHandle ?? undefined,
+      )
+      const segments = document.items.find((i) => i.id === itemId)?.geometry.segments
+      const incomingSegmentId = segments
+        ? (Object.values(segments).find((s) => s.endPointId === pointId)?.id ?? null)
+        : null
+      penToolStore.update({
+        itemId,
+        firstPointId: session?.firstPointId ?? pointId,
+        lastPointId: pointId,
+        incomingSegmentId,
+        document,
+        pendingOutgoingHandle: null,
+        cursor: point,
+      })
+
+      penDragRef.current = { pointerId: e.pointerId, dragging: false }
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+
+      const onMove = (moveEvent: PointerEvent) => {
+        const drag = penDragRef.current
+        if (!drag || moveEvent.pointerId !== drag.pointerId) return
+        const current = clientToCanvas(moveEvent.clientX, moveEvent.clientY)
+        if (!current) return
+        const active = penToolStore.getSnapshot()
+        if (!active) return
+        const dragDistance = Math.hypot(current.x - point.x, current.y - point.y)
+        if (dragDistance > 2) {
+          drag.dragging = true
+          const { document: draggedDoc, pendingOutgoingHandle } = dragVectorPenAnchor(
+            active.document,
+            active.itemId,
+            active.incomingSegmentId,
+            active.lastPointId,
+            current,
+          )
+          penToolStore.update({
+            ...active,
+            document: draggedDoc,
+            pendingOutgoingHandle,
+            cursor: current,
+          })
+        } else {
+          penToolStore.setCursor(current)
+        }
+      }
+      const onUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== e.pointerId) return
+        penDragRef.current = null
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [clientToCanvas, finishPenSession, view.zoom],
+  )
+
+  useEffect(() => {
+    if (tool !== 'pen') return
+    const onKeyDown = (e: KeyboardEvent) => {
+      const session = penToolStore.getSnapshot()
+      if (!session) return
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        cancelPenSession()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        finishPenSession(session)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [tool, cancelPenSession, finishPenSession])
+
 	  const onBackgroundPointerDown = useCallback(
 	    (e: React.PointerEvent<HTMLDivElement>) => {
       // Only left-button on the workspace background, not on a NodeView.
@@ -1958,6 +2212,14 @@ export function Canvas() {
         }
         setWorkspacePanning(true)
         ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+        return
+      }
+
+      if (tool === 'pen') {
+        // Same "draw on top of anything" allowance DRAW_TOOLS gets below —
+        // a pen click shouldn't be swallowed just because it lands on an
+        // existing layer.
+        onPenPointerDown(e)
         return
       }
 
@@ -2213,6 +2475,22 @@ export function Canvas() {
 
   const onBackgroundPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Live rubber-band tracking: onPenPointerDown's own window-level
+      // onMove only runs between a click and its release (for the
+      // click-and-drag-to-curve gesture) — plain hovering between two
+      // separate clicks, with no button held, never reaches that
+      // listener at all. Without this, the preview line stayed frozen
+      // wherever the last click/drag ended instead of following the
+      // cursor, so the pen didn't feel connected to the mouse while
+      // aiming the next point.
+      if (tool === 'pen') {
+        const session = penToolStore.getSnapshot()
+        if (session) {
+          const point = clientToCanvas(e.clientX, e.clientY)
+          if (point) penToolStore.setCursor(point)
+        }
+        return
+      }
       const nodeDrag = canvasNodeDragRef.current
       if (nodeDrag && e.pointerId === nodeDrag.pointerId) {
         const point = clientToCanvas(e.clientX, e.clientY)
@@ -2339,6 +2617,7 @@ export function Canvas() {
       clientToViewport,
       setView,
       view.zoom,
+      tool,
     ],
   )
 
@@ -2928,7 +3207,7 @@ export function Canvas() {
           ? workspacePanning
             ? 'grabbing'
             : 'grab'
-          : isDrawTool
+          : isDrawTool || tool === 'pen'
             ? 'crosshair'
             : undefined
 
@@ -3479,6 +3758,9 @@ export function Canvas() {
                   borderRadius: tool === 'ellipse' ? '9999px' : 2,
                 }}
               />
+            ) : null}
+            {tool === 'pen' ? (
+              <PenToolOverlay session={penSession} zoom={view.zoom} />
             ) : null}
             {marqueeRect && !marqueeRect.workspaceOnly ? (
               <div

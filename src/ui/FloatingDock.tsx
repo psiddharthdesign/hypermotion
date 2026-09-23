@@ -8,6 +8,7 @@ import {
   ImageIcon,
   MousePointer2,
   MousePointerClick,
+  PenTool,
   Smartphone,
   Sparkles,
   Square,
@@ -60,6 +61,7 @@ const TOOLS: { id: Tool; shortcut: string; hint: string; icon: ReactNode }[] = [
   { id: 'frame', shortcut: 'F', hint: 'Frame', icon: <Frame size={18} /> },
   { id: 'rect', shortcut: 'R', hint: 'Rectangle', icon: <Square size={18} /> },
   { id: 'ellipse', shortcut: 'O', hint: 'Ellipse', icon: <Circle size={18} /> },
+  { id: 'pen', shortcut: 'P', hint: 'Pen', icon: <PenTool size={18} /> },
   { id: 'text', shortcut: 'T', hint: 'Text', icon: <Type size={18} /> },
 ]
 
