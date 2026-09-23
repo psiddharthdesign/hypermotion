@@ -5335,8 +5335,18 @@ function TextGlyphs({
   const playhead = hasTextAnimationTracks
     ? getAnimEngine().getPlayhead()
     : mirroredPlayhead
-  const authoredTextAnimation =
-    anim?.textAnimation ?? legacyTextAnimation
+  const shimmerOutsideRange = anim?.shimmerEndTime !== undefined && (playhead < (anim.shimmerStartTime ?? 0) || playhead >= anim.shimmerEndTime)
+  const sourceTextAnimation = anim?.textAnimation ?? legacyTextAnimation
+  const baseTextAnimation = sourceTextAnimation?.id === 'shimmer' && shimmerOutsideRange ? null : sourceTextAnimation
+  const authoredTextAnimation = baseTextAnimation?.id === 'shimmer'
+    ? { ...baseTextAnimation,
+        startTime: anim?.shimmerStartTime ?? baseTextAnimation.startTime,
+        duration: anim?.shimmerEndTime !== undefined
+          ? Math.max(1e-6, anim.shimmerEndTime - (anim.shimmerStartTime ?? baseTextAnimation.startTime))
+          : anim?.shimmerDuration ?? baseTextAnimation.duration,
+        shimmerLoop: anim?.shimmerEndTime !== undefined ? false : baseTextAnimation.shimmerLoop,
+        shimmerWidth: anim?.shimmerWidth ?? baseTextAnimation.shimmerWidth }
+    : baseTextAnimation
   const subscribeToCurvePreview = useCallback(
     (listener: () => void) =>
       textStaggerCurvePreviewStore.subscribe(node.id, listener),
@@ -5441,7 +5451,7 @@ function TextGlyphs({
       : { color: node.color }),
     ...(textAnimation?.id === 'shimmer' ? { color: effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, background: undefined, WebkitTextFillColor: undefined } : {}),
     ...(node.textShimmer ? {
-      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color)),
+      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, anim)),
       backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent',
     } : {}),
     textAlign,

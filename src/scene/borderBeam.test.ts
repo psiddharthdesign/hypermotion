@@ -5,14 +5,14 @@ import { readScene, sceneToBytes } from './file'
 import { BEAM_PALETTES, BEAM_STYLES, beamPadding, beamSpatialScale, beamTiming, normalizeBorderBeam } from './borderBeam'
 import { expandRectForLayerEffects, nodeEffectsWrapSubtree, resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import { rebaseSceneNodes } from '@/project/splitScene'
-import { resolveBeamTheme } from '@/render/beam/paintBorderBeam'
+import { beamColorTreatment, resolveBeamTheme } from '@/render/beam/paintBorderBeam'
 
 describe('Beam layer effect', () => {
   it('round-trips every style and palette in a saved scene', async () => {
     const api = createSceneAPI()
     const root = api.createNode('frame', null)
     for (const size of BEAM_STYLES) for (const colorVariant of BEAM_PALETTES) {
-      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 12, duration: 300, strength: 8, glowSize: 12, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 6, saturation: 8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
+      api.createNode('rect', root, { appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam', size, colorVariant, nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false, colors: ['#fa3467', 'oklch(0.7 0.2 280)', '#2ad6ff'], edgeWidth: 12, duration: 300, speed: 2.5, strength: 8, glowSize: 12, theme: 'auto', staticColors: true, borderRadius: 8, brightness: 6, saturation: 8, hueRange: 60, startTime: 1, endTime: 5, fadeIn: .2, fadeOut: .4 }] } })
     }
     const bytes = await sceneToBytes(api.doc)
     const restored = await readScene(bytes)
@@ -23,6 +23,23 @@ describe('Beam layer effect', () => {
     const e = normalizeBorderBeam({kind:'border-beam', strength: 9, duration:0, glowSize:Infinity, hueRange:-4, brightness:NaN})
     expect(e).toMatchObject({strength:9,duration:.01,glowSize:1,hueRange:0,brightness:1.3})
     expect(normalizeBorderBeam({kind:'border-beam'}).brightness).toBeUndefined()
+  })
+  it('changes movement speed without retiming visibility or fades', () => {
+    const effect = { kind: 'border-beam' as const, startTime: 1, endTime: 5, duration: 4, fadeIn: 1, fadeOut: 1 }
+    for (const speed of [0, .5, 1, 2, 20]) {
+      expect([0, 1, 1.5, 2, 4, 4.5, 5].map(t => beamTiming({ ...effect, speed }, t).opacity))
+        .toEqual([0, 0, .5, 1, 1, .5, 0])
+      const first = beamTiming({ ...effect, speed }, 2)
+      expect(first.time).toBe(speed)
+      expect(first.phase).toBe((speed / 4) % 1)
+      beamTiming({ ...effect, speed }, 4.5)
+      expect(beamTiming({ ...effect, speed }, 2)).toEqual(first)
+    }
+    expect(beamTiming({ ...effect, speed: 0 }, 4).time).toBe(0)
+    expect(normalizeBorderBeam({ kind: 'border-beam' }).speed).toBe(1)
+    for (const speed of [NaN, Infinity]) expect(normalizeBorderBeam({ ...effect, speed }).speed).toBe(1)
+    expect(normalizeBorderBeam({ ...effect, speed: -1 }).speed).toBe(0)
+    expect(normalizeBorderBeam({ ...effect, speed: 20 }).speed).toBe(20)
   })
   it('bounds custom palettes and scales the edge/glow with large layers', () => {
     const normalized = normalizeBorderBeam({kind:'border-beam',colors:['invalid','#f00','#00ff00','oklch(0.7 0.2 280)'],edgeWidth:20})
@@ -74,5 +91,19 @@ describe('Beam layer effect', () => {
     expect(resolveBeamTheme({kind:'border-beam',theme:'auto'},'#fff')).toBe('light')
     expect(resolveBeamTheme({kind:'border-beam',theme:'auto'},'oklch(0.2 0 0)')).toBe('dark')
     expect(resolveBeamTheme({kind:'border-beam',theme:'light'},'#000')).toBe('light')
+  })
+  it('preserves custom swatches across themes, styles, palettes, and movement', () => {
+    for (const size of BEAM_STYLES) for (const theme of ['light', 'dark'] as const) {
+      for (const colorVariant of BEAM_PALETTES) for (const time of [0, 3, 6, 12]) {
+        const effect = { kind: 'border-beam' as const, size, colorVariant, colors: ['#288cff', 'oklch(1.000 0.000 222)'], staticColors: false }
+        expect(beamColorTreatment(effect, theme, time)).toEqual({ brightness: 1, saturation: 1, hue: 0 })
+        expect(beamColorTreatment({ ...effect, brightness: .7, saturation: 1.5 }, theme, time))
+          .toEqual({ brightness: .7, saturation: 1.5, hue: 0 })
+      }
+    }
+    expect(beamColorTreatment({ kind: 'border-beam' }, 'light', 0))
+      .toEqual({ brightness: .85, saturation: 1.35, hue: -30 })
+    expect(beamColorTreatment({ kind: 'border-beam', staticColors: true }, 'dark', 0))
+      .toEqual({ brightness: 1.25, saturation: 1.2, hue: 0 })
   })
 })

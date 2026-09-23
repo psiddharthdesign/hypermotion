@@ -140,9 +140,11 @@ export function paintLayerWithEffects(
   height: number,
   effects: readonly Effect[] | null | undefined,
   paintSource: (source: CanvasRenderingContext2D) => void,
+  isolateSource = false,
 ): void {
   const visible = effects?.filter((effect) => effect.visible !== false && effect.kind !== 'border-beam') ?? []
-  if (visible.length === 0) {
+  // Keep alpha-composited text separate from its parent and siblings.
+  if (visible.length === 0 && !isolateSource) {
     paintSource(ctx)
     return
   }

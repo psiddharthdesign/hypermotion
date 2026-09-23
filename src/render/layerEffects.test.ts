@@ -14,6 +14,30 @@ import { MAX_LAYER_BLUR_PX } from '@/scene/effects'
 import { createSceneAPI } from '@/scene/doc'
 
 describe('layer effect raster bounds', () => {
+  it('isolates shimmer alpha compositing even without a layer effect', () => {
+    const context = fakeCanvasContext()
+    context.globalCompositeOperation = 'multiply'
+    let sourceContext: CanvasRenderingContext2D | undefined
+    paintLayerWithEffects(
+      context as unknown as CanvasRenderingContext2D,
+      80,
+      24,
+      [],
+      (source) => {
+        sourceContext = source
+        source.fillText('Shimmer', 0, 16)
+        source.globalCompositeOperation = 'source-in'
+        source.fillRect(0, 0, 80, 24)
+      },
+      true,
+    )
+    expect(sourceContext).not.toBe(context)
+    expect(sourceContext?.canvas.width).toBe(80)
+    expect(sourceContext?.canvas.height).toBe(24)
+    expect(context.globalCompositeOperation).toBe('multiply')
+    expect(context.drawFilters).toEqual(['none'])
+  })
+
   it('resolves animated blur values onto the matching shadow and layer blur', () => {
     const shadowEffectId = 'effect-1'
     const layerBlurEffectId = 'effect-2'
@@ -204,6 +228,7 @@ interface FakeContext {
   getTransform: () => { a: number; b: number; c: number; d: number }
   scale: () => void
   fillRect: () => void
+  fillText: () => void
   drawImage: () => void
 }
 
@@ -232,6 +257,7 @@ function fakeCanvasContext(): FakeContext {
       getTransform: () => ({ a: 1, b: 0, c: 0, d: 1 }),
       scale: () => undefined,
       fillRect: () => undefined,
+      fillText: () => undefined,
       drawImage: () => context.drawFilters.push(context.filter),
     }
     return canvas

@@ -155,6 +155,11 @@ export function parseOklch(str: string | null | undefined): Lch | null {
   return { l, c, h }
 }
 
+/** Both palette hex swatches and colors already edited into OKLCH use this picker. */
+export function parsePickerColor(value: string | null | undefined): Lch | null {
+  return parseOklch(value) ?? (value ? hexToOklch(value) : null)
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }

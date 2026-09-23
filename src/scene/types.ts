@@ -485,6 +485,15 @@ export interface DeformationVector3 {
  */
 export interface BendDeformation {
   kind: 'bend'
+  mode: 'arc' | 'wave'
+  /** Sine displacement in pixels, cycles per region, and phase in degrees. */
+  waveAmplitude: number
+  waveFrequency: number
+  wavePhase: number
+  /** Region endpoints across the layer (0..1); falloff is a fraction of the region. */
+  waveStart: number
+  waveEnd: number
+  waveFalloff: number
   enabled: boolean
   /** Bend amount in degrees across the capture region. */
   angle: number
@@ -1307,6 +1316,8 @@ export interface Interaction {
 export type EffectBlurPropertyId =
   `appearance.effects.${string}.blur`
 
+export type EffectBeamRangePropertyId = `appearance.effects.${string}.beamRange`
+
 export type PropertyId =
   // transform group — post-layout, cheap
   | 'transform.x'
@@ -1323,6 +1334,12 @@ export type PropertyId =
   // generic layer motion path — resolves into post-layout transform values
   | 'motionPath.progress'
   // non-destructive layer deformation — post-layout, GPU evaluated
+  | 'deformation.bend.waveAmplitude'
+  | 'deformation.bend.waveFrequency'
+  | 'deformation.bend.wavePhase'
+  | 'deformation.bend.waveStart'
+  | 'deformation.bend.waveEnd'
+  | 'deformation.bend.waveFalloff'
   | 'deformation.bend.angle'
   | 'deformation.bend.factor'
   | 'deformation.bend.captureDirectionX'
@@ -1386,6 +1403,7 @@ export type PropertyId =
   | 'appearance.fill'
   | 'appearance.blendMode'
   | EffectBlurPropertyId
+  | EffectBeamRangePropertyId
   // native vector appearance and path morphs
   | 'vector.fill'
   | 'vector.stroke'
@@ -1405,6 +1423,9 @@ export type PropertyId =
   | 'shape.arcInnerRadius'
   // text effect group — drives text-specific reveal effects
   | 'text.progress'
+  | 'textShimmer.range'
+  | 'textShimmer.duration'
+  | 'textShimmer.shimmerWidth'
   // layout group — triggers relayout + FLIP
   | 'layout.gap'
   | 'layout.padding.top'

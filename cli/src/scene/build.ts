@@ -500,6 +500,13 @@ export interface BendDeformationJson {
   upRotation?: number
   bendRotation?: number
   captureOrigin?: Partial<DeformationVector3Json>
+  mode?: 'arc' | 'wave'
+  waveAmplitude?: number
+  waveFrequency?: number
+  wavePhase?: number
+  waveStart?: number
+  waveEnd?: number
+  waveFalloff?: number
   /** A value of 0 automatically fits the layer bounds. */
   captureLength?: number
   surfaceShading?: boolean
@@ -607,7 +614,15 @@ export const PROPERTY_IDS = [
   'shape.arcSweep',
   'shape.arcInnerRadius',
   'text.progress',
+  'textShimmer.range', 'textShimmer.duration',
+  'textShimmer.shimmerWidth',
   'motionPath.progress',
+  'deformation.bend.waveAmplitude',
+  'deformation.bend.waveFrequency',
+  'deformation.bend.wavePhase',
+  'deformation.bend.waveStart',
+  'deformation.bend.waveEnd',
+  'deformation.bend.waveFalloff',
   'deformation.bend.angle',
   'deformation.bend.factor',
   'deformation.bend.captureDirectionX',
@@ -645,6 +660,7 @@ export type EffectBlurPropertyIdJson =
 export type PropertyIdJson =
   | (typeof PROPERTY_IDS)[number]
   | EffectBlurPropertyIdJson
+  | `appearance.effects.${string}.beamRange`
 
 const PROPERTY_ID_SET: ReadonlySet<string> = new Set(PROPERTY_IDS)
 const EFFECT_BLUR_PROPERTY_ID =
@@ -2639,7 +2655,7 @@ function isNodePosition(value: string): value is NodePositionJson {
 }
 
 function isPropertyId(value: string): value is PropertyIdJson {
-  return PROPERTY_ID_SET.has(value) || EFFECT_BLUR_PROPERTY_ID.test(value)
+  return PROPERTY_ID_SET.has(value) || EFFECT_BLUR_PROPERTY_ID.test(value) || /^appearance\.effects\.[A-Za-z0-9_-]+\.beamRange$/.test(value)
 }
 
 function validateLayerMotionPath(
@@ -2784,6 +2800,11 @@ function validateLayerDeformation(
     errors.push(`${label}.kind must be bend`)
     return
   }
+  if (raw.mode !== undefined && raw.mode !== 'arc' && raw.mode !== 'wave') errors.push(`${label}.mode must be arc or wave`)
+  for (const [key, max] of [['waveFrequency', 32], ['waveStart', 1], ['waveEnd', 1], ['waveFalloff', .5]] as const) {
+    const value = raw[key]
+    if (typeof value === 'number' && (value < 0 || value > max)) errors.push(`${label}.${key} must be between 0 and ${max}`)
+  }
   const bend = raw
   const finite = (key: string): void => {
     const value = bend[key]
@@ -2795,6 +2816,12 @@ function validateLayerDeformation(
     }
   }
   for (const key of [
+    'waveAmplitude',
+    'waveFrequency',
+    'wavePhase',
+    'waveStart',
+    'waveEnd',
+    'waveFalloff',
     'angle',
     'factor',
     'captureRotation',

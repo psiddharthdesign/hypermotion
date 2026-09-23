@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useLayoutEffect, useRef } from 'react'
+import { resolveBeamRanges } from '@/anim/beamTimingTrack'
+import { useAnimatedValues } from '@/ui/hooks/useAnimatedValues'
+import { useLayoutEffect, useRef, useMemo } from 'react'
 import type { Effect, Node } from '@/scene'
 import { beamPadding, hasAnimatedBeam } from '@/scene/borderBeam'
 import { beamRasterScale } from '@/render/beam/raster'
@@ -11,7 +13,9 @@ export function BorderBeamOverlay({ node, width, height, radius, cornerSmoothing
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const time = useAnimationPlaybackClock(hasAnimatedBeam(effects))
-  const beams = effects.filter(e => e.kind === 'border-beam')
+  const ids = useMemo(() => [node.id], [node.id])
+  const animated = useAnimatedValues(ids)
+  const beams = resolveBeamRanges(effects, animated[node.id]?.effectBeamRange, node.proceduralTimeOffset).filter(e => e.kind === 'border-beam')
   const padding = Math.max(0, ...beams.map(e => beamPadding(e, width, height)))
   useLayoutEffect(() => {
     const canvas = ref.current

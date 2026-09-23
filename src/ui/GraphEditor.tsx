@@ -5,6 +5,7 @@ import type { EasingKind, Track } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import {
   effectIdFromBlurPropertyId,
+  effectIdFromBeamRangePropertyId,
   useSceneAPI,
   useSceneVersion,
 } from '@/scene'
@@ -458,8 +459,10 @@ function formatNumber(n: number): string {
 }
 
 function humanProperty(id: string): string {
+  if (effectIdFromBeamRangePropertyId(id)) return 'Beam'
   if (effectIdFromBlurPropertyId(id)) return 'Blur'
   const map: Record<string, string> = {
+    'textShimmer.range': 'Shimmer',
     'transform.x': 'X',
     'transform.y': 'Y',
     'transform.z': 'Z',
@@ -476,6 +479,12 @@ function humanProperty(id: string): string {
     'appearance.fill': 'Fill',
     'vector.fill': 'Vector Fill',
     'vector.geometry': 'Shape',
+    'deformation.bend.waveAmplitude': 'Wave amplitude',
+    'deformation.bend.waveFrequency': 'Wave frequency',
+    'deformation.bend.wavePhase': 'Wave phase',
+    'deformation.bend.waveStart': 'Wave start',
+    'deformation.bend.waveEnd': 'Wave end',
+    'deformation.bend.waveFalloff': 'Wave falloff',
     'bend.tl': 'Bend TL',
     'bend.tr': 'Bend TR',
     'bend.br': 'Bend BR',
@@ -485,6 +494,8 @@ function humanProperty(id: string): string {
     'bend.bottom': 'Bend Bottom',
     'bend.left': 'Bend Left',
     'text.progress': 'Text Animation',
+    'textShimmer.duration': 'Shimmer duration',
+    'textShimmer.shimmerWidth': 'Shimmer length',
     'motionPath.progress': 'Path Progress',
   }
   return map[id] ?? id

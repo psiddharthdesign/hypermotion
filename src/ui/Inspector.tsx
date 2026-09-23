@@ -1,5 +1,8 @@
+import { setBeamRange } from '@/anim/beamTimingTrack'
+import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
 
+import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
 import { TransitionsPanel } from './TransitionsPanel'
 import { useToast } from './toastStore'
@@ -39,6 +42,7 @@ import {
   MIN_BEND_GEOMETRY_DETAIL,
   clampLayerBlurAmount,
   effectBlurPropertyId,
+  effectBeamRangePropertyId,
   effectStableId,
   isEditableVectorNode,
   normalizeCameraScrollSensitivity,
@@ -2064,6 +2068,16 @@ function MultiBendSection({
         </button>
       }
     >
+      <FieldRow label="Type">
+        <SelectField<'arc' | 'wave'> value={bendForNode(nodes[0]).mode}
+          options={[{ value: 'arc', label: 'Bend' }, { value: 'wave', label: 'Sine wave' }]}
+          onCommit={mode => patchBendAll({ mode })} />
+      </FieldRow>
+      {nodes.every(node => bendForNode(node).mode === 'wave') && <BendWaveFields
+        targets={nodes.map(node => ({ nodeId: node.id, bend: bendForNode(node) }))}
+        onCommit={patchBendAll} onPreview={onPreview}
+        onScrubCommit={commitBendScrubAll} onCancel={onPreviewCancel}
+      />}
       <SectionToggleRow
         label="Enabled"
         value={cEnabled.value}
@@ -2095,6 +2109,7 @@ function MultiBendSection({
           />
         </MixedCell>
       </FieldRow>
+      {nodes.some(node => bendForNode(node).mode !== 'wave') && (
       <KeyframeSliderRow
         label="Angle"
         value={cAngle.value}
@@ -2116,6 +2131,7 @@ function MultiBendSection({
           />
         }
       />
+      )}
       <KeyframeSliderRow
         label="Factor"
         value={cFactor.value * 100}
@@ -2156,6 +2172,7 @@ function MultiBendSection({
           patchBendAll({ showOriginalGeometry })
         }
       />
+      {nodes.some(node => bendForNode(node).mode !== 'wave') && <>
       <SectionToggleRow
         label="Both directions"
         value={cBothDirections.value}
@@ -2170,6 +2187,7 @@ function MultiBendSection({
         plain
         onCommit={(limitToRegion) => patchBendAll({ limitToRegion })}
       />
+      </>}
 
       <InspectorDisclosure
         storageKey="multi-bend-surface"
@@ -2278,8 +2296,7 @@ function MultiBendSection({
 
       <InspectorDisclosure
         storageKey="multi-bend-capture-region"
-        title="Capture region"
-        defaultOpen
+        title="Advanced bend axes"
       >
         <div className="mb-1 text-[10px] font-medium text-text-muted">
           Capture direction
@@ -2529,6 +2546,7 @@ function MultiBendSection({
             />
           }
         />
+        {nodes.some(node => bendForNode(node).mode !== 'wave') && (
         <KeyframeSliderRow
           label="Bend rotation"
           value={cBendRotation.value}
@@ -2552,6 +2570,7 @@ function MultiBendSection({
             />
           }
         />
+        )}
 
         <div aria-hidden="true" className="my-2 border-t border-border" />
         <div className="mb-1 text-[10px] font-medium text-text-muted">
@@ -3207,6 +3226,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveBend = bend?.kind === 'bend'
     ? {
         ...bend,
+        waveFalloff: anim?.bendWaveFalloff ?? bend.waveFalloff,
+        waveEnd: anim?.bendWaveEnd ?? bend.waveEnd,
+        waveStart: anim?.bendWaveStart ?? bend.waveStart,
+        wavePhase: anim?.bendWavePhase ?? bend.wavePhase,
+        waveFrequency: anim?.bendWaveFrequency ?? bend.waveFrequency,
+        waveAmplitude: anim?.bendWaveAmplitude ?? bend.waveAmplitude,
         angle: anim?.bendAngle ?? bend.angle,
         factor: anim?.bendFactor ?? bend.factor,
         captureDirection: {
@@ -3485,6 +3510,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         ...current.appearance,
         effects,
       })
+      for (const [index, effect] of effects.entries()) {
+        const effectId = effectStableId(effect, index)
+        const previous = current.appearance.effects.find((e, i) => effectStableId(e, i) === effectId)
+        if (effect.kind === 'border-beam' && previous?.kind !== 'border-beam') {
+          const start = currentAnimationAuthorTime()
+          setBeamRange(api, node.id, effectId, start, start + (effect.duration ?? beamDuration(effect.size ?? 'md')))
+        }
+      }
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const commitEffectBlur = (effectId: string, rawValue: number) => {
@@ -3545,6 +3578,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       })
       const track = findTrack(api, node.id, propertyId)
       if (track) removeTrack(api, track.id)
+      const beamTrack = findTrack(api, node.id, effectBeamRangePropertyId(effectId))
+      if (beamTrack) removeTrack(api, beamTrack.id)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const previewNodeVisual = (patch: AnimatedValue) => {
@@ -4488,10 +4523,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
         >
           <FieldRow label="Type">
-            <SelectField<'bend'>
-              value="bend"
-              options={[{ value: 'bend', label: 'Bend' }]}
-              onCommit={() => undefined}
+            <SelectField<'arc' | 'wave'>
+              value={liveBend.mode}
+              options={[{ value: 'arc', label: 'Bend' }, { value: 'wave', label: 'Sine wave' }]}
+              onCommit={(mode) => patchBend({ mode })}
               width="w-full"
             />
           </FieldRow>
@@ -4523,6 +4558,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }}
             />
           </FieldRow>
+          {liveBend.mode === 'wave' && <BendWaveFields
+            targets={[{ nodeId: node.id, bend: liveBend }]}
+            onCommit={patchBend} onPreview={previewNodeVisual}
+            onScrubCommit={commitBendScrub} onCancel={cancelNodeVisualPreview}
+          />}
+          {liveBend.mode !== 'wave' && (
           <KeyframeSliderRow
             label="Angle"
             value={liveBend.angle}
@@ -4544,6 +4585,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           />
+          )}
           <KeyframeSliderRow
             label="Factor"
             value={liveBend.factor * 100}
@@ -4580,6 +4622,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               patchBend({ showOriginalGeometry })
             }
           />
+          {liveBend.mode !== 'wave' && <>
           <SectionToggleRow
             label="Both directions"
             value={liveBend.bothDirections}
@@ -4592,6 +4635,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             plain
             onCommit={(limitToRegion) => patchBend({ limitToRegion })}
           />
+          </>}
 
           <InspectorDisclosure
             storageKey="bend-surface"
@@ -4692,8 +4736,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
           <InspectorDisclosure
             storageKey="bend-capture-region"
-            title="Capture region"
-            defaultOpen
+            title="Advanced bend axes"
           >
             <div className="mb-1 text-[10px] font-medium text-text-muted">
               Capture direction
@@ -4815,6 +4858,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               suffix="°"
               keyframe={<KeyframeButton nodeId={node.id} propertyId="deformation.bend.upRotation" currentValue={liveBend.upRotation} />}
             />
+            {liveBend.mode !== 'wave' && (
             <KeyframeSliderRow
               label="Bend rotation"
               value={liveBend.bendRotation}
@@ -4828,6 +4872,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               suffix="°"
               keyframe={<KeyframeButton nodeId={node.id} propertyId="deformation.bend.bendRotation" currentValue={liveBend.bendRotation} />}
             />
+            )}
 
             <div aria-hidden="true" className="my-2 border-t border-border" />
             <div className="mb-1 text-[10px] font-medium text-text-muted">
@@ -6798,7 +6843,7 @@ function EffectRow({
         </button>
       </div>
       {effect.kind === 'border-beam' ? (
-        <BorderBeamFields effect={effect} onChange={onChange} />
+        <BorderBeamFields nodeId={nodeId} effectId={effectId} effect={effect} onChange={onChange} />
       ) : effect.kind === 'blur' ? (
         <EffectBlurSlider
           nodeId={nodeId}

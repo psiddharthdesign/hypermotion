@@ -16,6 +16,7 @@ import type {
 import type { SceneAPI } from '@/scene/doc'
 import {
   effectIdFromBlurPropertyId,
+  effectIdFromBeamRangePropertyId,
   propertyDescriptor,
 } from '@/scene/props'
 import { findCursorComponent } from '@/scene/builtins/cursorComponent'
@@ -104,6 +105,7 @@ export interface AnimatedValue {
   /** Discrete override for `node.appearance.blendMode`. */
   blendMode?: BlendMode
   /** Per-effect blur overrides keyed by the effect row's stable id. */
+  effectBeamRange?: Record<string, { start: number; end: number }>
   effectBlur?: Record<string, number>
   /** Editable ellipse geometry overrides. */
   arcStart?: number
@@ -120,6 +122,10 @@ export interface AnimatedValue {
   layoutPaddingBottom?: number
   layoutPaddingLeft?: number
   /** 0→1 progress for text-specific animation effects. */
+  shimmerStartTime?: number
+  shimmerEndTime?: number
+  shimmerDuration?: number
+  shimmerWidth?: number
   textProgress?: number
   /**
    * Uneased 0→1 position between the active text track's authored keys.
@@ -131,6 +137,12 @@ export interface AnimatedValue {
   textAnimation?: TextAnimationConfig
   /** 0→1 progress for a generic layer motion path. */
   motionPathProgress?: number
+  bendWaveAmplitude?: number
+  bendWaveFrequency?: number
+  bendWavePhase?: number
+  bendWaveStart?: number
+  bendWaveEnd?: number
+  bendWaveFalloff?: number
   bendAngle?: number
   bendFactor?: number
   bendCaptureDirectionX?: number
@@ -613,6 +625,16 @@ function applyTrack(
 ): void {
   const kfs = track.keyframes
   if (kfs.length === 0) return
+  const beamId = effectIdFromBeamRangePropertyId(track.propertyId)
+  if (beamId) {
+    ;(into.effectBeamRange ??= {})[beamId] = { start: kfs[0]!.time, end: kfs[kfs.length - 1]!.time }
+    return
+  }
+  if (track.propertyId === 'textShimmer.range') {
+    into.shimmerStartTime = kfs[0]!.time
+    into.shimmerEndTime = kfs[kfs.length - 1]!.time
+    return
+  }
   if (track.propertyId === 'text.progress') {
     applyTextProgressTrack(track, t, into, cache)
     return
@@ -885,11 +907,35 @@ function writeProperty(
     case 'layout.padding.left':
       into.layoutPaddingLeft = Math.max(0, value)
       break
+    case 'textShimmer.duration':
+      into.shimmerDuration = Math.max(0.05, value)
+      break
+    case 'textShimmer.shimmerWidth':
+      into.shimmerWidth = Math.max(0.02, Math.min(1, value))
+      break
     case 'text.progress':
       into.textProgress = value
       break
     case 'motionPath.progress':
       into.motionPathProgress = value
+      break
+    case 'deformation.bend.waveAmplitude':
+      into.bendWaveAmplitude = value
+      break
+    case 'deformation.bend.waveFrequency':
+      into.bendWaveFrequency = value
+      break
+    case 'deformation.bend.wavePhase':
+      into.bendWavePhase = value
+      break
+    case 'deformation.bend.waveStart':
+      into.bendWaveStart = value
+      break
+    case 'deformation.bend.waveEnd':
+      into.bendWaveEnd = value
+      break
+    case 'deformation.bend.waveFalloff':
+      into.bendWaveFalloff = value
       break
     case 'deformation.bend.angle':
       into.bendAngle = value

@@ -27,6 +27,8 @@ export interface BorderBeamEffect {
   /** Intensity multiplier: 1 is the preset, higher values intensify its color. */
   strength?: number
   duration?: number
+  /** Movement multiplier; does not change the active window or entry/exit fades. */
+  speed?: number
   /** Omitted values follow the layer's animated corner radius. */
   borderRadius?: number
   brightness?: number
@@ -75,6 +77,7 @@ export function normalizeBorderBeam(effect: BorderBeamEffect): BorderBeamEffect 
     animatePattern: effect.animatePattern !== false,
     active: effect.active !== false, staticColors: effect.staticColors === true,
     strength: bounded(effect.strength, 1, 0),
+    speed: bounded(effect.speed, 1, 0),
     duration: effect.duration === undefined ? undefined : bounded(effect.duration, beamDuration(size), 0.01),
     borderRadius: effect.borderRadius === undefined ? undefined : bounded(effect.borderRadius, 0, 0),
     brightness: effect.brightness === undefined ? undefined : bounded(effect.brightness, 1.3, 0),
@@ -98,7 +101,8 @@ export function beamTiming(effect: BorderBeamEffect, sceneTime: number) {
   const exit = e.fadeOut! > 0 ? smooth((end - time) / e.fadeOut!) : 1
   const opacity = e.visible === false || !e.active || time < 0 || time >= end ? 0 : Math.min(1, e.strength!) * entrance * exit
   const duration = e.duration ?? beamDuration(e.size!)
-  return { time, phase: ((time / duration) % 1 + 1) % 1, opacity }
+  const movementTime = time * e.speed!
+  return { time: movementTime, phase: ((movementTime / duration) % 1 + 1) % 1, opacity }
 }
 
 export function hasAnimatedBeam(effects: readonly { kind: string; visible?: boolean; active?: boolean }[] | undefined): boolean {

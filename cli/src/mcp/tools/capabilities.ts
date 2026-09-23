@@ -47,7 +47,7 @@ const BEAM_SUPPORT = {
   palettes: ['colorful', 'mono', 'ocean', 'sunset', 'forest', 'candy', 'ice', 'gold'],
   themes: ['dark', 'light', 'auto'],
   timelineDriven: true,
-  controls: ['nonUniform', 'variation', 'spread', 'seed', 'animatePattern', 'colors', 'edgeWidth', 'active', 'strength', 'duration', 'glowSize', 'brightness', 'saturation', 'hueRange', 'staticColors', 'borderRadius', 'startTime', 'endTime', 'fadeIn', 'fadeOut'],
+  controls: ['nonUniform', 'variation', 'spread', 'seed', 'animatePattern', 'colors', 'edgeWidth', 'active', 'strength', 'duration', 'speed', 'glowSize', 'brightness', 'saturation', 'hueRange', 'staticColors', 'borderRadius', 'startTime', 'endTime', 'fadeIn', 'fadeOut'],
 } as const
 
 type CapabilitiesPayload = {

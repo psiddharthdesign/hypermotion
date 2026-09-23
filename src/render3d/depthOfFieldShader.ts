@@ -40,6 +40,14 @@ export interface PlaneDepthOfFieldShaderState {
 }
 
 export interface PlaneBendShaderState {
+  mode?: 'arc' | 'wave'
+  waveAmplitude?: number
+  waveFrequency?: number
+  wavePhase?: number
+  waveStart?: number
+  waveEnd?: number
+  waveFalloff?: number
+
   enabled: boolean
   angle: number
   factor: number
@@ -77,6 +85,13 @@ interface DofShaderUniforms {
   hmDofKernel: { value: THREE.Vector2[] }
   hmBendCount: { value: number }
   hmBendEnabled: { value: number[] }
+  hmBendWaveMode: { value: number[] }
+  hmBendWaveAmplitude: { value: number[] }
+  hmBendWaveFrequency: { value: number[] }
+  hmBendWavePhase: { value: number[] }
+  hmBendWaveStart: { value: number[] }
+  hmBendWaveEnd: { value: number[] }
+  hmBendWaveFalloff: { value: number[] }
   hmBendAngle: { value: number[] }
   hmBendFactor: { value: number[] }
   hmBendBothDirections: { value: number[] }
@@ -96,7 +111,7 @@ interface DofShaderUniforms {
   hmBendRoughness: { value: number }
 }
 
-const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-stack-alpha-v16'
+const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-wave-stack-alpha-v19'
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const kernelCache = new Map<string, THREE.Vector2[]>()
 
@@ -213,6 +228,13 @@ export function installDepthOfFieldShader(material: THREE.MeshBasicMaterial) {
     },
     hmBendCount: { value: 0 },
     hmBendEnabled: { value: bendNumberArray(0) },
+    hmBendWaveMode: { value: bendNumberArray(0) },
+    hmBendWaveAmplitude: { value: bendNumberArray(40) },
+    hmBendWaveFrequency: { value: bendNumberArray(2) },
+    hmBendWavePhase: { value: bendNumberArray(0) },
+    hmBendWaveStart: { value: bendNumberArray(0) },
+    hmBendWaveEnd: { value: bendNumberArray(1) },
+    hmBendWaveFalloff: { value: bendNumberArray(0.1) },
     hmBendAngle: { value: bendNumberArray(0) },
     hmBendFactor: { value: bendNumberArray(1) },
     hmBendBothDirections: { value: bendNumberArray(0) },
@@ -426,6 +448,13 @@ function hasCurrentUniformSchema(value: unknown): value is DofShaderUniforms {
     'hmDofKernel',
     'hmBendCount',
     'hmBendEnabled',
+    'hmBendWaveMode',
+    'hmBendWaveAmplitude',
+    'hmBendWaveFrequency',
+    'hmBendWavePhase',
+    'hmBendWaveStart',
+    'hmBendWaveEnd',
+    'hmBendWaveFalloff',
     'hmBendAngle',
     'hmBendFactor',
     'hmBendBothDirections',
@@ -498,6 +527,13 @@ export function updateDepthOfFieldShader(
     uniforms.hmBendAngle.value[index] = THREE.MathUtils.degToRad(
       bend?.angle ?? 0,
     )
+    uniforms.hmBendWaveMode.value[index] = bend?.mode === 'wave' ? 1 : 0
+    uniforms.hmBendWaveAmplitude.value[index] = bend?.waveAmplitude ?? 40
+    uniforms.hmBendWaveFrequency.value[index] = bend?.waveFrequency ?? 2
+    uniforms.hmBendWavePhase.value[index] = bend?.wavePhase ?? 0
+    uniforms.hmBendWaveStart.value[index] = bend?.waveStart ?? 0
+    uniforms.hmBendWaveEnd.value[index] = bend?.waveEnd ?? 1
+    uniforms.hmBendWaveFalloff.value[index] = bend?.waveFalloff ?? 0.1
     uniforms.hmBendFactor.value[index] = clamp(bend?.factor ?? 0, 0, 1)
     uniforms.hmBendBothDirections.value[index] = bend?.bothDirections ? 1 : 0
     uniforms.hmBendLimitToRegion.value[index] = bend?.limitToRegion ? 1 : 0
@@ -536,7 +572,7 @@ export function updateDepthOfFieldShader(
     (bend) =>
       bend.enabled &&
       bend.surfaceShading &&
-      Math.abs(bend.angle) > 0.0001 &&
+      Math.abs(bend.mode === 'wave' ? (bend.waveAmplitude ?? 40) : bend.angle) > 0.0001 &&
       bend.factor > 0,
   )
   uniforms.hmBendSurfaceShading.value =
@@ -557,6 +593,13 @@ const BEND_VERTEX_DECLARATIONS = `
 #define HM_MAX_BENDS ${MAX_BEND_DEFORMERS}
 uniform float hmBendCount;
 uniform float hmBendEnabled[HM_MAX_BENDS];
+uniform float hmBendWaveMode[HM_MAX_BENDS];
+uniform float hmBendWaveAmplitude[HM_MAX_BENDS];
+uniform float hmBendWaveFrequency[HM_MAX_BENDS];
+uniform float hmBendWavePhase[HM_MAX_BENDS];
+uniform float hmBendWaveStart[HM_MAX_BENDS];
+uniform float hmBendWaveEnd[HM_MAX_BENDS];
+uniform float hmBendWaveFalloff[HM_MAX_BENDS];
 uniform float hmBendAngle[HM_MAX_BENDS];
 uniform float hmBendFactor[HM_MAX_BENDS];
 uniform float hmBendBothDirections[HM_MAX_BENDS];
@@ -618,7 +661,7 @@ vec3 hmApplyBend(vec3 originalPoint, int bendIndex) {
   float factor = hmBendFactor[bendIndex];
   if (
     enabled < 0.5 ||
-    abs(angle) < 0.000001 ||
+    (hmBendWaveMode[bendIndex] < 0.5 && abs(angle) < 0.000001) ||
     factor <= 0.0
   ) return originalPoint;
 
@@ -635,7 +678,7 @@ vec3 hmApplyBend(vec3 originalPoint, int bendIndex) {
   vec3 up = hmRotateAroundAxis(
     hmBendUpDirection[bendIndex],
     localZ,
-    hmBendUpRotation[bendIndex]
+    hmBendUpRotation[bendIndex] + (hmBendWaveMode[bendIndex] > 0.5 ? hmBendCaptureRotation[bendIndex] : 0.0)
   );
   up -= capture * dot(up, capture);
   if (length(up) < 0.00001) {
@@ -652,6 +695,19 @@ vec3 hmApplyBend(vec3 originalPoint, int bendIndex) {
   float height = dot(relative, up);
   float acrossAmount = dot(relative, across);
   float captureLength = max(hmBendCaptureLength[bendIndex], 0.0001);
+  if (hmBendWaveMode[bendIndex] > 0.5) {
+    float position = along / captureLength + 0.5;
+    float regionStart = hmBendWaveStart[bendIndex];
+    float regionEnd = hmBendWaveEnd[bendIndex];
+    float span = regionEnd - regionStart;
+    if (span <= 0.0 || position < regionStart || position >= regionEnd) return originalPoint;
+    float t = (position - regionStart) / span;
+    float fade = hmBendWaveFalloff[bendIndex];
+    float envelope = fade > 0.0 ? smoothstep(0.0, fade, t) * smoothstep(0.0, fade, 1.0 - t) : 1.0;
+    float phase = 6.28318530718 * hmBendWaveFrequency[bendIndex] * t + radians(hmBendWavePhase[bendIndex]);
+    float displacement = hmBendWaveAmplitude[bendIndex] * sin(phase) * envelope * clamp(factor, 0.0, 1.0);
+    return originalPoint + up * displacement;
+  }
   float start = hmBendBothDirections[bendIndex] > 0.5
     ? -captureLength * 0.5
     : 0.0;

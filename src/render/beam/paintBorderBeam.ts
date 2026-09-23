@@ -30,6 +30,17 @@ export function resolveBeamTheme(effect: BorderBeamEffect, fill?: string): 'dark
   return rgb?.length === 3 && (rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722) > 150 ? 'light' : 'dark'
 }
 
+/** Custom swatches are authored colors, not inputs to the preset color grading. */
+export function beamColorTreatment(effect: BorderBeamEffect, theme: 'dark' | 'light', time: number) {
+  const e = normalizeBorderBeam(effect)
+  const custom = !!e.colors
+  return {
+    brightness: e.brightness ?? (custom ? 1 : theme === 'light' ? .85 : 1.25),
+    saturation: e.saturation ?? (custom ? 1 : theme === 'light' ? 1.35 : 1.2),
+    hue: custom || e.staticColors || e.colorVariant === 'mono' ? 0 : -e.hueRange! * Math.cos(time / 12 * Math.PI * 2),
+  }
+}
+
 
 function outline(shape: BeamShape, inset: number): Path2D {
   const path = new Path2D()
@@ -107,9 +118,7 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   ]))
   // Brightness above one bleaches colored strokes on white. Presets now retain
   // chroma on light surfaces; explicit brightness still gives the author control.
-  const brightness = e.brightness ?? (theme === 'light' ? .85 : 1.25)
-  const saturation = e.saturation ?? (theme === 'light' ? 1.35 : 1.2)
-  const hue = e.staticColors || mono ? 0 : -e.hueRange! * Math.cos(timing.time / 12 * Math.PI * 2)
+  const { brightness, saturation, hue } = beamColorTreatment(e, theme, timing.time)
   const filter = `hue-rotate(${hue}deg) brightness(${brightness}) saturate(${saturation})`
   const alpha = ctx.globalAlpha * timing.opacity
   const edge = Math.min(w, h, (size === 'sm' ? 1.2 : 1.6) * e.edgeWidth!)
@@ -129,7 +138,7 @@ export function paintBorderBeam(ctx: CanvasRenderingContext2D, effect: BorderBea
   const rim = outline(shape, edge / 2)
   const uneven = e.nonUniform && e.variation! > 0
   const distribution = beamDistribution(e, timing.phase)
-  const palette = uneven && size === 'line' ? field.createLinearGradient(0,0,w,0) : field.createConicGradient(-Math.PI / 2, w / 2, h / 2)
+  const palette = size === 'line' ? field.createLinearGradient(0,0,w,0) : field.createConicGradient(-Math.PI / 2, w / 2, h / 2)
   const positions = beamColorPositions(colors.length,e)
   colors.forEach((color, i) => palette.addColorStop(positions[i], color))
   palette.addColorStop(1, colors[0])

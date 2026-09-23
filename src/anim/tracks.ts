@@ -1,3 +1,5 @@
+import { effectIdFromBeamRangePropertyId } from '@/scene/props'
+import { effectStableId } from '@/scene/effects'
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
@@ -60,6 +62,15 @@ export function ensureTrack(
 export function removeTrack(api: SceneAPI, trackId: TrackId): void {
   const track = api.getTrack(trackId)
   api.deleteTrack(trackId)
+  const beamId = track && effectIdFromBeamRangePropertyId(track.propertyId)
+  const node = beamId && track ? api.getNode(track.nodeId) : null
+  if (node) {
+    api.setNodeProperty(node.id, 'appearance', { ...node.appearance, effects: node.appearance.effects.map((effect, index) =>
+      effect.kind === 'border-beam' && effectStableId(effect, index) === beamId ? { ...effect, active: false } : effect) })
+  }
+  if (track?.propertyId === 'textShimmer.range') {
+    api.setNodeProperty(track.nodeId, 'textShimmer', null)
+  }
   if (
     track?.propertyId === 'text.progress' &&
     api.getTracksForNode(track.nodeId).every((candidate) => candidate.propertyId !== 'text.progress')

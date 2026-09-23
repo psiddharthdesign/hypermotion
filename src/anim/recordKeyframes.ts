@@ -74,6 +74,12 @@ const MOTION_PATH_PROP_IDS: Partial<Record<string, PropertyId>> = {
 }
 
 const DEFORMATION_PROP_IDS: Partial<Record<string, PropertyId>> = {
+  waveAmplitude: 'deformation.bend.waveAmplitude',
+  waveFrequency: 'deformation.bend.waveFrequency',
+  wavePhase: 'deformation.bend.wavePhase',
+  waveStart: 'deformation.bend.waveStart',
+  waveEnd: 'deformation.bend.waveEnd',
+  waveFalloff: 'deformation.bend.waveFalloff',
   angle: 'deformation.bend.angle',
   factor: 'deformation.bend.factor',
   captureDirectionX: 'deformation.bend.captureDirectionX',

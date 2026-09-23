@@ -11,6 +11,14 @@ export const MAX_BEND_GEOMETRY_DETAIL = 128
 
 export const DEFAULT_BEND_DEFORMATION: BendDeformation = Object.freeze({
   kind: 'bend',
+  mode: 'arc',
+  waveAmplitude: 40,
+  waveFrequency: 2,
+  wavePhase: 0,
+  waveStart: 0,
+  waveEnd: 1,
+  waveFalloff: 0.1,
+
   enabled: true,
   angle: 0,
   factor: 1,
@@ -45,6 +53,13 @@ export function normalizeLayerDeformation(
   if (source.kind !== 'bend') return null
   return {
     kind: 'bend',
+    mode: source.mode === 'wave' ? 'wave' : 'arc',
+    waveAmplitude: finite(source.waveAmplitude, 40),
+    waveFrequency: clamp(finite(source.waveFrequency, 2), 0, 32),
+    wavePhase: finite(source.wavePhase, 0),
+    waveStart: clamp(finite(source.waveStart, 0), 0, 1),
+    waveEnd: clamp(finite(source.waveEnd, 1), 0, 1),
+    waveFalloff: clamp(finite(source.waveFalloff, .1), 0, .5),
     enabled: booleanValue(source.enabled, true),
     angle: finite(source.angle, 0),
     factor: clamp(finite(source.factor, 1), 0, 1),

@@ -3943,3 +3943,15 @@ test('alpha masks preserve their mode, effects and sibling order through scene f
     doc.destroy()
   }
 })
+
+test('sine-wave deformation and phase tracks survive CLI authoring', () => {
+  const scene = sampleScene()
+  const deformation = { kind: 'bend' as const, mode: 'wave' as const, waveAmplitude: 80, waveFrequency: 6, wavePhase: 90, waveStart: .2, waveEnd: .8, waveFalloff: .15 }
+  scene.nodes!.title.deformation = deformation
+  scene.tracks = { wave: { id: 'wave', nodeId: 'title', propertyId: 'deformation.bend.wavePhase', keyframes: [{ id: 'a', time: 0, value: 0 }, { id: 'b', time: 1, value: 720 }] } }
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  assert.deepEqual((data.nodes as PlainSceneMap).title?.deformation, deformation)
+  assert.equal((data.tracks as PlainSceneMap).wave?.propertyId, 'deformation.bend.wavePhase')
+  assert.equal(validateScene(bytes).ok, true)
+})

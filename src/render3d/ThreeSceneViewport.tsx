@@ -10,6 +10,7 @@ import { expandRectForLayerEffects } from '@/render/layerEffects'
 import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { paintBorderBeam } from '@/render/beam/paintBorderBeam'
 import { syncMediaPlayback } from '@/media/syncPlayback'
+import { resolveBeamRanges } from '@/anim/beamTimingTrack'
 import { resolveTextShimmer } from '@/anim/textShimmerEffect'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
@@ -1189,11 +1190,16 @@ const SELF_TEXTURE_ANIMATION_KEYS = new Set<keyof AnimatedValue>([
   'cornerSmoothingEnabled',
   'fullRadius',
   'fill',
+  'effectBeamRange',
   'effectBlur',
   'arcStart',
   'arcSweep',
   'arcInnerRadius',
   'textProgress',
+  'shimmerStartTime',
+  'shimmerEndTime',
+  'shimmerDuration',
+  'shimmerWidth',
   'textTimelineProgress',
   'vectorGeometry',
   'vectorFill',
@@ -1740,7 +1746,7 @@ function syncPlanes(
     // Video stays on its native GPU decoder; only its transparent decoration
     // gets a timeline-driven canvas. It shares clipping, opacity, bend, and DOF.
     if (videoNode && hasAnimatedBeam(videoNode.appearance.effects)) {
-      const beams = videoNode.appearance.effects.filter(e => e.kind === 'border-beam')
+      const beams = resolveBeamRanges(videoNode.appearance.effects, animated[plane.nodeId]?.effectBeamRange, videoNode.proceduralTimeOffset).filter(e => e.kind === 'border-beam')
       const beamRect = expandRectForLayerEffects(plane.rect, beams)
       const beamPlane = { ...plane, textureRect: beamRect }
       const beamCanvas = document.createElement('canvas')
@@ -2882,7 +2888,7 @@ function textSegmentTextureSignature(
     blurPadding,
     atlasScale: Number(atlasScale.toFixed(3)),
     dynamicFrame,
-    shimmer: resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) : null,
+    shimmer: resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color), anim) : null,
   })
 }
 
@@ -3586,7 +3592,7 @@ function paintTextSegmentAtlasCell(
       -(entry.y - entry.padding),
     )
     const effectGradient =
-      resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)) :
+      resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color), anim) :
       config?.id === 'gradient-reveal'
         ? config.mode === 'in'
           ? config.endGradient ?? config.startGradient
@@ -4074,6 +4080,13 @@ function bendGeometrySignature(
   if (!bends.some((bend) => bend.enabled)) return 'none'
   return bends.map((bend) => [
     bend.enabled ? 1 : 0,
+    bend.waveAmplitude,
+    bend.waveFrequency,
+    bend.wavePhase,
+    bend.waveStart,
+    bend.waveEnd,
+    bend.waveFalloff,
+    bend.mode === 'wave' ? 1 : 0,
     bend.angle,
     bend.factor,
     bend.bothDirections ? 1 : 0,
@@ -4702,6 +4715,7 @@ function renderNodePaint(
     h,
     effects,
     (source) => paintNodeSource(source, node, rect, anim, playhead),
+    node.kind === 'text' && !!node.textShimmer,
   )
   if (includeBeam) paintNodeBeam(ctx, node, w, h, anim, playhead)
 }
@@ -4711,7 +4725,7 @@ function paintNodeBeam(ctx: CanvasRenderingContext2D, node: Node, w: number, h: 
   // Read the authored stack even when a frame's other effects wrap its subtree.
   const fill = anim?.fill ?? node.appearance.fill
   const { cornerRadius, cornerRadii: corners, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
-  for (const effect of node.appearance.effects ?? []) {
+  for (const effect of resolveBeamRanges(node.appearance.effects ?? [], anim?.effectBeamRange, node.proceduralTimeOffset)) {
     if (effect.kind !== 'border-beam') continue
     paintBorderBeam(ctx, effect, { width: w, height: h,
       radius: corners ? [corners.tl, corners.tr, corners.br, corners.bl] : cornerRadius,
@@ -4767,7 +4781,7 @@ function paintNodeSource(
       ctx.save()
       ctx.globalCompositeOperation = 'source-in'
       paintFill(ctx, textShimmerFill(node.textShimmer, playhead,
-        anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color)), w, h, true)
+        anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color), anim), w, h, true)
       ctx.restore()
     }
   }
@@ -5227,7 +5241,7 @@ function paintAnimatedTextNode(
         : y
 
   if (config?.id === 'shimmer') {
-    const fill = textShimmerFill(config, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color))
+    const fill = textShimmerFill(config, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color), anim)
     if (fill.kind === 'linear') {
       const gradient = ctx.createLinearGradient(config.direction === 'left' ? x + maxWidth : x, 0, config.direction === 'left' ? x : x + maxWidth, 0)
       for (const stop of fill.stops) gradient.addColorStop(stop.at, stop.color)
