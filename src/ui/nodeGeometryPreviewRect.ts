@@ -46,5 +46,23 @@ export function nodeGeometryPreviewRect(
     }
   }
 
-  return { ...base, width, height }
+  // A W/N-side resize handle shifts the OPPOSITE edge's anchor
+  // (transform.x/y), not just size — see ResizeHandles.tsx. `preview`
+  // carries the new absolute x/y; translate that into a delta against
+  // this node's own (unmodified) transform and apply it to `base`,
+  // which lives in whatever already-solved coordinate space this rect
+  // is in. Without this, the live preview only grew/shrank in place
+  // from the unmoved top-left corner regardless of which handle was
+  // actually dragged, snapping to the correct anchored position only
+  // once the gesture committed.
+  const x =
+    typeof preview.transform?.x === 'number'
+      ? base.x + (preview.transform.x - node.transform.x)
+      : base.x
+  const y =
+    typeof preview.transform?.y === 'number'
+      ? base.y + (preview.transform.y - node.transform.y)
+      : base.y
+
+  return { ...base, x, y, width, height }
 }

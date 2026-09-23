@@ -868,6 +868,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   f: 'frame',
   r: 'rect',
   o: 'ellipse',
+  p: 'pen',
   t: 'text',
   h: 'hand',
 }

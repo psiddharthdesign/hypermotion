@@ -29,10 +29,3 @@ export function videoFitUv(
   return { repeatX, repeatY, offsetX: (1 - repeatX) * x, offsetY: (1 - repeatY) * y }
 }
 
-export function videoResizeSize(width: number, height: number, nextW: number, nextH: number) {
-  const scaleX = nextW / Math.max(1, width)
-  const scaleY = nextH / Math.max(1, height)
-  const scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY
-  const safeScale = Math.max(1 / Math.max(1, width), 1 / Math.max(1, height), scale)
-  return { width: width * safeScale, height: height * safeScale }
-}

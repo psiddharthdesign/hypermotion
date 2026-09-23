@@ -45,4 +45,28 @@ describe('node geometry preview rect', () => {
       ),
     ).toEqual({ x: 0, y: 0, width: 320, height: 96 })
   })
+
+  it('offsets the rect by a previewed position delta, matching a W/N-handle drag', () => {
+    // Regression test: dragging a west/north-side resize handle shifts the
+    // OPPOSITE edge's anchor (see ResizeHandles.tsx), previewed as a new
+    // absolute transform.x/y. This rect must translate by the same delta,
+    // or the live selection outline anchors on the wrong corner for the
+    // whole gesture and only snaps to the correct side once it commits.
+    const api = createSceneAPI()
+    const rectId = api.createNode('rect', null, {
+      transform: { x: 100, y: 50, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1 },
+    })
+    const node = api.getNode(rectId)
+    if (!node) throw new Error('expected rect fixture')
+
+    const base = { x: 100, y: 50, width: 200, height: 150 }
+    // Dragging the west handle 60px left: width grows to 260, and the
+    // opposite (right) edge stays fixed, so x shifts to 100 - 60 = 40.
+    const preview = nodeGeometryPreviewRect(node, base, {
+      size: { width: 260 },
+      transform: { x: 40 },
+    })
+
+    expect(preview).toMatchObject({ x: 40, y: 50, width: 260, height: 150 })
+  })
 })

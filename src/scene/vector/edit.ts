@@ -14,7 +14,7 @@ import type {
   VectorStroke,
 } from '@/scene/types'
 import { lerpOklchStrings } from '@/anim/color'
-import { emptyVectorDocument } from './model'
+import { createVectorItem, defaultVectorStroke, emptyVectorDocument } from './model'
 
 export function isEditableVectorNode(
   node: { kind: string } | null | undefined,
@@ -232,6 +232,153 @@ function ensureCubicSegment(
     segment.controlStart ??= lerpPoint(start, end, 1 / 3)
     segment.controlEnd ??= lerpPoint(start, end, 2 / 3)
   }
+}
+
+/** Same convention `useKeyboardShortcuts.ts`/`tracks.ts`/etc. already use for a locally-unique, non-persistent id — not cryptographic, just collision-safe within one document. */
+function generateVectorId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 6)}`
+}
+
+export interface VectorPenAppendResult {
+  document: VectorDocument
+  itemId: string
+  pointId: string
+}
+
+/**
+ * Pen-tool primitive: place the next point of an in-progress path.
+ *
+ * Pass `document`/`itemId`/`lastPointId` as `null` to start a brand new
+ * path (its first point has nothing to connect to yet) — returns a fresh
+ * one-item `VectorDocument` with a default visible stroke and no fill, so
+ * the line the user is drawing is actually visible while they draw it.
+ * Otherwise appends a point plus the connecting `VectorSegment` (straight,
+ * unless `incomingControlStart` is given — see `dragVectorPenAnchor`,
+ * which computes it from a click-and-drag on the *previous* point) to the
+ * item's current (last) contour.
+ */
+export function appendVectorPenPoint(
+  document: VectorDocument | null,
+  itemId: string | null,
+  lastPointId: string | null,
+  point: VectorPosition,
+  incomingControlStart?: VectorPosition,
+): VectorPenAppendResult {
+  const pointId = generateVectorId('pt')
+  if (!document || !itemId || !lastPointId) {
+    const newItemId = generateVectorId('item')
+    const item = createVectorItem({
+      id: newItemId,
+      strokes: [defaultVectorStroke()],
+      geometry: {
+        points: { [pointId]: { id: pointId, x: point.x, y: point.y } },
+        segments: {},
+        contours: [
+          { id: generateVectorId('contour'), segmentIds: [], closed: false, fillRule: 'nonzero' },
+        ],
+      },
+    })
+    return { document: { version: 1, items: [item] }, itemId: newItemId, pointId }
+  }
+
+  const nextDoc = cloneVectorDocument(document)
+  const item = nextDoc.items.find((candidate) => candidate.id === itemId)
+  if (!item) return { document: nextDoc, itemId, pointId: lastPointId }
+
+  const segmentId = generateVectorId('seg')
+  item.geometry.points[pointId] = { id: pointId, x: point.x, y: point.y }
+  item.geometry.segments[segmentId] = {
+    id: segmentId,
+    startPointId: lastPointId,
+    endPointId: pointId,
+    kind: incomingControlStart ? 'cubic' : 'line',
+    ...(incomingControlStart ? { controlStart: { ...incomingControlStart } } : {}),
+  }
+  const contour = item.geometry.contours[item.geometry.contours.length - 1]
+  contour?.segmentIds.push(segmentId)
+  return { document: nextDoc, itemId, pointId }
+}
+
+export interface VectorPenDragResult {
+  document: VectorDocument
+  /**
+   * Absolute position for the future segment's `controlStart` if the
+   * pen continues from here — pass this straight into the next
+   * `appendVectorPenPoint`/`closeVectorPenPath` call's
+   * `incomingControlStart` (or drop it on release without a further
+   * point, in which case it's simply unused).
+   */
+  pendingOutgoingHandle: VectorPosition
+}
+
+/**
+ * Pen-tool primitive: the user is click-and-dragging right after placing
+ * `anchorPointId`. Standard pen-tool behavior — dragging sets the
+ * OUTGOING tangent for whatever segment comes next (not created yet,
+ * hence returning it separately rather than writing it anywhere), and
+ * mirrors the INCOMING handle on the segment that already ends at this
+ * anchor (`incomingSegmentId` — `null` for a path's very first point,
+ * which has no incoming segment to mirror).
+ */
+export function dragVectorPenAnchor(
+  document: VectorDocument,
+  itemId: string,
+  incomingSegmentId: string | null,
+  anchorPointId: string,
+  dragTo: VectorPosition,
+): VectorPenDragResult {
+  const nextDoc = cloneVectorDocument(document)
+  const item = nextDoc.items.find((candidate) => candidate.id === itemId)
+  const anchor = item?.geometry.points[anchorPointId]
+  if (item && anchor && incomingSegmentId) {
+    const segment = item.geometry.segments[incomingSegmentId]
+    if (segment) {
+      ensureCubicSegment(item.geometry, segment)
+      // Mirror the drag across the anchor for the incoming handle —
+      // the same symmetric relationship `moveVectorHandle`'s
+      // `handleMode !== 'independent'` path keeps between a real
+      // point's two handles, just computed directly since the outgoing
+      // handle isn't a real segment yet to mirror *from*.
+      segment.controlEnd = {
+        x: anchor.x * 2 - dragTo.x,
+        y: anchor.y * 2 - dragTo.y,
+      }
+    }
+  }
+  return { document: nextDoc, pendingOutgoingHandle: { ...dragTo } }
+}
+
+/**
+ * Pen-tool primitive: close the path — connect the last placed point
+ * back to its first point with a final `isClosing` segment, and mark the
+ * contour closed. `incomingControlStart` is the same drag-computed
+ * handle `appendVectorPenPoint` accepts, for a curved closing segment.
+ */
+export function closeVectorPenPath(
+  document: VectorDocument,
+  itemId: string,
+  lastPointId: string,
+  firstPointId: string,
+  incomingControlStart?: VectorPosition,
+): VectorDocument {
+  const nextDoc = cloneVectorDocument(document)
+  const item = nextDoc.items.find((candidate) => candidate.id === itemId)
+  if (!item) return nextDoc
+  const segmentId = generateVectorId('seg')
+  item.geometry.segments[segmentId] = {
+    id: segmentId,
+    startPointId: lastPointId,
+    endPointId: firstPointId,
+    kind: incomingControlStart ? 'cubic' : 'line',
+    isClosing: true,
+    ...(incomingControlStart ? { controlStart: { ...incomingControlStart } } : {}),
+  }
+  const contour = item.geometry.contours[item.geometry.contours.length - 1]
+  if (contour) {
+    contour.segmentIds.push(segmentId)
+    contour.closed = true
+  }
+  return nextDoc
 }
 
 function findOppositeHandle(

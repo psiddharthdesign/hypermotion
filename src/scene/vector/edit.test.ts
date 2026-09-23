@@ -2,7 +2,10 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  appendVectorPenPoint,
   applyVectorFill,
+  closeVectorPenPath,
+  dragVectorPenAnchor,
   isEditableVectorNode,
   lerpVectorDocuments,
   lerpVectorPaint,
@@ -153,5 +156,128 @@ describe('vector edit helpers', () => {
     }
     expect(lerpVectorPaint(from, gradient, 0.4)).toBe(from)
     expect(lerpVectorPaint(from, gradient, 1)).toBe(gradient)
+  })
+})
+
+describe('pen tool primitives', () => {
+  it('starts a brand new path with one point, a visible stroke, and no fill', () => {
+    const result = appendVectorPenPoint(null, null, null, { x: 10, y: 20 })
+    expect(result.document.items).toHaveLength(1)
+    const item = result.document.items[0]!
+    expect(item.id).toBe(result.itemId)
+    expect(Object.keys(item.geometry.points)).toEqual([result.pointId])
+    expect(item.geometry.points[result.pointId]).toMatchObject({ x: 10, y: 20 })
+    expect(item.geometry.segments).toEqual({})
+    expect(item.geometry.contours).toHaveLength(1)
+    expect(item.geometry.contours[0]).toMatchObject({ segmentIds: [], closed: false })
+    expect(item.strokes).toHaveLength(1)
+    expect(item.strokes[0]!.visible).toBe(true)
+    expect(item.fills).toEqual([])
+  })
+
+  it('appends a straight-line point to an existing path', () => {
+    const first = appendVectorPenPoint(null, null, null, { x: 0, y: 0 })
+    const second = appendVectorPenPoint(
+      first.document,
+      first.itemId,
+      first.pointId,
+      { x: 100, y: 0 },
+    )
+    const item = second.document.items[0]!
+    expect(Object.keys(item.geometry.points)).toHaveLength(2)
+    expect(item.geometry.segments).toHaveProperty(
+      Object.keys(item.geometry.segments)[0]!,
+    )
+    const segment = Object.values(item.geometry.segments)[0]!
+    expect(segment.kind).toBe('line')
+    expect(segment.startPointId).toBe(first.pointId)
+    expect(segment.endPointId).toBe(second.pointId)
+    expect(item.geometry.contours[0]!.segmentIds).toEqual([segment.id])
+    // Starting a new point never mutates the document it was built from —
+    // pen-tool callers keep re-deriving from a store snapshot.
+    expect(first.document.items[0]!.geometry.segments).toEqual({})
+  })
+
+  it('dragging the first point sets only the pending outgoing handle — nothing to mirror yet', () => {
+    const first = appendVectorPenPoint(null, null, null, { x: 0, y: 0 })
+    const drag = dragVectorPenAnchor(
+      first.document,
+      first.itemId,
+      null,
+      first.pointId,
+      { x: 20, y: 20 },
+    )
+    expect(drag.pendingOutgoingHandle).toEqual({ x: 20, y: 20 })
+    // No segment exists yet, so nothing in the document itself changes.
+    expect(drag.document).toEqual(first.document)
+  })
+
+  it('dragging a later point mirrors the incoming handle on the previous segment and reports the outgoing handle for the next one', () => {
+    const first = appendVectorPenPoint(null, null, null, { x: 0, y: 0 })
+    const second = appendVectorPenPoint(
+      first.document,
+      first.itemId,
+      first.pointId,
+      { x: 100, y: 0 },
+    )
+    const incomingSegmentId = Object.keys(second.document.items[0]!.geometry.segments)[0]!
+    const drag = dragVectorPenAnchor(
+      second.document,
+      second.itemId,
+      incomingSegmentId,
+      second.pointId,
+      { x: 120, y: 20 },
+    )
+    const segment = drag.document.items[0]!.geometry.segments[incomingSegmentId]!
+    expect(segment.kind).toBe('cubic')
+    // Mirrored across the anchor (100, 0): drag (120, 20) -> control (80, -20).
+    expect(segment.controlEnd).toEqual({ x: 80, y: -20 })
+    expect(drag.pendingOutgoingHandle).toEqual({ x: 120, y: 20 })
+  })
+
+  it('an incomingControlStart on append makes that segment cubic', () => {
+    const first = appendVectorPenPoint(null, null, null, { x: 0, y: 0 })
+    const second = appendVectorPenPoint(
+      first.document,
+      first.itemId,
+      first.pointId,
+      { x: 100, y: 0 },
+      { x: 10, y: -10 },
+    )
+    const segment = Object.values(second.document.items[0]!.geometry.segments)[0]!
+    expect(segment.kind).toBe('cubic')
+    expect(segment.controlStart).toEqual({ x: 10, y: -10 })
+  })
+
+  it('closes a path back to its first point and marks the contour closed', () => {
+    const first = appendVectorPenPoint(null, null, null, { x: 0, y: 0 })
+    const second = appendVectorPenPoint(
+      first.document,
+      first.itemId,
+      first.pointId,
+      { x: 100, y: 0 },
+    )
+    const third = appendVectorPenPoint(
+      second.document,
+      second.itemId,
+      second.pointId,
+      { x: 50, y: 80 },
+    )
+    const closed = closeVectorPenPath(
+      third.document,
+      third.itemId,
+      third.pointId,
+      first.pointId,
+    )
+    const item = closed.items[0]!
+    expect(item.geometry.contours[0]!.closed).toBe(true)
+    expect(item.geometry.contours[0]!.segmentIds).toHaveLength(3)
+    const closingSegment = item.geometry.segments[item.geometry.contours[0]!.segmentIds[2]!]!
+    expect(closingSegment).toMatchObject({
+      startPointId: third.pointId,
+      endPointId: first.pointId,
+      isClosing: true,
+      kind: 'line',
+    })
   })
 })

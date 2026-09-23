@@ -154,11 +154,19 @@ export function shouldRasterizePlaneTexture(
   cached: CachedPlaneTextureState | undefined,
   textureRevision: object,
   textureSignature: string,
+  deferDuringActiveSizePreview = false,
 ): boolean {
   if (isVideo) return false
+  if (!cached || cached.textureKind !== 'canvas') return true
+  // Mid-drag, a size change alone isn't worth a real re-raster: resizing
+  // the canvas backing store changes row stride, forcing a full
+  // reallocation + copy (unlike a plain content change), which is what
+  // made width-driven (not height-driven) resize handles visibly janky.
+  // The existing bitmap just stretches across the plane's new geometry
+  // extent until release produces the one authoritative, pixel-correct
+  // paint.
+  if (deferDuringActiveSizePreview) return false
   return (
-    !cached ||
-    cached.textureKind !== 'canvas' ||
     cached.textureRevision !== textureRevision ||
     cached.textureSignature !== textureSignature
   )

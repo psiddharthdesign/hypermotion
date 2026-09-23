@@ -179,6 +179,7 @@ import {
 import { getPreservedVectorSource } from '@/render/vectorSource'
 import { textStaggerCurvePreviewStore } from '@/ui/textStaggerCurvePreviewStore'
 import { vectorEditPreviewStore } from '@/ui/vectorEditPreviewStore'
+import { nodeGeometryPreviewStore } from '@/ui/nodeGeometryPreviewStore'
 import {
   getCachedTextureImage,
   IMAGE_TEXTURE_LOADED_EVENT,
@@ -1501,11 +1502,15 @@ function syncPlanes(
     // Viewport pan/zoom, selection, and camera-only renders must reuse the
     // existing bitmap. A plane is rasterized only when its scene/animation
     // content revision or a texture-affecting parameter actually changes.
+    const hasActiveSizePreview = !!nodeGeometryPreviewStore.getSnapshot()[
+      plane.nodeId
+    ]?.size
     const needsCanvasRaster = shouldRasterizePlaneTexture(
       !!videoNode,
       record,
       textureRevision,
       textureSignature,
+      hasActiveSizePreview,
     )
     const canvas = needsCanvasRaster
       ? renderPlaneCanvas(
