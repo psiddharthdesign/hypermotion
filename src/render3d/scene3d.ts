@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { hasAnimatedBeam } from '@/scene/borderBeam'
 import type { AnimatedValue } from '@/anim'
 import { evaluateLayerMotionPath } from '@/anim/layerMotionPath'
 import type { Rect, SolvedLayout } from '@/layout'
@@ -982,6 +983,7 @@ export function buildWorldPlanes(
     // The canvas painter still evaluates the live text effect every frame.
     const segmentText =
       segmentTextNodeIds.has(id) &&
+      !hasAnimatedBeam(node.appearance.effects) &&
       !deformedNode &&
       inheritedBendSources.length === 0
     const videoStackSibling = !!parent && hasDirectVideoChild(parent)
@@ -1157,7 +1159,7 @@ export function buildWorldPlanes(
   const emittedPlaneNodeIds = new Set(planes.map((plane) => plane.nodeId))
   for (const plane of planes) {
     const effects = resolveAnimatedLayerEffects(
-      plane.node.appearance.effects,
+      plane.node.kind === 'video' ? plane.node.appearance.effects.filter(e => e.kind !== 'border-beam') : plane.node.appearance.effects,
       animated[plane.nodeId]?.effectBlur,
     )
     let textureRect =

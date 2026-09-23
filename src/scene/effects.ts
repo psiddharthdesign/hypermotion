@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeBorderBeam } from './borderBeam'
 import type { Effect } from './types'
 
 /**
@@ -45,6 +46,7 @@ export function normalizeLayerEffects(
       id = `effect-${suffix}`
     }
     used.add(id)
+    if (effect.kind === 'border-beam') return normalizeBorderBeam({ ...effect, id })
     return effect.kind === 'blur'
       ? { ...effect, id, amount: clampLayerBlurAmount(effect.amount) }
       : { ...effect, id }

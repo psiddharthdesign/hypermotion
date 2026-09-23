@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { useMemo, useSyncExternalStore } from 'react'
 import { subscribePlaybackReadout } from './playbackReadoutSubscription'
 import type {
@@ -363,6 +364,7 @@ export function hasNodeDrivenTextAnimation(
 ): boolean {
   for (const nodeId of nodeIds) {
     const node = api.getNode(nodeId)
+    if (hasAnimatedBeam(node?.appearance.effects)) return true
     if (node?.kind !== 'text') continue
     if (node.textShimmer || node.textAnimation?.id === 'shimmer') return true
     if (!node.textAnimation) continue

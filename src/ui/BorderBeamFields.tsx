@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: Apache-2.0
+import { X } from 'lucide-react'
+import type { BorderBeamEffect } from '@/scene/borderBeam'
+import { BEAM_PALETTES, DEFAULT_BEAM_COLORS, beamDuration, normalizeBorderBeam } from '@/scene/borderBeam'
+import { FieldRow, SelectField, NumberField, CheckboxField, ColorField } from '@/ui/fields'
+
+export function BorderBeamFields({ effect, onChange }: { effect: BorderBeamEffect; onChange: (patch: Partial<BorderBeamEffect>) => void }) {
+  const e = normalizeBorderBeam(effect)
+  const numeric = (label: string, key: keyof BorderBeamEffect, value: number, min: number, step = .1) => (
+    <FieldRow label={label}><NumberField suffix={['strength', 'edgeWidth', 'glowSize', 'brightness', 'saturation', 'variation', 'spread'].includes(key) ? '×' : undefined} ariaLabel={label} value={value} min={min} step={step} onCommit={v => onChange({ [key]: v })} /></FieldRow>
+  )
+  return <div className="space-y-1.5">
+    <FieldRow label="Style"><SelectField value={e.size!} options={[
+      { value: 'md', label: 'Border' }, { value: 'sm', label: 'Compact' }, { value: 'line', label: 'Bottom line' },
+      { value: 'pulse-outside', label: 'Pulse outside' }, { value: 'pulse-inner', label: 'Pulse inside' },
+    ]} onCommit={size => onChange({ size })} /></FieldRow>
+    <FieldRow label="Colors"><SelectField value={e.colorVariant!} options={BEAM_PALETTES.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onCommit={colorVariant => onChange({ colorVariant, colors: undefined })} /></FieldRow>
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Custom colors<CheckboxField value={!!e.colors} onCommit={custom => onChange({ colors: custom ? [...DEFAULT_BEAM_COLORS] : undefined })} /></label>
+    {e.colors && <div className="space-y-1.5">
+      {e.colors.map((color, index) => <FieldRow key={index} label={`Color ${index + 1}`}>
+        <ColorField value={color} onCommit={next => {
+          if (!next) return
+          onChange({ colors: e.colors!.map((c, i) => i === index ? next : c) })
+        }} />
+        <button type="button" aria-label={`Remove color ${index + 1}`} disabled={e.colors!.length <= 2}
+          className="px-1 text-text-muted disabled:opacity-30" onClick={() => onChange({ colors: e.colors!.filter((_, i) => i !== index) })}><X size={12} /></button>
+      </FieldRow>)}
+      <button type="button" disabled={e.colors.length >= 8} className="text-[11px] text-text-muted disabled:opacity-30"
+        onClick={() => onChange({ colors: [...e.colors!, '#ff9b32'] })}>Add color</button>
+    </div>}
+    <FieldRow label="Theme"><SelectField value={e.theme!} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }, { value: 'auto', label: 'Auto · layer fill' }]} onCommit={theme => onChange({ theme })} /></FieldRow>
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Active<CheckboxField value={e.active!} onCommit={active => onChange({ active })} /></label>
+    {numeric('Strength', 'strength', e.strength!, 0, .1)}
+    {numeric('Duration (s)', 'duration', e.duration ?? beamDuration(e.size!), .01)}
+    {numeric('Edge width', 'edgeWidth', e.edgeWidth!, 0, .25)}
+    {numeric('Glow size', 'glowSize', e.glowSize!, 0)}
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Non-uniform<CheckboxField value={e.nonUniform!} onCommit={nonUniform => onChange({ nonUniform })} /></label>
+    {e.nonUniform && <div className="space-y-1.5">
+      {numeric('Variation', 'variation', e.variation!, 0)}
+      {numeric('Spread', 'spread', e.spread!, 0)}
+      {numeric('Pattern seed', 'seed', e.seed!, 0, 1)}
+      <label className="flex items-center justify-between text-[11px] text-text-muted">Moving highlights<CheckboxField value={e.animatePattern!} onCommit={animatePattern => onChange({ animatePattern })} /></label>
+      <p className="text-[10px] text-text-muted">Variation tapers the edge and glow. Spread widens the highlights. Change the seed for another arrangement.</p>
+    </div>}
+    <label className="flex items-center justify-between text-[11px] text-text-muted">Static colors<CheckboxField value={e.staticColors!} onCommit={staticColors => onChange({ staticColors })} /></label>
+    <details className="text-[11px] text-text-muted"><summary className="cursor-pointer py-1">Color and timing</summary><div className="space-y-1.5 pt-1">
+      <label className="flex items-center justify-between">Preset brightness<CheckboxField value={e.brightness === undefined} onCommit={auto => onChange({ brightness: auto ? undefined : 1.3 })} /></label>
+      {e.brightness !== undefined && numeric('Brightness', 'brightness', e.brightness, 0)}
+      <label className="flex items-center justify-between">Preset saturation<CheckboxField value={e.saturation === undefined} onCommit={auto => onChange({ saturation: auto ? undefined : 1.2 })} /></label>
+      {e.saturation !== undefined && numeric('Saturation', 'saturation', e.saturation, 0)}
+      {numeric('Hue range (°)', 'hueRange', e.hueRange!, 0, 1)}
+      <label className="flex items-center justify-between">Follow layer corners<CheckboxField value={e.borderRadius === undefined} onCommit={auto => onChange({ borderRadius: auto ? undefined : 16 })} /></label>
+      {e.borderRadius !== undefined && numeric('Radius (px)', 'borderRadius', e.borderRadius, 0, 1)}
+      {numeric('Start (s)', 'startTime', e.startTime!, 0)}
+      <label className="flex items-center justify-between">End with scene<CheckboxField value={e.endTime === undefined} onCommit={auto => onChange({ endTime: auto ? undefined : e.startTime! + 5 })} /></label>
+      {e.endTime !== undefined && numeric('End (s)', 'endTime', e.endTime, 0)}
+      {numeric('Fade in (s)', 'fadeIn', e.fadeIn!, 0)}
+      {numeric('Fade out (s)', 'fadeOut', e.fadeOut!, 0)}
+    </div></details>
+  </div>
+}

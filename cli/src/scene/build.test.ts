@@ -3904,3 +3904,22 @@ function yToPlain(value: unknown): unknown {
   if (value instanceof Y.Array) return value.toArray().map(yToPlain)
   return value
 }
+
+
+test('Beam styles and advanced controls survive CLI authoring and validation', () => {
+  const scene = sampleScene()
+  const effects = ['sm', 'md', 'line', 'pulse-outside', 'pulse-inner'].map((size, index) => ({
+    id: `beam-${index}`, kind: 'border-beam', size, colorVariant: 'ocean', theme: 'auto',
+    nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false,
+    active: true, strength: 8, duration: 300, glowSize: 12, brightness: 6,
+    colors: ['#ff3264', '#6446ff', '#32c850'], edgeWidth: 12,
+    saturation: 1.2, hueRange: 60, staticColors: false, borderRadius: 12,
+    startTime: 0.2, endTime: 2.5, fadeIn: 0.3, fadeOut: 0.4,
+  }))
+  scene.nodes!.root.appearance = { effects }
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const nodes = data.nodes as PlainSceneMap
+  assert.deepEqual((nodes.root.appearance as PlainSceneObject).effects, effects)
+  assert.equal(validateScene(bytes).ok, true)
+})
