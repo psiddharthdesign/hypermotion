@@ -1,6 +1,10 @@
-import { TransitionsPanel } from './TransitionsPanel'
+import { setBeamRange } from '@/anim/beamTimingTrack'
+import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
 
+import { BendWaveFields } from './BendWaveFields'
+import { BorderBeamFields } from './BorderBeamFields'
+import { TransitionsPanel } from './TransitionsPanel'
 import { useToast } from './toastStore'
 import {
   useCallback,
@@ -38,9 +42,9 @@ import {
   MIN_BEND_GEOMETRY_DETAIL,
   clampLayerBlurAmount,
   effectBlurPropertyId,
+  effectBeamRangePropertyId,
   effectStableId,
   isEditableVectorNode,
-  mergeLayerBend,
   normalizeCameraScrollSensitivity,
   normalizeEllipseArc,
   normalizeLayerZIndex,
@@ -92,7 +96,6 @@ import type {
   VectorStroke,
   Track,
   Keyframe,
-  LayerBend,
 } from '@/scene'
 import { isImageFile } from '@/ui/importImage'
 import {
@@ -154,6 +157,7 @@ import { PresetsPanel } from '@/ui/PresetsPanel'
 import { PaperShaderInspector } from '@/ui/PaperShaderInspector'
 import { AlignTools } from '@/ui/AlignTools'
 import { EasingPicker } from '@/ui/EasingPicker'
+import { CornerShapeFields } from './CornerShapeFields'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import {
   applyRenderModeToSelection,
@@ -2064,6 +2068,16 @@ function MultiBendSection({
         </button>
       }
     >
+      <FieldRow label="Type">
+        <SelectField<'arc' | 'wave'> value={bendForNode(nodes[0]).mode}
+          options={[{ value: 'arc', label: 'Bend' }, { value: 'wave', label: 'Sine wave' }]}
+          onCommit={mode => patchBendAll({ mode })} />
+      </FieldRow>
+      {nodes.every(node => bendForNode(node).mode === 'wave') && <BendWaveFields
+        targets={nodes.map(node => ({ nodeId: node.id, bend: bendForNode(node) }))}
+        onCommit={patchBendAll} onPreview={onPreview}
+        onScrubCommit={commitBendScrubAll} onCancel={onPreviewCancel}
+      />}
       <SectionToggleRow
         label="Enabled"
         value={cEnabled.value}
@@ -2095,6 +2109,7 @@ function MultiBendSection({
           />
         </MixedCell>
       </FieldRow>
+      {nodes.some(node => bendForNode(node).mode !== 'wave') && (
       <KeyframeSliderRow
         label="Angle"
         value={cAngle.value}
@@ -2116,6 +2131,7 @@ function MultiBendSection({
           />
         }
       />
+      )}
       <KeyframeSliderRow
         label="Factor"
         value={cFactor.value * 100}
@@ -2156,6 +2172,7 @@ function MultiBendSection({
           patchBendAll({ showOriginalGeometry })
         }
       />
+      {nodes.some(node => bendForNode(node).mode !== 'wave') && <>
       <SectionToggleRow
         label="Both directions"
         value={cBothDirections.value}
@@ -2170,6 +2187,7 @@ function MultiBendSection({
         plain
         onCommit={(limitToRegion) => patchBendAll({ limitToRegion })}
       />
+      </>}
 
       <InspectorDisclosure
         storageKey="multi-bend-surface"
@@ -2278,8 +2296,7 @@ function MultiBendSection({
 
       <InspectorDisclosure
         storageKey="multi-bend-capture-region"
-        title="Capture region"
-        defaultOpen
+        title="Advanced bend axes"
       >
         <div className="mb-1 text-[10px] font-medium text-text-muted">
           Capture direction
@@ -2529,6 +2546,7 @@ function MultiBendSection({
             />
           }
         />
+        {nodes.some(node => bendForNode(node).mode !== 'wave') && (
         <KeyframeSliderRow
           label="Bend rotation"
           value={cBendRotation.value}
@@ -2552,6 +2570,7 @@ function MultiBendSection({
             />
           }
         />
+        )}
 
         <div aria-hidden="true" className="my-2 border-t border-border" />
         <div className="mb-1 text-[10px] font-medium text-text-muted">
@@ -3207,6 +3226,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveBend = bend?.kind === 'bend'
     ? {
         ...bend,
+        waveFalloff: anim?.bendWaveFalloff ?? bend.waveFalloff,
+        waveEnd: anim?.bendWaveEnd ?? bend.waveEnd,
+        waveStart: anim?.bendWaveStart ?? bend.waveStart,
+        wavePhase: anim?.bendWavePhase ?? bend.wavePhase,
+        waveFrequency: anim?.bendWaveFrequency ?? bend.waveFrequency,
+        waveAmplitude: anim?.bendWaveAmplitude ?? bend.waveAmplitude,
         angle: anim?.bendAngle ?? bend.angle,
         factor: anim?.bendFactor ?? bend.factor,
         captureDirection: {
@@ -3485,6 +3510,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         ...current.appearance,
         effects,
       })
+      for (const [index, effect] of effects.entries()) {
+        const effectId = effectStableId(effect, index)
+        const previous = current.appearance.effects.find((e, i) => effectStableId(e, i) === effectId)
+        if (effect.kind === 'border-beam' && previous?.kind !== 'border-beam') {
+          const start = currentAnimationAuthorTime()
+          setBeamRange(api, node.id, effectId, start, start + (effect.duration ?? beamDuration(effect.size ?? 'md')))
+        }
+      }
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const commitEffectBlur = (effectId: string, rawValue: number) => {
@@ -3496,7 +3529,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         effectStableId(effect, effectIndex) === effectId,
     )
     const effect = effects[index]
-    if (!effect) return
+    if (!effect || effect.kind === 'border-beam') return
     const value = normalizedEffectBlur(effect, rawValue)
     effects[index] =
       effect.kind === 'blur'
@@ -3545,6 +3578,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       })
       const track = findTrack(api, node.id, propertyId)
       if (track) removeTrack(api, track.id)
+      const beamTrack = findTrack(api, node.id, effectBeamRangePropertyId(effectId))
+      if (beamTrack) removeTrack(api, beamTrack.id)
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const previewNodeVisual = (patch: AnimatedValue) => {
@@ -4488,10 +4523,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
         >
           <FieldRow label="Type">
-            <SelectField<'bend'>
-              value="bend"
-              options={[{ value: 'bend', label: 'Bend' }]}
-              onCommit={() => undefined}
+            <SelectField<'arc' | 'wave'>
+              value={liveBend.mode}
+              options={[{ value: 'arc', label: 'Bend' }, { value: 'wave', label: 'Sine wave' }]}
+              onCommit={(mode) => patchBend({ mode })}
               width="w-full"
             />
           </FieldRow>
@@ -4523,6 +4558,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }}
             />
           </FieldRow>
+          {liveBend.mode === 'wave' && <BendWaveFields
+            targets={[{ nodeId: node.id, bend: liveBend }]}
+            onCommit={patchBend} onPreview={previewNodeVisual}
+            onScrubCommit={commitBendScrub} onCancel={cancelNodeVisualPreview}
+          />}
+          {liveBend.mode !== 'wave' && (
           <KeyframeSliderRow
             label="Angle"
             value={liveBend.angle}
@@ -4544,6 +4585,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           />
+          )}
           <KeyframeSliderRow
             label="Factor"
             value={liveBend.factor * 100}
@@ -4580,6 +4622,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               patchBend({ showOriginalGeometry })
             }
           />
+          {liveBend.mode !== 'wave' && <>
           <SectionToggleRow
             label="Both directions"
             value={liveBend.bothDirections}
@@ -4592,6 +4635,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             plain
             onCommit={(limitToRegion) => patchBend({ limitToRegion })}
           />
+          </>}
 
           <InspectorDisclosure
             storageKey="bend-surface"
@@ -4692,8 +4736,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
           <InspectorDisclosure
             storageKey="bend-capture-region"
-            title="Capture region"
-            defaultOpen
+            title="Advanced bend axes"
           >
             <div className="mb-1 text-[10px] font-medium text-text-muted">
               Capture direction
@@ -4815,6 +4858,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               suffix="°"
               keyframe={<KeyframeButton nodeId={node.id} propertyId="deformation.bend.upRotation" currentValue={liveBend.upRotation} />}
             />
+            {liveBend.mode !== 'wave' && (
             <KeyframeSliderRow
               label="Bend rotation"
               value={liveBend.bendRotation}
@@ -4828,6 +4872,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               suffix="°"
               keyframe={<KeyframeButton nodeId={node.id} propertyId="deformation.bend.bendRotation" currentValue={liveBend.bendRotation} />}
             />
+            )}
 
             <div aria-hidden="true" className="my-2 border-t border-border" />
             <div className="mb-1 text-[10px] font-medium text-text-muted">
@@ -5202,6 +5247,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           )) : null}
+          {node.kind !== 'ellipse' && node.kind !== 'text' ? <CornerShapeFields node={node} animated={anim} /> : null}
           {node.kind === 'frame' ? (
             <SectionToggleRow
               label="Clip"
@@ -5219,10 +5265,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'vector' ? (
         <VectorSection node={node} api={api} />
-      ) : null}
-
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
-        <LayerBendSection node={node} api={api} />
       ) : null}
 
       {node.kind !== 'camera' && (
@@ -6638,15 +6680,14 @@ function EffectsSection({
     >
       {value.length === 0 ? (
         <div className="text-[11px] text-text-dim">
-          No effects. Click + to add a drop shadow, inner shadow, or
-          layer blur.
+          No effects. Click + to add a shadow, blur, or Beam.
         </div>
       ) : (
         <div className="space-y-2">
           {value.map((effect, i) => {
             const effectId = effectStableId(effect, i)
             const staticBlur =
-              effect.kind === 'blur' ? effect.amount : effect.blur
+              effect.kind === 'blur' ? effect.amount : effect.kind === 'border-beam' ? 0 : effect.blur
             const liveBlur = normalizedEffectBlur(
               effect,
               animatedBlur?.[effectId] ?? staticBlur,
@@ -6716,6 +6757,10 @@ function EffectRow({
   // dangling `amount` field along, etc.
   const setKind = (kind: Effect['kind']) => {
     if (effect.kind === kind) return
+    if (kind === 'border-beam') {
+      onChange({ kind: 'border-beam', size: 'md', colorVariant: 'colorful', visible })
+      return
+    }
     if (kind === 'shadow') {
       onChange({
         kind: 'shadow',
@@ -6752,6 +6797,7 @@ function EffectRow({
             { value: 'shadow', label: 'Drop shadow' },
             { value: 'inner-shadow', label: 'Inner shadow' },
             { value: 'blur', label: 'Layer blur' },
+            { value: 'border-beam', label: 'Beam' },
           ]}
           onCommit={setKind}
           width="flex-1"
@@ -6796,7 +6842,9 @@ function EffectRow({
           ×
         </button>
       </div>
-      {effect.kind === 'blur' ? (
+      {effect.kind === 'border-beam' ? (
+        <BorderBeamFields nodeId={nodeId} effectId={effectId} effect={effect} onChange={onChange} />
+      ) : effect.kind === 'blur' ? (
         <EffectBlurSlider
           nodeId={nodeId}
           effectId={effectId}
@@ -9138,71 +9186,6 @@ function VectorSection({
           </div>
         </FieldRow>
       ) : null}
-    </Section>
-  )
-}
-
-function LayerBendSection({
-  node,
-  api,
-}: {
-  node: Node
-  api: SceneAPI
-}) {
-  const anim = getAnimEngine().getSnapshot()[node.id]
-  const bend = mergeLayerBend(node.layerBend, {
-    tl: anim?.bendTl,
-    tr: anim?.bendTr,
-    br: anim?.bendBr,
-    bl: anim?.bendBl,
-    top: anim?.bendTop,
-    right: anim?.bendRight,
-    bottom: anim?.bendBottom,
-    left: anim?.bendLeft,
-  })
-  const patchBend = (patch: Partial<LayerBend>) => {
-    const next = mergeLayerBend(node.layerBend, patch)
-    const ui = useUI.getState()
-    api.doc.transact(() => {
-      api.setNodeProperty(node.id, 'layerBend', next)
-      if (ui.recording) {
-        recordKeyframesForPatch(api, node.id, ui.playhead, 'bend', patch)
-      } else {
-        stampToActiveTracksForPatch(api, node.id, ui.playhead, 'bend', patch)
-      }
-    }, UNDOABLE_GESTURE_ORIGIN)
-  }
-  const rows: Array<{ label: string; key: keyof LayerBend; propertyId: 'bend.tl' | 'bend.tr' | 'bend.br' | 'bend.bl' | 'bend.top' | 'bend.right' | 'bend.bottom' | 'bend.left' }> = [
-    { label: 'Top left', key: 'tl', propertyId: 'bend.tl' },
-    { label: 'Top right', key: 'tr', propertyId: 'bend.tr' },
-    { label: 'Bottom right', key: 'br', propertyId: 'bend.br' },
-    { label: 'Bottom left', key: 'bl', propertyId: 'bend.bl' },
-    { label: 'Top', key: 'top', propertyId: 'bend.top' },
-    { label: 'Right', key: 'right', propertyId: 'bend.right' },
-    { label: 'Bottom', key: 'bottom', propertyId: 'bend.bottom' },
-    { label: 'Left', key: 'left', propertyId: 'bend.left' },
-  ]
-  return (
-    <Section title="Layer bend">
-      {rows.map((row) => (
-        <KeyframeSliderRow
-          key={row.key}
-          label={row.label}
-          value={bend[row.key]}
-          onCommit={(value) => patchBend({ [row.key]: value })}
-          min={-400}
-          max={400}
-          step={1}
-          suffix="px"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId={row.propertyId}
-              currentValue={bend[row.key]}
-            />
-          }
-        />
-      ))}
     </Section>
   )
 }

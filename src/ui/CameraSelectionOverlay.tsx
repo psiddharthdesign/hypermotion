@@ -133,6 +133,7 @@ export function CameraSelectionOverlay({
   const planeByNodeId = useMemo(() => {
     if (targetNodeIds.size === 0) return new Map<NodeId, Plane3D>()
     const planes = buildWorldPlanes(api, previewSolved, animated, resolvedCamera, {
+      includeMaskGuides: true,
       context: planeBuildContext,
       independentNodes: true,
       targetNodeIds,

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+import { siblingMask } from '@/render/maskShape'
+import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
+
+import { BorderBeamOverlay } from './BorderBeamOverlay'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { textShimmerFill } from '@/anim/textShimmer'
 // SPDX-License-Identifier: Apache-2.0
@@ -104,7 +109,7 @@ import {
 } from '@/render/layerCompositing'
 import { resolveAnimatedLayerEffects } from '@/render/layerEffects'
 import type { CameraPostEffectsState } from '@/render3d/postEffects'
-import { ThreeSceneViewport } from '@/render3d/ThreeSceneViewport'
+import { ThreeSceneViewport, renderMaskTexture } from '@/render3d/ThreeSceneViewport'
 import { resolveVideoCrop } from '@/render3d/videoFit'
 import {
   playbackPixelRatio,
@@ -4122,7 +4127,7 @@ export function SceneLayer({
     const walk = (id: NodeId, parentHidden: boolean) => {
       const n = api.getNode(id)
       if (!n) return
-      const eff = parentHidden || !n.visible
+      const eff = parentHidden || !n.visible || n.isMask
       if (eff) hidden.add(id)
       for (const c of api.getChildren(id)) walk(c.id, eff)
     }
@@ -4213,59 +4218,26 @@ export function SceneLayer({
     return map
   }, [api, rootId, solved, order, sceneVersion, animated, inherited])
 
-  // Mask info — for each node whose previous sibling carries
-  // `isMask: true`, record the mask shape's solved rect + kind + corner
-  // radius so NodeView can derive a CSS clip-path.
-  //
-  // Mask convention: sibling[i] with isMask=true clips sibling[i+1].
-  // Only the immediate next sibling is masked (Figma's MVP behavior).
-  // Multi-layer masking ("clip everything above") is a follow-up if
-  // users ask for it — most motion-graphics masks are 1:1.
-  //
-  // Limitation in this MVP: clip-path is applied to the masked node's
-  // own box in box-local coords. That means animating the masked
-  // node's transform also drags the clip with it — fine for static
-  // masks (avatar circles, container reveals where mask + content
-  // share a parent that animates as a unit), wrong for "content
-  // slides through a stationary mask" reveals. Real reveal behavior
-  // needs a world-space clip wrapper; defer until requested.
-  type MaskHit = {
-    rect: Rect
-    kind: NodeKind
-    corner: number
-  }
+  // Keep each mask in its own coordinate system, including inherited masks
+  // on flattened descendants. Moving content must not move its reveal window.
   const maskInfo = useMemo(() => {
     void sceneVersion
-    const map: Record<NodeId, MaskHit> = {}
-    if (!rootId) return map
-    const visit = (id: NodeId) => {
-      const kids = api.getChildren(id)
-      for (let i = 0; i < kids.length - 1; i++) {
-        const masker = kids[i]!
-        if (!masker.isMask) continue
-        const masked = kids[i + 1]!
-        const maskerRect = solved[masker.id]
-        if (!maskerRect) continue
-        // Corner radius — frames carry it on appearance.cornerRadius; rect
-        // and ellipse don't have a separate field. For ellipse we let
-        // the kind drive the clip path (clip-path: ellipse(...)) and
-        // corner is unused; for rect/frame we read appearance.cornerRadius
-        // when present.
-        const corner = maxCornerRadius(
-          masker.appearance.cornerRadius,
-          masker.appearance.cornerRadii,
-        )
-        map[masked.id] = {
-          rect: maskerRect,
-          kind: masker.kind,
-          corner,
-        }
-      }
-      for (const k of kids) visit(k.id)
+    const map: Record<NodeId, DomMask[]> = {}
+    const visit = (id: NodeId, ancestors: DomMask[] = []) => {
+      const node = api.getNode(id)
+      if (!node) return
+      const mask = siblingMask(node, (id) => api.getNode(id))
+      const maskRect = mask ? solved[mask.id] : undefined
+      const masks = mask && maskRect ? [...ancestors, {
+        node: mask, rect: maskRect, anim: animated[mask.id],
+        inherit: inherited[mask.id] ?? IDENTITY_INHERITED,
+      }] : ancestors
+      if (masks.length) map[id] = masks
+      for (const child of node.children) visit(child, masks)
     }
-    visit(rootId)
+    if (rootId) visit(rootId)
     return map
-  }, [api, rootId, solved, sceneVersion])
+  }, [api, rootId, solved, sceneVersion, animated, inherited])
 
   const compositingOrder = partitionAlwaysOnTopSubtrees(api, order)
   const renderNode = (id: NodeId) => {
@@ -4283,7 +4255,6 @@ export function SceneLayer({
         isRoot={id === rootId}
         isSelected={selection.includes(id)}
         ancestorClip={ancestorClip[id]}
-        maskedBy={maskInfo[id]}
         onClick={(e) => {
           e.stopPropagation()
         }}
@@ -4314,14 +4285,29 @@ export function SceneLayer({
     )
   }
 
-  return (
-    <>
-      {compositingOrder.normal.map(renderNode)}
-      {compositingOrder.normal.map(renderStroke)}
-      {compositingOrder.overlay.map(renderNode)}
-      {compositingOrder.overlay.map(renderStroke)}
-    </>
-  )
+  // Composite each masked subtree first, then apply its alpha once. Applying
+  // 40% alpha separately to a frame and its children leaks the frame through
+  // opaque children and makes overlapping content more opaque than the mask.
+  const renderMaskedScope = (ids: NodeId[], depth = 0): React.ReactNode => {
+    const painted = new Set<NodeId>()
+    const scope: React.ReactNode[] = []
+    const unmasked: NodeId[] = []
+    for (const id of ids) {
+      if (painted.has(id) || hiddenIds.has(id)) continue
+      const mask = maskInfo[id]?.[depth]
+      if (!mask) { scope.push(renderNode(id)); unmasked.push(id); continue }
+      const members = ids.filter(candidate => maskInfo[candidate]?.[depth]?.node.id === mask.node.id)
+      members.forEach(member => painted.add(member))
+      const rootRect = rootId ? solved[rootId] : undefined
+      const width = rootRect?.width ?? 1, height = rootRect?.height ?? 1
+      scope.push(<div key={`mask-${mask.node.id}`} style={{ position: 'absolute', left: 0, top: 0, width, height,
+        ...domMaskStyleForMatrix(width, height, new DOMMatrix(), [mask]),
+      }}>{renderMaskedScope(members, depth + 1)}</div>)
+    }
+    return <>{scope}{unmasked.map(renderStroke)}</>
+  }
+  return <>{renderMaskedScope(compositingOrder.normal)}{renderMaskedScope(compositingOrder.overlay)}</>
+
 }
 
 /**
@@ -4334,12 +4320,14 @@ export function SceneLayer({
  * ordering for clipped frames without changing layout.
  */
 function ClippedFrameStrokeOverlay({
+  maskedBy,
   node,
   rect,
   anim,
   inherit,
   isRoot,
 }: {
+  maskedBy?: DomMask[]
   node: SceneNode
   rect: Rect
   anim: AnimatedValue | undefined
@@ -4399,6 +4387,7 @@ function ClippedFrameStrokeOverlay({
         transform: parts.length > 0 ? parts.join(' ') : undefined,
         transformOrigin,
         transformStyle: 'preserve-3d',
+        ...domMaskStyle(node, rect, anim, inherit, maskedBy),
       }}
     >
       <StrokeOverlay
@@ -4828,7 +4817,7 @@ type NodeViewProps = {
   /** Closest clipping ancestor in world space, if one exists. */
   ancestorClip?: ClipHit
   /** Previous sibling mask applied to this node. */
-  maskedBy?: { rect: Rect; kind: NodeKind; corner: number }
+  maskedBy?: DomMask[]
   onClick: (e: React.MouseEvent<HTMLDivElement>) => void
   onContextMenu: (e: React.MouseEvent<HTMLDivElement>) => void
 }
@@ -4836,6 +4825,51 @@ type NodeViewProps = {
 function NodeView(props: NodeViewProps) {
   if (props.node.kind === 'audio') return null
   return <VisualNodeView {...props} />
+}
+
+interface DomMask {
+  node: SceneNode
+  rect: Rect
+  anim: AnimatedValue | undefined
+  inherit: InheritedAnim
+}
+
+function domLayerMatrix(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim): DOMMatrix {
+  const t = node.transform
+  const x = (anim?.x ?? t.x) + inherit.x, y = (anim?.y ?? t.y) + inherit.y
+  const z = (anim?.z ?? t.z) + inherit.z
+  const ax = (anim?.anchorX ?? t.anchorX ?? 0.5) * rect.width
+  const ay = (anim?.anchorY ?? t.anchorY ?? 0.5) * rect.height
+  const az = anim?.anchorZ ?? t.anchorZ ?? 0
+  let matrix = new DOMMatrix().translate(rect.x + x + ax, rect.y + y + ay, az)
+  if (t.space === 'world') matrix = matrix.translate(0, 0, z)
+  matrix = matrix.rotateAxisAngle(1, 0, 0, (anim?.rotationX ?? t.rotationX) + inherit.rotationX)
+    .rotateAxisAngle(0, 1, 0, (anim?.rotationY ?? t.rotationY) + inherit.rotationY)
+    .rotateAxisAngle(0, 0, 1, (anim?.rotation ?? t.rotation) + inherit.rotation)
+  if (t.space !== 'world') matrix = matrix.translate(0, 0, z)
+  return matrix.scale((anim?.scaleX ?? t.scaleX) * inherit.scaleX, (anim?.scaleY ?? t.scaleY) * inherit.scaleY)
+    .translate(-ax, -ay, -az)
+}
+
+const maskDataUrls = new WeakMap<HTMLCanvasElement, string>()
+function domMaskStyle(node: SceneNode, rect: Rect, anim: AnimatedValue | undefined, inherit: InheritedAnim, masks?: DomMask[]): CSSProperties {
+  if (!masks?.length) return {}
+  return domMaskStyleForMatrix(rect.width, rect.height, domLayerMatrix(node, rect, anim, inherit).inverse(), masks)
+}
+function domMaskStyleForMatrix(width: number, height: number, inverse: DOMMatrix, masks: DomMask[]): CSSProperties {
+  const images = masks.map(mask => {
+    const raster = renderMaskTexture(mask.node, mask.rect, mask.anim)
+    let url = maskDataUrls.get(raster.canvas)
+    if (!url) { url = raster.canvas.toDataURL(); maskDataUrls.set(raster.canvas, url) }
+    const matrix = inverse.multiply(domLayerMatrix(mask.node, mask.rect, mask.anim, mask.inherit))
+    const values = [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f]
+    if (!values.every(Number.isFinite)) return 'linear-gradient(transparent,transparent)'
+    const { x, y, width: imageWidth, height: imageHeight } = raster.bounds
+    const opacity = mask.anim?.opacity ?? mask.node.appearance.opacity
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><image href="${url}" x="${x}" y="${y}" width="${imageWidth}" height="${imageHeight}" opacity="${opacity}" transform="matrix(${values.join(' ')})"/></svg>`
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+  })
+  return { maskImage: images.join(','), maskSize: '100% 100%', maskRepeat: 'no-repeat', maskMode: 'alpha', maskComposite: 'intersect' }
 }
 
 function VisualNodeView({
@@ -4963,17 +4997,9 @@ function VisualNodeView({
   const sx = isRoot ? 1 : ownSX * inherit.scaleX
   const sy = isRoot ? 1 : ownSY * inherit.scaleY
   const opacity = ownOp * inherit.opacity
-  // cornerRadius from the engine REPLACES the static value when a track
-  // is active; static is the fallback for the no-track case. See the
-  // `AnimatedValue.cornerRadius` docstring for why this differs from
-  // the additive/multiplicative composition used for transform/opacity.
-  const cornerRadius = anim?.cornerRadius ?? node.appearance.cornerRadius
-  // Per-corner override. When `appearance.cornerRadii` is set, write the
-  // four-value CSS shorthand `tl tr br bl`. We deliberately ignore the
-  // animated uniform `cornerRadius` here — once a designer promotes to
-  // per-corner, the uniform track stops applying. This trade-off keeps
-  // the data model honest: there is one source of truth at any time.
-  const cornerRadii = node.appearance.cornerRadii
+  const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, rect.width, rect.height)
+  const cornerClipPath = node.kind !== 'ellipse' && cornerSmoothing > 0
+    ? `path("${cornerShapePath({ width: rect.width, height: rect.height, cornerRadius, cornerRadii, cornerSmoothing })}")` : undefined
   // Ellipses are always circles/ellipses by definition — the
   // cornerRadius property on ellipse nodes doesn't mean anything. Paint
   // the wrapper with percentage radii so horizontal and vertical radii
@@ -5001,53 +5027,8 @@ function VisualNodeView({
   // (the frame itself is an invisible container). Non-empty frames and
   // every other node kind keep the wrapper opacity so their fill / text
   // / image content fades normally.
-  // Mask shapes paint at reduced opacity so the user can still see and
-  // edit them on the canvas — Figma hides them entirely once the
-  // selection moves elsewhere, but for our DOM renderer that's
-  // confusing because the mask shape still has fields in the
-  // Inspector. 0.35 keeps it visible without competing with the
-  // masked content.
-  const baseWrapperOpacity = isEmptyFrame ? 1 : opacity
-  const wrapperOpacity = node.isMask ? baseWrapperOpacity * 0.35 : baseWrapperOpacity
-
-  // Mask clip-path. When this node is masked by a sibling, derive a
-  // CSS clip-path string from the mask shape's local rect (relative
-  // to this node's own box) and apply it to the styled inner box.
-  //
-  // Kind-specific shapes:
-  //   - 'ellipse' → CSS ellipse(rx ry at cx cy), giving a true round
-  //     mask matching the mask shape's bounding box.
-  //   - 'rect' / 'frame' / everything else → inset(t r b l) optionally
-  //     with `round Npx` when the masker carries a corner radius. This
-  //     covers rounded-rectangle reveals.
-  //
-  // Coordinates are in the masked node's local box space (top-left of
-  // the box is 0,0). World-coord clipping needs a wrapper layer; see
-  // the maskInfo comment in SceneLayer for why MVP punts on that.
-  let maskClipPath: string | undefined
-  if (maskedBy) {
-    const localX = maskedBy.rect.x - rect.x
-    const localY = maskedBy.rect.y - rect.y
-    const w = maskedBy.rect.width
-    const h = maskedBy.rect.height
-    if (maskedBy.kind === 'ellipse') {
-      const rx = w / 2
-      const ry = h / 2
-      const cx = localX + rx
-      const cy = localY + ry
-      maskClipPath = `ellipse(${rx}px ${ry}px at ${cx}px ${cy}px)`
-    } else {
-      // inset insets are: top / right / bottom / left
-      const t = localY
-      const l = localX
-      const r = rect.width - (localX + w)
-      const b = rect.height - (localY + h)
-      maskClipPath =
-        maskedBy.corner > 0
-          ? `inset(${t}px ${r}px ${b}px ${l}px round ${maskedBy.corner}px)`
-          : `inset(${t}px ${r}px ${b}px ${l}px)`
-    }
-  }
+  const wrapperOpacity = isEmptyFrame ? 1 : opacity
+  const maskStyle = domMaskStyle(node, rect, anim, inherit, maskedBy)
 
   const parts: string[] = []
   const transformSpace = node.transform.space ?? 'local'
@@ -5312,7 +5293,8 @@ function VisualNodeView({
         outlineOffset: node.isMask || needsDashedOutline ? '-1px' : undefined,
         // Apply the sibling-mask clip-path. See maskedBy / maskInfo
         // for derivation. No-op when this node isn't being masked.
-        clipPath: maskClipPath,
+        clipPath: cornerClipPath,
+        ...maskStyle,
         // Re-enable pointer events: the clip wrapper above sets
         // pointer-events:none, so we have to reinstate them here for
         // clicks / drags to reach the node.
@@ -5388,6 +5370,8 @@ function VisualNodeView({
           anim={anim}
         />
       ) : null}
+      <BorderBeamOverlay node={node} width={rect.width} height={rect.height}
+        radius={cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius} cornerSmoothing={cornerSmoothing} effects={effects} />
       {shouldRenderStrokeOverlay ? (
         <StrokeOverlay
           stroke={stroke}
@@ -5633,8 +5617,18 @@ function TextGlyphs({
   const playhead = hasTextAnimationTracks
     ? getAnimEngine().getPlayhead()
     : mirroredPlayhead
-  const authoredTextAnimation =
-    anim?.textAnimation ?? legacyTextAnimation
+  const shimmerOutsideRange = anim?.shimmerEndTime !== undefined && (playhead < (anim.shimmerStartTime ?? 0) || playhead >= anim.shimmerEndTime)
+  const sourceTextAnimation = anim?.textAnimation ?? legacyTextAnimation
+  const baseTextAnimation = sourceTextAnimation?.id === 'shimmer' && shimmerOutsideRange ? null : sourceTextAnimation
+  const authoredTextAnimation = baseTextAnimation?.id === 'shimmer'
+    ? { ...baseTextAnimation,
+        startTime: anim?.shimmerStartTime ?? baseTextAnimation.startTime,
+        duration: anim?.shimmerEndTime !== undefined
+          ? Math.max(1e-6, anim.shimmerEndTime - (anim.shimmerStartTime ?? baseTextAnimation.startTime))
+          : anim?.shimmerDuration ?? baseTextAnimation.duration,
+        shimmerLoop: anim?.shimmerEndTime !== undefined ? false : baseTextAnimation.shimmerLoop,
+        shimmerWidth: anim?.shimmerWidth ?? baseTextAnimation.shimmerWidth }
+    : baseTextAnimation
   const subscribeToCurvePreview = useCallback(
     (listener: () => void) =>
       textStaggerCurvePreviewStore.subscribe(node.id, listener),
@@ -5739,7 +5733,7 @@ function TextGlyphs({
       : { color: node.color }),
     ...(textAnimation?.id === 'shimmer' ? { color: effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, background: undefined, WebkitTextFillColor: undefined } : {}),
     ...(node.textShimmer ? {
-      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color)),
+      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, anim)),
       backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent',
     } : {}),
     textAlign,

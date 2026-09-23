@@ -15,6 +15,7 @@ import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './me
 import { mediaClipRange } from '@/scene/mediaClip'
 import {
   effectIdFromBlurPropertyId,
+  effectIdFromBeamRangePropertyId,
   useSceneAPI,
   useSceneVersion,
 } from '@/scene'
@@ -9046,6 +9047,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
 // ---------------------------------------------------------------------------
 
 function humanProperty(id: string, nodeKind?: string): string {
+  if (effectIdFromBeamRangePropertyId(id)) return 'Beam'
   if (effectIdFromBlurPropertyId(id)) return 'Blur'
   if (nodeKind === 'instance' && id === 'variant') return 'State'
   // Cameras are uniform-scale, so `transform.scaleX` (the only scale
@@ -9061,6 +9063,9 @@ function humanProperty(id: string, nodeKind?: string): string {
   if (nodeKind === 'camera' && id === 'transform.rotationY') return 'Rotate Y'
   // Compact the verbose PropertyId strings for the label column.
   const map: Record<string, string> = {
+    'textShimmer.range': 'Shimmer',
+    'textShimmer.duration': 'Shimmer duration',
+    'textShimmer.shimmerWidth': 'Shimmer length',
     'transform.x': 'X',
     'transform.y': 'Y',
     'transform.rotation': 'Rotation',
@@ -9070,9 +9075,18 @@ function humanProperty(id: string, nodeKind?: string): string {
     'transform.scaleY': 'Scale Y',
     'appearance.opacity': 'Opacity',
     'appearance.cornerRadius': 'Corner',
+    'appearance.cornerSmoothing': 'Smoothing',
+    'appearance.cornerSmoothingEnabled': 'Squircle',
+    'appearance.fullRadius': 'Full radius',
     'appearance.fill': 'Fill',
     'vector.fill': 'Vector Fill',
     'vector.geometry': 'Shape',
+    'deformation.bend.waveAmplitude': 'Wave amplitude',
+    'deformation.bend.waveFrequency': 'Wave frequency',
+    'deformation.bend.wavePhase': 'Wave phase',
+    'deformation.bend.waveStart': 'Wave start',
+    'deformation.bend.waveEnd': 'Wave end',
+    'deformation.bend.waveFalloff': 'Wave falloff',
     'bend.tl': 'Bend TL',
     'bend.tr': 'Bend TR',
     'bend.br': 'Bend BR',

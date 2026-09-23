@@ -34,7 +34,7 @@ export function rebaseSceneNodes(api: SceneAPI, nodeIds: Set<string>, offset: nu
       // beat grids and playback rate without rewriting the source media.
       api.setNodeProperty(id, 'startTime', node.startTime - offset)
     }
-    if (node.kind === 'shader' || node.kind === 'camera') {
+    if (node.kind === 'shader' || node.kind === 'camera' || node.appearance.effects.some(e => e.kind === 'border-beam')) {
       api.setNodeProperty(id, 'proceduralTimeOffset', (node.proceduralTimeOffset ?? 0) + offset)
     }
     if (node.kind === 'text' && node.textShimmer) {

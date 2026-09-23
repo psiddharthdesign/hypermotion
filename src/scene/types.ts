@@ -358,6 +358,7 @@ export type LayoutGuide =
  * effects, so older documents continue to render correctly.
  */
 export type Effect =
+  | import('./borderBeam').BorderBeamEffect
   | {
       /** Stable row identity used by per-effect animation tracks. */
       id?: string
@@ -423,6 +424,10 @@ export interface Appearance {
    * values from legacy scenes are treated as `0`.
    */
   cornerSmoothing?: number
+  /** Enable smooth squircle corners without losing the smoothing amount. */
+  cornerSmoothingEnabled?: boolean
+  /** Resolve the radius to half the smaller current layout dimension. */
+  fullRadius?: boolean
   /** CSS-compatible compositing mode for this layer. */
   blendMode?: BlendMode
   effects: Effect[]
@@ -480,6 +485,15 @@ export interface DeformationVector3 {
  */
 export interface BendDeformation {
   kind: 'bend'
+  mode: 'arc' | 'wave'
+  /** Sine displacement in pixels, cycles per region, and phase in degrees. */
+  waveAmplitude: number
+  waveFrequency: number
+  wavePhase: number
+  /** Region endpoints across the layer (0..1); falloff is a fraction of the region. */
+  waveStart: number
+  waveEnd: number
+  waveFalloff: number
   enabled: boolean
   /** Bend amount in degrees across the capture region. */
   angle: number
@@ -554,22 +568,14 @@ interface NodeBase {
   /** Original timeline origin retained by procedural effects after a scene split. */
   proceduralTimeOffset?: number
   /**
-   * When true, this node acts as a mask for the layer immediately
-   * above it among its parent's children — Figma's mask convention,
-   * where the bottom shape clips everything stacked above it within
-   * the same parent. The mask shape itself does not paint normally;
-   * its silhouette becomes the visible region of the masked layer(s).
-   *
-   * MVP scope: only the immediate next sibling is masked, and the
-   * mask is treated as a clip-path on the masked layer. This covers
-   * "rectangle reveal" / "circle avatar" / "rounded-frame container"
-   * — the 90% of motion-graphics mask uses. Multi-layer masking
-   * ("mask all upper siblings") and chained masks land later if
-   * users ask for them.
-   *
-   * Default false. Toggle via Cmd+Opt+M (matches Figma).
+   * This layer's painted alpha controls the visibility of its masked content.
+   * Its fill, opacity and effects (including blur) contribute to the reveal.
+   * New masks sit below their content in a Mask group. Legacy ungrouped masks
+   * retain their immediate-next-sibling pairing until regrouped.
    */
   isMask: boolean
+  /** Alpha masks sit after their content inside an automatically created group. */
+  maskMode?: 'alpha'
   /**
    * Optional layer-local spatial rail. Every node kind may follow one; the
    * animation engine resolves it into the normal transform snapshot so
@@ -583,6 +589,7 @@ interface NodeBase {
    * composition pixels. Children sample the same field so they follow the
    * parent surface.
    */
+  /** @deprecated Retained only to read older scenes. Use deformation instead. */
   layerBend?: LayerBend
 }
 
@@ -1309,6 +1316,8 @@ export interface Interaction {
 export type EffectBlurPropertyId =
   `appearance.effects.${string}.blur`
 
+export type EffectBeamRangePropertyId = `appearance.effects.${string}.beamRange`
+
 export type PropertyId =
   // transform group — post-layout, cheap
   | 'transform.x'
@@ -1325,6 +1334,12 @@ export type PropertyId =
   // generic layer motion path — resolves into post-layout transform values
   | 'motionPath.progress'
   // non-destructive layer deformation — post-layout, GPU evaluated
+  | 'deformation.bend.waveAmplitude'
+  | 'deformation.bend.waveFrequency'
+  | 'deformation.bend.wavePhase'
+  | 'deformation.bend.waveStart'
+  | 'deformation.bend.waveEnd'
+  | 'deformation.bend.waveFalloff'
   | 'deformation.bend.angle'
   | 'deformation.bend.factor'
   | 'deformation.bend.captureDirectionX'
@@ -1382,9 +1397,13 @@ export type PropertyId =
   // appearance group — post-layout, cheap
   | 'appearance.opacity'
   | 'appearance.cornerRadius'
+  | 'appearance.cornerSmoothing'
+  | 'appearance.cornerSmoothingEnabled'
+  | 'appearance.fullRadius'
   | 'appearance.fill'
   | 'appearance.blendMode'
   | EffectBlurPropertyId
+  | EffectBeamRangePropertyId
   // native vector appearance and path morphs
   | 'vector.fill'
   | 'vector.stroke'
@@ -1404,6 +1423,9 @@ export type PropertyId =
   | 'shape.arcInnerRadius'
   // text effect group — drives text-specific reveal effects
   | 'text.progress'
+  | 'textShimmer.range'
+  | 'textShimmer.duration'
+  | 'textShimmer.shimmerWidth'
   // layout group — triggers relayout + FLIP
   | 'layout.gap'
   | 'layout.padding.top'

@@ -346,6 +346,9 @@ function writeProperty(
     case 'transform.anchorY': into.anchorY = value; break
     case 'transform.anchorZ': into.anchorZ = value; break
     case 'appearance.opacity': into.opacity = value; break
+    case 'appearance.cornerSmoothing': into.cornerSmoothing = value; break
+    case 'appearance.cornerSmoothingEnabled': into.cornerSmoothingEnabled = value; break
+    case 'appearance.fullRadius': into.fullRadius = value; break
     case 'appearance.cornerRadius': into.cornerRadius = value; break
     case 'camera.focusDistance': into.focusDistance = value; break
     case 'camera.focusX': into.focusX = value; break

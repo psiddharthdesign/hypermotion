@@ -4,6 +4,7 @@ import { useSequenceExportPreview } from '@/export/sequencePreview'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -851,6 +852,14 @@ function PreviewShell() {
 
   useEagerLoadSceneFonts()
   useCustomFonts()
+
+  useLayoutEffect(() => {
+    // Preview fits the same workspace view used by the editor. Keep the
+    // entry view for this entire mount, including resizes and work-area edits,
+    // and restore it before the editor paints on any preview exit path.
+    const editorView = { ...useUI.getState().view }
+    return () => setView(editorView)
+  }, [setView])
 
   useEffect(() => {
     document.body.setAttribute('data-preview-mode', '1')

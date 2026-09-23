@@ -429,6 +429,40 @@ Every paintable node carries:
 Backwards-compatible with the desktop app's inspector — the same
 schema renders inside the editor exactly as it does in the saved file.
 
+### Beam layer effect
+
+`appearance.effects` accepts `kind: "border-beam"` for the Border, Compact,
+Bottom line, Pulse outside, and Pulse inside styles. All eight palettes and
+color, glow, timing, and fade controls are documented in
+[docs/border-beam.md](./docs/border-beam.md). Beam animation uses composition
+time and survives scene splitting.
+
+Corner controls: `appearance.cornerSmoothing` is a normalized `0..1` amount.
+`appearance.cornerSmoothingEnabled: false` disables smoothing without losing
+its amount; legacy scenes infer it from the amount. `appearance.fullRadius:
+true` resolves the uniform radius to half the smaller current layout dimension,
+overriding independent corners without deleting them. With smoothing off, a
+square becomes a circle and a rectangle becomes a pill. Both switches use
+**numeric 0/1 keyframes with discrete interpolation**; smoothing interpolates
+continuously. Manual radius values remain saved when Full radius is enabled.
+
+### Deform effects
+
+Use the original `deformation` object with `kind: 'bend'` for bending layers.
+The inspector exposes it as **Deform → Add bend**, with capture axes, origin,
+length, angle/factor, dimensional lighting, geometry detail, and reset. Its
+`deformation.bend.*` tracks support animation and staggered groups; parent
+and child bend modifiers compose. The later `layerBend` corner/edge deformation
+is retired and no longer rendered. Do not author `layerBend` or `bend.*` tracks.
+Existing legacy values remain readable so opening a scene does not delete data.
+
+Set `deformation.mode: 'wave'` for a directional sine wave. Animate
+`waveAmplitude` (pixels), `waveFrequency` (cycles), `wavePhase` (degrees),
+`waveStart` / `waveEnd` (0–1 across the layer), and `waveFalloff` (0–0.5).
+These use `deformation.bend.<field>` property ids. Capture rotation controls
+wave direction; the up axis chooses canvas displacement or 3D depth. Omitted
+mode preserves the original arc bend. Radial ripples are not supported.
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local
@@ -492,11 +526,18 @@ camera.chromaticAberrationAmount, camera.chromaticAberrationAngle,
 camera.bloomStrength, camera.bloomRadius, camera.bloomThreshold,
 camera.vhsIntensity, camera.vhsNoise, camera.vhsScanlines,
 camera.vhsColorBleed,
-appearance.opacity, appearance.cornerRadius, appearance.cornerRadii,
+appearance.opacity, appearance.cornerRadius, appearance.cornerSmoothing,
+appearance.cornerSmoothingEnabled, appearance.fullRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
 vector.fill, vector.geometry,
-bend.tl, bend.tr, bend.br, bend.bl, bend.top, bend.right, bend.bottom, bend.left,
+deformation.bend.angle, deformation.bend.factor, deformation.bend.captureLength,
+deformation.bend.captureDirectionX, deformation.bend.captureDirectionY, deformation.bend.captureDirectionZ,
+deformation.bend.upDirectionX, deformation.bend.upDirectionY, deformation.bend.upDirectionZ,
+deformation.bend.captureRotation, deformation.bend.upRotation, deformation.bend.bendRotation,
+deformation.bend.captureOriginX, deformation.bend.captureOriginY, deformation.bend.captureOriginZ,
+deformation.bend.lightAzimuth, deformation.bend.lightElevation, deformation.bend.ambient,
+deformation.bend.diffuse, deformation.bend.specular, deformation.bend.roughness,
 text.progress, motionPath.progress, layout.gap, layout.padding.top, layout.padding.right,
 layout.padding.bottom, layout.padding.left, layout.direction,
 size.width, size.height, variant

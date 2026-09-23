@@ -2,6 +2,7 @@
 
 import type {
   EffectBlurPropertyId,
+  EffectBeamRangePropertyId,
   PropertyId,
 } from '@/scene/types'
 
@@ -38,7 +39,7 @@ export interface PropertyDescriptor {
   defaultValue: unknown
 }
 
-type StaticPropertyId = Exclude<PropertyId, EffectBlurPropertyId>
+type StaticPropertyId = Exclude<PropertyId, EffectBlurPropertyId | EffectBeamRangePropertyId>
 
 export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   // transform group — applied after layout, no relayout needed
@@ -92,6 +93,30 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   },
 
   // bend deformation — vertex-only GPU work, no Yoga relayout
+  'deformation.bend.waveAmplitude': {
+    id: 'deformation.bend.waveAmplitude', group: 'deformation', label: 'Wave amplitude',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 40,
+  },
+  'deformation.bend.waveFrequency': {
+    id: 'deformation.bend.waveFrequency', group: 'deformation', label: 'Wave frequency',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 2,
+  },
+  'deformation.bend.wavePhase': {
+    id: 'deformation.bend.wavePhase', group: 'deformation', label: 'Wave phase',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'deformation.bend.waveStart': {
+    id: 'deformation.bend.waveStart', group: 'deformation', label: 'Wave start',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'deformation.bend.waveEnd': {
+    id: 'deformation.bend.waveEnd', group: 'deformation', label: 'Wave end',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
+  },
+  'deformation.bend.waveFalloff': {
+    id: 'deformation.bend.waveFalloff', group: 'deformation', label: 'Wave falloff',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.1,
+  },
   'deformation.bend.angle': {
     id: 'deformation.bend.angle', group: 'deformation', label: 'Bend Angle',
     layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
@@ -312,6 +337,18 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'appearance.opacity', group: 'appearance', label: 'Opacity',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 1,
   },
+  'appearance.cornerSmoothing': {
+    id: 'appearance.cornerSmoothing', group: 'appearance', label: 'Corner Smoothing',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'appearance.cornerSmoothingEnabled': {
+    id: 'appearance.cornerSmoothingEnabled', group: 'appearance', label: 'Squircle',
+    layoutAffecting: false, interpolation: 'discrete', defaultValue: 0,
+  },
+  'appearance.fullRadius': {
+    id: 'appearance.fullRadius', group: 'appearance', label: 'Full Radius',
+    layoutAffecting: false, interpolation: 'discrete', defaultValue: 0,
+  },
   'appearance.cornerRadius': {
     id: 'appearance.cornerRadius', group: 'appearance', label: 'Corner Radius',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
@@ -403,6 +440,18 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   },
 
   // text effect group — post-layout; controls text-specific reveal progress
+  'textShimmer.range': {
+    id: 'textShimmer.range', group: 'text', label: 'Shimmer',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'textShimmer.duration': {
+    id: 'textShimmer.duration', group: 'text', label: 'Shimmer duration',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 2,
+  },
+  'textShimmer.shimmerWidth': {
+    id: 'textShimmer.shimmerWidth', group: 'text', label: 'Shimmer length',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.25,
+  },
   'text.progress': {
     id: 'text.progress', group: 'text', label: 'Text Animation',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
@@ -482,10 +531,22 @@ export function effectIdFromBlurPropertyId(
   return EFFECT_ID_PATTERN.test(effectId) ? effectId : null
 }
 
+export function effectBeamRangePropertyId(effectId: string): EffectBeamRangePropertyId {
+  if (!EFFECT_ID_PATTERN.test(effectId)) throw new Error(`Invalid effect id: ${effectId}`)
+  return `appearance.effects.${effectId}.beamRange`
+}
+
+export function effectIdFromBeamRangePropertyId(propertyId: string): string | null {
+  return /^appearance\.effects\.([A-Za-z0-9_-]+)\.beamRange$/.exec(propertyId)?.[1] ?? null
+}
+
 /** Resolve static and stable per-effect properties through one registry API. */
 export function propertyDescriptor(
   propertyId: PropertyId,
 ): PropertyDescriptor | undefined {
+  if (effectIdFromBeamRangePropertyId(propertyId)) return {
+    id: propertyId, group: 'appearance', label: 'Beam', layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  }
   const staticDescriptor = PROPERTIES[propertyId as StaticPropertyId]
   if (staticDescriptor) return staticDescriptor
   const effectId = effectIdFromBlurPropertyId(propertyId)

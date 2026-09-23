@@ -207,3 +207,44 @@ describe('bend deformation', () => {
     expect(stack[1]?.captureOrigin).toEqual({ x: 20, y: 20, z: 0 })
   })
 })
+
+describe('localized sine-wave deformation', () => {
+  const wave = { ...DEFAULT_BEND_DEFORMATION, mode: 'wave' as const, angle: 0, waveAmplitude: 20, waveFrequency: 2, waveFalloff: 0, resolvedLength: 200 }
+  it('controls amplitude, frequency, phase, and blend independently of arc angle', () => {
+    expect(bendPoint({ x: -75, y: 0, z: 0 }, wave).z).toBeCloseTo(20)
+    expect(bendPoint({ x: -25, y: 0, z: 0 }, wave).z).toBeCloseTo(-20)
+    expect(bendPoint({ x: -75, y: 0, z: 0 }, { ...wave, waveAmplitude: 40, factor: .5 }).z).toBeCloseTo(20)
+    expect(bendPoint({ x: -75, y: 0, z: 0 }, { ...wave, waveFrequency: 4 }).z).toBeCloseTo(0)
+    expect(bendPoint({ x: 0, y: 0, z: 0 }, { ...wave, wavePhase: 90 }).z).toBeCloseTo(20)
+    const point = { x: -75, y: 3, z: 8 }
+    expect(bendPoint(point, { ...wave, waveAmplitude: 0 })).toEqual(point)
+    expect(bendPoint(point, { ...wave, enabled: false })).toEqual(point)
+  })
+  it('keeps both boundaries and the exterior fixed, with a smooth adjustable falloff', () => {
+    const region = { ...wave, waveStart: .25, waveEnd: .75, wavePhase: 90, waveFrequency: 0, waveFalloff: .2 }
+    for (const x of [-100, -51, -50, 50, 51, 100]) {
+      const point = { x, y: 5, z: 3 }
+      expect(bendPoint(point, region)).toEqual(point)
+    }
+    expect(bendPoint({ x: -40, y: 0, z: 0 }, region).z).toBeCloseTo(10)
+    expect(bendPoint({ x: 0, y: 0, z: 0 }, region).z).toBeCloseTo(20)
+    expect(bendPoint({ x: -49.999, y: 0, z: 0 }, region).z).toBeLessThan(.00001)
+    expect(bendPoint({ x: 0, y: 0, z: 0 }, { ...region, waveEnd: .25 }).z).toBe(0)
+  })
+  it('fits rotated rectangular layers and keeps canvas waves in the canvas plane', () => {
+    const bend = resolveBendDeformation({ ...wave, captureLength: 0, captureRotation: 90, upDirection: { x: 0, y: 1, z: 0 } }, undefined, 400, 100)!
+    expect(bend.resolvedLength).toBeCloseTo(100)
+    const point = bendPoint({ x: 0, y: -37.5, z: 0 }, bend)
+    expect(point.x).toBeCloseTo(-20)
+    expect(point.y).toBeCloseTo(-37.5)
+    expect(point.z).toBeCloseTo(0)
+  })
+  it('increases mesh detail for repeated waves and resolves animated region controls', () => {
+    const bend = resolveBendDeformation(wave, { bendWaveAmplitude: 80, bendWaveFrequency: 8, bendWaveStart: .25, bendWaveEnd: .75, bendWavePhase: 720, bendWaveFalloff: .3 }, 400, 200)!
+    expect(bend).toMatchObject({ waveAmplitude: 80, waveFrequency: 8, waveStart: .25, waveEnd: .75, wavePhase: 720, waveFalloff: .3, geometryDetail: 512 })
+    const target = bendDeformationInTargetSpace(bend, { x: 0, y: 0, width: 400, height: 200 }, { x: 100, y: 0, width: 100, height: 200 })
+    const parentPoint = bendPoint({ x: -30, y: 0, z: 0 }, bend)
+    const childPoint = bendPoint({ x: 20, y: 0, z: 0 }, target)
+    expect(childPoint.z).toBeCloseTo(parentPoint.z)
+  })
+})

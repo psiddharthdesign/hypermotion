@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NumberField } from './NumberField'
 import { TextField } from './TextField'
-import { hexToOklch, oklchToHex } from './colorConvert'
+import { hexToOklch, oklchToHex, parsePickerColor } from './colorConvert'
 
 /**
  * Fill/stroke color field — click the swatch to open a popover with
@@ -143,8 +143,15 @@ function ColorPopover({
   onClose: () => void
   anchor: HTMLElement | null
 }) {
-  const [lch, setLch] = useState<Lch>(() => parseOklch(value) ?? { l: 0.7, c: 0.2, h: 300 })
+  const [lch, setLch] = useState<Lch>(() => parsePickerColor(value) ?? { l: 0.7, c: 0.2, h: 300 })
   const popRef = useRef<HTMLDivElement>(null)
+
+  const [previousValue, setPreviousValue] = useState(value)
+  if (value !== previousValue) {
+    setPreviousValue(value)
+    const next = parsePickerColor(value)
+    if (next) setLch(next)
+  }
 
   // Close on outside click or Escape.
   useEffect(() => {
@@ -238,7 +245,7 @@ function ColorPopover({
         <TextField
           value={formatOklch(lch)}
           onCommit={(s) => {
-            const parsed = parseOklch(s)
+            const parsed = parsePickerColor(s)
             if (parsed) commit(parsed)
           }}
           width="w-full"
@@ -322,21 +329,6 @@ function formatOklch(lch: Lch): string {
   return `oklch(${L} ${C} ${H})`
 }
 
-function parseOklch(str: string | null): Lch | null {
-  if (!str) return null
-  const m = str
-    .trim()
-    .match(/^oklch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+)(?:\s*\/\s*[\d.%]+)?\s*\)$/i)
-  if (!m) return null
-  const parsePercentOr = (s: string) =>
-    s.endsWith('%') ? Number(s.slice(0, -1)) / 100 : Number(s)
-  const l = parsePercentOr(m[1]!)
-  const c = parsePercentOr(m[2]!)
-  const h = Number(m[3]!)
-  if ([l, c, h].some((n) => Number.isNaN(n))) return null
-  return { l, c, h }
-}
-
 function buildGradient(
   at: (value: number) => string,
   min: number,
@@ -360,7 +352,7 @@ function buildHueGradient(l: number, c: number): string {
 }
 
 function shortLabel(oklchStr: string): string {
-  const parsed = parseOklch(oklchStr)
+  const parsed = parsePickerColor(oklchStr)
   if (!parsed) return oklchStr
   return oklchToHex(parsed)
 }

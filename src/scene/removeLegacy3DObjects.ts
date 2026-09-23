@@ -2,11 +2,11 @@
 
 import * as Y from 'yjs'
 
-const REMOVED_NODE_KIND = 'primitive3d'
+const REMOVED_NODE_KINDS = new Set(['primitive3d', 'null'])
 
 /**
- * Remove documents authored while standalone GPU objects were briefly
- * available. This runs on raw Yjs data before the typed scene reader sees it,
+ * Remove retired standalone GPU objects and experimental Null controllers.
+ * This runs on raw Yjs data before the typed scene reader sees it,
  * so old autosaves and .hype files cannot surface an unsupported node kind.
  *
  * The literal kind intentionally lives only in this compatibility cleanup;
@@ -32,17 +32,27 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
   for (const [nodeId, node] of nodes.entries()) {
     if (
       node instanceof Y.Map &&
-      node.get('kind') === REMOVED_NODE_KIND
+      REMOVED_NODE_KINDS.has(String(node.get('kind')))
     ) {
       visitRemovedSubtree(nodeId)
     }
   }
-  if (removedNodeIds.size === 0) return []
+  const hasRetiredFields = [...nodes.values()].some((node) =>
+    node instanceof Y.Map &&
+    ['transformParent', 'transformOffset', 'positionMode'].some((key) => node.has(key)),
+  )
+  if (removedNodeIds.size === 0 && !hasRetiredFields) return []
 
   doc.transact(() => {
     for (const [nodeId, node] of nodes.entries()) {
       if (!(node instanceof Y.Map) || removedNodeIds.has(nodeId)) continue
       removeIdsFromNodeChildren(node, removedNodeIds)
+      if (node.get('kind') === 'camera' && node.get('positionMode') === 'free') {
+        restoreOrbitCoordinates(scene, node, nodeId)
+      }
+      node.delete('transformParent')
+      node.delete('transformOffset')
+      node.delete('positionMode')
 
       if (removedNodeIds.has(String(node.get('focusTargetNodeId') ?? ''))) {
         node.set('focusTargetNodeId', null)
@@ -95,6 +105,66 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
   }, removeLegacy3DObjects)
 
   return [...removedNodeIds]
+}
+
+/** Restore the target/dolly coordinate convention, including translation keys.
+ * Controller influence is deliberately discarded; authored layer/camera
+ * rotations remain. Only previously converted cameras enter this migration.
+ */
+function restoreOrbitCoordinates(scene: Y.Map<unknown>, node: Y.Map<unknown>, nodeId: string) {
+  const transform = node.get('transform')
+  if (!isRecord(transform)) return
+  const meta = scene.get('meta')
+  const canvas = meta instanceof Y.Map ? meta.get('canvas') : undefined
+  let height = isRecord(canvas) ? finite(canvas.height, 540) : 540
+  const compositions = scene.get('compositionScenes')
+  const nodes = scene.get('nodes')
+  if (compositions instanceof Y.Map && nodes instanceof Y.Map) {
+    for (const composition of compositions.values()) {
+      if (!isRecord(composition) || !readStringArray(composition.cameraIds).includes(nodeId)) continue
+      const root = nodes.get(String(composition.rootNodeId))
+      const size = root instanceof Y.Map ? root.get('size') : undefined
+      if (isRecord(size)) height = finite(size.height, height)
+      break
+    }
+  }
+  const fov = finite(node.get('fieldOfView'), 35)
+  const focal = Math.max(1, (height / 2) / Math.tan(Math.min(175, Math.max(1, fov)) * Math.PI / 360))
+  const pitch = finite(transform.rotationX, 0) * Math.PI / 180
+  const yaw = finite(transform.rotationY, 0) * Math.PI / 180
+  const forward = { x: Math.sin(yaw) * Math.cos(pitch), y: Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) }
+  const z = finite(transform.z, -focal)
+  const intersection = Math.abs(forward.z) > 1e-6 ? -z / forward.z : 0
+  // A camera facing away from the scene has no forward intersection. Restore
+  // a finite orbit distance rather than introducing an infinite target.
+  const distance = intersection > 0 ? Math.max(1, intersection) : Math.max(1, Math.abs(z))
+  const offset: Record<string, number> = {
+    x: forward.x * distance,
+    y: forward.y * distance,
+    z: focal - distance - z,
+  }
+  node.set('transform', {
+    ...transform,
+    x: finite(transform.x, 0) + offset.x,
+    y: finite(transform.y, 0) + offset.y,
+    z: focal - distance,
+  })
+  const tracks = scene.get('tracks')
+  if (!(tracks instanceof Y.Map)) return
+  for (const track of tracks.values()) {
+    if (!(track instanceof Y.Map) || track.get('nodeId') !== nodeId) continue
+    const property = String(track.get('propertyId'))
+    if (!['transform.x', 'transform.y', 'transform.z'].includes(property)) continue
+    const delta = offset[property.slice('transform.'.length)]
+    track.set('keyframes', readRecordArray(track.get('keyframes')).map((keyframe) => ({
+      ...keyframe,
+      value: typeof keyframe.value === 'number' ? keyframe.value + delta : keyframe.value,
+    })))
+  }
+}
+
+function finite(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
 function removeIdsFromNodeChildren(

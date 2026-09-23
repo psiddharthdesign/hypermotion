@@ -3904,3 +3904,54 @@ function yToPlain(value: unknown): unknown {
   if (value instanceof Y.Array) return value.toArray().map(yToPlain)
   return value
 }
+
+
+test('Beam styles and advanced controls survive CLI authoring and validation', () => {
+  const scene = sampleScene()
+  const effects = ['sm', 'md', 'line', 'pulse-outside', 'pulse-inner'].map((size, index) => ({
+    id: `beam-${index}`, kind: 'border-beam', size, colorVariant: 'ocean', theme: 'auto',
+    nonUniform: true, variation: 2.5, spread: .6, seed: 42, animatePattern: false,
+    active: true, strength: 8, duration: 300, glowSize: 12, brightness: 6,
+    colors: ['#ff3264', '#6446ff', '#32c850'], edgeWidth: 12,
+    saturation: 1.2, hueRange: 60, staticColors: false, borderRadius: 12,
+    startTime: 0.2, endTime: 2.5, fadeIn: 0.3, fadeOut: 0.4,
+  }))
+  scene.nodes!.root.appearance = { effects }
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  const nodes = data.nodes as PlainSceneMap
+  assert.deepEqual((nodes.root.appearance as PlainSceneObject).effects, effects)
+  assert.equal(validateScene(bytes).ok, true)
+})
+
+test('alpha masks preserve their mode, effects and sibling order through scene files and patches', () => {
+  const scene = sampleScene()
+  scene.nodes!.root!.children = ['title', 'mask']
+  scene.nodes!.mask = {
+    id: 'mask', kind: 'rect', parent: 'root', isMask: true, maskMode: 'alpha',
+    size: { width: 160, height: 140 },
+    appearance: { opacity: 0.4, effects: [{ kind: 'blur', amount: 16 }] },
+  }
+  for (const bytes of [buildSceneBytes(scene), applyScenePatch(buildSceneBytes(sampleScene()), [{ op: 'createNode', node: scene.nodes!.mask }])]) {
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, bytes)
+    const nodes = doc.getMap('scene').get('nodes') as Y.Map<Y.Map<unknown>>
+    assert.equal(nodes.get('mask')!.get('maskMode'), 'alpha')
+    assert.equal(nodes.get('mask')!.get('isMask'), true)
+    assert.equal((nodes.get('mask')!.get('appearance') as { opacity: number }).opacity, 0.4)
+    assert.deepEqual((nodes.get('root')!.get('children') as Y.Array<string>).toArray(), ['title', 'mask'])
+    doc.destroy()
+  }
+})
+
+test('sine-wave deformation and phase tracks survive CLI authoring', () => {
+  const scene = sampleScene()
+  const deformation = { kind: 'bend' as const, mode: 'wave' as const, waveAmplitude: 80, waveFrequency: 6, wavePhase: 90, waveStart: .2, waveEnd: .8, waveFalloff: .15 }
+  scene.nodes!.title.deformation = deformation
+  scene.tracks = { wave: { id: 'wave', nodeId: 'title', propertyId: 'deformation.bend.wavePhase', keyframes: [{ id: 'a', time: 0, value: 0 }, { id: 'b', time: 1, value: 720 }] } }
+  const bytes = buildSceneBytes(scene)
+  const data = inspectScene(bytes)
+  assert.deepEqual((data.nodes as PlainSceneMap).title?.deformation, deformation)
+  assert.equal((data.tracks as PlainSceneMap).wave?.propertyId, 'deformation.bend.wavePhase')
+  assert.equal(validateScene(bytes).ok, true)
+})

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { cornerShapePath, needsCornerShapePath, resolveCornerAppearance } from '@/render/cornerShape'
 
+import { paintBorderBeam } from './beam/paintBorderBeam'
+import { beamRasterScale } from './beam/raster'
+import { beamPadding } from '@/scene/borderBeam'
 /**
  * Pixi-backed offscreen renderer for the export pipeline.
  *
@@ -96,6 +100,8 @@ interface VectorRasterEntry {
  * from a 1920×1080 comp without distortion.
  */
 export interface RenderFrameInput {
+  /** Composition-local seconds for procedural effects. */
+  time?: number
   /** Scene API — used to read the tree from the root down. */
   api: SceneAPI
   /** Computed rects per node. Output of solveLayout. */
@@ -535,7 +541,7 @@ export class PixiExportRenderer {
     // attach to the container's filter chain so they apply to the
     // shape and any later children of this container.
     if (rect) {
-      this.applyEffects(node, rect, container, animated)
+      this.applyEffects(node, rect, container, animated, input.time ?? 0)
     }
 
     // Recurse into children. Children's rects are already in scene
@@ -984,12 +990,10 @@ export class PixiExportRenderer {
     node: { appearance: Appearance } & Node,
     animated: AnimatedValue,
   ): void {
-    const radius = animated.cornerRadius ?? node.appearance.cornerRadius ?? 0
-    const radii = node.appearance.cornerRadii
-    if (radii) {
-      // Per-corner radii — Pixi v8 doesn't have a built-in roundRect
-      // with 4 different corners, so we draw the path manually.
-      this.drawRoundedRectPath(g, x, y, w, h, radii)
+    const { cornerRadius: radius, cornerRadii: radii, cornerSmoothing } = resolveCornerAppearance(node.appearance, animated, w, h)
+    if (needsCornerShapePath(cornerSmoothing, radii)) {
+      const path = new GraphicsPath(cornerShapePath({ width: w, height: h, cornerRadius: radius, cornerRadii: radii, cornerSmoothing }), true)
+      g.save().translateTransform(x, y).path(path).restore()
     } else if (radius > 0) {
       g.roundRect(x, y, w, h, Math.min(radius, Math.min(w, h) / 2))
     } else {
@@ -1066,6 +1070,7 @@ export class PixiExportRenderer {
     rect: Rect,
     container: Container,
     animated: AnimatedValue,
+    time: number,
   ): void {
     const effects = resolveAnimatedLayerEffects(
       node.appearance.effects,
@@ -1079,7 +1084,26 @@ export class PixiExportRenderer {
       // Hidden effects render as if they weren't there. Default-true
       // for legacy rows that lack the explicit `visible` flag.
       if (e.visible === false) continue
-      if (e.kind === 'shadow') {
+      if (e.kind === 'border-beam') {
+        const padding = beamPadding(e, rect.width, rect.height)
+        const scale = beamRasterScale(rect.width + padding * 2, rect.height + padding * 2)
+        const raster = this.vectorRaster(`beam:${node.id}:${i}`, Math.ceil((rect.width + padding * 2) * scale), Math.ceil((rect.height + padding * 2) * scale))
+        const ctx = raster.context
+        ctx.clearRect(0, 0, raster.width, raster.height)
+        ctx.save(); ctx.scale(scale, scale); ctx.translate(padding, padding)
+        const fill = node.appearance.fill
+        const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, animated, rect.width, rect.height)
+        paintBorderBeam(ctx, e, { width: rect.width, height: rect.height,
+          radius: cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius,
+          cornerSmoothing, ellipse: node.kind === 'ellipse',
+          fill: fill?.kind === 'solid' ? fill.color : undefined,
+        }, time + (node.proceduralTimeOffset ?? 0))
+        ctx.restore(); raster.texture.source.update()
+        const sprite = new Sprite(raster.texture)
+        sprite.position.set(-padding, -padding)
+        sprite.scale.set(1 / scale)
+        container.addChild(sprite)
+      } else if (e.kind === 'shadow') {
         this.appendDropShadow(e, node, rect, container, animated)
       } else if (e.kind === 'blur') {
         // Pixi v8 BlurFilter strength is roughly 1px ≈ 1 unit but
@@ -1172,25 +1196,16 @@ export class PixiExportRenderer {
       )
       if (!path) return
       g.path(new GraphicsPath(path, true))
-    } else if (
-      (node.kind === 'frame' || node.kind === 'rect') &&
-      (node.appearance.cornerRadius > 0 || node.appearance.cornerRadii)
-    ) {
-      const radii = node.appearance.cornerRadii
-      if (radii) {
-        this.drawRoundedRectPath(g, x, y, w, h, {
-          tl: radii.tl + spread,
-          tr: radii.tr + spread,
-          br: radii.br + spread,
-          bl: radii.bl + spread,
-        })
-      } else {
-        const r = Math.min(
-          node.appearance.cornerRadius + spread,
-          Math.min(w, h) / 2,
-        )
-        g.roundRect(x, y, w, h, r)
-      }
+    } else if (node.kind === 'frame' || node.kind === 'rect') {
+      const corners = resolveCornerAppearance(node.appearance, animated, rect.width, rect.height)
+      const radii = corners.cornerRadii
+      const path = new GraphicsPath(cornerShapePath({
+        width: w, height: h,
+        cornerRadius: Math.max(0, corners.cornerRadius + spread),
+        cornerRadii: radii ? { tl: radii.tl + spread, tr: radii.tr + spread, br: radii.br + spread, bl: radii.bl + spread } : undefined,
+        cornerSmoothing: corners.cornerSmoothing,
+      }), true)
+      g.save().translateTransform(x, y).path(path).restore()
     } else {
       // Frames without corner radii, plus text/image/etc., get a
       // plain rect shadow approximation. For text/image this misses
@@ -1207,36 +1222,6 @@ export class PixiExportRenderer {
     // Index 0 keeps the shadow behind the shape regardless of how many
     // shapes/text/sprites have already been added to this container.
     container.addChildAt(g, 0)
-  }
-
-  /**
-   * Draw a rounded-rect path with per-corner radii. Pixi v8 doesn't
-   * expose this directly (its `roundRect` takes a single radius), so
-   * we walk the path manually using arc segments.
-   */
-  private drawRoundedRectPath(
-    g: Graphics,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    radii: { tl: number; tr: number; br: number; bl: number },
-  ): void {
-    const maxR = Math.min(w, h) / 2
-    const tl = Math.min(radii.tl, maxR)
-    const tr = Math.min(radii.tr, maxR)
-    const br = Math.min(radii.br, maxR)
-    const bl = Math.min(radii.bl, maxR)
-    g.moveTo(x + tl, y)
-    g.lineTo(x + w - tr, y)
-    if (tr > 0) g.arcTo(x + w, y, x + w, y + tr, tr)
-    g.lineTo(x + w, y + h - br)
-    if (br > 0) g.arcTo(x + w, y + h, x + w - br, y + h, br)
-    g.lineTo(x + bl, y + h)
-    if (bl > 0) g.arcTo(x, y + h, x, y + h - bl, bl)
-    g.lineTo(x, y + tl)
-    if (tl > 0) g.arcTo(x, y, x + tl, y, tl)
-    g.closePath()
   }
 }
 

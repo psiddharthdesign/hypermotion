@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { useMemo, useSyncExternalStore } from 'react'
 import { subscribePlaybackReadout } from './playbackReadoutSubscription'
 import type {
@@ -49,9 +50,13 @@ export interface AnimatedValue {
   anchorZ?: number
   opacity?: number
   cornerRadius?: number
+  cornerSmoothing?: number
+  cornerSmoothingEnabled?: number
+  fullRadius?: number
   fill?: string
   blendMode?: BlendMode
   /** Per-effect blur overrides keyed by the effect row's stable id. */
+  effectBeamRange?: Record<string, { start: number; end: number }>
   effectBlur?: Record<string, number>
   arcStart?: number
   arcSweep?: number
@@ -64,11 +69,21 @@ export interface AnimatedValue {
   layoutPaddingRight?: number
   layoutPaddingBottom?: number
   layoutPaddingLeft?: number
+  shimmerStartTime?: number
+  shimmerEndTime?: number
+  shimmerDuration?: number
+  shimmerWidth?: number
   textProgress?: number
   /** Uneased position between the active text animation's authored keys. */
   textTimelineProgress?: number
   textAnimation?: TextAnimationConfig
   motionPathProgress?: number
+  bendWaveAmplitude?: number
+  bendWaveFrequency?: number
+  bendWavePhase?: number
+  bendWaveStart?: number
+  bendWaveEnd?: number
+  bendWaveFalloff?: number
   bendAngle?: number
   bendFactor?: number
   bendCaptureDirectionX?: number
@@ -363,6 +378,7 @@ export function hasNodeDrivenTextAnimation(
 ): boolean {
   for (const nodeId of nodeIds) {
     const node = api.getNode(nodeId)
+    if (hasAnimatedBeam(node?.appearance.effects)) return true
     if (node?.kind !== 'text') continue
     if (node.textShimmer || node.textAnimation?.id === 'shimmer') return true
     if (!node.textAnimation) continue

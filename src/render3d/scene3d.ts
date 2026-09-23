@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { maskOutline, siblingMask } from '@/render/maskShape'
+import { clipContainsPoint } from './planeClipping'
+import { hasAnimatedBeam } from '@/scene/borderBeam'
 import type { AnimatedValue } from '@/anim'
 import { evaluateLayerMotionPath } from '@/anim/layerMotionPath'
 import type { Rect, SolvedLayout } from '@/layout'
@@ -36,11 +39,6 @@ import {
   nodeEffectsWrapSubtree,
   resolveAnimatedLayerEffects,
 } from '@/render/layerEffects'
-import {
-  layerBendIsActive,
-  resolvedLayerBend,
-  type ParentBendField,
-} from '@/render3d/layerBendMesh'
 
 export interface ViewportSize {
   width: number
@@ -139,12 +137,15 @@ export interface Plane3D {
     rect: Rect
   }>
   extractedFromParent?: boolean
+  /** Masks applied after the combined subtree bitmap, directly by the GPU. */
+  textureMaskIds?: NodeId[]
   clips?: PlaneClip3D[]
-  bend?: import('@/scene/types').LayerBend
-  parentBendFields?: ParentBendField[]
 }
 
 export interface PlaneClip3D {
+  mask?: { node: Node; anim?: AnimatedValue }
+  /** World-space convex mask boundary; absent for ordinary frame clips. */
+  outline?: Vec3[]
   rect: Rect
   center: Vec3
   right: Vec3
@@ -154,6 +155,8 @@ export interface PlaneClip3D {
 }
 
 interface PlaneBuildOptions {
+  /** Editor selection geometry only; mask shapes never enter render output. */
+  includeMaskGuides?: boolean
   /**
    * Root children become planes even when their renderMode is still flat.
    * This is the bridge that lets normal auto-layout designs appear as
@@ -226,7 +229,6 @@ const IDENTITY_INHERITED = {
   scaleX: 1,
   scaleY: 1,
   opacity: 1,
-  bendFields: [] as ParentBendField[],
 }
 
 interface Inherited3D {
@@ -241,7 +243,6 @@ interface Inherited3D {
   scaleX: number
   scaleY: number
   opacity: number
-  bendFields: ParentBendField[]
 }
 
 interface BendSource3D {
@@ -823,7 +824,7 @@ export function buildWorldPlanes(
     const scan = (id: NodeId, parentMatrix: Matrix2D) => {
       const child = getNode(id)
       const childRect = layout[id]
-      if (!child || !childRect || !child.visible || child.kind === 'camera') {
+      if (!child || !childRect || !child.visible || child.kind === 'camera' || child.isMask) {
         return
       }
       // A separately emitted plane owns its complete raster subtree. Including
@@ -880,8 +881,8 @@ export function buildWorldPlanes(
   }
 
   const clipFromFrame = (rect: Rect, inherited: Inherited3D): PlaneClip3D => {
-    const basisXLength = Math.max(0.0001, len3(inherited.basisX))
-    const basisYLength = Math.max(0.0001, len3(inherited.basisY))
+    const basisXLength = len3(inherited.basisX)
+    const basisYLength = len3(inherited.basisY)
     return {
       rect,
       center: mapPoint(inherited, {
@@ -896,26 +897,8 @@ export function buildWorldPlanes(
     }
   }
 
-  const visit = (
-    id: NodeId,
-    inherited: Inherited3D,
-    activeClips: PlaneClip3D[] = [],
-    insideAlwaysOnTopSubtree = false,
-    inheritedBendSources: readonly BendSource3D[] = [],
-  ): void => {
-    if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
-    const node = getNode(id)
-    const rect = layout[id]
-    if (!node || !rect || node.kind === 'camera') return
-    // Visibility is hierarchical. The WebGL compositor emits some descendants
-    // as independent planes (group3d children, videos, and explicit planes),
-    // so checking only each emitted plane's own `visible` flag lets those
-    // descendants survive when their parent is hidden. Stop the walk at the
-    // first hidden node: this matches the DOM renderer and also removes hidden
-    // descendants from rendering, outlines, and hit testing in one place.
-    if (!node.visible) return
-    const alwaysOnTop =
-      insideAlwaysOnTopSubtree || isAlwaysOnTopNode(node)
+  const nodeTransform = (node: Node, rect: Rect, inherited: Inherited3D): Inherited3D => {
+    const id = node.id
     const a = animated[id]
     const isRoot = id === rootId
     const x = a?.x ?? node.transform.x
@@ -927,14 +910,6 @@ export function buildWorldPlanes(
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
     const opacity = a?.opacity ?? node.appearance.opacity ?? 1
-    // The animation engine marks every composed layer path with its resolved
-    // progress. Without that marker x/y/z are still the un-offset authored
-    // transform (for example in structural tests), so there is nothing to
-    // subtract from the path origin.
-    const motionPathOffset =
-      node.motionPath && a?.motionPathProgress !== undefined
-        ? evaluateLayerMotionPath(node.motionPath, a.motionPathProgress)
-        : { x: 0, y: 0, z: 0 }
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -951,7 +926,7 @@ export function buildWorldPlanes(
     const localBasisX = rotateEuler({ x: isRoot ? 1 : scaleX, y: 0, z: 0 }, rotationX, rotationY, rotation)
     const localBasisY = rotateEuler({ x: 0, y: isRoot ? 1 : scaleY, z: 0 }, rotationX, rotationY, rotation)
     const localBasisZ = rotateEuler({ x: 0, y: 0, z: 1 }, rotationX, rotationY, rotation)
-    const nextInherited: Inherited3D = {
+    return {
       origin: add3(mapPoint(inherited, anchorPoint), translation),
       anchor: anchorPoint,
       basisX: mapLocalVector(inherited, localBasisX),
@@ -963,7 +938,48 @@ export function buildWorldPlanes(
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
-      bendFields: inherited.bendFields,
+    }
+  }
+
+  const visit = (
+    id: NodeId,
+    inherited: Inherited3D,
+    activeClips: PlaneClip3D[] = [],
+    insideAlwaysOnTopSubtree = false,
+    inheritedBendSources: readonly BendSource3D[] = [],
+  ): void => {
+    if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
+    const node = getNode(id)
+    const rect = layout[id]
+    if (!node || !rect || node.kind === 'camera' || (node.isMask && !options.includeMaskGuides)) return
+    // Visibility is hierarchical. The WebGL compositor emits some descendants
+    // as independent planes (group3d children, videos, and explicit planes),
+    // so checking only each emitted plane's own `visible` flag lets those
+    // descendants survive when their parent is hidden. Stop the walk at the
+    // first hidden node: this matches the DOM renderer and also removes hidden
+    // descendants from rendering, outlines, and hit testing in one place.
+    if (!node.visible) return
+    const alwaysOnTop =
+      insideAlwaysOnTopSubtree || isAlwaysOnTopNode(node)
+    const a = animated[id]
+    const isRoot = id === rootId
+    // The animation engine marks every composed layer path with its resolved
+    // progress. Without that marker x/y/z are still the un-offset authored
+    // transform (for example in structural tests), so there is nothing to
+    // subtract from the path origin.
+    const motionPathOffset = node.motionPath && a?.motionPathProgress !== undefined
+      ? evaluateLayerMotionPath(node.motionPath, a.motionPathProgress) : { x: 0, y: 0, z: 0 }
+    const anchor = { x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width, y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height, z: a?.anchorZ ?? node.transform.anchorZ ?? 0 }
+    const nextInherited = nodeTransform(node, rect, inherited)
+    const mask = siblingMask(node, getNode)
+    const maskRect = mask ? layout[mask.id] : undefined
+    if (mask && maskRect) {
+      const maskTransform = nodeTransform(mask, maskRect, inherited)
+      const clip = clipFromFrame(maskRect, maskTransform)
+      clip.mask = { node: mask, anim: animated[mask.id] }
+      clip.outline = maskOutline(mask, maskRect, animated[mask.id]).map((point) =>
+        mapPoint(maskTransform, { x: maskRect.x + point.x, y: maskRect.y + point.y, z: 0 }))
+      activeClips = [...activeClips, clip]
     }
 
     const parent = node.parent ? getNode(node.parent) : null
@@ -982,6 +998,7 @@ export function buildWorldPlanes(
     // The canvas painter still evaluates the live text effect every frame.
     const segmentText =
       segmentTextNodeIds.has(id) &&
+      !hasAnimatedBeam(node.appearance.effects) &&
       !deformedNode &&
       inheritedBendSources.length === 0
     const videoStackSibling = !!parent && hasDirectVideoChild(parent)
@@ -1033,6 +1050,34 @@ export function buildWorldPlanes(
           renderMode === 'group3d')
           ? 'self'
           : 'subtree'
+      // A plain mask group paints all its content together, then applies one
+      // alpha mask. Keep that last step on the GPU so moving the mask only
+      // updates its sampling matrix, never rerasterizing the content/blur.
+      // Effects, Bend, and extracted planes retain their compositing order.
+      const children = node.children.map(getNode).filter((child): child is Node => !!child)
+      const groupMask = children.find(child => child.isMask && child.visible)
+      const contentChildren = children.filter(child => !child.isMask && child.visible)
+      const textureMaskIds: NodeId[] = []
+      let planeClips = activeClips
+      if (
+        contentMode === 'subtree' && !independentNodes &&
+        node.kind === 'frame' && !node.clipsContent &&
+        !node.appearance.fill && !node.appearance.stroke &&
+        !node.appearance.effects.some(effect => effect.visible !== false) &&
+        bendSources.length === 0 && !containsExplicit3DDescendant &&
+        !hasVideoDescendant(id) && groupMask && layout[groupMask.id] &&
+        contentChildren.length > 0 &&
+        contentChildren.every(child => siblingMask(child, getNode)?.id === groupMask.id)
+      ) {
+        const maskRect = layout[groupMask.id]!
+        const maskTransform = nodeTransform(groupMask, maskRect, nextInherited)
+        const clip = clipFromFrame(maskRect, maskTransform)
+        clip.mask = { node: groupMask, anim: animated[groupMask.id] }
+        clip.outline = maskOutline(groupMask, maskRect, animated[groupMask.id]).map(point =>
+          mapPoint(maskTransform, { x: maskRect.x + point.x, y: maskRect.y + point.y, z: 0 }))
+        planeClips = [...activeClips, clip]
+        textureMaskIds.push(groupMask.id)
+      }
       const center = mapPoint(nextInherited, {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
@@ -1086,51 +1131,9 @@ export function buildWorldPlanes(
           segmentStackSibling ||
           videoStackSibling ||
           node.kind === 'video',
-        clips: activeClips.length ? [...activeClips] : undefined,
-        bend: resolvedLayerBend(node, a),
-        parentBendFields: inherited.bendFields.length
-          ? [...inherited.bendFields]
-          : undefined,
+        textureMaskIds: textureMaskIds.length ? textureMaskIds : undefined,
+        clips: planeClips.length ? [...planeClips] : undefined,
       })
-      const ownBend = resolvedLayerBend(node, a)
-      if (layerBendIsActive(ownBend)) {
-        nextInherited.bendFields = [
-          ...inherited.bendFields,
-          {
-            center,
-            right,
-            down,
-            normal,
-            width: rect.width * Math.abs(nextInherited.scaleX),
-            height: rect.height * Math.abs(nextInherited.scaleY),
-            bend: ownBend,
-          },
-        ]
-      }
-    } else {
-      const ownBend = resolvedLayerBend(node, a)
-      if (layerBendIsActive(ownBend)) {
-        const right = norm3(nextInherited.basisX)
-        const down = norm3(nextInherited.basisY)
-        const normal = norm3(nextInherited.basisZ)
-        const center = mapPoint(nextInherited, {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-          z: 0,
-        })
-        nextInherited.bendFields = [
-          ...inherited.bendFields,
-          {
-            center,
-            right,
-            down,
-            normal,
-            width: rect.width * Math.abs(nextInherited.scaleX),
-            height: rect.height * Math.abs(nextInherited.scaleY),
-            bend: ownBend,
-          },
-        ]
-      }
     }
 
     const nextClips =
@@ -1157,7 +1160,7 @@ export function buildWorldPlanes(
   const emittedPlaneNodeIds = new Set(planes.map((plane) => plane.nodeId))
   for (const plane of planes) {
     const effects = resolveAnimatedLayerEffects(
-      plane.node.appearance.effects,
+      plane.node.kind === 'video' ? plane.node.appearance.effects.filter(e => e.kind !== 'border-beam') : plane.node.appearance.effects,
       animated[plane.nodeId]?.effectBlur,
     )
     let textureRect =
@@ -1266,6 +1269,7 @@ export function hitTestPlanes(
     const t = dot3(sub3(plane.center, ray.origin), plane.normal) / denom
     if (t <= 0) continue
     const point = add3(ray.origin, mul3(ray.direction, t))
+    if (plane.clips?.some((clip) => !clipContainsPoint(clip, point))) continue
     const rel = sub3(point, plane.center)
     const localX = dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX)) + plane.rect.width / 2
     const localY = dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY)) + plane.rect.height / 2

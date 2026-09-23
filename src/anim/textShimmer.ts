@@ -6,15 +6,31 @@ import { evaluator } from './easing'
 import { findEasingPreset } from './easingPresets'
 
 /** Scene-time driven paint shared by the editor and export renderer. */
-export function textShimmerFill(config: TextAnimationConfig, time: number, baseColor = '#111111'): Fill {
-  const elapsed = time - config.startTime
-  const duration = Math.max(0.05, config.duration)
-  const progress = elapsed <= 0 ? 0 : config.shimmerLoop === false
+export interface AnimatedShimmerValues {
+  shimmerStartTime?: number
+  shimmerEndTime?: number
+  shimmerDuration?: number
+  shimmerWidth?: number
+}
+
+export function textShimmerFill(config: TextAnimationConfig, time: number, baseColor = '#111111', animated?: AnimatedShimmerValues): Fill {
+  const start = animated?.shimmerStartTime ?? config.startTime
+  if (animated?.shimmerEndTime !== undefined && (time < start || time >= animated.shimmerEndTime)) {
+    return { kind: 'solid', color: baseColor }
+  }
+  const elapsed = time - start
+  // A timeline range is one complete sweep. Legacy files without endpoints
+  // retain their original duration/loop settings until timing is authored.
+  const hasRange = animated?.shimmerEndTime !== undefined
+  const duration = hasRange
+    ? Math.max(1e-6, animated.shimmerEndTime! - start)
+    : Math.max(0.05, animated?.shimmerDuration ?? config.duration)
+  const progress = elapsed <= 0 ? 0 : hasRange || config.shimmerLoop === false
     ? Math.min(1, elapsed / duration)
     : (elapsed % duration) / duration
   const easing = config.easingPresetId === 'custom' && config.customEasing
     ? config.customEasing : findEasingPreset(config.easingPresetId).build(config.easingStrength)
-  const width = config.shimmerWidth ?? 0.25
+  const width = Math.max(0.02, Math.min(1, animated?.shimmerWidth ?? config.shimmerWidth ?? 0.25))
   const center = -width + evaluator(easing)(progress) * (1 + width * 2)
   const base = rgba(baseColor)
   const light = rgba(config.shimmerColor ?? '#ffffff')

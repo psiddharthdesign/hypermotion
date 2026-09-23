@@ -52,8 +52,20 @@ export function resolveBendDeformation(
     0,
     animated?.bendCaptureLength ?? normalized.captureLength,
   )
+  const captureRotation = animated?.bendCaptureRotation ?? normalized.captureRotation
+  const waveFrequency = clamp(animated?.bendWaveFrequency ?? normalized.waveFrequency, 0, 32)
+  const waveSpan = Math.max(.01, (animated?.bendWaveEnd ?? normalized.waveEnd) - (animated?.bendWaveStart ?? normalized.waveStart))
   return {
     ...normalized,
+    geometryDetail: normalized.mode === 'wave'
+      ? Math.max(normalized.geometryDetail, Math.min(512, Math.ceil(waveFrequency * 32 / waveSpan)))
+      : normalized.geometryDetail,
+    waveFalloff: clamp(animated?.bendWaveFalloff ?? normalized.waveFalloff, 0, .5),
+    waveEnd: clamp(animated?.bendWaveEnd ?? normalized.waveEnd, 0, 1),
+    waveStart: clamp(animated?.bendWaveStart ?? normalized.waveStart, 0, 1),
+    wavePhase: animated?.bendWavePhase ?? normalized.wavePhase,
+    waveFrequency: clamp(animated?.bendWaveFrequency ?? normalized.waveFrequency, 0, 32),
+    waveAmplitude: animated?.bendWaveAmplitude ?? normalized.waveAmplitude,
     angle: animated?.bendAngle ?? normalized.angle,
     factor: clamp(animated?.bendFactor ?? normalized.factor, 0, 1),
     captureDirection,
@@ -84,7 +96,7 @@ export function resolveBendDeformation(
       1,
       captureLength > 0
         ? captureLength
-        : automaticCaptureLength(captureDirection, layerWidth, layerHeight),
+        : automaticCaptureLength(rotateAroundAxis(captureDirection, { x: 0, y: 0, z: 1 }, degreesToRadians(captureRotation)), layerWidth, layerHeight),
     ),
   }
 }
@@ -159,7 +171,7 @@ export function bendPoint(
   deformation: ResolvedBendDeformation | BendDeformation,
   automaticLength = 1,
 ): DeformationVector3 {
-  if (!deformation.enabled || Math.abs(deformation.angle) < 0.0001) {
+  if (!deformation.enabled || (deformation.mode !== 'wave' && Math.abs(deformation.angle) < 0.0001)) {
     return { ...point }
   }
   const factor = clamp(deformation.factor, 0, 1)
@@ -175,6 +187,17 @@ export function bendPoint(
   const basis = bendBasis(deformation)
   const relative = subtract(point, deformation.captureOrigin)
   const s = dot(relative, basis.capture)
+  if (deformation.mode === 'wave') {
+    const position = s / length + .5
+    const span = deformation.waveEnd - deformation.waveStart
+    if (span <= 0 || position < deformation.waveStart || position >= deformation.waveEnd) return { ...point }
+    const t = (position - deformation.waveStart) / span
+    const smooth = (v: number) => { const x = clamp(v, 0, 1); return x * x * (3 - 2 * x) }
+    const fade = deformation.waveFalloff
+    const envelope = fade > 0 ? smooth(t / fade) * smooth((1 - t) / fade) : 1
+    const displacement = deformation.waveAmplitude * Math.sin(2 * Math.PI * deformation.waveFrequency * t + degreesToRadians(deformation.wavePhase)) * envelope * factor
+    return add(point, scale(basis.up, displacement))
+  }
   const h = dot(relative, basis.up)
   const across = dot(relative, basis.across)
   const start = deformation.bothDirections ? -length / 2 : 0
@@ -226,7 +249,7 @@ export function bendBasis(deformation: BendDeformation): {
   let up = rotateAroundAxis(
     deformation.upDirection,
     zAxis,
-    degreesToRadians(deformation.upRotation),
+    degreesToRadians(deformation.upRotation + (deformation.mode === 'wave' ? deformation.captureRotation : 0)),
   )
   up = subtract(up, scale(capture, dot(up, capture)))
   if (lengthSquared(up) < 1e-8) {

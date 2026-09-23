@@ -26,6 +26,8 @@ export {
   PROPERTIES,
   LAYOUT_AFFECTING_PROPERTIES,
   effectBlurPropertyId,
+  effectIdFromBeamRangePropertyId,
+  effectBeamRangePropertyId,
   effectIdFromBlurPropertyId,
   propertyDescriptor,
 } from './props'

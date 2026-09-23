@@ -186,3 +186,23 @@ describe('WebGL paintable-layer effect bounds', () => {
   })
 
 })
+
+
+describe('Beam plane integration', () => {
+  it('rasterizes animated text with its beam but keeps native video dimensions', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null, { size: { width: 960, height: 540 } })
+    const appearance = { opacity: 1, fill: null, stroke: null, cornerRadius: 16, effects: [{ kind: 'border-beam' as const, size: 'pulse-outside' as const }] }
+    const text = api.createNode('text', root, { appearance, text: 'Beam', textAnimation: { ...DEFAULT_TEXT_ANIMATION, id: 'fade', applyTo: 'letters' } })
+    const video = api.createNode('video', root, { appearance, src: 'test.mp4', duration: 5 })
+    const layout: SolvedLayout = { [root]: { x:0,y:0,width:960,height:540 }, [text]: { x:100,y:100,width:200,height:50 }, [video]: { x:400,y:100,width:200,height:100 } }
+    const camera = resolveCamera3D(api.getActiveCamera()!, undefined, { width:960,height:540 })
+    const planes = buildWorldPlanes(api, layout, {}, camera, { independentNodes:true })
+    const textPlane = planes.find(p=>p.nodeId===text)!
+    expect(textPlane.renderKind).toBe('canvas')
+    expect(textPlane.textureRect).toEqual({ x:20,y:20,width:360,height:210 })
+    const videoPlane = planes.find(p=>p.nodeId===video)!
+    expect(videoPlane.textureRect ?? videoPlane.rect).toEqual(layout[video])
+    api.doc.destroy()
+  })
+})

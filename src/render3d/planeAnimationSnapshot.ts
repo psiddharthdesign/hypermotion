@@ -26,6 +26,8 @@ const WORLD_PLANE_ANIMATION_PROPERTIES = [
   'effectBlur',
 ] as const satisfies readonly (keyof AnimatedValue)[]
 
+const MASK_SHAPE_PROPERTIES = ['fill', 'cornerRadius', 'cornerSmoothing', 'cornerSmoothingEnabled', 'fullRadius'] as const satisfies readonly (keyof AnimatedValue)[]
+
 const EMPTY_WORLD_PLANE_ANIMATION = Object.freeze({}) as Record<
   NodeId,
   AnimatedValue
@@ -37,7 +39,7 @@ function sameWorldPlaneAnimation(
 ): boolean {
   if (left === right) return true
   if (!left || !right) return false
-  return WORLD_PLANE_ANIMATION_PROPERTIES.every((property) =>
+  return [...WORLD_PLANE_ANIMATION_PROPERTIES, ...MASK_SHAPE_PROPERTIES].every((property) =>
     Object.is(left[property], right[property]),
   )
 }
@@ -53,19 +55,25 @@ function sameWorldPlaneAnimation(
  * graph for every letter-animation frame.
  */
 export function createWorldPlaneAnimationSelector() {
+  let previousNodes: ReadonlyMap<NodeId, { isMask: boolean }> | undefined
   let previousSource: Record<NodeId, AnimatedValue> | null = null
   let previousSelection = EMPTY_WORLD_PLANE_ANIMATION
 
   return (
     source: Record<NodeId, AnimatedValue>,
+    nodes?: ReadonlyMap<NodeId, { isMask: boolean }>,
   ): Record<NodeId, AnimatedValue> => {
-    if (source === previousSource) return previousSelection
+    if (source === previousSource && nodes === previousNodes) return previousSelection
+    previousNodes = nodes
     previousSource = source
 
     const next: Record<NodeId, AnimatedValue> = {}
     for (const [nodeId, value] of Object.entries(source)) {
       let projected: AnimatedValue | undefined
-      for (const property of WORLD_PLANE_ANIMATION_PROPERTIES) {
+      const properties = nodes?.get(nodeId)?.isMask
+        ? [...WORLD_PLANE_ANIMATION_PROPERTIES, ...MASK_SHAPE_PROPERTIES]
+        : WORLD_PLANE_ANIMATION_PROPERTIES
+      for (const property of properties) {
         const propertyValue = value[property]
         if (propertyValue === undefined) continue
         projected ??= {}
