@@ -53,4 +53,3 @@ export function pulseOscillatorDefs(id: string, p: ReturnType<typeof pulseParams
     { prop: `--bop-br-${id}`, a: 1 - op, b: 1, period: bs * 1.58, delay: bs * 0.83, unit: '' },
   ];
 }
-

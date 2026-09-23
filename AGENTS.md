@@ -456,6 +456,13 @@ and child bend modifiers compose. The later `layerBend` corner/edge deformation
 is retired and no longer rendered. Do not author `layerBend` or `bend.*` tracks.
 Existing legacy values remain readable so opening a scene does not delete data.
 
+Set `deformation.mode: 'wave'` for a directional sine wave. Animate
+`waveAmplitude` (pixels), `waveFrequency` (cycles), `wavePhase` (degrees),
+`waveStart` / `waveEnd` (0–1 across the layer), and `waveFalloff` (0–0.5).
+These use `deformation.bend.<field>` property ids. Capture rotation controls
+wave direction; the up axis chooses canvas displacement or 3D depth. Omitted
+mode preserves the original arc bend. Radial ripples are not supported.
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local

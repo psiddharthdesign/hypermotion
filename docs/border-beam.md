@@ -20,8 +20,8 @@ in `src/render/beam/LICENSE` and the shipped `NOTICE`.
 - **Active / visibility:** disable the effect while retaining its settings.
 - **Strength:** a nonnegative intensity multiplier. 1 is the preset, values
   below 1 fade it down, and values above 1 increase color coverage in the edge
-  and glow. **Duration:** at least 0.01 seconds per cycle. Defaults are 1.96s
-  for Border/Compact, 3.1s for Bottom line, and 2.3s for pulses.
+  and glow. **Speed:** scales movement independently of the active range;
+  0 freezes movement, 1 uses normal speed, and higher values move faster.
 - **Edge width:** a nonnegative multiplier; 0 hides the crisp edge. The crisp edge and soft glow automatically scale to
   the layer dimensions, so large frames remain readable at reduced zoom. The
   glow works on light, dark, and colored fills without changing the layer fill.
@@ -46,8 +46,10 @@ density to fit the texture budget while preserving their authored size.
 Animation follows composition time, including scrubbing, repeated scenes,
 scene splitting, and frame-by-frame exports. Beam settings persist in `.hype`
 files, support undo/redo, and can be authored through CLI/MCP `appearance.effects`.
-Numeric Beam controls are static settings; use the start/end/fade controls for
-entry and exit, and layer transform/opacity tracks for additional animation.
+Use the Start and End keyframe buttons to place the two Beam timing markers
+at the playhead, then drag those markers on the timeline. The interval controls
+the active range and base cycle duration. Speed adjusts movement independently;
+other numeric Beam controls remain static settings.
 
 ```json
 {
@@ -63,7 +65,7 @@ entry and exit, and layer transform/opacity tracks for additional animation.
       "colorVariant": "ocean",
       "theme": "auto",
       "strength": 1,
-      "duration": 2.3,
+      "speed": 1,
       "glowSize": 1,
       "staticColors": false,
       "startTime": 0,

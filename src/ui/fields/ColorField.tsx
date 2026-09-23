@@ -146,10 +146,12 @@ function ColorPopover({
   const [lch, setLch] = useState<Lch>(() => parsePickerColor(value) ?? { l: 0.7, c: 0.2, h: 300 })
   const popRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
+  const [previousValue, setPreviousValue] = useState(value)
+  if (value !== previousValue) {
+    setPreviousValue(value)
     const next = parsePickerColor(value)
     if (next) setLch(next)
-  }, [value])
+  }
 
   // Close on outside click or Escape.
   useEffect(() => {
