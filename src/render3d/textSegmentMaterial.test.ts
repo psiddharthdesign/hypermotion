@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
+import { installDepthOfFieldShader } from './depthOfFieldShader'
 import {
   installTextSegmentMaterialShader,
   updateTextSegmentMaterialShader,
@@ -150,7 +151,10 @@ describe('batched text-segment material shader', () => {
 
     expect(material.onBeforeCompile).toBe(compileOnce)
     expect(material.version).toBe(versionOnce)
-    expect(cacheKey).toContain('hypermotion-gpu-dof-bend-stack-alpha-v16')
+    const baseMaterial = new THREE.MeshBasicMaterial()
+    installDepthOfFieldShader(baseMaterial)
+    expect(cacheKey).toContain(baseMaterial.customProgramCacheKey())
+    expect(cacheKey).not.toBe(baseMaterial.customProgramCacheKey())
     expect(cacheKey).toContain('hypermotion-text-segment-v3')
   })
 

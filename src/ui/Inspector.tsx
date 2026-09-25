@@ -108,6 +108,7 @@ import {
   readMediaFileAsDataUrl,
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
+import { nearestLayerFocus } from '@/ui/cameraFocus'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
 import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
@@ -5421,6 +5422,41 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     width="w-full"
                   />
                 </FieldRow>
+
+                <p className="text-[11px] leading-relaxed text-text-muted">
+                  {node.focusMode === 'plane'
+                    ? 'Layers at the focus distance are sharp. Layers nearer or farther away blur with depth.'
+                    : node.focusMode === 'target'
+                      ? 'Focus follows the target layer’s depth as it moves.'
+                      : 'Point keeps a screen area sharp. Use Distance or Object to focus by 3D depth.'}
+                </p>
+                <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
+                  title="Set the focus distance to the nearest layer in view at the current playhead"
+                  onClick={() => {
+                    const layout = getLastSolvedLayout()
+                    if (!layout) return
+                    const nearest = nearestLayerFocus(api, node, layout, getAnimEngine().getSnapshot())
+                    if (nearest) api.doc.transact(() => patchCamera({ focusMode: 'plane', focusDistance: nearest.distance, focusTargetNodeId: null }), UNDOABLE_GESTURE_ORIGIN)
+                  }}>Focus nearest layer</button>
+
+                {node.focusMode === 'plane' ? (
+                  <FieldRow label="Focus point">
+                    <button
+                      type="button"
+                      disabled={node.locked}
+                      title="Click a layer on the canvas to focus at that surface's depth"
+                      onClick={() => setFocusPickingCameraId(focusPickingCameraId === node.id ? null : node.id)}
+                      className={[
+                        'h-7 w-full rounded-md border px-2 text-[11px] transition-colors',
+                        focusPickingCameraId === node.id
+                          ? 'border-accent bg-accent/15 text-accent'
+                          : 'border-border bg-app-bg text-text-muted hover:border-border-strong hover:text-text',
+                      ].join(' ')}
+                    >
+                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Pick focus point'}
+                    </button>
+                  </FieldRow>
+                ) : null}
 
                 {node.focusMode === 'target' ? (
                   <FieldRow label="Target" layout="compound">
