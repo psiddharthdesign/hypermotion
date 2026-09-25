@@ -22,6 +22,7 @@ import { programMediaRate } from '@/state/sequenceMediaClock'
 import { videoVisibleAtTime } from '@/scene/mediaClip'
 import { createVideoTexture, ensureVideoTexture } from './videoTextureResource'
 import { createPlaybackVideo, masterVideoPrewarm } from './videoPrewarm'
+import { depthOfFieldTexturePadding } from './depthOfFieldPadding'
 
 import {
   useEffect,
@@ -1354,7 +1355,23 @@ function syncPlanes(
     camera.depthOfField &&
     apertureStrength > 0 &&
     maximumBlurLevel > 0
-  for (const plane of planes) {
+  for (const sourcePlane of planes) {
+    const padding = sourcePlane.renderKind === 'canvas' && sourcePlane.node.kind !== 'video' && apertureStrength > 0
+      ? depthOfFieldTexturePadding(sourcePlane, camera, maximumBlurLevel)
+      : { x: 0, y: 0 }
+    const sourceRect = sourcePlane.textureRect ?? sourcePlane.rect
+    const plane = padding.x > 0 || padding.y > 0
+      ? {
+          ...sourcePlane,
+          textureRect: {
+            x: sourceRect.x - padding.x,
+            y: sourceRect.y - padding.y,
+            width: sourceRect.width + padding.x * 2,
+            height: sourceRect.height + padding.y * 2,
+          },
+          textureCenter: sourcePlane.textureCenter ?? sourcePlane.center,
+        }
+      : sourcePlane
     active.add(plane.nodeId)
     let record = records.get(plane.nodeId)
     if (record && record.renderKind !== plane.renderKind) {

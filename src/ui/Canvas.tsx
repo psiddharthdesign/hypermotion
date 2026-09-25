@@ -134,6 +134,7 @@ import {
   resolveCamera3D,
   viewportPointToRay,
 } from '@/render3d/scene3d'
+import { pickLayerFocus } from '@/ui/cameraFocus'
 import {
   getAnimEngine,
   recordKeyframesForPatch,
@@ -1750,9 +1751,38 @@ export function Canvas() {
       if (e.button !== 0) return
       if (!focusPickingCameraId) return
       const point = clientToViewport(e.clientX, e.clientY)
-      const canvasPoint = clientToCanvas(e.clientX, e.clientY)
       const focusCamera = api.getNode(focusPickingCameraId)
-      if (!point || !canvasPoint || !focusCamera || focusCamera.kind !== 'camera') {
+      if (!point || !focusCamera || focusCamera.kind !== 'camera') {
+        setFocusPickingCameraId(null)
+        return
+      }
+      if (focusCamera.focusMode === 'plane') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!solved || focusCamera.locked) return
+        const engineAnimated = getAnimEngine().getSnapshot()
+        const preview = cameraPreviewStore.getSnapshot()
+        const focusAnimated = {
+          ...engineAnimated,
+          [focusCamera.id]: mergeCameraAnimationPreview(
+            engineAnimated[focusCamera.id],
+            preview?.cameraId === focusCamera.id ? preview.value : undefined,
+          ) ?? {},
+        }
+        const hit = pickLayerFocus(api, focusCamera, solved, focusAnimated, point)
+        // An empty click leaves the picker armed, without editing the scene.
+        if (!hit) return
+        api.doc.transact(() => {
+          api.setNodeProperty(focusCamera.id, 'focusDistance', hit.distance)
+          api.setNodeProperty(focusCamera.id, 'focusTargetNodeId', null)
+          stampCanvasCameraPatch(focusCamera.id, { focusDistance: hit.distance })
+        }, UNDOABLE_GESTURE_ORIGIN)
+        setSelection([focusCamera.id])
+        setFocusPickingCameraId(null)
+        return
+      }
+      const canvasPoint = clientToCanvas(e.clientX, e.clientY)
+      if (!canvasPoint) {
         setFocusPickingCameraId(null)
         return
       }
@@ -1793,6 +1823,7 @@ export function Canvas() {
       setSelection,
       startCameraNavigation,
       stampCanvasCameraPatch,
+      solved,
       spacePanning,
       view.panX,
       view.panY,
@@ -3844,7 +3875,10 @@ export function Canvas() {
           className="pointer-events-none absolute bottom-20 left-1/2 z-30 -translate-x-1/2 rounded border border-border-strong bg-panel/95 px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-text-muted shadow-lg"
           data-export-hide="1"
         >
-          Click anywhere to set focus
+          {api.getNode(focusPickingCameraId)?.kind === 'camera' &&
+          (api.getNode(focusPickingCameraId) as CameraNode).focusMode === 'plane'
+            ? 'Click a layer to set focus distance'
+            : 'Click anywhere to set focus'}
         </div>
       ) : null}
 
