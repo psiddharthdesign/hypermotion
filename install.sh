@@ -3,7 +3,7 @@
 #
 # Hyper Motion — one-line installer.
 #
-# Pulls the latest unsigned/not-notarized DMG from GitHub Releases,
+# Pulls the latest ad-hoc-signed, unnotarized DMG from GitHub Releases,
 # copies the .app into /Applications, strips macOS download quarantine,
 # re-applies a local ad-hoc signature, and opens the app. End result:
 # the app launches the same way a notarized App Store install would —
@@ -130,7 +130,7 @@ cp -R "$SOURCE_APP" "$TARGET_APP"
 # ---------------------------------------------------------------------------
 
 # `xattr -cr` clears every extended attribute on the bundle. Without
-# this, macOS Gatekeeper would block the unsigned binary with the
+# this, macOS Gatekeeper would block the unnotarized binary with the
 # "Hyper Motion is damaged" dialog.
 xattr -cr "$TARGET_APP"
 
