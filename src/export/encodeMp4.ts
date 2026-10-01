@@ -30,6 +30,8 @@ export interface Mp4EncoderOptions {
   fps: number
   /** Bits per second — defaults to ~0.1 bpp × pixels × fps. */
   bitrate?: number
+  /** Preserve subtle gradient dithering when supported; may increase file size. */
+  preserveGradients?: boolean
   audio?: PcmAudioTrack | null
 }
 
@@ -71,18 +73,53 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
   const accelPrefs: Array<
     'prefer-hardware' | 'prefer-software' | 'no-preference'
   > = ['prefer-hardware', 'no-preference', 'prefer-software']
-  let chosenAccel: (typeof accelPrefs)[number] | null = null
-  for (const accel of accelPrefs) {
-    const probed = await VideoEncoder.isConfigSupported({
-      ...baseConfig,
-      hardwareAcceleration: accel,
-    })
-    if (probed.supported) {
-      chosenAccel = accel
-      break
+  let chosenConfig: VideoEncoderConfig | null = null
+  let gradientQuantizer: number | null = null
+  if (opts.preserveGradients && opts.bitrate === undefined) {
+    // Average-bitrate encoding can erase sub-LSB gradient dithering even at
+    // 50 Mbps. QP 12 preserves it in decoded 4K60 tests, at the cost of a less
+    // predictable file size. VideoToolbox exposes manual QP in realtime mode;
+    // the explicit quantizer controls quality rather than an automatic budget.
+    // A caller's explicit bitrate always takes precedence over this preference.
+    for (const accel of accelPrefs) {
+      const candidate: VideoEncoderConfig = {
+        codec,
+        width,
+        height,
+        framerate: fps,
+        bitrateMode: 'quantizer',
+        latencyMode: 'realtime',
+        hardwareAcceleration: accel,
+      }
+      try {
+        const probed = await VideoEncoder.isConfigSupported(candidate)
+        // Older engines ignore unknown dictionary members while reporting
+        // supported:true. Do not mistake that for manual rate-control support.
+        if (probed.supported && probed.config?.bitrateMode === 'quantizer') {
+          chosenConfig = candidate
+          gradientQuantizer = 12
+          break
+        }
+      } catch {
+        // This is an optional quality path; unsupported enums or platform
+        // probes must still reach the existing bitrate-based fallback below.
+      }
     }
   }
-  if (!chosenAccel) {
+  if (!chosenConfig) {
+    for (const accel of accelPrefs) {
+      const candidate: VideoEncoderConfig = {
+        ...baseConfig,
+        hardwareAcceleration: accel,
+      }
+      const probed = await VideoEncoder.isConfigSupported(candidate)
+      if (probed.supported) {
+        chosenConfig = candidate
+        break
+      }
+    }
+  }
+  if (!chosenConfig) {
     // Tailor the suggestion. H.264 has hard caps that vary by Level
     // (the trailing two hex digits of the codec string). On Chromium
     // for macOS the practical ceiling for MP4 is roughly 4K @ 16:9
@@ -131,10 +168,7 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
     },
   })
 
-  encoder.configure({
-    ...baseConfig,
-    hardwareAcceleration: chosenAccel,
-  })
+  encoder.configure(chosenConfig)
 
   const frameDurationUs = Math.round(1_000_000 / fps)
 
@@ -150,7 +184,9 @@ export async function createMp4Encoder(opts: Mp4EncoderOptions): Promise<Mp4Enco
       // Force a keyframe every `fps` frames (≈ once per second) so
       // scrubbing the output MP4 doesn't have to decode from frame 0.
       const keyFrame = index % fps === 0
-      encoder.encode(frame, { keyFrame })
+      encoder.encode(frame, gradientQuantizer === null
+        ? { keyFrame }
+        : { keyFrame, avc: { quantizer: gradientQuantizer } })
       frame.close()
       // Don't let the encoder queue grow without bound — back-pressure
       // ourselves by waiting if the encoder is more than 2 seconds of

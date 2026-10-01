@@ -4,6 +4,9 @@ import * as THREE from 'three'
 import type { BlendMode } from '@/scene'
 
 const BACKDROP_BLEND_SHADER_KEY = 'hypermotion-backdrop-blend-v1'
+// A camera frame alternates between its output and canonical bloom source.
+// Retain both sizes, while bounding memory as the viewport is resized.
+const MAX_BACKDROP_TEXTURES = 2
 
 export const BACKDROP_BLEND_MODES = [
   'normal',
@@ -39,6 +42,7 @@ interface BackdropBlendInstallation {
   key: string
   compile: THREE.MeshBasicMaterial['onBeforeCompile']
   texture: THREE.FramebufferTexture
+  textures: Map<string, THREE.FramebufferTexture>
   uniforms: BackdropBlendUniforms
 }
 
@@ -100,18 +104,28 @@ export function captureBackdropForMaterial(
     targetColorSpace === THREE.NoColorSpace
       ? 1
       : 0
-  const texture = installation.texture
-  const sizeChanged =
-    texture.image.width !== width || texture.image.height !== height
-  const typeChanged = texture.type !== type
-
-  if (sizeChanged || typeChanged) {
-    texture.dispose()
-    texture.image.width = Math.max(1, width)
-    texture.image.height = Math.max(1, height)
+  installation.textures ??= new Map([
+    [backdropTextureKey(installation.texture.image.width, installation.texture.image.height, installation.texture.type), installation.texture],
+  ])
+  const key = backdropTextureKey(width, height, type)
+  let texture = installation.textures.get(key)
+  if (!texture) {
+    texture = new THREE.FramebufferTexture(Math.max(1, width), Math.max(1, height))
+    texture.name = 'Hyper Motion layer blend backdrop'
     texture.type = type
     texture.needsUpdate = true
   }
+  // Touch existing entries as well so an old output size is evicted before
+  // the canonical source that continues to be used on every frame.
+  installation.textures.delete(key)
+  installation.textures.set(key, texture)
+  while (installation.textures.size > MAX_BACKDROP_TEXTURES) {
+    const oldest = installation.textures.entries().next().value!
+    installation.textures.delete(oldest[0])
+    oldest[1].dispose()
+  }
+  installation.texture = texture
+  installation.uniforms.hmBlendBackdrop.value = texture
   installation.uniforms.hmBlendViewport.value.set(
     Math.max(1, width),
     Math.max(1, height),
@@ -124,7 +138,7 @@ export function disposeBackdropBlendMode(
 ): void {
   const installation = material.userData
     .hyperMotionBackdropBlend as BackdropBlendInstallation | undefined
-  installation?.texture.dispose()
+  if (installation) disposeBackdropTextures(installation)
   delete material.userData.hyperMotionBackdropBlend
   delete material.userData.hyperMotionBackdropBlendMode
 }
@@ -138,6 +152,11 @@ function installBackdropBlendShader(
     current?.key === BACKDROP_BLEND_SHADER_KEY &&
     current.compile === material.onBeforeCompile
   ) {
+    // Preserve an already compiled shader during Fast Refresh from the
+    // previous single-texture installation.
+    current.textures ??= new Map([
+      [backdropTextureKey(current.texture.image.width, current.texture.image.height, current.texture.type), current.texture],
+    ])
     return current
   }
 
@@ -163,15 +182,26 @@ function installBackdropBlendShader(
     key: BACKDROP_BLEND_SHADER_KEY,
     compile,
     texture,
+    textures: new Map([[backdropTextureKey(1, 1, texture.type), texture]]),
     uniforms,
   }
-  current?.texture.dispose()
+  if (current) disposeBackdropTextures(current)
   material.onBeforeCompile = compile
   material.customProgramCacheKey = () =>
     `${previousCacheKey.call(material)}:${BACKDROP_BLEND_SHADER_KEY}`
   material.userData.hyperMotionBackdropBlend = installation
   material.needsUpdate = true
   return installation
+}
+
+function backdropTextureKey(width: number, height: number, type: THREE.TextureDataType): string {
+  return `${Math.max(1, width)}:${Math.max(1, height)}:${type}`
+}
+
+function disposeBackdropTextures(installation: BackdropBlendInstallation): void {
+  const textures = new Set([installation.texture, ...(installation.textures?.values() ?? [])])
+  for (const texture of textures) texture.dispose()
+  installation.textures?.clear()
 }
 
 export function injectBackdropBlendShader(fragmentShader: string): string {

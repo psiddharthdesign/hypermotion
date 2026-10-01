@@ -138,6 +138,9 @@ export interface AnimatedValue {
   vhsNoise?: number
   vhsScanlines?: number
   vhsColorBleed?: number
+  vignetteAmount?: number
+  vignetteSize?: number
+  vignetteFeather?: number
   vectorFill?: VectorPaint
   vectorStroke?: VectorStroke
   vectorGeometry?: VectorDocument

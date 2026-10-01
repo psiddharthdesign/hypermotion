@@ -5,6 +5,16 @@ entry below for each corresponding tag.
 
 ## Unreleased
 
+### Camera effects and export quality
+
+- Add a keyframeable Vignette effect with amount, size, and feather controls.
+- Keep bloom highlights consistent between the editor and high-resolution
+  exports while preserving detail in the underlying scene.
+- Smooth dark vignette gradients with stable dithering and preserve that detail
+  in supported MP4 encoders. These exports may produce larger files; older
+  encoders continue using the existing bitrate settings.
+- Remove colored frame-edge lines caused by chromatic aberration.
+
 ### Video quality and playback
 
 - Restore video playback for older projects that store original media in a

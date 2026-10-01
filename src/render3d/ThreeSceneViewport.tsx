@@ -23,6 +23,9 @@ import { videoVisibleAtTime } from '@/scene/mediaClip'
 import { createVideoTexture, ensureVideoTexture } from './videoTextureResource'
 import { createPlaybackVideo, masterVideoPrewarm } from './videoPrewarm'
 import { depthOfFieldTexturePadding } from './depthOfFieldPadding'
+import { installDepthOfFieldRenderTargetScale } from './depthOfFieldRenderTarget'
+import { bloomReferenceSize } from './SceneBloomPass'
+import { syncBloomCanvasRaster, withBloomRasterOverrides, type BloomCanvasRaster, type BloomRasterOverride } from './bloomRaster'
 
 import {
   useEffect,
@@ -255,6 +258,10 @@ interface PlaneRecord {
   clipSignature: string
   maskTextures?: Map<HTMLCanvasElement, THREE.CanvasTexture>
   beamOverlay?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  bloomCanvas?: BloomCanvasRaster
+  bloomBeam?: BloomCanvasRaster
+  /** Detached canonical atlas/geometry cache; never owns a video or scene render. */
+  bloomText?: PlaneRecord
   textSegments?: TextSegmentRecord
 }
 
@@ -416,6 +423,8 @@ function createVideoElement(node: Extract<Node, { kind: 'video' }>): HTMLVideoEl
 }
 
 function disposeBeamOverlay(record: PlaneRecord) {
+  record.bloomBeam?.texture.dispose()
+  record.bloomBeam = undefined
   if (!record.beamOverlay) return
   record.beamOverlay.removeFromParent()
   record.beamOverlay.geometry.dispose()
@@ -425,6 +434,7 @@ function disposeBeamOverlay(record: PlaneRecord) {
 }
 
 function disposePlaneRecord(record: PlaneRecord) {
+  disposeBloomRasters(record)
   disposeBeamOverlay(record)
   for (const texture of record.maskTextures?.values() ?? []) texture.dispose()
   record.video?.pause()
@@ -437,6 +447,32 @@ function disposePlaneRecord(record: PlaneRecord) {
   record.texture.dispose()
   record.referenceOutline?.geometry.dispose()
   ;(record.referenceOutline?.material as THREE.Material | undefined)?.dispose()
+}
+
+function disposeBloomRasters(record: PlaneRecord) {
+  record.bloomCanvas?.texture.dispose()
+  record.bloomCanvas = undefined
+  record.bloomBeam?.texture.dispose()
+  record.bloomBeam = undefined
+  if (record.bloomText) {
+    disposePlaneRecord(record.bloomText)
+    record.bloomText.outline.geometry.dispose()
+    ;(record.bloomText.outline.material as THREE.Material).dispose()
+    record.bloomText = undefined
+  }
+}
+
+function* bloomRasterOverrides(records: Iterable<PlaneRecord>): Iterable<BloomRasterOverride> {
+  for (const record of records) {
+    if (record.bloomText) {
+      yield { mesh: record.mesh, texture: record.bloomText.texture, geometry: record.bloomText.mesh.geometry }
+    } else if (record.bloomCanvas) {
+      yield { mesh: record.mesh, texture: record.bloomCanvas.texture }
+    }
+    if (record.beamOverlay && record.bloomBeam) {
+      yield { mesh: record.beamOverlay, texture: record.bloomBeam.texture }
+    }
+  }
 }
 
 function syncVideoElement(
@@ -535,6 +571,9 @@ export function ThreeSceneViewport({
     playhead: number
   } | null>(null)
   const planesRef = useRef<Map<NodeId, PlaneRecord>>(new Map())
+  const withBloomSource = useMemo(() => (draw: () => void) => {
+    withBloomRasterOverrides(bloomRasterOverrides(planesRef.current.values()), draw)
+  }, [])
   const helpersRef = useRef<THREE.Group | null>(null)
   const planeSyncRef = useRef<{
     planes: Plane3D[]
@@ -543,9 +582,14 @@ export function ThreeSceneViewport({
     hiddenNodeIds: readonly NodeId[]
     textureRevision: PlaneTextureRevision
     playing: boolean
+    interactiveCameraPreview: boolean
+    finalRender: boolean
+    width: number
+    height: number
     playhead: number
     showPlanes: boolean
     dynamicDepthOfField: boolean
+    bloomRasterActive: boolean
     camera: ResolvedCamera3D
     pixelRatio: number
     texturePixelRatio: number
@@ -866,6 +910,7 @@ export function ThreeSceneViewport({
         resolvedCamera.fStop,
       ) > 0 &&
       resolvedCamera.blurLevel > 0
+    const bloomRasterActive = resolvedCamera.bloomEnabled && resolvedCamera.bloomStrength > 0.001
     const playheadDrivenTextureChanged = previousPlaneSync
       ? playheadDrivenTextureNeedsSync(
           playheadDrivenTextureRanges,
@@ -894,6 +939,13 @@ export function ThreeSceneViewport({
       previousPlaneSync.showPlanes !== showPlanes ||
       previousPlaneSync.pixelRatio !== pixelRatio ||
       previousPlaneSync.texturePixelRatio !== stableTexturePixelRatio ||
+      previousPlaneSync.width !== width ||
+      previousPlaneSync.height !== height ||
+      previousPlaneSync.playing !== playing ||
+      previousPlaneSync.interactiveCameraPreview !== interactiveCameraPreview ||
+      previousPlaneSync.finalRender !== finalRender ||
+      previousPlaneSync.bloomRasterActive !== bloomRasterActive ||
+      (bloomRasterActive && previousPlaneSync.camera !== resolvedCamera) ||
       (hasSegmentTextPlane && previousPlaneSync.camera !== resolvedCamera) ||
       requestedVideoSync ||
       playheadDrivenTextureChanged ||
@@ -952,9 +1004,14 @@ export function ThreeSceneViewport({
       hiddenNodeIds,
       textureRevision,
       playing,
+      interactiveCameraPreview,
+      finalRender,
+      width,
+      height,
       playhead,
       showPlanes,
       dynamicDepthOfField: hasDynamicDepthOfField,
+      bloomRasterActive,
       camera: resolvedCamera,
       pixelRatio,
       texturePixelRatio: stableTexturePixelRatio,
@@ -1020,6 +1077,7 @@ export function ThreeSceneViewport({
           width,
           height,
           postEffectsPixelRatio,
+          withBloomSource,
         )
         postEffectsRef.current = postEffects
       }
@@ -1056,7 +1114,7 @@ export function ThreeSceneViewport({
         outgoingCamera, renderer, perspective, animated, playing, playhead, textureRevision,
         playheadDrivenTextureRanges, interactiveCameraPreview, finalRender, curvePreviewRevision, vectorEditPreview, stableTexturePixelRatio)
       if (cameraPostEffectsActive(outgoingCamera)) {
-        if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, perspective, width, height, pixelRatio)
+        if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, perspective, width, height, pixelRatio, withBloomSource)
         dissolveEffectsRef.current.configure(outgoingCamera, width, height, pixelRatio, playhead + (outgoing.proceduralTimeOffset ?? 0))
         dissolveEffectsRef.current.render()
       } else renderer.render(scene, perspective)
@@ -1099,6 +1157,7 @@ export function ThreeSceneViewport({
     finalRender,
     postEffectsIdleQuality,
     postEffectsQualityRevision,
+    withBloomSource,
     curvePreviewRevision,
     vectorEditPreview,
     texturePixelRatio,
@@ -1347,6 +1406,13 @@ function syncPlanes(
   )
   const viewportSize = renderer.getSize(new THREE.Vector2())
   const screenPixelRatio = renderer.getPixelRatio()
+  const bloomRasterActive = camera.bloomEnabled && camera.bloomStrength > 0.001
+  const bloomReference = bloomReferenceSize(viewportSize.x, viewportSize.y)
+  const bloomPixelRatio = bloomReference.height / Math.max(1, viewportSize.y)
+  // Atlas cache construction reuses the ordinary text synchronizer. Its
+  // meshes are detached immediately; only the atlas and geometry are drawn
+  // through the existing scene mesh during the canonical source pass.
+  const bloomRasterScene = bloomRasterActive ? new THREE.Scene() : null
   // Point focus is a screen-space lens field. Every composited plane must use
   // the same field; gating it by an approximate world point made tilted cards
   // jump straight to full blur even when they sat underneath the visible dot.
@@ -1374,6 +1440,7 @@ function syncPlanes(
       : sourcePlane
     active.add(plane.nodeId)
     let record = records.get(plane.nodeId)
+    if (record && !bloomRasterActive) disposeBloomRasters(record)
     if (record && record.renderKind !== plane.renderKind) {
       scene.remove(record.mesh)
       scene.remove(record.outline)
@@ -1409,7 +1476,7 @@ function syncPlanes(
     // exact point the user focused on visibly soft.
     const minimumBlur = focusMask ? 0 : blur
     if (plane.renderKind === 'segment-text' && plane.node.kind === 'text') {
-      const nextRecord = syncTextSegmentPlane({
+      const options: TextSegmentPlaneSyncOptions = {
         scene,
         record,
         plane,
@@ -1432,7 +1499,24 @@ function syncPlanes(
         interactiveCameraPreview,
         texturePixelRatio,
         finalRender,
-      })
+      }
+      const nextRecord = syncTextSegmentPlane(options)
+      if (bloomRasterScene) {
+        nextRecord.bloomText = syncTextSegmentPlane({
+          ...options,
+          scene: bloomRasterScene,
+          record: nextRecord.bloomText,
+          playing: false,
+          interactiveCameraPreview: false,
+          finalRender: false,
+          screenPixelRatio: bloomPixelRatio,
+          texturePixelRatio: bloomPixelRatio,
+          sampleCount: 48,
+          selected: false,
+        })
+        nextRecord.bloomText.mesh.removeFromParent()
+        nextRecord.bloomText.outline.removeFromParent()
+      }
       records.set(plane.nodeId, nextRecord)
       continue
     }
@@ -1495,14 +1579,13 @@ function syncPlanes(
             bucketStep: finalRender ? 0.5 : 0.25,
           },
         )
-    const textureSignature = [
+    const textureSignatureBase = [
       plane.contentMode,
       plane.textureMaskIds?.join(',') ?? '',
       Number(textureRect.x.toFixed(3)),
       Number(textureRect.y.toFixed(3)),
       Number(textureRect.width.toFixed(3)),
       Number(textureRect.height.toFixed(3)),
-      Number(textureScale.toFixed(4)),
       planeTextureAnimationSignature(
         planeBuildContext,
         plane,
@@ -1516,6 +1599,7 @@ function syncPlanes(
         : 0,
       vectorEditPreview[plane.nodeId] ? 'vector-edit' : '',
     ].join(':')
+    const textureSignature = `${textureSignatureBase}:scale=${textureScale.toFixed(4)}`
     // Viewport pan/zoom, selection, and camera-only renders must reuse the
     // existing bitmap. A plane is rasterized only when its scene/animation
     // content revision or a texture-affecting parameter actually changes.
@@ -1553,6 +1637,7 @@ function syncPlanes(
         depthWrite: false,
       })
       installDepthOfFieldShader(material)
+      installDepthOfFieldRenderTargetScale(material)
       const mesh = new THREE.Mesh(geometry, material)
       mesh.name = plane.node.name
       mesh.onBeforeRender = (activeRenderer) => {
@@ -1686,6 +1771,8 @@ function syncPlanes(
     }
     updateDepthOfFieldShader(material, depthOfFieldOptions)
     if (videoNode) {
+      record.bloomCanvas?.texture.dispose()
+      record.bloomCanvas = undefined
       if (ensureVideoTexture(record, videoNode.src, () => createVideoElement(videoNode))) {
         material.map = record.texture
         material.needsUpdate = true
@@ -1730,6 +1817,26 @@ function syncPlanes(
       record.textureRevision = textureRevision
       record.textureSignature = textureSignature
     }
+    if (bloomRasterActive && !videoNode) {
+      // Rasterize the same canonical source in preview and export. Sampling
+      // an 8x export text raster through mipmaps does not reproduce a 2.5x
+      // canvas raster's edge coverage near the bloom threshold.
+      const bloomScale = textureScaleForRect(textureRect, projectedPlaneTextureScale({
+        plane,
+        camera,
+        viewportSize,
+        screenPixelRatio: bloomPixelRatio,
+        fallbackScale: bloomPixelRatio,
+      }), { maximumScale: 4, bucketStep: 0.25 })
+      record.bloomCanvas = syncBloomCanvasRaster(
+        record.bloomCanvas,
+        textureRevision,
+        `${textureSignatureBase}:scale=${bloomScale.toFixed(4)}`,
+        () => renderPlaneCanvas(api, layout, plane, emittedPlaneNodeIds, animated, playhead, bloomScale),
+        canvas => createPlaneTexture(canvas, renderer),
+        hasActiveSizePreview,
+      )
+    }
     applyPlaneTextureTransform(record.mesh, plane)
     applyPlaneTransform(record.outline, plane)
     if (record.referenceOutline) {
@@ -1771,25 +1878,40 @@ function syncPlanes(
       const beams = resolveBeamRanges(videoNode.appearance.effects, animated[plane.nodeId]?.effectBeamRange, videoNode.proceduralTimeOffset).filter(e => e.kind === 'border-beam')
       const beamRect = expandRectForLayerEffects(plane.rect, beams)
       const beamPlane = { ...plane, textureRect: beamRect }
-      const beamCanvas = document.createElement('canvas')
       const beamScale = beamRasterScale(beamRect.width, beamRect.height, Math.min(4, Math.max(1, texturePixelRatio)))
-      beamCanvas.width = Math.ceil(beamRect.width * beamScale)
-      beamCanvas.height = Math.ceil(beamRect.height * beamScale)
-      const context = beamCanvas.getContext('2d')!
-      context.scale(beamScale, beamScale)
-      context.translate(plane.rect.x - beamRect.x, plane.rect.y - beamRect.y)
       const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(videoNode.appearance, animated[plane.nodeId], plane.rect.width, plane.rect.height)
       const fill = videoNode.appearance.fill
-      for (const effect of beams) paintBorderBeam(context, effect, {
-        width: plane.rect.width, height: plane.rect.height,
-        radius: cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius,
-        cornerSmoothing,
-        fill: fill?.kind === 'solid' ? fill.color : undefined,
-      }, playhead + (videoNode.proceduralTimeOffset ?? 0))
+      const paintBeamCanvas = (scale: number) => {
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.ceil(beamRect.width * scale)
+        canvas.height = Math.ceil(beamRect.height * scale)
+        const context = canvas.getContext('2d')!
+        context.scale(scale, scale)
+        context.translate(plane.rect.x - beamRect.x, plane.rect.y - beamRect.y)
+        for (const effect of beams) paintBorderBeam(context, effect, {
+          width: plane.rect.width, height: plane.rect.height,
+          radius: cornerRadii ? [cornerRadii.tl, cornerRadii.tr, cornerRadii.br, cornerRadii.bl] : cornerRadius,
+          cornerSmoothing,
+          fill: fill?.kind === 'solid' ? fill.color : undefined,
+        }, playhead + (videoNode.proceduralTimeOffset ?? 0))
+        return canvas
+      }
+      const beamCanvas = paintBeamCanvas(beamScale)
+      if (bloomRasterActive) {
+        const bloomBeamScale = beamRasterScale(beamRect.width, beamRect.height, Math.min(4, Math.max(1, bloomPixelRatio)))
+        record.bloomBeam = syncBloomCanvasRaster(
+          record.bloomBeam,
+          textureRevision,
+          JSON.stringify([beams, beamRect, plane.rect, cornerRadius, cornerRadii, cornerSmoothing, fill, playhead, videoNode.proceduralTimeOffset, bloomBeamScale]),
+          () => paintBeamCanvas(bloomBeamScale),
+          canvas => createPlaneTexture(canvas, renderer),
+        )
+      }
       let overlay = record.beamOverlay
       if (!overlay) {
         const beamMaterial = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
         installDepthOfFieldShader(beamMaterial)
+        installDepthOfFieldRenderTargetScale(beamMaterial)
         overlay = new THREE.Mesh(createPlaneGeometry(beamRect, geometryDetail), beamMaterial)
         record.beamOverlay = overlay
         scene.add(overlay)
@@ -2019,6 +2141,7 @@ function syncTextSegmentPlane({
       depthWrite: false,
     })
     installTextSegmentMaterialShader(material)
+    installDepthOfFieldRenderTargetScale(material)
     material.forceSinglePass = true
     const mesh = new THREE.Mesh(geometry, material)
     mesh.name = `${node.name} segments`

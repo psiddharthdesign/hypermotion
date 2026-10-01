@@ -315,6 +315,18 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'camera.bloomThreshold', group: 'camera', label: 'Bloom Threshold',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.75,
   },
+  'camera.vignetteAmount': {
+    id: 'camera.vignetteAmount', group: 'camera', label: 'Vignette Amount',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.35,
+  },
+  'camera.vignetteSize': {
+    id: 'camera.vignetteSize', group: 'camera', label: 'Vignette Size',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.5,
+  },
+  'camera.vignetteFeather': {
+    id: 'camera.vignetteFeather', group: 'camera', label: 'Vignette Feather',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.5,
+  },
   'camera.vhsIntensity': {
     id: 'camera.vhsIntensity', group: 'camera', label: 'VHS Intensity',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0.65,

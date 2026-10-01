@@ -11,6 +11,7 @@ import {
 } from './captureRect'
 import { createGifEncoder } from './encodeGif'
 import { createMp4Encoder, isMp4ExportSupported } from './encodeMp4'
+import { exportUsesVignette } from './gradientQuality'
 import {
   buildExportFilename,
   resolveDimensions,
@@ -213,7 +214,10 @@ export async function runExport(ctx: ExportSceneContext): Promise<void> {
             finish: async () => enc.finish(),
           }
         }
-        const enc = await createMp4Encoder({ width, height, fps })
+        const enc = await createMp4Encoder({
+          width, height, fps,
+          preserveGradients: exportUsesVignette(ctx.api, getProjectAPI(ctx.api).getActiveScene()?.cameraIds),
+        })
         return {
           addFrame: (canvas, index) => enc.addFrame(canvas, index),
           finish: async () => enc.finish(),

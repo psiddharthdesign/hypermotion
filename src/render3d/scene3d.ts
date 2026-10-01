@@ -462,6 +462,10 @@ export function resolveCamera3D(
       animated?.vhsScanlines ?? camera.vhsScanlines,
     vhsColorBleed:
       animated?.vhsColorBleed ?? camera.vhsColorBleed,
+    vignetteEnabled: camera.vignetteEnabled,
+    vignetteAmount: animated?.vignetteAmount ?? camera.vignetteAmount,
+    vignetteSize: animated?.vignetteSize ?? camera.vignetteSize,
+    vignetteFeather: animated?.vignetteFeather ?? camera.vignetteFeather,
   })
   const fieldOfView =
     animated?.fieldOfView ??

@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="UTF-8" /><title>Chromatic aberration frame edges regression</title></head>
+<body><div id="root"></div><script type="module">
+const url = new URL(location.href)
+url.searchParams.set('render-window', '1')
+history.replaceState(null, '', url)
+await import('./chromatic-edges.tsx')
+</script></body></html>
