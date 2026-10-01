@@ -2942,6 +2942,7 @@ test('buildSceneBytes writes camera defaults expected by the desktop app', () =>
     projection: '2d',
     enabled: true,
     background: null,
+    compositionGuide: 'none',
     focalLength: 1000,
     scrollSensitivity: 1,
     fieldOfView: 35,

@@ -106,6 +106,18 @@ describe('text segment batch geometry', () => {
     ).toBeCloseTo(1.2)
   })
 
+  it('keeps orthographic text blur support independent of depth and tied to zoom', () => {
+    for (const z of [100, 1000, 10000]) {
+      expect(textSegmentWorldUnitsPerScreenPixel({
+        plane: { ...plane, center: { ...plane.center, z } },
+        cameraDepth: point => point.z,
+        focalLength: 1000,
+        orthographicZoom: 2,
+        extraAwayDepth: 200,
+      })).toBe(0.5)
+    }
+  })
+
   it('writes world-space XYZ, alpha, blur, and UV cell bounds', () => {
     const buffers = createTextSegmentBuffers(1)
     writeTextSegmentBuffers({

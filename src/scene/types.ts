@@ -4,7 +4,9 @@ import type {
   PaperShaderParams,
   PaperShaderType,
 } from '@/scene/paperShaders'
+import type { Extrusion } from '@/scene/extrusion'
 import type { LayerMotionPath } from '@/anim/layerMotionPath'
+import type { CameraCompositionGuide } from '@/scene/cameraCompositionGuide'
 
 export type {
   PaperShaderCategory,
@@ -581,6 +583,8 @@ interface NodeBase {
    * animation engine resolves it into the normal transform snapshot so
    * renderers do not need kind-specific path logic.
    */
+  /** Opt-in solid depth for rectangles and ellipses; absent preserves flat layers. */
+  extrusion?: Extrusion
   motionPath?: LayerMotionPath | null
   /** Optional non-destructive layer deformation evaluated by the GPU renderer. */
   deformation?: LayerDeformation | null
@@ -1004,8 +1008,10 @@ export function normalizeCameraScrollSensitivity(value: unknown): number {
 
 export interface CameraNode extends NodeBase {
   kind: 'camera'
-  /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
-  projection: '2d' | 'perspective'
+  /** Static editor overlay. Guides are excluded from rendered exports. */
+  compositionGuide: CameraCompositionGuide
+  /** Lens projection. Legacy '2d' retains perspective; orthographic has parallel rays. */
+  projection: '2d' | 'perspective' | 'orthographic'
   /**
    * Whether the camera is enabled. Only the scene's active camera is
    * actually used for rendering; this flag lets users temporarily
@@ -1340,6 +1346,7 @@ export type PropertyId =
   | 'transform.anchorY'
   | 'transform.anchorZ'
   // generic layer motion path — resolves into post-layout transform values
+  | 'extrusion.depth'
   | 'motionPath.progress'
   // non-destructive layer deformation — post-layout, GPU evaluated
   | 'deformation.bend.waveAmplitude'

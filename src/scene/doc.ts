@@ -1,3 +1,5 @@
+import { normalizeCameraProjection } from '@/scene/cameraProjection'
+import { normalizeCameraCompositionGuide } from '@/scene/cameraCompositionGuide'
 import { normalizeTextShimmer } from '@/anim/textShimmerEffect'
 // SPDX-License-Identifier: Apache-2.0
 
@@ -55,6 +57,7 @@ import { normalizeLayerEffects } from '@/scene/effects'
 import { normalizeEllipseArc } from '@/scene/ellipseArc'
 import { normalizeLayerBend } from '@/scene/layerBend'
 import { normalizeLayerZIndex } from '@/scene/zIndex'
+import { normalizeExtrusion, type Extrusion } from '@/scene/extrusion'
 import { normalizeLayerDeformation } from '@/scene/deformation'
 
 /**
@@ -250,6 +253,7 @@ export interface NodeBaseMutable {
   zIndex: number
   isMask: boolean
   maskMode: 'alpha' | undefined
+  extrusion: Extrusion | undefined
   motionPath: LayerMotionPath | null
   deformation: LayerDeformation | null
   layerBend: LayerBend
@@ -320,6 +324,8 @@ export interface NodeBaseMutable {
   beatAnalysis: import('@/audio/beatSync').BeatAnalysis | undefined
   beatGrid: import('@/audio/beatSync').AudioBeatGrid | undefined
   // camera-kind fields — settable via Inspector on CameraNode.
+  projection: CameraNode['projection']
+  compositionGuide: CameraNode['compositionGuide']
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
@@ -688,6 +694,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
       proceduralTimeOffset: finiteNumber(y.get('proceduralTimeOffset') as number | undefined, 0),
+      ...((kind === 'rect' || kind === 'ellipse') && y.has('extrusion')
+        ? { extrusion: normalizeExtrusion(y.get('extrusion')) } : {}),
       motionPath: normalizeLayerMotionPath(y.get('motionPath')),
       deformation: normalizeLayerDeformation(y.get('deformation')),
       layerBend: normalizeLayerBend(y.get('layerBend')),
@@ -946,8 +954,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // Legacy-safe defaults: '2d' + enabled=true. Older persisted
           // cameras (if any exist before migration) will read through
           // these so the render path never sees undefined.
-          projection:
-            (y.get('projection') as CameraNode['projection'] | undefined) ?? '2d',
+          projection: normalizeCameraProjection(y.get('projection')),
+          compositionGuide: normalizeCameraCompositionGuide(y.get('compositionGuide')),
           enabled: (y.get('enabled') as boolean) ?? true,
           // Background fill predates v2 cameras → default null. The
           // renderer interprets null as "use workspace chrome behind
@@ -1274,6 +1282,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
         }
+        if (kind === 'rect' || kind === 'ellipse') {
+          const extrusion = normalizeExtrusion(props?.extrusion)
+          if (extrusion) y.set('extrusion', extrusion)
+        }
         if (kind === 'ellipse') {
           y.set(
             'arc',
@@ -1450,7 +1462,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // view transform — inverse-applied to the artboard so
           // "camera x=100" pans the viewport right by 100px.
           const cp = props as Partial<CameraNode> | undefined
-          y.set('projection', cp?.projection ?? '2d')
+          y.set('projection', normalizeCameraProjection(cp?.projection))
+          y.set('compositionGuide', normalizeCameraCompositionGuide(cp?.compositionGuide))
           y.set('enabled', cp?.enabled ?? true)
           // Background defaults to null — the camera's viewport falls
           // back to the workspace chrome until the user picks a fill
@@ -1593,6 +1606,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (key === 'projection') {
+          y.set(key, normalizeCameraProjection(value))
+          return
+        }
+        if (key === 'compositionGuide') {
+          y.set(key, normalizeCameraCompositionGuide(value))
+          return
+        }
         if (key === 'vignetteEnabled') {
           y.set(key, value === true)
           return
@@ -1622,6 +1643,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
                         ),
                 }),
           })
+          return
+        }
+        if (key === 'extrusion') {
+          if (y.get('kind') !== 'rect' && y.get('kind') !== 'ellipse') return
+          const extrusion = normalizeExtrusion(value)
+          if (extrusion) y.set('extrusion', extrusion)
+          else y.delete('extrusion')
           return
         }
         if (key === 'motionPath') {

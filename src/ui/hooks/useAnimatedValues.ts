@@ -77,6 +77,7 @@ export interface AnimatedValue {
   /** Uneased position between the active text animation's authored keys. */
   textTimelineProgress?: number
   textAnimation?: TextAnimationConfig
+  extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
   bendWaveFrequency?: number

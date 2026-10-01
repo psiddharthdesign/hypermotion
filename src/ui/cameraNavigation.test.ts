@@ -8,10 +8,13 @@ import {
   cameraPanFromPointer,
   cameraPanFromWheel,
   cameraZFromPointerDrag,
+  cameraScaleFromPointerDrag,
+  cameraNavigationTransformPatch,
   normalizedWheelDeltas,
   resolveCameraPointerNavigation,
   resolveCameraWheelNavigation,
 } from '@/ui/cameraNavigation'
+import { createSceneAPI } from '@/scene/doc'
 
 describe('camera navigation policy', () => {
   it('uses Blender-style middle-mouse chords', () => {
@@ -197,5 +200,22 @@ describe('camera dolly navigation', () => {
         pageHeight: 800,
       }),
     ).toEqual({ z: expect.closeTo(14.888, 3) })
+  })
+})
+
+describe('orthographic camera gestures', () => {
+  it('uses uncapped pointer zoom with the same response as perspective dolly', () => {
+    const zoom = cameraScaleFromPointerDrag({ startScaleX: 1, startScaleY: 0.001, deltaY: -100 })
+    const z = cameraZFromPointerDrag({ startZ: 0, focalLength: 1000, deltaY: -100 })
+    expect(1 / zoom.scaleX).toBeCloseTo(1000 / (1000 - z))
+    expect(zoom.scaleY).toBe(zoom.scaleX)
+  })
+
+  it('records and commits only the axes owned by each projection gesture', () => {
+    const transform = { ...createSceneAPI().getActiveCamera()!.transform, z: 120, scaleX: 0.5, scaleY: 0.2 }
+    expect(cameraNavigationTransformPatch('dolly', transform, 'orthographic')).toEqual({ scaleX: 0.5 })
+    expect(cameraNavigationTransformPatch('dolly', transform, 'perspective')).toEqual({ z: 120 })
+    expect(cameraNavigationTransformPatch('pan', transform, 'orthographic')).toEqual({ x: transform.x, y: transform.y })
+    expect(cameraNavigationTransformPatch('orbit', transform, 'orthographic')).toEqual({ rotationX: 0, rotationY: 0 })
   })
 })

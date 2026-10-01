@@ -463,6 +463,19 @@ These use `deformation.bend.<field>` property ids. Capture rotation controls
 wave direction; the up axis chooses canvas displacement or 3D depth. Omitted
 mode preserves the original arc bend. Radial ripples are not supported.
 
+### Isometric cameras and composition guides
+
+Set a camera's `projection` to `orthographic` for parallel projection. Camera
+`transform.scaleX` is the uniform view extent: `0.5` gives 200% zoom; legacy
+`scaleY` values remain stored but do not distort the camera. XYZ rotation,
+position and zoom use the normal keyframe tracks. Four named isometric views
+are available at the top of camera Properties and with Alt/Option+1–4.
+
+The static `compositionGuide` camera field accepts `none`, `thirds`, `center`,
+`diagonals`, `diamond`, `diamond-grid`, `isometric`, `golden-ratio`, `grid`, or
+`safe-areas`. These are editor-only framing overlays, excluded from exports.
+They do not snap or move assets. See [docs/camera-guides.md](./docs/camera-guides.md).
+
 ### Layer motion paths
 
 Any non-root visual layer may follow an editable cubic path in local
@@ -743,3 +756,12 @@ welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR.
 ## License
 
 Apache 2.0. See [LICENSE](./LICENSE).
+
+### Isometric solid assets
+
+Rectangles and complete ellipses can carry `extrusion: { depth, sideColor }`.
+Depth extends behind the front face in local +Z, clamps to 0–100000 pixels, and
+is keyframeable as `extrusion.depth`. Omit or clear extrusion for a flat layer.
+Use uniform corners without smoothing. The first version has plain shaded
+sides; full solid silhouette depth-of-field, world-plane snapping, and face
+push/pull are not yet supported. See [docs/isometric-assets.md](./docs/isometric-assets.md).

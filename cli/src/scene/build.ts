@@ -259,6 +259,8 @@ export interface NodeJson {
   motionPath?: LayerMotionPathJson | null
   /** Optional non-destructive layer deformation. */
   deformation?: LayerDeformationJson | null
+  /** Non-destructive volume for rectangles and full ellipses. */
+  extrusion?: { depth?: number; sideColor?: string } | null
   transform?: {
     x: number
     y: number
@@ -355,9 +357,11 @@ export interface NodeJson {
       division: 1 | 2 | 4 | 8 | 16 | 32
     }>
   }
-  projection?: '2d' | 'perspective'
+  projection?: '2d' | 'perspective' | 'orthographic'
   enabled?: boolean
   background?: FillJson | null
+  /** Editor-only composition overlay; excluded from rendered output. */
+  compositionGuide?: 'none' | 'thirds' | 'center' | 'diagonals' | 'diamond' | 'diamond-grid' | 'isometric' | 'golden-ratio' | 'grid' | 'safe-areas'
   focalLength?: number
   scrollSensitivity?: number
   fieldOfView?: number
@@ -549,6 +553,7 @@ export interface AppearanceJson {
 }
 
 export const PROPERTY_IDS = [
+  'extrusion.depth',
   'transform.x',
   'transform.y',
   'transform.z',
@@ -1385,6 +1390,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     if (node.deformation !== undefined) {
       y.set('deformation', node.deformation)
     }
+    const extrusion = normalizeExtrusion(node.extrusion)
+    if (extrusion) y.set('extrusion', extrusion)
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
@@ -1503,9 +1510,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     if (node.kind === 'camera') {
       const centerX = metaIn.canvas.width / 2
       const centerY = metaIn.canvas.height / 2
-      y.set('projection', node.projection ?? '2d')
+      y.set('projection', normalizeCameraProjection(node.projection))
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
+      y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))
       y.set('focalLength', node.focalLength ?? 1000)
       y.set(
         'scrollSensitivity',
@@ -3003,6 +3011,13 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
         if (k === 'zIndex') node.set(k, normalizeLayerZIndex(v))
         else if (k === 'vignetteEnabled') node.set(k, v === true)
         else if (k === 'vignetteAmount' || k === 'vignetteSize' || k === 'vignetteFeather') node.set(k, normalizeVignetteValue(v, k === 'vignetteAmount' ? 0.35 : 0.5))
+        else if (k === 'extrusion') {
+          const extrusion = normalizeExtrusion(v)
+          if (extrusion) node.set(k, extrusion)
+          else node.delete(k)
+        }
+        else if (k === 'projection') node.set(k, normalizeCameraProjection(v))
+        else if (k === 'compositionGuide') node.set(k, normalizeCameraCompositionGuide(v))
         else if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
@@ -3019,6 +3034,14 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
         node.set(op.key, op.value === true)
       } else if (op.key === 'vignetteAmount' || op.key === 'vignetteSize' || op.key === 'vignetteFeather') {
         node.set(op.key, normalizeVignetteValue(op.value, op.key === 'vignetteAmount' ? 0.35 : 0.5))
+      } else if (op.key === 'extrusion') {
+        const extrusion = normalizeExtrusion(op.value)
+        if (extrusion) node.set(op.key, extrusion)
+        else node.delete(op.key)
+      } else if (op.key === 'projection') {
+        node.set(op.key, normalizeCameraProjection(op.value))
+      } else if (op.key === 'compositionGuide') {
+        node.set(op.key, normalizeCameraCompositionGuide(op.value))
       } else if (op.key === 'children' && Array.isArray(op.value)) {
         node.set(op.key, arrayToY(op.value))
       } else {
@@ -3091,6 +3114,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'workspaceOnly',
     'motionPath',
     'deformation',
+    'extrusion',
   ])
   y.set('id', node.id)
   y.set('kind', node.kind)
@@ -3120,6 +3144,8 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   if (node.deformation !== undefined) {
     y.set('deformation', node.deformation)
   }
+  const extrusion = normalizeExtrusion(node.extrusion)
+  if (extrusion) y.set('extrusion', extrusion)
   if (node.kind === 'text') {
     for (const key of [
       'size',
@@ -3255,6 +3281,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'projection',
       'enabled',
       'background',
+      'compositionGuide',
       'focalLength',
       'scrollSensitivity',
       'fieldOfView',
@@ -3305,9 +3332,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     }
     const centerX = meta.canvas.width / 2
     const centerY = meta.canvas.height / 2
-    y.set('projection', node.projection ?? '2d')
+    y.set('projection', normalizeCameraProjection(node.projection))
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
+    y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))
     y.set('focalLength', node.focalLength ?? 1000)
     y.set(
       'scrollSensitivity',
@@ -3364,11 +3392,45 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   return y
 }
 
+/** Kept aligned with the desktop scene/extrusion normalizer. */
+function normalizeExtrusion(value: unknown): { depth: number; sideColor: string } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const depth = typeof source.depth === 'number' && Number.isFinite(source.depth)
+    ? Math.max(0, Math.min(100000, source.depth)) : 0
+  const sideColor = typeof source.sideColor === 'string' && source.sideColor.trim().length > 0 && source.sideColor.length <= 256
+    ? source.sideColor.trim() : '#2563eb'
+  return { depth, sideColor }
+}
+
 function normalizeVignetteValue(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, Math.min(1, value))
     : fallback
 }
+
+function normalizeCameraProjection(value: unknown): NonNullable<NodeJson['projection']> {
+  return value === 'orthographic' || value === 'perspective' ? value : '2d'
+}
+
+// Kept local because the CLI is published independently of the desktop app.
+function normalizeCameraCompositionGuide(value: unknown): NonNullable<NodeJson['compositionGuide']> {
+  switch (value) {
+    case 'thirds':
+    case 'center':
+    case 'diagonals':
+    case 'diamond':
+    case 'diamond-grid':
+    case 'isometric':
+    case 'golden-ratio':
+    case 'grid':
+    case 'safe-areas':
+      return value
+    default:
+      return 'none'
+  }
+}
+
 
 function normalizeCameraScrollSensitivity(value: unknown): number {
   const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 1

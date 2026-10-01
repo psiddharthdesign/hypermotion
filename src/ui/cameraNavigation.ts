@@ -2,10 +2,12 @@
 
 import {
   normalizeCameraScrollSensitivity,
+  type CameraNode,
   type Transform,
 } from '@/scene/types'
 import {
   cameraZFromWheel,
+  cameraScaleFromZoomDelta,
   normalizedWheelDeltaY,
   type CameraWheelDollyInput,
 } from '@/ui/cameraWheel'
@@ -15,6 +17,19 @@ export type CameraNavigationMode = 'orbit' | 'pan' | 'dolly'
 export type CameraOrbitPatch = Pick<Transform, 'rotationX' | 'rotationY'>
 export type CameraPanPatch = Pick<Transform, 'x' | 'y'>
 export type CameraDollyPatch = Pick<Transform, 'z'>
+
+/** Own only the axes changed by a gesture, including its recorded samples. */
+export function cameraNavigationTransformPatch(
+  mode: CameraNavigationMode,
+  transform: Transform,
+  projection: CameraNode['projection'],
+): Record<string, number> {
+  if (mode === 'orbit') return { rotationX: transform.rotationX, rotationY: transform.rotationY }
+  if (mode === 'pan') return { x: transform.x, y: transform.y }
+  return projection === 'orthographic'
+    ? { scaleX: transform.scaleX }
+    : { z: transform.z }
+}
 
 export interface CameraPointerNavigationInput {
   button: number
@@ -256,6 +271,20 @@ export function cameraZFromPointerDrag(
     gestureMaxDistance,
   )
   return focalLength - nextDistance
+}
+
+export function cameraScaleFromPointerDrag(input: {
+  startScaleX: number
+  startScaleY: number
+  deltaY: number
+  scrollSensitivity?: number
+}): Pick<Transform, 'scaleX' | 'scaleY'> {
+  return cameraScaleFromZoomDelta(
+    input.startScaleX,
+    input.startScaleY,
+    finiteOr(input.deltaY, 0) * POINTER_DOLLY_SENSITIVITY *
+      normalizeCameraScrollSensitivity(input.scrollSensitivity),
+  )
 }
 
 /** Return the Z-only patch used by a wheel/trackpad dolly gesture. */

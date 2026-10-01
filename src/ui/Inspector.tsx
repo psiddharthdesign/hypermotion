@@ -1,6 +1,11 @@
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
+import { applyIsometricCameraPreset, cameraZoomScale } from './cameraViewPreset'
+import { CameraZoomKeyframeButton } from './CameraZoomKeyframeButton'
+import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
+import { CameraCompositionGuideField } from './CameraCompositionGuideField'
+import { ExtrusionSection } from './ExtrusionSection'
 
 import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
@@ -3975,6 +3980,39 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   }
   return (
     <div className="space-y-4">
+      {node.kind === 'camera' && (
+        <Section title="Camera view">
+          <FieldRow label="Projection">
+            <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
+              ariaLabel="Camera projection"
+              options={[{ value: 'perspective', label: 'Perspective' }, { value: 'orthographic', label: 'Orthographic' }]}
+              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection), UNDOABLE_GESTURE_ORIGIN)} />
+          </FieldRow>
+          <FieldRow label="Isometric view">
+            <SelectField value={node.projection === 'orthographic' ? ISOMETRIC_CAMERA_VIEWS.find(view =>
+              Math.abs(view.rotation.rotationX - liveRotX) < 0.01 && Math.abs(view.rotation.rotationY - liveRotY) < 0.01 && Math.abs(view.rotation.rotation - liveRot) < 0.01)?.id ?? '' : ''}
+              ariaLabel="Isometric view" options={[
+                { value: '', label: 'Choose view…' },
+                ...ISOMETRIC_CAMERA_VIEWS.map((view, index) => ({ value: view.id, label: `${view.label} · Alt/Option+${index + 1}` })),
+              ]} onCommit={value => {
+                const view = ISOMETRIC_CAMERA_VIEWS.find(candidate => candidate.id === value)
+                if (!view) return
+                cameraPreviewStore.clear(node.id)
+                applyIsometricCameraPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, view.id)
+              }} />
+          </FieldRow>
+          {node.projection === 'orthographic' && <>
+            <KeyframeSliderRow label="Zoom" value={100 / Math.max(0.01, liveSX)}
+              onCommit={value => { const scale = cameraZoomScale(value); patchTransform({ scaleX: scale }) }}
+              onScrubPreview={value => { const scale = cameraZoomScale(value); previewCameraTransform({ scaleX: scale }) }}
+              onScrubCommit={value => { const scale = cameraZoomScale(value); commitCameraTransformScrub({ scaleX: scale }) }}
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              min={1} max={10000} adaptiveSpan={400} step={1} suffix="%"
+              keyframe={<CameraZoomKeyframeButton nodeId={node.id} scale={liveSX} />} />
+            <p className="text-[11px] leading-relaxed text-text-muted">Parallel lines stay parallel at every depth. Pan, orbit, and zoom can be animated.</p>
+          </>}
+        </Section>
+      )}
       <Section title="Node">
         <FieldRow label="Name">
           <TextField
@@ -4038,7 +4076,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
-          <CameraViewportControlsHint />
+          <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
 
           <Section
             title="Camera Position"
@@ -5012,6 +5050,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </Section>
       )}
 
+      {(node.kind === 'rect' || node.kind === 'ellipse') && (
+        <ExtrusionSection node={node} api={api} anim={anim} />
+      )}
+
       {node.kind === 'text' && (
         <TypographySection node={node} api={api} />
       )}
@@ -5291,8 +5333,15 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
+          <Section title="Composition guides">
+            <CameraCompositionGuideField value={node.compositionGuide}
+              onCommit={guide => api.doc.transact(() => api.setNodeProperty(node.id, 'compositionGuide', guide), UNDOABLE_GESTURE_ORIGIN)} />
+            <p className="text-[11px] leading-relaxed text-text-muted">
+              Framing guides stay fixed to the camera view and are hidden in exports.
+            </p>
+          </Section>
           <Section title="Lens">
-            <KeyframeSliderRow
+            {node.projection !== 'orthographic' && <KeyframeSliderRow
               label="Field of View"
               value={liveFieldOfView}
               onCommit={(v) =>
@@ -5321,7 +5370,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   variant="boxed"
                 />
               }
-            />
+            />}
             <KeyframeSliderRow
               label="Clip start"
               value={liveNearClip}
@@ -6387,12 +6436,12 @@ function MotionPathSection({
   )
 }
 
-function CameraViewportControlsHint() {
+function CameraViewportControlsHint({ orthographic = false }: { orthographic?: boolean }) {
   const recording = useUI((state) => state.recording)
   const controls = [
     { shortcut: 'MMB / Option-drag', action: 'Orbit' },
     { shortcut: 'Shift+MMB / Shift-scroll', action: 'Pan' },
-    { shortcut: 'Ctrl+MMB / Scroll', action: 'Dolly' },
+    { shortcut: 'Ctrl+MMB / Scroll', action: orthographic ? 'Zoom' : 'Dolly' },
     { shortcut: 'Cmd/Ctrl-scroll', action: 'Canvas zoom' },
   ] as const
 

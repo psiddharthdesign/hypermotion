@@ -87,6 +87,10 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'transform.anchorZ', group: 'transform', label: 'Anchor Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'extrusion.depth': {
+    id: 'extrusion.depth', group: 'transform', label: 'Extrusion depth',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
   'motionPath.progress': {
     id: 'motionPath.progress', group: 'transform', label: 'Path Progress',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,

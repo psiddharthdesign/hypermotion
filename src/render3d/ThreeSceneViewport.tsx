@@ -24,6 +24,9 @@ import { createVideoTexture, ensureVideoTexture } from './videoTextureResource'
 import { createPlaybackVideo, masterVideoPrewarm } from './videoPrewarm'
 import { depthOfFieldTexturePadding } from './depthOfFieldPadding'
 import { installDepthOfFieldRenderTargetScale } from './depthOfFieldRenderTarget'
+import { createExtrusionBodyGeometry } from './extrusionGeometry'
+import { extrusionShapeForPlane } from './extrusionScene'
+import { syncExtrusionMaterial } from './extrusionMaterial'
 import { bloomReferenceSize } from './SceneBloomPass'
 import { syncBloomCanvasRaster, withBloomRasterOverrides, type BloomCanvasRaster, type BloomRasterOverride } from './bloomRaster'
 
@@ -36,6 +39,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import * as THREE from 'three'
+import { createThreeCamera, syncThreeCamera, type SceneThreeCamera } from './threeCamera'
 import { videoFitUv } from './videoFit'
 import type { AnimatedValue } from '@/anim'
 import {
@@ -210,6 +214,8 @@ interface ThreeSceneViewportProps {
   exportable?: boolean
   /** Use the authored final-render sample budget instead of preview quality. */
   finalRender?: boolean
+  /** Disable program dissolves while viewing or exporting a locked camera. */
+  cameraTransitions?: boolean
   /** Explicit WebGL drawing-buffer ratio. Editor previews derive this from zoom. */
   renderPixelRatio?: number
   /**
@@ -243,6 +249,9 @@ interface ThreeSceneViewportProps {
 const EMPTY_HIDDEN_NODE_IDS: readonly NodeId[] = Object.freeze([])
 
 interface PlaneRecord {
+  solidBody?: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+  solidOutline?: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>
+  solidSignature?: string
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
   outline: THREE.LineSegments
   /** Undeformed editor reference shown by Better Bend's helper toggle. */
@@ -360,7 +369,7 @@ interface SubtreeTransformContext {
 interface HelperBundle {
   width: number
   height: number
-  camera: THREE.PerspectiveCamera
+  camera: SceneThreeCamera
   frustum: THREE.CameraHelper
   focusPlane: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
   focusLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
@@ -434,6 +443,7 @@ function disposeBeamOverlay(record: PlaneRecord) {
 }
 
 function disposePlaneRecord(record: PlaneRecord) {
+  disposeSolidBody(record)
   disposeBloomRasters(record)
   disposeBeamOverlay(record)
   for (const texture of record.maskTextures?.values() ?? []) texture.dispose()
@@ -473,6 +483,57 @@ function* bloomRasterOverrides(records: Iterable<PlaneRecord>): Iterable<BloomRa
       yield { mesh: record.beamOverlay, texture: record.bloomBeam.texture }
     }
   }
+}
+
+function disposeSolidBody(record: PlaneRecord) {
+  record.solidOutline?.geometry.dispose()
+  record.solidOutline?.material.dispose()
+  record.solidOutline?.removeFromParent()
+  record.solidBody?.geometry.dispose()
+  record.solidBody?.material.dispose()
+  record.solidBody?.removeFromParent()
+  record.solidBody = undefined
+  record.solidOutline = undefined
+  record.solidSignature = undefined
+}
+
+function syncSolidBody(
+  record: PlaneRecord,
+  plane: Plane3D,
+  dof: Parameters<typeof updateDepthOfFieldShader>[1],
+  finalRender: boolean,
+) {
+  const shape = extrusionShapeForPlane(plane)
+  if (!shape || shape.depth <= 0) { disposeSolidBody(record); return }
+  const signature = JSON.stringify(shape)
+  if (!record.solidBody || record.solidSignature !== signature) {
+    disposeSolidBody(record)
+    const geometry = createExtrusionBodyGeometry(shape)
+    const material = new THREE.MeshBasicMaterial({
+      color: '#2563eb', vertexColors: true, transparent: true,
+      side: THREE.FrontSide, depthTest: true, depthWrite: true, alphaTest: 1 / 255,
+    })
+    installDepthOfFieldShader(material)
+    installDepthOfFieldRenderTargetScale(material)
+    record.solidBody = new THREE.Mesh(geometry, material)
+    record.solidBody.name = `${plane.node.name} depth`
+    record.mesh.add(record.solidBody)
+    record.solidOutline = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25), new THREE.LineBasicMaterial({
+      color: '#0095ff', depthTest: false, transparent: true,
+    }))
+    record.solidBody.add(record.solidOutline)
+    record.solidSignature = signature
+  }
+  const body = record.solidBody
+  const textureRect = plane.textureRect ?? plane.rect
+  body.position.set(plane.rect.x + plane.rect.width / 2 - textureRect.x - textureRect.width / 2,
+    plane.rect.y + plane.rect.height / 2 - textureRect.y - textureRect.height / 2, 0)
+  body.material.color.set(parseCanvasSolidColor(plane.extrusion!.sideColor) ?? '#2563eb')
+  syncExtrusionMaterial(record.mesh.material, body.material)
+  body.renderOrder = record.mesh.renderOrder
+  updateDepthOfFieldShader(body.material, { ...dof, enabled: false })
+  record.solidOutline!.visible = record.outline.visible && !finalRender
+  record.solidOutline!.renderOrder = record.outline.renderOrder
 }
 
 function syncVideoElement(
@@ -548,6 +609,7 @@ export function ThreeSceneViewport({
   focusWorldPoint = null,
   exportable = false,
   finalRender = false,
+  cameraTransitions = true,
   renderPixelRatio,
   texturePixelRatio,
   playing = false,
@@ -563,8 +625,9 @@ export function ThreeSceneViewport({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const dissolveRef = useRef<CameraDissolveRenderer | null>(null)
   const dissolveEffectsRef = useRef<ScenePostEffectsRenderer | null>(null)
+  const dissolveCameraRef = useRef<SceneThreeCamera | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const cameraRef = useRef<SceneThreeCamera | null>(null)
   const postEffectsRef = useRef<ScenePostEffectsRenderer | null>(null)
   const postEffectsInteractionRef = useRef<{
     effects: CameraPostEffectsState
@@ -810,7 +873,7 @@ export function ThreeSceneViewport({
     host.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    const perspective = new THREE.PerspectiveCamera(35, width / Math.max(1, height), 1, 100000)
+    const perspective = createThreeCamera(resolvedCamera.projection)
     sceneRef.current = scene
     cameraRef.current = perspective
     rendererRef.current = renderer
@@ -841,6 +904,7 @@ export function ThreeSceneViewport({
       dissolveRef.current = null
       dissolveEffectsRef.current?.dispose()
       dissolveEffectsRef.current = null
+      dissolveCameraRef.current = null
       renderer.dispose()
       // HMR and React development remounts can otherwise leave retired WebGL
       // contexts alive until Chromium's GC runs. After enough edits the dev
@@ -872,9 +936,8 @@ export function ThreeSceneViewport({
       renderer.setPixelRatio(nextPixelRatio)
     }
     renderer.setSize(width, height, false)
-    perspective.aspect = width / Math.max(1, height)
-    perspective.updateProjectionMatrix()
-  }, [webglUnavailable, width, height, renderPixelRatio])
+    syncThreeCamera(perspective, resolvedCamera, width, height)
+  }, [webglUnavailable, width, height, renderPixelRatio, resolvedCamera])
 
   useLayoutEffect(() => {
     // Text editing temporarily reveals the DOM scene above this mounted
@@ -887,9 +950,18 @@ export function ThreeSceneViewport({
     // is rendered once more at paused/full quality.
     void postEffectsQualityRevision
     const scene = sceneRef.current
-    const perspective = cameraRef.current
+    let perspective = cameraRef.current
     const renderer = rendererRef.current
     if (!scene || !perspective || !renderer) return
+    const needsOrthographic = resolvedCamera.projection === 'orthographic'
+    if ((perspective instanceof THREE.OrthographicCamera) !== needsOrthographic) {
+      perspective = createThreeCamera(resolvedCamera.projection)
+      cameraRef.current = perspective
+      // RenderPass captures its camera; rebuild only that small post graph when
+      // changing projection, retaining all layer textures and the WebGL context.
+      postEffectsRef.current?.dispose()
+      postEffectsRef.current = null
+    }
 
     syncThreeCamera(perspective, resolvedCamera, width, height)
     syncBackground(scene, sceneFill)
@@ -1097,7 +1169,7 @@ export function ThreeSceneViewport({
       }
     }
     const composition = getProjectAPI(api).getScenes().find(s => s.rootNodeId === api.getRoot())
-    const dissolve = composition ? cameraDissolveAt(composition, playhead) : null
+    const dissolve = cameraTransitions && composition ? cameraDissolveAt(composition, playhead) : null
     const outgoing = dissolve && dissolve.to === camera.id ? api.getNode(dissolve.from) : null
     if (dissolve && outgoing?.kind === 'camera' && !showHelpers) {
       const drawingSize = renderer.getDrawingBufferSize(new THREE.Vector2())
@@ -1109,15 +1181,23 @@ export function ThreeSceneViewport({
       const outgoingAnimation = animated[outgoing.id] ?? (!finalRender ? getAnimEngine().getSnapshot()[outgoing.id] : undefined)
       const target = outgoing.focusTargetNodeId ? planes.find(p => p.nodeId === outgoing.focusTargetNodeId)?.center : null
       const outgoingCamera = resolveCamera3D(outgoing, outgoingAnimation, { width, height }, target)
-      syncThreeCamera(perspective, outgoingCamera, width, height)
+      let outgoingThreeCamera = dissolveCameraRef.current
+      if (!outgoingThreeCamera ||
+        (outgoingThreeCamera instanceof THREE.OrthographicCamera) !== (outgoingCamera.projection === 'orthographic')) {
+        outgoingThreeCamera = createThreeCamera(outgoingCamera.projection)
+        dissolveCameraRef.current = outgoingThreeCamera
+        dissolveEffectsRef.current?.dispose()
+        dissolveEffectsRef.current = null
+      }
+      syncThreeCamera(outgoingThreeCamera, outgoingCamera, width, height)
       syncPlanes(scene, planesRef.current, api, planeBuildContext, layout, planes, selectedIds, hiddenNodeIds,
-        outgoingCamera, renderer, perspective, animated, playing, playhead, textureRevision,
+        outgoingCamera, renderer, outgoingThreeCamera, animated, playing, playhead, textureRevision,
         playheadDrivenTextureRanges, interactiveCameraPreview, finalRender, curvePreviewRevision, vectorEditPreview, stableTexturePixelRatio)
       if (cameraPostEffectsActive(outgoingCamera)) {
-        if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, perspective, width, height, pixelRatio, withBloomSource)
+        if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, outgoingThreeCamera, width, height, pixelRatio, withBloomSource)
         dissolveEffectsRef.current.configure(outgoingCamera, width, height, pixelRatio, playhead + (outgoing.proceduralTimeOffset ?? 0))
         dissolveEffectsRef.current.render()
-      } else renderer.render(scene, perspective)
+      } else renderer.render(scene, outgoingThreeCamera)
       dissolveRef.current.blend(renderer, dissolve.progress)
       syncThreeCamera(perspective, resolvedCamera, width, height)
       // The outgoing render updated camera-dependent materials; resync next frame.
@@ -1133,6 +1213,7 @@ export function ThreeSceneViewport({
   }, [
     camera.id,
     camera.proceduralTimeOffset,
+    cameraTransitions,
     api,
     planeBuildContext,
     layout,
@@ -1208,30 +1289,6 @@ function playheadDrivenTextureNeedsSync(
     if (crossedStart || crossedEnd) return true
   }
   return false
-}
-
-function syncThreeCamera(
-  camera: THREE.PerspectiveCamera,
-  resolved: ResolvedCamera3D,
-  width: number,
-  height: number,
-) {
-  camera.fov = resolved.fieldOfView
-  camera.aspect = width / Math.max(1, height)
-  camera.near = resolved.nearClip
-  camera.far = resolved.farClip
-  camera.position.set(resolved.position.x, resolved.position.y, resolved.position.z)
-  camera.up.set(0, -1, 0)
-  camera.lookAt(
-    resolved.pointOfInterest.x,
-    resolved.pointOfInterest.y,
-    resolved.pointOfInterest.z,
-  )
-  if (resolved.rotation.z !== 0) {
-    camera.rotateZ(THREE.MathUtils.degToRad(-resolved.rotation.z))
-  }
-  camera.updateProjectionMatrix()
-  camera.updateMatrixWorld(true)
 }
 
 function syncBackground(scene: THREE.Scene, sceneFill: string | null) {
@@ -1368,7 +1425,7 @@ function syncPlanes(
   hiddenNodeIds: readonly NodeId[],
   camera: ResolvedCamera3D,
   renderer: THREE.WebGLRenderer,
-  perspective: THREE.PerspectiveCamera,
+  perspective: SceneThreeCamera,
   animated: Record<NodeId, AnimatedValue>,
   playing: boolean,
   playhead: number,
@@ -1734,18 +1791,19 @@ function syncPlanes(
     // Do not key material state to animated Bend values. Crossing zero used
     // to flip ALPHATEST and force a shader-program rebuild on the settling
     // frame, which direct-GPU export could capture as a corrupted flash.
-    const depthAwareBend = bendUsesDepthCompositing(textureBends)
+    const depthAwareBend = bendUsesDepthCompositing(textureBends) || !!plane.extrusion
     const nextAlphaTest = depthAwareBend ? 1 / 255 : 0
     if (material.alphaTest !== nextAlphaTest) {
       material.alphaTest = nextAlphaTest
       material.needsUpdate = true
     }
-    material.depthTest = depthAwareBend
-    material.depthWrite = depthAwareBend
+    // Explicit overlay instances keep layer order above the scene depth buffer.
+    material.depthTest = depthAwareBend && !plane.alwaysOnTop
+    material.depthWrite = depthAwareBend && !plane.alwaysOnTop
     // An extracted child and its bent ancestor occupy the same mathematical
     // surface. A small depth bias keeps the child's pixels above the backing
     // fill without disabling real depth/self-occlusion when the surface curls.
-    material.polygonOffset = depthAwareBend && inheritsBend
+    material.polygonOffset = depthAwareBend && !plane.alwaysOnTop && inheritsBend
     material.polygonOffsetFactor = material.polygonOffset ? -1 : 0
     material.polygonOffsetUnits = material.polygonOffset ? -1 : 0
     const depthOfFieldOptions = {
@@ -1872,6 +1930,7 @@ function syncPlanes(
         !hidden.has(plane.nodeId) &&
         !finalRender
     }
+    syncSolidBody(record, plane, depthOfFieldOptions, finalRender)
     // Video stays on its native GPU decoder; only its transparent decoration
     // gets a timeline-driven canvas. It shares clipping, opacity, bend, and DOF.
     if (videoNode && hasAnimatedBeam(videoNode.appearance.effects)) {
@@ -1964,7 +2023,7 @@ interface TextSegmentPlaneSyncOptions {
   plane: Plane3D
   camera: ResolvedCamera3D
   renderer: THREE.WebGLRenderer
-  perspective: THREE.PerspectiveCamera
+  perspective: SceneThreeCamera
   anim: AnimatedValue | undefined
   playing: boolean
   playhead: number
@@ -2072,6 +2131,7 @@ function syncTextSegmentPlane({
     plane,
     cameraDepth,
     focalLength: camera.focalLength,
+    orthographicZoom: camera.projection === 'orthographic' ? Math.min(camera.zoomX, camera.zoomY) : undefined,
     extraAwayDepth,
   })
   const effectBlur =
@@ -4264,7 +4324,7 @@ function syncHelpers(
   if (!group) return
   group.visible = show
   if (!show) return
-  const bundle = ensureHelperBundle(group, width, height)
+  const bundle = ensureHelperBundle(group, width, height, camera.projection)
   syncThreeCamera(bundle.camera, camera, width, height)
   bundle.frustum.update()
 
@@ -4289,9 +4349,11 @@ function ensureHelperBundle(
   group: THREE.Group,
   width: number,
   height: number,
+  projection: ResolvedCamera3D['projection'],
 ): HelperBundle {
   const existing = helperBundles.get(group)
-  if (existing && existing.width === width && existing.height === height) {
+  if (existing && existing.width === width && existing.height === height &&
+    (existing.camera instanceof THREE.OrthographicCamera) === (projection === 'orthographic')) {
     return existing
   }
   if (existing) clearHelperGroup(group)
@@ -4305,12 +4367,7 @@ function ensureHelperBundle(
   }
   group.add(grid)
 
-  const helperCamera = new THREE.PerspectiveCamera(
-    35,
-    width / Math.max(1, height),
-    1,
-    2400,
-  )
+  const helperCamera = createThreeCamera(projection)
   const frustum = new THREE.CameraHelper(helperCamera)
   ;(frustum.material as THREE.LineBasicMaterial).color.set(0x94a3b8)
   ;(frustum.material as THREE.LineBasicMaterial).depthTest = false

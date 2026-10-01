@@ -98,11 +98,13 @@ export function textSegmentWorldUnitsPerScreenPixel({
   cameraDepth,
   focalLength,
   extraAwayDepth = 0,
+  orthographicZoom,
 }: {
   plane: Plane3D
   cameraDepth: (point: { x: number; y: number; z: number }) => number
   focalLength: number
   extraAwayDepth?: number
+  orthographicZoom?: number
 }): number {
   const halfWidth = Math.abs(plane.scaleX) * plane.rect.width / 2
   const halfHeight = Math.abs(plane.scaleY) * plane.rect.height / 2
@@ -132,7 +134,9 @@ export function textSegmentWorldUnitsPerScreenPixel({
   )
   return Math.max(
     0.25,
-    Math.min(8, farthestDepth / Math.max(1, focalLength) / localScale),
+    Math.min(8, (orthographicZoom == null
+      ? farthestDepth / Math.max(1, focalLength)
+      : 1 / Math.max(0.0001, orthographicZoom)) / localScale),
   )
 }
 

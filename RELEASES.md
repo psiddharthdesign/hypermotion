@@ -5,6 +5,19 @@ entry below for each corresponding tag.
 
 ## Unreleased
 
+### Isometric asset builder (first version)
+
+- Add orthographic cameras with four isometric presets, Option/Alt + 1–4
+  shortcuts, uniform animated zoom, and selectable composition grids.
+- Give rectangles and complete ellipses editable 3D depth, side colors,
+  depth keyframes, and selection from their visible sides.
+- Add editable Block, Platform, and Server stack assets to the Assets tab.
+- Create Float and Spin cycles as ordinary editable keyframes, with explicit
+  confirmation before replacing existing animation on the chosen axis.
+- This first version uses simple shaded sides. World-plane drawing/snapping,
+  face push/pull, cast shadows, and depth-of-field blur for solid silhouettes
+  remain follow-up work. See [isometric assets](docs/isometric-assets.md).
+
 ### Camera effects and export quality
 
 - Add a keyframeable Vignette effect with amount, size, and feather controls.

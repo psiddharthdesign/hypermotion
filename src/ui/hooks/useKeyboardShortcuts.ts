@@ -64,6 +64,11 @@ import {
 } from '@/ui/CameraCutBar.helpers'
 import { planCameraCutShortcut } from '@/ui/cameraCutShortcut'
 import { cameraCutDeleteKeyGuard } from '@/ui/cameraCutKeyboard'
+import { isometricViewForShortcut } from '@/ui/isometricViewShortcut'
+import { applyIsometricCameraPreset } from '@/ui/cameraViewPreset'
+import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
+import { cameraPreviewStore } from '@/ui/cameraPreviewStore'
+import { resolveProgramCamera } from '@/sequence'
 
 /**
  * Global keyboard shortcuts.
@@ -229,6 +234,29 @@ export function useKeyboardShortcuts() {
       }
 
       if (inField) return
+
+      const isometricView = isometricViewForShortcut(e)
+      if (isometricView && !isEditableControl && !useUI.getState().contextMenu) {
+        const scene = project.getActiveScene()
+        if (!scene) return
+        const ui = useUI.getState()
+        const view = ui.previewScope === 'scene' ? ui.cameraViewByComposition[scene.id] : undefined
+        const time = currentAnimationAuthorTime()
+        const cameras = scene.cameraIds.flatMap(id => {
+          const camera = api.getNode(id)
+          return camera?.kind === 'camera' ? [{ id: camera.id, enabled: camera.enabled }] : []
+        })
+        const cameraId = view?.mode === 'camera' ? view.cameraId : resolveProgramCamera({
+          scene, localTime: time, frameRate: api.getMeta().frameRate,
+          cameras, fallbackCameraId: api.getActiveCameraId(),
+        }).cameraId
+        const camera = cameraId ? api.getNode(cameraId) : null
+        if (camera?.kind !== 'camera' || camera.locked || !camera.enabled || !scene.cameraIds.includes(camera.id)) return
+        e.preventDefault()
+        cameraPreviewStore.clear(camera.id)
+        applyIsometricCameraPreset(api, camera.id, time, ui.recording, isometricView)
+        return
+      }
 
       // Undo / redo. Read the ref instead of a closed-over variable so
       // the manager's identity can swap (when `api` changes) without

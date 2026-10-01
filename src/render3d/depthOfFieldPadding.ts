@@ -38,7 +38,7 @@ export function depthOfFieldTexturePadding(
   const depthSpan =
     Math.abs(cameraSpaceDepth(add3(center, right), camera) - depth) * rect.width / 2 +
     Math.abs(cameraSpaceDepth(add3(center, down), camera) - depth) * rect.height / 2
-  const perspectiveMargin = Math.pow(1 + depthSpan / depth, 2)
+  const perspectiveMargin = camera.projection === 'orthographic' ? 1 : Math.pow(1 + depthSpan / depth, 2)
   const ratio = Math.max(0.25, Math.min(4, camera.bokehRatio))
   const apertureStretch = Math.max(Math.sqrt(ratio), 1 / Math.sqrt(ratio))
   // Include the sparse-kernel mip prefilter as well as the aperture radius.

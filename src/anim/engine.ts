@@ -136,6 +136,7 @@ export interface AnimatedValue {
   /** Text effect config attached to the active text.progress track. */
   textAnimation?: TextAnimationConfig
   /** 0→1 progress for a generic layer motion path. */
+  extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
   bendWaveFrequency?: number
@@ -918,6 +919,9 @@ function writeProperty(
       break
     case 'text.progress':
       into.textProgress = value
+      break
+    case 'extrusion.depth':
+      into.extrusionDepth = value
       break
     case 'motionPath.progress':
       into.motionPathProgress = value

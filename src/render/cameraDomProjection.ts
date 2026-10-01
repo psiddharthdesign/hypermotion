@@ -30,6 +30,7 @@ export type CameraDomMatrix = readonly [
 
 export interface CameraDomProjection {
   focalLength: number
+  perspective: number | 'none'
   z: number
   scale: number
   matrix: CameraDomMatrix
@@ -63,6 +64,7 @@ export function resolveCameraDomProjection(
   if (!camera) {
     return {
       focalLength: 1000,
+      perspective: 1000,
       z: 0,
       scale: 1,
       matrix: IDENTITY_MATRIX,
@@ -95,21 +97,24 @@ export function resolveCameraDomProjection(
     worldToCamera({ x: 0, y: 0, z: 1 }, resolved),
     cameraOrigin,
   )
+  const orthographic = resolved.projection === 'orthographic'
+  const sx = orthographic ? resolved.zoomX : 1
+  const sy = orthographic ? resolved.zoomY : 1
   const matrix: CameraDomMatrix = [
-    cameraX.x,
-    cameraX.y,
+    cameraX.x * sx,
+    cameraX.y * sy,
     -cameraX.z,
     0,
-    cameraY.x,
-    cameraY.y,
+    cameraY.x * sx,
+    cameraY.y * sy,
     -cameraY.z,
     0,
-    cameraZ.x,
-    cameraZ.y,
+    cameraZ.x * sx,
+    cameraZ.y * sy,
     -cameraZ.z,
     0,
-    origin.x + cameraOrigin.x,
-    origin.y + cameraOrigin.y,
+    origin.x + cameraOrigin.x * sx,
+    origin.y + cameraOrigin.y * sy,
     focalLength - cameraOrigin.z,
     1,
   ]
@@ -117,8 +122,9 @@ export function resolveCameraDomProjection(
 
   return {
     focalLength,
+    perspective: orthographic ? 'none' : focalLength,
     z,
-    scale: focalLength / Math.max(1, targetDepth),
+    scale: orthographic ? resolved.zoomX : focalLength / Math.max(1, targetDepth),
     matrix,
     transform: `matrix3d(${matrix.join(',')})`,
   }

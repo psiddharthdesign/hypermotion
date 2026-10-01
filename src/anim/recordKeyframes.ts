@@ -176,6 +176,7 @@ export type PatchGroup =
   | 'shape'
   | 'size'
   | 'camera'
+  | 'extrusion'
   | 'motionPath'
   | 'deformation'
   | 'layout'
@@ -344,7 +345,9 @@ export function stampToActiveTracksForPatch(
 function propertyMapForGroup(
   group: PatchGroup,
 ): Partial<Record<string, PropertyId>> {
-  return group === 'transform'
+  return group === 'extrusion'
+    ? { depth: 'extrusion.depth' }
+    : group === 'transform'
     ? TRANSFORM_PROP_IDS
     : group === 'appearance'
       ? APPEARANCE_PROP_IDS

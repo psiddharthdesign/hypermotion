@@ -12,6 +12,11 @@ import {
   type RefObject,
 } from 'react'
 import { getAnimEngine } from '@/anim'
+import { resolveProgramCamera } from '@/sequence'
+import { IsometricAssetsPanel } from './IsometricAssetsPanel'
+import { applyIsometricCameraPreset } from './cameraViewPreset'
+import { currentAnimationAuthorTime } from './animationPlayhead'
+import { cameraPreviewStore } from './cameraPreviewStore'
 import { useProjectAPI } from '@/project'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type { CameraNode, Node, NodeId, NodeKind } from '@/scene'
@@ -319,12 +324,42 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
   useSceneVersion()
   const api = useSceneAPI()
   const components = listComponents(api)
+  const project = useProjectAPI()
+  const selection = useUI((state) => state.selection)
+  const playhead = useUI((state) => state.playhead)
+  const playing = useUI((state) => state.playing)
+  const [viewMessage, setViewMessage] = useState('')
+  const viewIsometric = () => {
+    const scene = project.getActiveScene()
+    if (!scene) return
+    const ui = useUI.getState()
+    const view = ui.previewScope === 'scene' ? ui.cameraViewByComposition[scene.id] : undefined
+    const time = currentAnimationAuthorTime()
+    const cameras = listSceneCameras(api).filter(camera => scene.cameraIds.includes(camera.id))
+    const cameraId = view?.mode === 'camera' ? view.cameraId : resolveProgramCamera({
+      scene, localTime: time, frameRate: api.getMeta().frameRate,
+      cameras, fallbackCameraId: api.getActiveCameraId(),
+    }).cameraId
+    const camera = cameraId ? api.getNode(cameraId) : null
+    if (camera?.kind !== 'camera' || camera.locked || !camera.enabled) {
+      setViewMessage('Choose an unlocked, enabled camera to use an isometric view.')
+      return
+    }
+    cameraPreviewStore.clear(camera.id)
+    applyIsometricCameraPreset(api, camera.id, time, ui.recording)
+    setViewMessage('Isometric view applied. Option/Alt + 1–4 switches the view.')
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+      <IsometricAssetsPanel api={api} parentId={api.getRoot()} selection={selection}
+        currentTime={currentAnimationAuthorTime({ ...useUI.getState(), playhead, playing })}
+        onCreated={id => useUI.getState().setSelection([id])}
+        onViewIsometric={viewIsometric} />
+      {viewMessage && <p role="status" className="px-3 pb-3 text-[11px] text-text-muted">{viewMessage}</p>}
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
         <span className="text-[11px] font-medium text-text-muted">
-          Asset library
+          Components
         </span>
         <div className="flex items-center gap-1">
           <span

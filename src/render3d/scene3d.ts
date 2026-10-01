@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+import { resolveNodeExtrusion, extrusionShapeForPlane, extrusionWorldMatrix } from './extrusionScene'
+import { intersectExtrusion } from './extrusionPicking'
+import type { Extrusion } from '@/scene/extrusion'
+import { orthographicCameraZoom } from '@/scene/cameraProjection'
 
 import { maskOutline, siblingMask } from '@/render/maskShape'
 import { clipContainsPoint } from './planeClipping'
@@ -47,6 +51,9 @@ export interface ViewportSize {
 
 export interface ResolvedCamera3D extends CameraPostEffectsState {
   nodeId: NodeId
+  projection: 'perspective' | 'orthographic'
+  zoomX: number
+  zoomY: number
   position: Vec3
   rotation: Vec3
   pointOfInterest: Vec3
@@ -73,6 +80,8 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 }
 
 export interface Plane3D {
+  extrusion?: Extrusion
+  extrusionCornerRadius?: number
   nodeId: NodeId
   node: Node
   /** Authored node bounds used for selection, hit testing, and outlines. */
@@ -351,6 +360,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       if (
         segmentTextNodeIds.has(childId) ||
         layerHasBendDeformation(child) ||
+        ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
         isAlwaysOnTopNode(child) ||
         childRenderMode === 'plane' ||
         childRenderMode === 'group3d' ||
@@ -398,6 +408,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       if (
         child.kind === 'video' ||
         layerHasBendDeformation(child) ||
+        ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
         isAlwaysOnTopNode(child) ||
         renderMode === 'plane' ||
         renderMode === 'group3d' ||
@@ -481,6 +492,8 @@ export function resolveCamera3D(
       ),
   )
   const focalLength = Math.max(1, fovToFocalLength(fieldOfView, viewport.height))
+  // One uniform lens control prevents hidden legacy Y-scale keys from stretching the view.
+  const zoom = orthographicCameraZoom(animated?.scaleX ?? camera.transform.scaleX)
   const transformZ = animated?.z ?? camera.transform.z
   const dolly = transformZ
   const pointOfInterest = {
@@ -496,7 +509,9 @@ export function resolveCamera3D(
   const basePosition = {
     x: pointOfInterest.x,
     y: pointOfInterest.y,
-    z: pointOfInterest.z - Math.max(1, focalLength - dolly),
+    z: pointOfInterest.z - Math.max(1, (camera.projection === 'orthographic'
+      ? Math.max(1000, viewport.width * 2, viewport.height * 2)
+      : focalLength) - dolly),
   }
   const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
   const position = add3(pointOfInterest, orbitOffset)
@@ -562,6 +577,9 @@ export function resolveCamera3D(
   return {
     ...postEffects,
     nodeId: camera.id,
+    projection: camera.projection === 'orthographic' ? 'orthographic' : 'perspective',
+    zoomX: zoom,
+    zoomY: zoom,
     position,
     rotation,
     pointOfInterest,
@@ -629,7 +647,7 @@ function cameraBasisFromPosition(
   return { right, down, forward }
 }
 
-function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
+export function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
   return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
 }
 
@@ -639,12 +657,21 @@ export function viewportPointToRay(
   viewportY: number,
   viewport: ViewportSize,
 ): Ray3 {
+  const basis = cameraBasis(camera)
+  if (camera.projection === 'orthographic') {
+    return {
+      origin: add3(camera.position, add3(
+        mul3(basis.right, (viewportX - viewport.width / 2) / camera.zoomX),
+        mul3(basis.down, (viewportY - viewport.height / 2) / camera.zoomY),
+      )),
+      direction: basis.forward,
+    }
+  }
   const local = norm3({
     x: viewportX - viewport.width / 2,
     y: viewportY - viewport.height / 2,
     z: camera.focalLength,
   })
-  const basis = cameraBasis(camera)
   return {
     origin: camera.position,
     direction: norm3(
@@ -676,6 +703,12 @@ export function projectWorldPoint(
   viewport: ViewportSize,
 ): { x: number; y: number } {
   const cameraSpace = worldToCamera(point, camera)
+  if (camera.projection === 'orthographic') {
+    return {
+      x: viewport.width / 2 + cameraSpace.x * camera.zoomX,
+      y: viewport.height / 2 + cameraSpace.y * camera.zoomY,
+    }
+  }
   const z = Math.max(camera.nearClip, cameraSpace.z)
   const scale = camera.focalLength / z
   return {
@@ -1009,11 +1042,13 @@ export function buildWorldPlanes(
     const segmentStackSibling = !!parent && hasDirectSegmentTextChild(parent)
     const splitsSegmentStack = hasDirectSegmentTextChild(node)
     const containsExplicit3DDescendant = hasExplicit3DDescendant(id)
+    const extrusion = resolveNodeExtrusion(node, animated[id])
     const shouldEmitPlane =
       isRequestedNode &&
       !isRoot &&
       (segmentText ||
         deformedNode ||
+        !!extrusion ||
         isAlwaysOnTopNode(node) ||
         independentNodes ||
         videoStackSibling ||
@@ -1099,6 +1134,10 @@ export function buildWorldPlanes(
         nodeId: id,
         node,
         rect,
+        extrusion,
+        extrusionCornerRadius: (animated[id]?.fullRadius ?? (node.appearance.fullRadius ? 1 : 0)) >= 0.5
+          ? Math.min(rect.width, rect.height) / 2
+          : animated[id]?.cornerRadius ?? node.appearance.cornerRadius,
         renderKind: segmentText ? 'segment-text' : 'canvas',
         contentMode,
         paintOrder: paintOrder++,
@@ -1267,17 +1306,25 @@ export function hitTestPlanes(
     // transparent layer planes compose like the DOM renderer. Traverse the
     // same list front-to-back and keep the first hit in each compositing band;
     // authored 3D depth remains available on the winning hit for controls/DOF.
-    if ((overlay && bestOverlay) || (!overlay && bestScene)) continue
+    const best = overlay ? bestOverlay : bestScene
+    // Ordinary design planes retain their authored paint order. Solids also
+    // write depth, so another solid must be compared at its actual surface.
+    // The explicit overlay band bypasses scene depth and retains paint order.
+    if (best && (overlay || !plane.extrusion || !planes.find(p => p.nodeId === best.nodeId)?.extrusion)) continue
+    const shape = extrusionShapeForPlane(plane)
+    const solidHit = shape && shape.depth > 0 ? intersectExtrusion(ray, shape, extrusionWorldMatrix(plane)) : null
+    if (shape && shape.depth > 0 && !solidHit) continue
     const denom = dot3(ray.direction, plane.normal)
-    if (Math.abs(denom) < 0.0001) continue
-    const t = dot3(sub3(plane.center, ray.origin), plane.normal) / denom
+    if (!solidHit && Math.abs(denom) < 0.0001) continue
+    const t = solidHit?.t ?? dot3(sub3(plane.center, ray.origin), plane.normal) / denom
     if (t <= 0) continue
-    const point = add3(ray.origin, mul3(ray.direction, t))
+    if (best && t >= best.t) continue
+    const point = solidHit?.point ?? add3(ray.origin, mul3(ray.direction, t))
     if (plane.clips?.some((clip) => !clipContainsPoint(clip, point))) continue
     const rel = sub3(point, plane.center)
-    const localX = dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX)) + plane.rect.width / 2
-    const localY = dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY)) + plane.rect.height / 2
-    if (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height) continue
+    const localX = (solidHit?.localPoint.x ?? dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX))) + plane.rect.width / 2
+    const localY = (solidHit?.localPoint.y ?? dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY))) + plane.rect.height / 2
+    if (!solidHit && (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height)) continue
     const hit = {
       nodeId: plane.nodeId,
       point,
@@ -1326,8 +1373,8 @@ export function depthBlurAmount(
 
 export function cameraFrustumCorners(camera: ResolvedCamera3D, viewport: ViewportSize, depth: number): Vec3[] {
   const basis = cameraBasis(camera)
-  const halfH = (depth / camera.focalLength) * (viewport.height / 2)
-  const halfW = (depth / camera.focalLength) * (viewport.width / 2)
+  const halfH = (camera.projection === 'orthographic' ? 1 / camera.zoomY : depth / camera.focalLength) * (viewport.height / 2)
+  const halfW = (camera.projection === 'orthographic' ? 1 / camera.zoomX : depth / camera.focalLength) * (viewport.width / 2)
   const center = add3(camera.position, mul3(basis.forward, depth))
   return [
     add3(add3(center, mul3(basis.right, -halfW)), mul3(basis.down, -halfH)),
