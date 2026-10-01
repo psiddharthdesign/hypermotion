@@ -23,6 +23,8 @@
     "test:figma": "vitest run src/import/figma src/scene/vector/path.test.ts src/scene/vector/svgSecurity.test.ts src/scene/vector/vectorNode.test.ts src/render/vectorPaint.test.ts src/render/vectorSource.test.ts src/layout/vectorMeasure.test.ts src/ui/fonts/googleFonts.test.ts",
     "test:figma-plugin": "vitest run figma-plugin/test/*.test.ts electron/figmaPlugin.test.ts",
     "test:figma-plugin-shell": "vitest run electron/figmaPlugin.test.ts",
+    "test:units": "vitest run src/export/formats.test.ts src/export/progressStore.test.ts src/fonts/loader.test.ts src/fonts/registration.test.ts src/layout/mapper.test.ts src/interaction/componentRuntime.test.ts",
+    "test:coverage": "vitest run --exclude 'cli/**' --exclude '**/node_modules/**' --coverage.enabled --coverage.provider=v8 --coverage.include='src/**' --coverage.exclude='**/*.test.*'",
     "typecheck": "tsc -b",
     "preview": "vite preview"
   },
@@ -55,6 +57,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
     "eslint": "^9.39.4",
