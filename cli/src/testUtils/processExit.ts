@@ -2,7 +2,7 @@
 
 type ProcessExitCallback<T> = () => Promise<T> | T
 type ProcessExitCode = Parameters<typeof process.exit>[0]
-type NormalizedProcessExitCode = NonNullable<ProcessExitCode>
+type NormalizedProcessExitCode = Exclude<ProcessExitCode, null | undefined>
 
 export interface ProcessExitError extends Error {
   readonly exitCode: NormalizedProcessExitCode
