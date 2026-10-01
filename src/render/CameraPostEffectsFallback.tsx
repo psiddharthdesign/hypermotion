@@ -3,13 +3,97 @@
 import { Fragment, useId, type ReactNode } from 'react'
 import {
   cameraPostEffectsActive,
+  cameraVignetteActive,
   type CameraPostEffectsState,
 } from '@/render3d/postEffects'
 import {
   fallbackBloomSigma,
   fallbackPostEffectPadding,
+  fallbackVignetteImage,
   finiteFallbackNumber,
 } from './cameraPostEffectsFallbackState'
+
+/**
+ * Repeat only the frame's outermost rows, columns, and corner pixels into the
+ * filter padding. Splitting an unpadded SourceGraphic introduces a missing
+ * channel at the composition boundary even when its background is opaque.
+ * Tiling the cropped edge preserves its color and alpha; internal transparent
+ * boundaries still receive the normal chromatic fringe.
+ */
+function ChromaticFrameExtension({
+  input,
+  width,
+  height,
+  padding,
+}: {
+  input: string
+  width: number
+  height: number
+  padding: number
+}) {
+  const columns = [
+    { name: 'left', source: 0, size: 1, start: -padding, extent: padding },
+    { name: 'middle', source: 0, size: width, start: 0, extent: width },
+    { name: 'right', source: width - 1, size: 1, start: width, extent: padding },
+  ]
+  const rows = [
+    { name: 'top', source: 0, size: 1, start: -padding, extent: padding },
+    { name: 'middle', source: 0, size: height, start: 0, extent: height },
+    { name: 'bottom', source: height - 1, size: 1, start: height, extent: padding },
+  ]
+  const edges = rows.flatMap(row => columns.flatMap(column => (
+    row.name === 'middle' && column.name === 'middle'
+      ? []
+      : [{ row, column, id: `hm-chromatic-edge-${row.name}-${column.name}` }]
+  )))
+
+  return (
+    <>
+      {edges.map(({ row, column, id }) => (
+        <Fragment key={id}>
+          <feOffset
+            in={input}
+            dx="0"
+            dy="0"
+            x={column.source}
+            y={row.source}
+            width={column.size}
+            height={row.size}
+            result={`${id}-source`}
+          />
+          <feTile
+            in={`${id}-source`}
+            x={column.start}
+            y={row.start}
+            width={column.extent}
+            height={row.extent}
+            result={id}
+          />
+        </Fragment>
+      ))}
+      <feOffset
+        in={input}
+        dx="0"
+        dy="0"
+        x="0"
+        y="0"
+        width={width}
+        height={height}
+        result="hm-chromatic-frame-center"
+      />
+      <feMerge
+        x={-padding}
+        y={-padding}
+        width={width + padding * 2}
+        height={height + padding * 2}
+        result="hm-chromatic-frame"
+      >
+        {edges.map(({ id }) => <feMergeNode key={id} in={id} />)}
+        <feMergeNode in="hm-chromatic-frame-center" />
+      </feMerge>
+    </>
+  )
+}
 
 /**
  * DOM/WebGL-failure compositor for camera-wide post effects.
@@ -17,7 +101,8 @@ import {
  * The scene is rendered once. One SVG filter performs highlight extraction,
  * bloom, and RGB channel separation in the same optical order as the WebGL
  * graph (DOF is supplied by the child compositor, then Bloom, then Chromatic).
- * When both effects are inert this returns the children directly: no wrapper,
+ * A final RGB-only multiplication applies the vignette to the complete image.
+ * When all effects are inert this returns the children directly: no wrapper,
  * SVG definitions, CSS filter, or compositor layer is created.
  */
 export function CameraPostEffectsFallback({
@@ -41,8 +126,10 @@ export function CameraPostEffectsFallback({
     effects.chromaticAberrationAmount > 0.001
   const bloomActive = effects.bloomEnabled && effects.bloomStrength > 0.001
   const vhsActive = effects.vhsEnabled && effects.vhsIntensity > 0.001
+  const vignetteActive = cameraVignetteActive(effects)
   const svgFilterActive = chromaticActive || bloomActive
   const filterId = `hm-camera-post-${reactId.replaceAll(':', '')}`
+  const vignetteFilterId = `${filterId}-vignette`
   const safeWidth = Math.max(1, finiteFallbackNumber(width, 1))
   const safeHeight = Math.max(1, finiteFallbackNumber(height, 1))
   const padding = fallbackPostEffectPadding(effects)
@@ -60,6 +147,7 @@ export function CameraPostEffectsFallback({
     bloomActive ? 'bloom' : null,
     chromaticActive ? 'chromatic' : null,
     vhsActive ? 'vhs' : null,
+    vignetteActive ? 'vignette' : null,
   ]
     .filter(Boolean)
     .join(' ')
@@ -68,9 +156,12 @@ export function CameraPostEffectsFallback({
     <div
       className="absolute inset-0"
       data-camera-post-effects={activeNames}
-      style={{ isolation: 'isolate' }}
+      style={{
+        isolation: 'isolate',
+        filter: vignetteActive ? `url("#${vignetteFilterId}")` : undefined,
+      }}
     >
-      {svgFilterActive ? (
+      {svgFilterActive || vignetteActive ? (
         <svg
           aria-hidden="true"
           focusable="false"
@@ -79,6 +170,39 @@ export function CameraPostEffectsFallback({
           className="pointer-events-none absolute"
         >
           <defs>
+            {vignetteActive ? (
+              <filter
+                id={vignetteFilterId}
+                x="0"
+                y="0"
+                width={safeWidth}
+                height={safeHeight}
+                filterUnits="userSpaceOnUse"
+                primitiveUnits="userSpaceOnUse"
+                colorInterpolationFilters="linearRGB"
+              >
+                <feImage
+                  href={fallbackVignetteImage(effects)}
+                  x="0"
+                  y="0"
+                  width={safeWidth}
+                  height={safeHeight}
+                  preserveAspectRatio="none"
+                  result="hm-vignette-multiplier"
+                />
+                <feComposite
+                  in="SourceGraphic"
+                  in2="hm-vignette-multiplier"
+                  operator="arithmetic"
+                  k1="1"
+                  k2="0"
+                  k3="0"
+                  k4="0"
+                  result="hm-vignette"
+                />
+              </filter>
+            ) : null}
+            {svgFilterActive ? (
             <filter
               id={filterId}
               x={-padding}
@@ -137,8 +261,14 @@ export function CameraPostEffectsFallback({
 
             {chromaticActive ? (
               <>
+                <ChromaticFrameExtension
+                  input={chromaticInput}
+                  width={safeWidth}
+                  height={safeHeight}
+                  padding={padding}
+                />
                 <feColorMatrix
-                  in={chromaticInput}
+                  in="hm-chromatic-frame"
                   type="matrix"
                   values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"
                   result="hm-red"
@@ -150,13 +280,13 @@ export function CameraPostEffectsFallback({
                   result="hm-red-shift"
                 />
                 <feColorMatrix
-                  in={chromaticInput}
+                  in="hm-chromatic-frame"
                   type="matrix"
                   values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0"
                   result="hm-green"
                 />
                 <feColorMatrix
-                  in={chromaticInput}
+                  in="hm-chromatic-frame"
                   type="matrix"
                   values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0"
                   result="hm-blue"
@@ -182,6 +312,7 @@ export function CameraPostEffectsFallback({
               </>
             ) : null}
             </filter>
+            ) : null}
           </defs>
         </svg>
       ) : null}

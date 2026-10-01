@@ -3755,6 +3755,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'vhsNoise'
         | 'vhsScanlines'
         | 'vhsColorBleed'
+        | 'vignetteEnabled'
+        | 'vignetteAmount'
+        | 'vignetteSize'
+        | 'vignetteFeather'
         | 'showFocusPlane'
       >
     >,
@@ -3899,6 +3903,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.vhsColorBleed !== undefined) {
       api.setNodeProperty(node.id, 'vhsColorBleed', patch.vhsColorBleed)
+    }
+    for (const field of ['vignetteEnabled', 'vignetteAmount', 'vignetteSize', 'vignetteFeather'] as const) {
+      if (patch[field] !== undefined) api.setNodeProperty(node.id, field, patch[field])
     }
     if (patch.showFocusPlane !== undefined) {
       api.setNodeProperty(node.id, 'showFocusPlane', patch.showFocusPlane)
@@ -6077,6 +6084,37 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+              </>
+            ) : null}
+
+            <div className="border-t border-border" />
+
+            <SectionToggleRow
+              label="Vignette"
+              value={node.vignetteEnabled ?? false}
+              onCommit={(vignetteEnabled) => patchCamera({ vignetteEnabled })}
+            />
+            {node.vignetteEnabled ? (
+              <>
+                <p className="px-2 text-[10px] leading-4 text-text-dim">
+                  Darkens the frame edges. Size widens the clear center; Feather softens the fade.
+                </p>
+                {([
+                  ['vignetteAmount', 'Amount', 0.35],
+                  ['vignetteSize', 'Size', 0.5],
+                  ['vignetteFeather', 'Feather', 0.5],
+                ] as const).map(([field, label, fallback]) => {
+                  const value = anim?.[field] ?? node[field] ?? fallback
+                  const patch = (percent: number) => ({ [field]: Math.max(0, Math.min(1, percent / 100)) })
+                  return <KeyframeSliderRow key={field} label={label} value={value * 100}
+                    onCommit={(v) => patchCamera(patch(v))}
+                    onScrubPreview={(v) => previewCameraProperties(patch(v))}
+                    onScrubCommit={(v) => commitCameraPropertiesScrub(patch(v))}
+                    onScrubCancel={cancelCameraPropertiesPreview}
+                    min={0} max={100} step={1} suffix="%"
+                    keyframe={<KeyframeButton nodeId={node.id} propertyId={`camera.${field}`}
+                      currentValue={value} variant="boxed" />} />
+                })}
               </>
             ) : null}
 

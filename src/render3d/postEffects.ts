@@ -5,7 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { SceneBloomPass } from './SceneBloomPass'
 
 export interface CameraPostEffectsInput {
   chromaticAberrationEnabled?: boolean
@@ -20,6 +20,10 @@ export interface CameraPostEffectsInput {
   vhsNoise?: number
   vhsScanlines?: number
   vhsColorBleed?: number
+  vignetteEnabled?: boolean
+  vignetteAmount?: number
+  vignetteSize?: number
+  vignetteFeather?: number
 }
 
 export interface CameraPostEffectsState {
@@ -43,6 +47,13 @@ export interface CameraPostEffectsState {
   vhsScanlines: number
   /** Horizontal red/blue channel bleed in composition pixels. */
   vhsColorBleed: number
+  vignetteEnabled: boolean
+  /** Edge darkening contribution, in the range 0...1. */
+  vignetteAmount: number
+  /** Unaffected inner radius relative to the viewport corners, 0...1. */
+  vignetteSize: number
+  /** Width of the smooth edge transition, in the range 0...1. */
+  vignetteFeather: number
 }
 
 const EFFECT_EPSILON = 0.001
@@ -82,6 +93,10 @@ export function normalizeCameraPostEffects(
     vhsNoise: clampFinite(input.vhsNoise, 0, 1, 0.35),
     vhsScanlines: clampFinite(input.vhsScanlines, 0, 1, 0.5),
     vhsColorBleed: clampFinite(input.vhsColorBleed, 0, 32, 3),
+    vignetteEnabled: input.vignetteEnabled === true,
+    vignetteAmount: clampFinite(input.vignetteAmount, 0, 1, 0.35),
+    vignetteSize: clampFinite(input.vignetteSize, 0, 1, 0.5),
+    vignetteFeather: clampFinite(input.vignetteFeather, 0, 1, 0.5),
   }
 }
 
@@ -93,7 +108,8 @@ export function cameraPostEffectsActive(
     (effects.chromaticAberrationEnabled &&
       effects.chromaticAberrationAmount > EFFECT_EPSILON) ||
     (effects.bloomEnabled && effects.bloomStrength > EFFECT_EPSILON) ||
-    (effects.vhsEnabled && effects.vhsIntensity > EFFECT_EPSILON)
+    (effects.vhsEnabled && effects.vhsIntensity > EFFECT_EPSILON) ||
+    cameraVignetteActive(effects)
   )
 }
 
@@ -104,7 +120,8 @@ export function cameraPostEffectsEnabled(
   return (
     effects.chromaticAberrationEnabled ||
     effects.bloomEnabled ||
-    effects.vhsEnabled
+    effects.vhsEnabled ||
+    effects.vignetteEnabled
   )
 }
 
@@ -134,8 +151,30 @@ export function cameraPostEffectsInteractionChanged(
     previousEffects.vhsIntensity !== nextEffects.vhsIntensity ||
     previousEffects.vhsNoise !== nextEffects.vhsNoise ||
     previousEffects.vhsScanlines !== nextEffects.vhsScanlines ||
-    previousEffects.vhsColorBleed !== nextEffects.vhsColorBleed
+    previousEffects.vhsColorBleed !== nextEffects.vhsColorBleed ||
+    previousEffects.vignetteEnabled !== nextEffects.vignetteEnabled ||
+    previousEffects.vignetteAmount !== nextEffects.vignetteAmount ||
+    previousEffects.vignetteSize !== nextEffects.vignetteSize ||
+    previousEffects.vignetteFeather !== nextEffects.vignetteFeather
   )
+}
+
+export function cameraVignetteActive(effects: CameraPostEffectsState): boolean {
+  return effects.vignetteEnabled &&
+    effects.vignetteAmount > EFFECT_EPSILON &&
+    effects.vignetteSize < 1
+}
+
+/** Linear RGB multiplier shared by the SVG fallback and shader contract tests. */
+export function cameraVignetteMultiplier(
+  radius: number,
+  effects: Pick<CameraPostEffectsState, 'vignetteAmount' | 'vignetteSize' | 'vignetteFeather'>,
+): number {
+  const transition = Math.max(0, Math.min(1,
+    (radius - effects.vignetteSize) / Math.max(effects.vignetteFeather, 0.001),
+  ))
+  const mask = transition * transition * (3 - 2 * transition)
+  return 1 - effects.vignetteAmount * mask
 }
 
 /**
@@ -247,7 +286,9 @@ export function chromaticAberrationUvOffset(
  * Three ShaderPass definition for a true RGB channel split. Red samples ahead
  * of the authored direction, blue behind it, and green stays centered. Alpha
  * uses the widest of the three samples so transparent artwork retains its
- * colored fringe instead of being cropped to the original silhouette.
+ * colored fringe instead of being cropped to the original silhouette. Samples
+ * beyond the composition repeat its edge pixels: the camera's crop is not an
+ * artwork edge and must not lose a color channel when the split crosses it.
  */
 export const CHROMATIC_ABERRATION_SHADER = {
   name: 'HyperMotionChromaticAberration',
@@ -273,11 +314,7 @@ export const CHROMATIC_ABERRATION_SHADER = {
     varying vec2 vUv;
 
     vec4 sampleWithinFrame(vec2 uv) {
-      vec2 lowerBound = step(vec2(0.0), uv);
-      vec2 upperBound = step(uv, vec2(1.0));
-      float coverage =
-        lowerBound.x * lowerBound.y * upperBound.x * upperBound.y;
-      return texture2D(tDiffuse, clamp(uv, vec2(0.0), vec2(1.0))) * coverage;
+      return texture2D(tDiffuse, clamp(uv, vec2(0.0), vec2(1.0)));
     }
 
     void main() {
@@ -298,13 +335,58 @@ export const CHROMATIC_ABERRATION_SHADER = {
   `,
 } as const
 
+/** Viewport-relative ellipse that darkens existing pixels without adding alpha. */
+export const VIGNETTE_SHADER = {
+  name: 'HyperMotionVignette',
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    hmAmount: { value: 0.35 },
+    hmSize: { value: 0.5 },
+    hmFeather: { value: 0.5 },
+    // One display code of spatial dither prevents near-black gradients from
+    // collapsing into broad contours at the final 8-bit output boundary.
+    hmDitherAmplitude: { value: 1 / 255 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float hmAmount;
+    uniform float hmSize;
+    uniform float hmFeather;
+    uniform float hmDitherAmplitude;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 source = texture2D(tDiffuse, vUv);
+      float radius = length((vUv - 0.5) * 2.0) / sqrt(2.0);
+      float mask = smoothstep(hmSize, hmSize + max(hmFeather, 0.001), radius);
+      gl_FragColor = vec4(source.rgb * (1.0 - hmAmount * mask), source.a);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      // Dither in display space, after encoding, where the 8-bit rounding
+      // happens. Keep it monochrome and fixed to output pixels so neither
+      // color speckles nor animated grain are introduced during playback.
+      float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
+      float ditherWeight = smoothstep(0.0, 1.0 / 255.0, hmAmount * mask) * source.a;
+      gl_FragColor.rgb = clamp(gl_FragColor.rgb + vec3(noise * hmDitherAmplitude * ditherWeight), 0.0, 1.0);
+    }
+  `,
+} as const
+
 /**
  * Deterministic analog-tape treatment. All temporal variation comes from the
  * authored scene playhead; a paused frame and the matching exported frame
  * therefore resolve to the same wobble, tear, grain, and rolling noise band.
  *
- * This pass intentionally stays in linear color space. OutputPass, or the
- * following chromatic-aberration pass, owns tone mapping and display encoding.
+ * This pass intentionally stays in linear color space. OutputPass or the final
+ * chromatic/vignette pass owns tone mapping and display encoding.
  */
 export const VHS_SHADER = {
   name: 'HyperMotionVHS',
@@ -434,16 +516,18 @@ export const VHS_SHADER = {
  * The graph is allocated lazily by ThreeSceneViewport only when at least one
  * effect is active, then reused for every preview/export frame. Parameter
  * animation updates uniforms/pass fields without rebuilding shaders or render
- * targets. The caller retains the direct renderer.render fast path while both
+ * targets. The caller retains the direct renderer.render fast path while all
  * effects are inactive.
  */
 export class ScenePostEffectsRenderer {
   private readonly composer: EffectComposer
   private readonly renderPass: RenderPass
-  private bloomPass: UnrealBloomPass | null = null
+  private bloomPass: SceneBloomPass | null = null
   private readonly vhsPass: ShaderPass
   private readonly chromaticPass: ShaderPass
+  private readonly vignettePass: ShaderPass
   private readonly outputPass: OutputPass
+  private readonly withBloomSource?: (draw: () => void) => void
   private width = 0
   private height = 0
   private pixelRatio = 0
@@ -456,16 +540,20 @@ export class ScenePostEffectsRenderer {
     width: number,
     height: number,
     pixelRatio: number,
+    withBloomSource?: (draw: () => void) => void,
   ) {
+    this.withBloomSource = withBloomSource
     this.composer = new EffectComposer(renderer)
     this.renderPass = new RenderPass(scene, camera)
     this.vhsPass = new ShaderPass(VHS_SHADER)
     this.chromaticPass = new ShaderPass(CHROMATIC_ABERRATION_SHADER)
+    this.vignettePass = new ShaderPass(VIGNETTE_SHADER)
     this.outputPass = new OutputPass()
 
     this.composer.addPass(this.renderPass)
     this.composer.addPass(this.vhsPass)
     this.composer.addPass(this.chromaticPass)
+    this.composer.addPass(this.vignettePass)
     this.composer.addPass(this.outputPass)
     this.resize(width, height, pixelRatio)
   }
@@ -527,10 +615,16 @@ export class ScenePostEffectsRenderer {
     this.chromaticPass.uniforms.hmAngleRadians.value =
       THREE.MathUtils.degToRad(effects.chromaticAberrationAngle)
 
-    // Chromatic is already a full-screen pass. When active, it also performs
-    // Three's standard tone mapping/output conversion and becomes the final
-    // pass, avoiding a second full-resolution copy through OutputPass.
-    this.outputPass.enabled = !chromaticEnabled
+    const vignetteEnabled = cameraVignetteActive(effects)
+    this.vignettePass.enabled = vignetteEnabled
+    this.vignettePass.uniforms.hmAmount.value = effects.vignetteAmount
+    this.vignettePass.uniforms.hmSize.value = effects.vignetteSize
+    this.vignettePass.uniforms.hmFeather.value = effects.vignetteFeather
+
+    // Three applies tone mapping/display encoding only when a ShaderPass
+    // renders to the screen. The last active chromatic/vignette pass owns it;
+    // intermediate passes retain linear RGB, avoiding duplicate conversion.
+    this.outputPass.enabled = !chromaticEnabled && !vignetteEnabled
 
     const bloomPass = effects.bloomEnabled
       ? this.ensureBloomPass()
@@ -544,7 +638,8 @@ export class ScenePostEffectsRenderer {
   }
 
   render(): void {
-    // No pass is time-dependent. A fixed delta keeps frame export bit-stable.
+    // Time-dependent passes use the scene playhead. A fixed delta keeps export
+    // independent of how long the previous frame took to render.
     this.composer.render(0)
   }
 
@@ -554,6 +649,7 @@ export class ScenePostEffectsRenderer {
     this.releaseBloomPass()
     this.vhsPass.dispose()
     this.chromaticPass.dispose()
+    this.vignettePass.dispose()
     this.outputPass.dispose()
     this.composer.dispose()
   }
@@ -578,23 +674,17 @@ export class ScenePostEffectsRenderer {
     }
   }
 
-  private ensureBloomPass(): UnrealBloomPass {
+  private ensureBloomPass(): SceneBloomPass {
     if (this.bloomPass) return this.bloomPass
-    const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(
-        Math.max(1, this.width * this.pixelRatio),
-        Math.max(1, this.height * this.pixelRatio),
-      ),
-      0,
-      0.35,
-      0.75,
+    const bloomPass = new SceneBloomPass(
+      Math.max(1, this.width * this.pixelRatio),
+      Math.max(1, this.height * this.pixelRatio),
+      (renderer, target, deltaTime) => {
+        const draw = () => this.renderPass.render(renderer, target, target, deltaTime, false)
+        if (this.withBloomSource) this.withBloomSource(draw)
+        else draw()
+      },
     )
-    // UnrealBloom's fullscreen scratch passes never use depth. These targets
-    // are public Three API and have not reached WebGL yet, so disabling their
-    // attachments here prevents the allocations entirely.
-    for (const target of bloomScratchTargets(bloomPass)) {
-      target.depthBuffer = false
-    }
     this.composer.insertPass(bloomPass, 1)
     this.bloomPass = bloomPass
     return bloomPass
@@ -610,13 +700,9 @@ export class ScenePostEffectsRenderer {
 }
 
 function bloomScratchTargets(
-  bloomPass: UnrealBloomPass,
+  bloomPass: SceneBloomPass,
 ): THREE.WebGLRenderTarget[] {
-  return [
-    bloomPass.renderTargetBright,
-    ...bloomPass.renderTargetsHorizontal,
-    ...bloomPass.renderTargetsVertical,
-  ]
+  return bloomPass.getScratchTargets()
 }
 
 function clampFinite(

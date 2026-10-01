@@ -4,15 +4,18 @@ import * as THREE from 'three'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSceneAPI } from '@/scene/doc'
 import { resolveCamera3D } from './scene3d'
+import { bloomReferenceSize, SceneBloomPass } from './SceneBloomPass'
 import {
   CHROMATIC_ABERRATION_SHADER,
   PostEffectsIdleQualityController,
   ScenePostEffectsRenderer,
   VHS_SHADER,
+  VIGNETTE_SHADER,
   cameraPostEffectsActive,
   cameraPostEffectsEnabled,
   cameraPostEffectsInteractionChanged,
   cameraPostEffectsPixelRatio,
+  cameraVignetteMultiplier,
   chromaticAberrationUvOffset,
   normalizeCameraPostEffects,
 } from './postEffects'
@@ -34,6 +37,10 @@ describe('camera post effects', () => {
       vhsNoise: 0.35,
       vhsScanlines: 0.5,
       vhsColorBleed: 3,
+      vignetteEnabled: false,
+      vignetteAmount: 0.35,
+      vignetteSize: 0.5,
+      vignetteFeather: 0.5,
     })
 
     expect(
@@ -50,6 +57,10 @@ describe('camera post effects', () => {
         vhsNoise: -2,
         vhsScanlines: Number.NaN,
         vhsColorBleed: 80,
+        vignetteEnabled: true,
+        vignetteAmount: 2,
+        vignetteSize: -1,
+        vignetteFeather: Number.NaN,
       }),
     ).toEqual({
       chromaticAberrationEnabled: true,
@@ -65,6 +76,10 @@ describe('camera post effects', () => {
       vhsNoise: 0,
       vhsScanlines: 0.5,
       vhsColorBleed: 32,
+      vignetteEnabled: true,
+      vignetteAmount: 1,
+      vignetteSize: 0,
+      vignetteFeather: 0.5,
     })
   })
 
@@ -80,6 +95,8 @@ describe('camera post effects', () => {
         bloomStrength: 0,
         vhsEnabled: true,
         vhsIntensity: 0,
+        vignetteEnabled: true,
+        vignetteAmount: 0,
       }),
     ).toBe(false)
     expect(
@@ -100,6 +117,12 @@ describe('camera post effects', () => {
         vhsEnabled: true,
       }),
     ).toBe(true)
+    expect(cameraPostEffectsActive({ ...disabled, vignetteEnabled: true })).toBe(true)
+    expect(cameraPostEffectsActive({
+      ...disabled,
+      vignetteEnabled: true,
+      vignetteSize: 1,
+    })).toBe(false)
   })
 
   it('ties resource lifetime to authored toggles, not animated zeroes', () => {
@@ -116,14 +139,20 @@ describe('camera post effects', () => {
       vhsEnabled: true,
       vhsIntensity: 0,
     })
+    const zeroVignette = normalizeCameraPostEffects({
+      vignetteEnabled: true,
+      vignetteAmount: 0,
+    })
 
     expect(cameraPostEffectsEnabled(disabled)).toBe(false)
     expect(cameraPostEffectsEnabled(zeroChromatic)).toBe(true)
     expect(cameraPostEffectsEnabled(zeroBloom)).toBe(true)
     expect(cameraPostEffectsEnabled(zeroVhs)).toBe(true)
+    expect(cameraPostEffectsEnabled(zeroVignette)).toBe(true)
     expect(cameraPostEffectsActive(zeroChromatic)).toBe(false)
     expect(cameraPostEffectsActive(zeroBloom)).toBe(false)
     expect(cameraPostEffectsActive(zeroVhs)).toBe(false)
+    expect(cameraPostEffectsActive(zeroVignette)).toBe(false)
   })
 
   it('converts composition-pixel separation into aspect-correct UV offsets', () => {
@@ -220,6 +249,16 @@ describe('camera post effects', () => {
     expect(
       cameraPostEffectsInteractionChanged(before, vhsAfter, 1, 1),
     ).toBe(true)
+    for (const vignetteChange of [
+      { vignetteEnabled: true },
+      { vignetteAmount: 0.8 },
+      { vignetteSize: 0.8 },
+      { vignetteFeather: 0.8 },
+    ]) {
+      expect(cameraPostEffectsInteractionChanged(
+        before, { ...before, ...vignetteChange }, 1, 1,
+      )).toBe(true)
+    }
     expect(cameraPostEffectsInteractionChanged(before, before, 1, 1.25)).toBe(
       true,
     )
@@ -290,6 +329,216 @@ describe('camera post effects', () => {
     expect(postEffects.getResourceProfile().disposed).toBe(true)
   })
 
+  it('keeps the bloom footprint stable from fitted preview through 4K and 2x stills', () => {
+    const bloom = new SceneBloomPass(960, 540, () => undefined)
+    const blurSizes = () => bloom.renderTargetsHorizontal.map((target) => [target.width, target.height])
+    const previewSizes = blurSizes()
+    expect(previewSizes).toEqual([[480, 270], [240, 135], [120, 68], [60, 34], [30, 17]])
+
+    for (const [width, height] of [[3840, 2160], [7680, 4320], [1920, 1080], [480, 270]]) {
+      bloom.setSize(width, height)
+      expect(blurSizes()).toEqual(previewSizes)
+      expect(bloom.renderTargetBright.width).toBe(480)
+      expect(bloom.renderTargetBright.height).toBe(270)
+      expect(bloom.getScratchTargets().every((target) => !target.depthBuffer)).toBe(true)
+    }
+    bloom.dispose()
+  })
+
+  it('normalizes bloom resolution by frame aspect rather than output size', () => {
+    expect(bloomReferenceSize(7680, 4320)).toEqual({ width: 960, height: 540 })
+    expect(bloomReferenceSize(960, 540)).toEqual({ width: 960, height: 540 })
+    expect(bloomReferenceSize(540, 960)).toEqual({ width: 540, height: 960 })
+    expect(bloomReferenceSize(1080, 1920)).toEqual({ width: 540, height: 960 })
+    expect(bloomReferenceSize(4001, 2251)).toEqual({ width: 960, height: 540 })
+  })
+
+  it('extracts a canonical scene render but adds bloom onto the untouched full-resolution scene', () => {
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera()
+    const renderSource = vi.fn((renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) => {
+      renderer.setRenderTarget(target)
+      renderer.clear()
+      renderer.render(scene, camera)
+    })
+    const bloom = new SceneBloomPass(7680, 4320, renderSource)
+    const source = new THREE.WebGLRenderTarget(7680, 4320)
+    const output = source.clone()
+    let target: THREE.WebGLRenderTarget | null = null
+    const draws: {
+      material: THREE.ShaderMaterial
+      target: THREE.WebGLRenderTarget | null
+      source: THREE.Texture | null
+    }[] = []
+    const renderer = {
+      autoClear: true,
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.WebGLRenderTarget | null) => { target = next },
+      getClearColor: (color: THREE.Color) => color.set('#000'),
+      getClearAlpha: () => 1,
+      setClearColor: () => undefined,
+      clear: () => undefined,
+      render: (object: THREE.Object3D) => {
+        if (!(object instanceof THREE.Mesh)) return
+        const material = object.material as THREE.ShaderMaterial
+        draws.push({
+          material,
+          target,
+          source: material.uniforms.hmBloomSource?.value ?? material.uniforms.tDiffuse?.value ?? null,
+        })
+      },
+    } as unknown as THREE.WebGLRenderer
+    bloom.render(renderer, output, source, 0, false)
+
+    expect(renderSource).toHaveBeenCalledOnce()
+    const canonical = renderSource.mock.calls[0][1]
+    expect([canonical.width, canonical.height]).toEqual([960, 540])
+    expect(canonical.depthBuffer).toBe(true)
+    expect(canonical.texture.type).toBe(THREE.HalfFloatType)
+    expect(canonical.texture.colorSpace).toBe(THREE.NoColorSpace)
+    expect(canonical.texture.userData.hyperMotionBloomSource).toBe(true)
+    const highPass = draws.find((draw) => draw.material === bloom.materialHighPassFilter)!
+    expect(highPass.source).toBe(canonical.texture)
+    expect(highPass.target).toBe(bloom.renderTargetBright)
+    expect(bloom.materialHighPassFilter.fragmentShader).toContain('texture2D( hmBloomSource, vUv )')
+    expect(draws.at(-1)?.material).toBe(bloom.blendMaterial)
+    expect(draws.at(-1)?.target).toBe(source)
+    expect([source.width, source.height]).toEqual([7680, 4320])
+
+    bloom.render(renderer, output, source, 0, false)
+    expect(renderSource.mock.calls[1][1]).toBe(canonical)
+    const disposeCanonical = vi.spyOn(canonical, 'dispose')
+    const disposeHighPass = vi.spyOn(bloom.materialHighPassFilter, 'dispose')
+    bloom.setSize(960, 540)
+    expect(disposeCanonical).not.toHaveBeenCalled()
+    expect(bloom.getScratchTargets()).toHaveLength(12)
+
+    source.setSize(960, 540)
+    renderSource.mockClear()
+    draws.length = 0
+    bloom.render(renderer, output, source, 0, false)
+    expect(renderSource).toHaveBeenCalledOnce()
+    expect(renderSource.mock.calls[0][1]).toBe(canonical)
+    expect(draws.find((draw) => draw.material === bloom.materialHighPassFilter)?.source).toBe(canonical.texture)
+    bloom.dispose()
+    expect(disposeCanonical).toHaveBeenCalledOnce()
+    expect(disposeHighPass).toHaveBeenCalledOnce()
+    source.dispose()
+    output.dispose()
+  })
+
+  it('restores the current render target and clear policy when the canonical draw fails', () => {
+    const source = new THREE.WebGLRenderTarget(3840, 2160)
+    let target: THREE.WebGLRenderTarget | null = source
+    const renderer = {
+      autoClear: true,
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.WebGLRenderTarget | null) => { target = next },
+    } as unknown as THREE.WebGLRenderer
+    const bloom = new SceneBloomPass(3840, 2160, (activeRenderer, canonical) => {
+      activeRenderer.setRenderTarget(canonical)
+      activeRenderer.autoClear = false
+      throw new Error('Interrupted canonical draw')
+    })
+    expect(() => bloom.render(renderer, source, source, 0, false)).toThrow('Interrupted canonical draw')
+    expect(target).toBe(source)
+    expect(renderer.autoClear).toBe(true)
+    bloom.dispose()
+    source.dispose()
+  })
+
+  it('applies canonical texture swaps only around the bloom source scene render', () => {
+    const scene = new THREE.Scene()
+    let target: THREE.WebGLRenderTarget | null = null
+    let canonicalTextures = false
+    const sceneDraws: { width: number; canonicalTextures: boolean }[] = []
+    const renderer = {
+      autoClear: true,
+      getPixelRatio: () => 1,
+      getSize: (size: THREE.Vector2) => size.set(3840, 2160),
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.WebGLRenderTarget | null) => { target = next },
+      getClearColor: (color: THREE.Color) => color.set('#000'),
+      getClearAlpha: () => 1,
+      setClearColor: () => undefined,
+      clear: () => undefined,
+      render: (object: THREE.Object3D) => {
+        if (object === scene) sceneDraws.push({ width: target!.width, canonicalTextures })
+      },
+    } as unknown as THREE.WebGLRenderer
+    const withBloomSource = vi.fn((draw: () => void) => {
+      canonicalTextures = true
+      try { draw() } finally { canonicalTextures = false }
+    })
+    const postEffects = new ScenePostEffectsRenderer(
+      renderer, scene, new THREE.PerspectiveCamera(), 3840, 2160, 1, withBloomSource,
+    )
+    postEffects.configure(normalizeCameraPostEffects({
+      bloomEnabled: true,
+      chromaticAberrationEnabled: true,
+    }), 3840, 2160, 1)
+    postEffects.render()
+    expect(withBloomSource).toHaveBeenCalledOnce()
+    expect(sceneDraws).toEqual([
+      { width: 3840, canonicalTextures: false },
+      { width: 960, canonicalTextures: true },
+    ])
+    expect(canonicalTextures).toBe(false)
+    postEffects.dispose()
+  })
+
+  it('renders vignette last and updates its uniforms without replacing the pass', () => {
+    let target: THREE.WebGLRenderTarget | null = null
+    const draws: { material: THREE.ShaderMaterial; toScreen: boolean }[] = []
+    const renderer = {
+      getPixelRatio: () => 1,
+      getSize: (size: THREE.Vector2) => size.set(960, 540),
+      getRenderTarget: () => target,
+      setRenderTarget: (next: THREE.WebGLRenderTarget | null) => { target = next },
+      clear: () => undefined,
+      render: (object: THREE.Object3D) => {
+        if (object instanceof THREE.Mesh) {
+          draws.push({ material: object.material, toScreen: target === null })
+        }
+      },
+    } as unknown as THREE.WebGLRenderer
+    const postEffects = new ScenePostEffectsRenderer(
+      renderer, new THREE.Scene(), new THREE.PerspectiveCamera(), 960, 540, 1,
+    )
+    const effects = normalizeCameraPostEffects({
+      chromaticAberrationEnabled: true,
+      vhsEnabled: true,
+      vignetteEnabled: true,
+    })
+    postEffects.configure(effects, 960, 540, 1)
+    postEffects.render()
+    expect(draws.map(draw => [draw.material.name, draw.toScreen])).toEqual([
+      ['HyperMotionVHS', false],
+      ['HyperMotionChromaticAberration', false],
+      ['HyperMotionVignette', true],
+    ])
+    const vignetteMaterial = draws[2].material
+    const dispose = vi.spyOn(vignetteMaterial, 'dispose')
+    draws.length = 0
+    postEffects.configure({
+      ...effects, vignetteAmount: 0.8, vignetteSize: 0.2, vignetteFeather: 0.1,
+    }, 960, 540, 2)
+    postEffects.render()
+    expect(draws[2].material).toBe(vignetteMaterial)
+    expect(vignetteMaterial.uniforms.hmAmount.value).toBe(0.8)
+    expect(vignetteMaterial.uniforms.hmSize.value).toBe(0.2)
+    expect(vignetteMaterial.uniforms.hmFeather.value).toBe(0.1)
+    draws.length = 0
+    postEffects.configure({ ...effects, vignetteAmount: 0 }, 960, 540, 1)
+    postEffects.render()
+    expect(draws.map(draw => [draw.material.name, draw.toScreen])).toEqual([
+      ['HyperMotionVHS', false],
+      ['HyperMotionChromaticAberration', true],
+    ])
+    postEffects.dispose()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
   it('resolves animated numeric parameters while keeping static enable flags', () => {
     const api = createSceneAPI()
     const camera = api.getActiveCamera()
@@ -306,6 +555,10 @@ describe('camera post effects', () => {
     api.setNodeProperty(camera.id, 'vhsNoise', 0.3)
     api.setNodeProperty(camera.id, 'vhsScanlines', 0.4)
     api.setNodeProperty(camera.id, 'vhsColorBleed', 4)
+    api.setNodeProperty(camera.id, 'vignetteEnabled', true)
+    api.setNodeProperty(camera.id, 'vignetteAmount', 0.2)
+    api.setNodeProperty(camera.id, 'vignetteSize', 0.3)
+    api.setNodeProperty(camera.id, 'vignetteFeather', 0.4)
     const authored = api.getActiveCamera()
     if (!authored) throw new Error('Expected the updated camera')
 
@@ -321,6 +574,9 @@ describe('camera post effects', () => {
         vhsNoise: 0.7,
         vhsScanlines: 0.8,
         vhsColorBleed: 7,
+        vignetteAmount: 0.7,
+        vignetteSize: 0.6,
+        vignetteFeather: 0.2,
       },
       { width: 960, height: 540 },
     )
@@ -337,6 +593,10 @@ describe('camera post effects', () => {
       vhsNoise: 0.7,
       vhsScanlines: 0.8,
       vhsColorBleed: 7,
+      vignetteEnabled: true,
+      vignetteAmount: 0.7,
+      vignetteSize: 0.6,
+      vignetteFeather: 0.2,
     })
   })
 
@@ -360,7 +620,11 @@ describe('camera post effects', () => {
       'sampleWithinFrame',
     )
     expect(CHROMATIC_ABERRATION_SHADER.fragmentShader).toContain(
-      'lowerBound.x * lowerBound.y * upperBound.x * upperBound.y',
+      'texture2D(tDiffuse, clamp(uv, vec2(0.0), vec2(1.0)))',
+    )
+    expect(CHROMATIC_ABERRATION_SHADER.fragmentShader).not.toContain('coverage')
+    expect(CHROMATIC_ABERRATION_SHADER.fragmentShader).toContain(
+      'max(centerSample.a, max(redSample.a, blueSample.a))',
     )
     expect(CHROMATIC_ABERRATION_SHADER.fragmentShader).toContain(
       '#include <tonemapping_fragment>',
@@ -384,5 +648,20 @@ describe('camera post effects', () => {
     expect(VHS_SHADER.fragmentShader).not.toContain('random(')
     expect(VHS_SHADER.fragmentShader).not.toContain('tonemapping_fragment')
     expect(VHS_SHADER.fragmentShader).not.toContain('colorspace_fragment')
+  })
+
+  it('keeps the vignette center clear and applies a smooth darkening at corners', () => {
+    const effects = normalizeCameraPostEffects({ vignetteEnabled: true })
+    expect(cameraVignetteMultiplier(0, effects)).toBe(1)
+    expect(cameraVignetteMultiplier(0.5, effects)).toBe(1)
+    expect(cameraVignetteMultiplier(0.75, effects)).toBeCloseTo(0.825)
+    expect(cameraVignetteMultiplier(1, effects)).toBeCloseTo(0.65)
+    expect(cameraVignetteMultiplier(1, { ...effects, vignetteAmount: 0 })).toBe(1)
+    expect(cameraVignetteMultiplier(1, { ...effects, vignetteSize: 1 })).toBe(1)
+    expect(cameraVignetteMultiplier(0.5, { ...effects, vignetteFeather: 0 })).toBe(1)
+    expect(cameraVignetteMultiplier(0.501, { ...effects, vignetteFeather: 0 })).toBeCloseTo(0.65)
+    expect(VIGNETTE_SHADER.fragmentShader).toContain('source.a')
+    expect(VIGNETTE_SHADER.fragmentShader).toContain('length((vUv - 0.5) * 2.0) / sqrt(2.0)')
+    expect(VIGNETTE_SHADER.fragmentShader).toContain('source.rgb * (1.0 - hmAmount * mask)')
   })
 })

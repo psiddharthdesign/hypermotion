@@ -393,6 +393,10 @@ export interface NodeJson {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vignetteEnabled?: boolean
+  vignetteAmount?: number
+  vignetteSize?: number
+  vignetteFeather?: number
   vhsEnabled?: boolean
   vhsIntensity?: number
   vhsNoise?: number
@@ -584,6 +588,9 @@ export const PROPERTY_IDS = [
   'camera.bloomStrength',
   'camera.bloomRadius',
   'camera.bloomThreshold',
+  'camera.vignetteAmount',
+  'camera.vignetteSize',
+  'camera.vignetteFeather',
   'camera.vhsIntensity',
   'camera.vhsNoise',
   'camera.vhsScanlines',
@@ -1537,6 +1544,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('bloomStrength', node.bloomStrength ?? 0.8)
       y.set('bloomRadius', node.bloomRadius ?? 0.35)
       y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
+      y.set('vignetteEnabled', node.vignetteEnabled === true)
+      y.set('vignetteAmount', normalizeVignetteValue(node.vignetteAmount, 0.35))
+      y.set('vignetteSize', normalizeVignetteValue(node.vignetteSize, 0.5))
+      y.set('vignetteFeather', normalizeVignetteValue(node.vignetteFeather, 0.5))
       y.set('vhsEnabled', node.vhsEnabled ?? false)
       y.set('vhsIntensity', node.vhsIntensity ?? 0.65)
       y.set('vhsNoise', node.vhsNoise ?? 0.35)
@@ -2990,6 +3001,8 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       for (const [k, v] of Object.entries(op.patch)) {
         if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v)
         if (k === 'zIndex') node.set(k, normalizeLayerZIndex(v))
+        else if (k === 'vignetteEnabled') node.set(k, v === true)
+        else if (k === 'vignetteAmount' || k === 'vignetteSize' || k === 'vignetteFeather') node.set(k, normalizeVignetteValue(v, k === 'vignetteAmount' ? 0.35 : 0.5))
         else if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
@@ -3002,6 +3015,10 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       }
       if (op.key === 'zIndex') {
         node.set(op.key, normalizeLayerZIndex(op.value))
+      } else if (op.key === 'vignetteEnabled') {
+        node.set(op.key, op.value === true)
+      } else if (op.key === 'vignetteAmount' || op.key === 'vignetteSize' || op.key === 'vignetteFeather') {
+        node.set(op.key, normalizeVignetteValue(op.value, op.key === 'vignetteAmount' ? 0.35 : 0.5))
       } else if (op.key === 'children' && Array.isArray(op.value)) {
         node.set(op.key, arrayToY(op.value))
       } else {
@@ -3273,6 +3290,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'bloomStrength',
       'bloomRadius',
       'bloomThreshold',
+      'vignetteEnabled',
+      'vignetteAmount',
+      'vignetteSize',
+      'vignetteFeather',
       'vhsEnabled',
       'vhsIntensity',
       'vhsNoise',
@@ -3325,6 +3346,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('bloomStrength', node.bloomStrength ?? 0.8)
     y.set('bloomRadius', node.bloomRadius ?? 0.35)
     y.set('bloomThreshold', node.bloomThreshold ?? 0.75)
+    y.set('vignetteEnabled', node.vignetteEnabled === true)
+    y.set('vignetteAmount', normalizeVignetteValue(node.vignetteAmount, 0.35))
+    y.set('vignetteSize', normalizeVignetteValue(node.vignetteSize, 0.5))
+    y.set('vignetteFeather', normalizeVignetteValue(node.vignetteFeather, 0.5))
     y.set('vhsEnabled', node.vhsEnabled ?? false)
     y.set('vhsIntensity', node.vhsIntensity ?? 0.65)
     y.set('vhsNoise', node.vhsNoise ?? 0.35)
@@ -3337,6 +3362,12 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set(k, v)
   }
   return y
+}
+
+function normalizeVignetteValue(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : fallback
 }
 
 function normalizeCameraScrollSensitivity(value: unknown): number {

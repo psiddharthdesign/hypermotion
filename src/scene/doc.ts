@@ -359,6 +359,10 @@ export interface NodeBaseMutable {
   bloomStrength: number
   bloomRadius: number
   bloomThreshold: number
+  vignetteEnabled: boolean
+  vignetteAmount: number
+  vignetteSize: number
+  vignetteFeather: number
   vhsEnabled: boolean
   vhsIntensity: number
   vhsNoise: number
@@ -1012,6 +1016,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             (y.get('bloomRadius') as number | undefined) ?? 0.35,
           bloomThreshold:
             (y.get('bloomThreshold') as number | undefined) ?? 0.75,
+          vignetteEnabled: y.get('vignetteEnabled') === true,
+          vignetteAmount: clampFiniteNumber(y.get('vignetteAmount'), 0, 1, 0.35),
+          vignetteSize: clampFiniteNumber(y.get('vignetteSize'), 0, 1, 0.5),
+          vignetteFeather: clampFiniteNumber(y.get('vignetteFeather'), 0, 1, 0.5),
           vhsEnabled:
             (y.get('vhsEnabled') as boolean | undefined) ?? false,
           vhsIntensity:
@@ -1505,6 +1513,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('bloomStrength', cp?.bloomStrength ?? 0.8)
           y.set('bloomRadius', cp?.bloomRadius ?? 0.35)
           y.set('bloomThreshold', cp?.bloomThreshold ?? 0.75)
+          y.set('vignetteEnabled', cp?.vignetteEnabled === true)
+          y.set('vignetteAmount', clampFiniteNumber(cp?.vignetteAmount, 0, 1, 0.35))
+          y.set('vignetteSize', clampFiniteNumber(cp?.vignetteSize, 0, 1, 0.5))
+          y.set('vignetteFeather', clampFiniteNumber(cp?.vignetteFeather, 0, 1, 0.5))
           y.set('vhsEnabled', cp?.vhsEnabled ?? false)
           y.set('vhsIntensity', cp?.vhsIntensity ?? 0.65)
           y.set('vhsNoise', cp?.vhsNoise ?? 0.35)
@@ -1581,6 +1593,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (key === 'vignetteEnabled') {
+          y.set(key, value === true)
+          return
+        }
+        if (key === 'vignetteAmount' || key === 'vignetteSize' || key === 'vignetteFeather') {
+          y.set(key, clampFiniteNumber(value, 0, 1, key === 'vignetteAmount' ? 0.35 : 0.5))
+          return
+        }
         if (key === 'appearance') {
           const appearance = value as Appearance
           const kind = y.get('kind') as NodeKind | undefined

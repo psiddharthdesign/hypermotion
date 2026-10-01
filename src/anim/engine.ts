@@ -194,6 +194,9 @@ export interface AnimatedValue {
   bloomStrength?: number
   bloomRadius?: number
   bloomThreshold?: number
+  vignetteAmount?: number
+  vignetteSize?: number
+  vignetteFeather?: number
   vhsIntensity?: number
   vhsNoise?: number
   vhsScanlines?: number
@@ -1083,6 +1086,15 @@ function writeProperty(
       break
     case 'camera.bloomThreshold':
       into.bloomThreshold = value
+      break
+    case 'camera.vignetteAmount':
+      into.vignetteAmount = value
+      break
+    case 'camera.vignetteSize':
+      into.vignetteSize = value
+      break
+    case 'camera.vignetteFeather':
+      into.vignetteFeather = value
       break
     case 'camera.vhsIntensity':
       into.vhsIntensity = value

@@ -377,6 +377,9 @@ function writeProperty(
     case 'camera.bloomStrength': into.bloomStrength = value; break
     case 'camera.bloomRadius': into.bloomRadius = value; break
     case 'camera.bloomThreshold': into.bloomThreshold = value; break
+    case 'camera.vignetteAmount': into.vignetteAmount = value; break
+    case 'camera.vignetteSize': into.vignetteSize = value; break
+    case 'camera.vignetteFeather': into.vignetteFeather = value; break
     case 'camera.vhsIntensity': into.vhsIntensity = value; break
     case 'camera.vhsNoise': into.vhsNoise = value; break
     case 'camera.vhsScanlines': into.vhsScanlines = value; break

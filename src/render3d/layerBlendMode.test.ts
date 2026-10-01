@@ -168,4 +168,102 @@ void main() {
       (shader.uniforms.hmBlendTargetIsLinear as { value: number }).value,
     ).toBe(0)
   })
+
+  it('reuses output and canonical bloom backdrops without reallocating on every draw', () => {
+    const material = new THREE.MeshBasicMaterial()
+    setBackdropBlendMode(material, 'overlay')
+    const target = {
+      width: 3840, height: 2160,
+      texture: { type: THREE.HalfFloatType, colorSpace: THREE.NoColorSpace },
+    }
+    const copyFramebufferToTexture = vi.fn()
+    const renderer = {
+      getRenderTarget: () => target,
+      copyFramebufferToTexture,
+    } as unknown as THREE.WebGLRenderer
+    captureBackdropForMaterial(renderer, material)
+    const output = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    target.width = 960
+    target.height = 540
+    captureBackdropForMaterial(renderer, material)
+    const canonical = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    const disposeOutput = vi.spyOn(output, 'dispose')
+    const disposeCanonical = vi.spyOn(canonical, 'dispose')
+    const versions = [output.version, canonical.version]
+
+    for (let frame = 0; frame < 3; frame++) {
+      for (const texture of [output, canonical]) {
+        target.width = texture.image.width
+        target.height = texture.image.height
+        captureBackdropForMaterial(renderer, material)
+        expect(copyFramebufferToTexture.mock.lastCall![0]).toBe(texture)
+        expect(material.userData.hyperMotionBackdropBlend.uniforms.hmBlendBackdrop.value).toBe(texture)
+      }
+    }
+    expect([output.version, canonical.version]).toEqual(versions)
+    expect(disposeOutput).not.toHaveBeenCalled()
+    expect(disposeCanonical).not.toHaveBeenCalled()
+    disposeBackdropBlendMode(material)
+    expect(disposeOutput).toHaveBeenCalledOnce()
+    expect(disposeCanonical).toHaveBeenCalledOnce()
+  })
+
+  it('bounds cached backdrops and evicts a retired output size before the active bloom source', () => {
+    const material = new THREE.MeshBasicMaterial()
+    setBackdropBlendMode(material, 'difference')
+    const target = {
+      width: 1920, height: 1080,
+      texture: { type: THREE.HalfFloatType, colorSpace: THREE.NoColorSpace },
+    }
+    const copyFramebufferToTexture = vi.fn()
+    const renderer = { getRenderTarget: () => target, copyFramebufferToTexture } as unknown as THREE.WebGLRenderer
+    captureBackdropForMaterial(renderer, material)
+    const oldOutput = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    const disposeOldOutput = vi.spyOn(oldOutput, 'dispose')
+    target.width = 960
+    target.height = 540
+    captureBackdropForMaterial(renderer, material)
+    const canonical = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    const disposeCanonical = vi.spyOn(canonical, 'dispose')
+
+    target.width = 3840
+    target.height = 2160
+    captureBackdropForMaterial(renderer, material)
+    expect(disposeOldOutput).toHaveBeenCalledOnce()
+    expect(disposeCanonical).not.toHaveBeenCalled()
+    expect(material.userData.hyperMotionBackdropBlend.textures.size).toBe(2)
+    target.width = 960
+    target.height = 540
+    captureBackdropForMaterial(renderer, material)
+    expect(copyFramebufferToTexture.mock.lastCall![0]).toBe(canonical)
+    disposeBackdropBlendMode(material)
+    expect(disposeOldOutput).toHaveBeenCalledOnce()
+    expect(disposeCanonical).toHaveBeenCalledOnce()
+  })
+
+  it('keeps distinct framebuffer formats at the same size', () => {
+    const material = new THREE.MeshBasicMaterial()
+    setBackdropBlendMode(material, 'screen')
+    let target: THREE.WebGLRenderTarget | null = null
+    const copyFramebufferToTexture = vi.fn()
+    const renderer = {
+      outputColorSpace: THREE.SRGBColorSpace,
+      getRenderTarget: () => target,
+      getDrawingBufferSize: (size: THREE.Vector2) => size.set(960, 540),
+      copyFramebufferToTexture,
+    } as unknown as THREE.WebGLRenderer
+    captureBackdropForMaterial(renderer, material)
+    const display = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    target = new THREE.WebGLRenderTarget(960, 540, { type: THREE.HalfFloatType })
+    captureBackdropForMaterial(renderer, material)
+    const linear = copyFramebufferToTexture.mock.lastCall![0] as THREE.FramebufferTexture
+    expect(display).not.toBe(linear)
+    expect(display.type).toBe(THREE.UnsignedByteType)
+    expect(linear.type).toBe(THREE.HalfFloatType)
+    target.dispose()
+    target = null
+    captureBackdropForMaterial(renderer, material)
+    expect(copyFramebufferToTexture.mock.lastCall![0]).toBe(display)
+    disposeBackdropBlendMode(material)
+  })
 })

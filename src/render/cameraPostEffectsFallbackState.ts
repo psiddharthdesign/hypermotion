@@ -3,6 +3,7 @@
 import type { AnimatedValue } from '@/anim'
 import type { CameraNode } from '@/scene'
 import {
+  cameraVignetteMultiplier,
   normalizeCameraPostEffects,
   type CameraPostEffectsState,
 } from '@/render3d/postEffects'
@@ -31,7 +32,38 @@ export function resolveFallbackCameraPostEffects(
     vhsNoise: animated?.vhsNoise ?? camera.vhsNoise,
     vhsScanlines: animated?.vhsScanlines ?? camera.vhsScanlines,
     vhsColorBleed: animated?.vhsColorBleed ?? camera.vhsColorBleed,
+    vignetteEnabled: camera.vignetteEnabled,
+    vignetteAmount: animated?.vignetteAmount ?? camera.vignetteAmount,
+    vignetteSize: animated?.vignetteSize ?? camera.vignetteSize,
+    vignetteFeather: animated?.vignetteFeather ?? camera.vignetteFeather,
   })
+}
+
+/**
+ * Opaque linear-RGB attenuation image for an SVG arithmetic multiply. The
+ * normalized viewBox stretches with the viewport, matching the shader's UV
+ * ellipse. Sampling the transition itself keeps even a zero-feather edge
+ * smooth without requiring a large raster texture.
+ */
+export function fallbackVignetteImage(
+  effects: CameraPostEffectsState,
+): string {
+  const start = effects.vignetteSize
+  const end = Math.min(1, start + Math.max(effects.vignetteFeather, 0.001))
+  const stops = ['<stop offset="0" stop-color="white"/>']
+  const samples = 64
+  for (let index = 0; index <= samples; index++) {
+    const radius = start + (end - start) * index / samples
+    const linear = cameraVignetteMultiplier(radius, effects)
+    // feImage decodes SVG pixels into the filter's linearRGB working space.
+    const encoded = linear <= 0.0031308
+      ? linear * 12.92
+      : 1.055 * linear ** (1 / 2.4) - 0.055
+    const channel = (encoded * 100).toFixed(6)
+    stops.push(`<stop offset="${radius}" stop-color="rgb(${channel}%,${channel}%,${channel}%)"/>`)
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 2 2"><defs><radialGradient id="v" gradientUnits="userSpaceOnUse" cx="1" cy="1" r="${Math.SQRT2}" color-interpolation="linearRGB">${stops.join('')}</radialGradient></defs><rect width="2" height="2" fill="url(#v)"/></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
 /** Map UnrealBloomPass's 0...1 radius onto an SVG Gaussian sigma. */

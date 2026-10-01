@@ -15,6 +15,14 @@ export interface DofSampleBudgetContext {
   finalRender: boolean
 }
 
+/** Saved separately from draw uniforms so a bloom pass never changes base quality. */
+export interface DepthOfFieldSamplingState {
+  sampleCount: number
+  kernel: THREE.Vector2[]
+  bloomSampleCount: number
+  bloomKernel: THREE.Vector2[]
+}
+
 export interface PlaneDepthOfFieldShaderState {
   clipMap?: boolean
   enabled: boolean
@@ -516,6 +524,19 @@ export function updateDepthOfFieldShader(
     state.bladeRotation,
     state.bokehRatio,
     sampleCount,
+  )
+  // Bright extraction must see the same aperture integration during playback,
+  // draft preview and export. Keep its fixed kernel alongside the ordinary
+  // budget; the render-target hook selects the appropriate pair on each draw.
+  const sampling = (material.userData.hyperMotionDofSampling ??= {}) as DepthOfFieldSamplingState
+  sampling.sampleCount = sampleCount
+  sampling.kernel = uniforms.hmDofKernel.value
+  sampling.bloomSampleCount = MAX_DOF_KERNEL_SAMPLES
+  sampling.bloomKernel = apertureKernelVectors(
+    state.bladeCount,
+    state.bladeRotation,
+    state.bokehRatio,
+    sampling.bloomSampleCount,
   )
   const bends = (
     state.bends ?? (state.bend ? [state.bend] : [])

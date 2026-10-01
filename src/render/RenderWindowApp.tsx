@@ -47,6 +47,7 @@ import {
   isElectronCaptureSupported,
 } from '@/export/captureRect'
 import { createMp4Encoder } from '@/export/encodeMp4'
+import { exportUsesVignette } from '@/export/gradientQuality'
 import { mixSceneAudioTrack } from '@/export/audioMix'
 import { createGifEncoder } from '@/export/encodeGif'
 import {
@@ -796,6 +797,10 @@ async function runExportLoop(
   const sequenceScope =
     job.scope === 'sequence' ||
     (job.scope === undefined && project.getSequenceItems().length > 1)
+  const renderCompositions = sequenceScope
+    ? sequenceMap.items.map((entry) => entry.scene)
+    : project.getScenes().filter((scene) => scene.id === (job.compositionSceneId ?? project.getActiveSceneId()))
+  const preserveGradients = exportUsesVignette(api, renderCompositions.flatMap(scene => scene.cameraIds))
 
   // Wait for the canvas to actually paint. SceneProvider + RenderCanvas
   // both committed by the time this function fires, but the browser needs
@@ -806,9 +811,7 @@ async function runExportLoop(
   // the complete project before capture so switching composition scenes cannot
   // bake ThreeSceneViewport's placeholder into the exported video.
   try {
-    const renderImageRoots = (sequenceScope
-      ? sequenceMap.items.map((entry) => entry.scene)
-      : project.getScenes().filter((scene) => scene.id === (job.compositionSceneId ?? project.getActiveSceneId())))
+    const renderImageRoots = renderCompositions
       .flatMap((composition) => [
         composition.rootNodeId,
         ...composition.cameraIds,
@@ -1136,6 +1139,7 @@ async function runExportLoop(
                 height: canvasEl.height,
                 fps: job.exportFps,
                 audio: audioTrack,
+                preserveGradients,
               })
               encoder = {
                 addFrame: (c, i) => mp4.addFrame(c, i),

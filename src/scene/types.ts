@@ -1106,6 +1106,14 @@ export interface CameraNode extends NodeBase {
   bloomRadius: number
   /** Normalized luminance threshold above which pixels bloom. */
   bloomThreshold: number
+  /** Enables camera-wide edge darkening around the composition center. */
+  vignetteEnabled: boolean
+  /** Edge darkening strength, from 0 to 1. */
+  vignetteAmount: number
+  /** Normalized size of the clear center, from 0 to 1. */
+  vignetteSize: number
+  /** Normalized softness of the transition to darkened edges, from 0 to 1. */
+  vignetteFeather: number
   /** Enables the camera-wide analog VHS signal treatment. */
   vhsEnabled: boolean
   /** Overall VHS contribution, from a clean signal at 0 to a worn tape at 1. */
@@ -1390,6 +1398,9 @@ export type PropertyId =
   | 'camera.bloomStrength'
   | 'camera.bloomRadius'
   | 'camera.bloomThreshold'
+  | 'camera.vignetteAmount'
+  | 'camera.vignetteSize'
+  | 'camera.vignetteFeather'
   | 'camera.vhsIntensity'
   | 'camera.vhsNoise'
   | 'camera.vhsScanlines'

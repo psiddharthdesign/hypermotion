@@ -526,6 +526,7 @@ camera.chromaticAberrationAmount, camera.chromaticAberrationAngle,
 camera.bloomStrength, camera.bloomRadius, camera.bloomThreshold,
 camera.vhsIntensity, camera.vhsNoise, camera.vhsScanlines,
 camera.vhsColorBleed,
+camera.vignetteAmount, camera.vignetteSize, camera.vignetteFeather,
 appearance.opacity, appearance.cornerRadius, appearance.cornerSmoothing,
 appearance.cornerSmoothingEnabled, appearance.fullRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
@@ -559,6 +560,13 @@ treatment driven deterministically by scene time, then tune `vhsIntensity`,
 `vhsNoise`, and `vhsScanlines` (each 0-1), plus `vhsColorBleed` in composition
 pixels (0-32). All nine numeric fields are keyframeable; the enable flags are
 static scene settings.
+
+Set `vignetteEnabled: true` to darken the camera frame's edges while preserving
+transparency. `vignetteAmount` controls strength (default 0.35), `vignetteSize`
+widens the clear center (default 0.5), and `vignetteFeather` softens the fade
+(default 0.5). All three are normalized 0–1 values and keyframeable using the
+`camera.*` property ids above. The effect follows the output frame at every
+export resolution and runs after the other camera post effects.
 
 EasingKind: `'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | { bezier: [x1, y1, x2, y2] } | { spring: { stiffness, damping, mass } }`.
 
