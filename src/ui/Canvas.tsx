@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { CameraCompositionOverlay } from './CameraCompositionOverlay'
+import { SolidFaceSelectionOverlay } from './SolidFaceSelectionOverlay'
+import { createSolidMoveConstraint, type SolidMoveConstraint } from './solidMoveConstraint'
 import { siblingMask } from '@/render/maskShape'
 import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
@@ -136,6 +138,8 @@ import {
   viewportPointToRay,
 } from '@/render3d/scene3d'
 import { pickLayerFocus } from '@/ui/cameraFocus'
+import { FocusPlaneOverlay, type FocusPlanePositionPatch } from '@/ui/FocusPlaneOverlay'
+import { viewportPointToMotionPathLocal } from '@/render3d/selectionProjection'
 import {
   getAnimEngine,
   recordKeyframesForPatch,
@@ -286,6 +290,10 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   selectionOverlayHost,
   ...props
 }: AnimatedThreeSceneViewportProps) {
+  const exporting = useExportProgress(state => state.phase === 'rendering')
+  const editorGridSpacing = useUI(state => state.solidGridSnapEnabled && !state.playing ? state.solidGridSize : null)
+  const faceEditing = useUI(state => state.solidFaceEditing && !state.playing && state.tool === 'select')
+  const selectedConnectionIds = useMemo(() => { void props.sceneVersion; return props.selectedIds.filter(id => props.api.getNode(id)?.connection) }, [props.api, props.selectedIds, props.sceneVersion])
   const sceneAnimated = useAnimatedValues(animationIds)
   const geometryPreviewNodeIds = useSyncExternalStore(
     nodeGeometryPreviewStore.subscribe,
@@ -406,10 +414,11 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
         sceneFill={liveSceneFill}
         selectedIds={
           showSelectionOverlay
-            ? EMPTY_THREE_SELECTION_IDS
+            ? exporting ? EMPTY_THREE_SELECTION_IDS : selectedConnectionIds
             : props.selectedIds
         }
         hiddenNodeIds={hiddenGeometryTextIds}
+        editorGridSpacing={exporting ? null : editorGridSpacing}
         interactiveCameraPreview={!!cameraPreview}
         playhead={playbackPlayhead}
       />
@@ -418,7 +427,19 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
       !props.suspended &&
       selectionOverlayHost
         ? createPortal(
-            <CameraSelectionOverlay
+            faceEditing ? <SolidFaceSelectionOverlay
+              api={props.api}
+              layout={paintLayout}
+              animated={sceneAnimated}
+              camera={camera}
+              cameraAnim={cameraAnim}
+              selection={props.selectedIds}
+              width={props.width}
+              height={props.height}
+              zoom={editorZoom}
+              sceneVersion={props.sceneVersion ?? 0}
+              clientToViewport={clientToViewport}
+            /> : <CameraSelectionOverlay
               api={props.api}
               solved={props.layout}
               animated={sceneAnimated}
@@ -1465,7 +1486,13 @@ export function Canvas() {
         currentCamera,
         { independentNodes },
       )
-      return hitTestPlanes(
+      // Attached lines may reference children that a flat parent batches into
+      // one texture. Resolve those endpoints independently without changing
+      // the ordinary layer selection order.
+      const connectionPlanes = !independentNodes && planes3D.some(plane => plane.node.connection)
+        ? buildWorldPlanes(api, solved, hitAnimated, currentCamera, { independentNodes: true })
+        : planes3D
+      const hit = hitTestPlanes(
         planes3D,
         viewportPointToRay(
           currentCamera,
@@ -1475,7 +1502,9 @@ export function Canvas() {
         ),
         currentCamera,
         { width: canvasWidth, height: canvasHeight },
+        connectionPlanes,
       )
+      return hit ? { ...hit, plane: planes3D.find(plane => plane.nodeId === hit.nodeId), camera: currentCamera } : null
     },
     [
       camera,
@@ -2181,7 +2210,9 @@ export function Canvas() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [tool, cancelPenSession, finishPenSession])
 
-	  const onBackgroundPointerDown = useCallback(
+  const solidCanvasMoveConstraint = useRef<SolidMoveConstraint | null>(null)
+  const solidCanvasDragPoint = useRef<((x: number, y: number) => { x: number; y: number } | null) | null>(null)
+  const onBackgroundPointerDown = useCallback(
 	    (e: React.PointerEvent<HTMLDivElement>) => {
       // Only left-button on the workspace background, not on a NodeView.
       if (e.button !== 0) return
@@ -2342,11 +2373,19 @@ export function Canvas() {
               : null
             const parentMode =
               parent && 'layout' in parent ? parent.layout.mode : 'none'
-            const start = clientToCanvas(e.clientX, e.clientY)
+            const placementConstraint = hitNode ? createSolidMoveConstraint(api, hitNode.id, solved, getAnimEngine().getSnapshot(), pointerHit.camera) : null
+            const frozenPlane = pointerHit.plane
+            const localPointer = placementConstraint && frozenPlane ? (x: number, y: number) => {
+              const point = clientToViewport(x, y)
+              return point ? viewportPointToMotionPathLocal(point, 0, frozenPlane, pointerHit.camera, { width: canvasWidth, height: canvasHeight }) : null
+            } : null
+            const localStart = localPointer?.(e.clientX, e.clientY)
+            const start = localStart ?? clientToCanvas(e.clientX, e.clientY)
             if (
               hitNode &&
               hitNode.id !== rootId &&
               !hitNode.locked &&
+              (!localPointer || localStart) &&
               start &&
               canMoveChildOnCanvas(hitNode.position, parentMode)
             ) {
@@ -2354,6 +2393,8 @@ export function Canvas() {
               const origin = nodeTransformDragOrigin(hitNode, engineValue)
               const startTransformX = origin.display.x
               const startTransformY = origin.display.y
+              solidCanvasMoveConstraint.current = placementConstraint
+              solidCanvasDragPoint.current = localStart ? localPointer : null
               canvasNodeDragRef.current = {
                 pointerId: e.pointerId,
                 nodeId: hitNode.id,
@@ -2449,9 +2490,12 @@ export function Canvas() {
 	      isDrawTool,
 	      clientToCanvas,
 	      clientToViewport,
+      canvasWidth,
+      canvasHeight,
       isInsideArtboard,
       hitTestWorkspace,
 	      hitTestCanvas3D,
+	      solved,
 	      api,
 	      project,
 	      rootId,
@@ -2487,7 +2531,7 @@ export function Canvas() {
       }
       const nodeDrag = canvasNodeDragRef.current
       if (nodeDrag && e.pointerId === nodeDrag.pointerId) {
-        const point = clientToCanvas(e.clientX, e.clientY)
+        const point = solidCanvasDragPoint.current ? solidCanvasDragPoint.current(e.clientX, e.clientY) : clientToCanvas(e.clientX, e.clientY)
         if (!point) return
         const clientDx = e.clientX - nodeDrag.startClientX
         const clientDy = e.clientY - nodeDrag.startClientY
@@ -2501,6 +2545,9 @@ export function Canvas() {
             nodeDrag.startTransformY +
             (point.y - nodeDrag.startPointerY),
         }
+        const requested = { x: nodeDrag.latest.x - nodeDrag.startTransformX, y: nodeDrag.latest.y - nodeDrag.startTransformY }
+        const allowed = solidCanvasMoveConstraint.current?.(requested, e.altKey) ?? requested
+        nodeDrag.latest = { x: nodeDrag.startTransformX + allowed.x, y: nodeDrag.startTransformY + allowed.y }
         nodeTransformPreviewStore.preview({
           [nodeDrag.nodeId]: nodeDrag.latest,
         })
@@ -3578,6 +3625,7 @@ export function Canvas() {
                       texturePixelRatio={pausedWebglPreviewPixelRatio}
                       showHelpers={
                         !isEditingText &&
+                        camera.focusMode !== 'spatial' &&
                         (focusPickingCameraId === camera.id ||
                           camera.showFocusPlane)
                       }
@@ -3825,6 +3873,13 @@ export function Canvas() {
             ) : null}
           </div>
         </div>
+        {camera?.kind === 'camera' && camera.depthOfField && camera.focusMode === 'spatial' && camera.showFocusPlane ? (
+          <AnimatedFocusPlaneOverlay camera={camera} width={canvasWidth} height={canvasHeight} zoom={view.zoom} playing={playing}
+            onCommit={(patch) => api.doc.transact(() => {
+              for (const field of ['focusPlaneX', 'focusPlaneY', 'focusPlaneZ'] as const) api.setNodeProperty(camera.id, field, patch[field])
+              stampCanvasCameraPatch(camera.id, patch)
+            }, UNDOABLE_GESTURE_ORIGIN)} />
+        ) : null}
         {camera &&
         camera.kind === 'camera' &&
         camera.depthOfField &&
@@ -4568,6 +4623,13 @@ ScenePostProcessLayer.displayName = 'ScenePostProcessLayer'
  * the WebGL blur. Keeping this subscription in a tiny leaf avoids reconciling
  * Canvas, layout, selection, and the timeline for every animation frame.
  */
+const AnimatedFocusPlaneOverlay = memo(function AnimatedFocusPlaneOverlay({ camera, ...props }: {
+  camera: CameraNode; width: number; height: number; zoom: number; playing?: boolean; onCommit: (patch: FocusPlanePositionPatch) => void
+}) {
+  const { cameraAnim } = useLiveCameraAnimatedValue(camera.id)
+  return <FocusPlaneOverlay camera={camera} cameraAnim={cameraAnim} {...props} />
+})
+
 const AnimatedCameraFocusMaskOverlay = memo(
   function AnimatedCameraFocusMaskOverlay({
     camera,

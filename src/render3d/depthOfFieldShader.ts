@@ -41,10 +41,21 @@ export interface PlaneDepthOfFieldShaderState {
   bladeCount: number
   bladeRotation: number
   bokehRatio: number
+  /** Per-fragment lens focus; Point focus takes precedence when focusMask is set. */
+  depthFocus?: PlaneDepthFocusShaderState | null
   /** Ordered local-to-outer Bend modifiers applied by the vertex shader. */
   bends?: readonly PlaneBendShaderState[]
   /** @deprecated Single-Bend compatibility for non-compositor callers. */
   bend?: PlaneBendShaderState | null
+}
+
+export interface PlaneDepthFocusShaderState {
+  /** View-space plane equation: dot(normal, viewPosition) + constant = 0. */
+  normal: { x: number; y: number; z: number }
+  constant: number
+  depthScale: number
+  aperture: number
+  maxBlurPx: number
 }
 
 export interface PlaneBendShaderState {
@@ -82,6 +93,11 @@ interface DofShaderUniforms {
   hmDofEnabled: { value: number }
   hmDofBlur: { value: number }
   hmDofMinBlur: { value: number }
+  hmDepthFocusEnabled: { value: number }
+  hmDepthFocusPlane: { value: THREE.Vector4 }
+  hmDepthFocusScale: { value: number }
+  hmDepthFocusAperture: { value: number }
+  hmDepthFocusMaxBlur: { value: number }
   hmPlaneSize: { value: THREE.Vector2 }
   hmFocusMask: { value: number }
   hmFocusCenter: { value: THREE.Vector2 }
@@ -119,7 +135,7 @@ interface DofShaderUniforms {
   hmBendRoughness: { value: number }
 }
 
-const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-wave-stack-alpha-v19'
+const DOF_SHADER_KEY = 'hypermotion-gpu-dof-bend-wave-stack-alpha-depth-v21'
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const kernelCache = new Map<string, THREE.Vector2[]>()
 
@@ -223,6 +239,11 @@ export function installDepthOfFieldShader(material: THREE.MeshBasicMaterial) {
     hmDofEnabled: { value: 0 },
     hmDofBlur: { value: 0 },
     hmDofMinBlur: { value: 0 },
+    hmDepthFocusEnabled: { value: 0 },
+    hmDepthFocusPlane: { value: new THREE.Vector4(0, 0, 1, 0) },
+    hmDepthFocusScale: { value: 80 },
+    hmDepthFocusAperture: { value: 0 },
+    hmDepthFocusMaxBlur: { value: 0 },
     hmPlaneSize: { value: new THREE.Vector2(1, 1) },
     hmFocusMask: { value: 0 },
     hmFocusCenter: { value: new THREE.Vector2(0.5, 0.5) },
@@ -295,6 +316,11 @@ uniform float hmDofEnabled;
 uniform float hmClipMap;
 uniform float hmDofBlur;
 uniform float hmDofMinBlur;
+uniform float hmDepthFocusEnabled;
+uniform vec4 hmDepthFocusPlane;
+uniform float hmDepthFocusScale;
+uniform float hmDepthFocusAperture;
+uniform float hmDepthFocusMaxBlur;
 uniform vec2 hmPlaneSize;
 uniform float hmFocusMask;
 uniform vec2 hmFocusCenter;
@@ -330,7 +356,19 @@ varying vec3 hmBentViewPosition;`,
     );
   }
 
-  float hmLocalBlur = mix( hmDofMinBlur, hmDofBlur, hmFocusBlend );
+  float hmLensBlur = mix( hmDofMinBlur, hmDofBlur, hmFocusBlend );
+  if ( hmDepthFocusEnabled > 0.5 && hmFocusMask < 0.5 ) {
+    // View position is interpolated after Bend and the final model/view and
+    // instance transforms. A tilted or curved card can cross the focus plane
+    // without inheriting the blur at its centre as a minimum blur everywhere.
+    float hmDepthError = abs(
+      dot( hmDepthFocusPlane.xyz, hmBentViewPosition ) + hmDepthFocusPlane.w
+    );
+    hmLensBlur = hmDepthFocusMaxBlur * (
+      1.0 - exp( -hmDepthError / max( 80.0, hmDepthFocusScale ) * hmDepthFocusAperture * 1.6 )
+    );
+  }
+  float hmLocalBlur = hmLensBlur;
   // Circle of confusion grows continuously across the authored falloff: zero
   // inside the sharp radius, progressively wider through the transition, and
   // equal to Max Blur beyond the outer radius.
@@ -406,7 +444,7 @@ varying vec3 hmBentViewPosition;`,
       ? hmSurfaceNormalRaw / hmSurfaceNormalLength
       : vec3( 0.0, 0.0, 1.0 );
     if ( hmSurfaceNormal.z < 0.0 ) hmSurfaceNormal *= -1.0;
-    vec3 hmViewDirection = normalize( -hmBentViewPosition );
+    vec3 hmViewDirection = isOrthographic ? vec3( 0.0, 0.0, 1.0 ) : normalize( -hmBentViewPosition );
     vec3 hmLightDirection = normalize( hmBendLightDirection );
     float hmLambert = max( dot( hmSurfaceNormal, hmLightDirection ), 0.0 );
     vec3 hmHalfDirection = normalize( hmLightDirection + hmViewDirection );
@@ -445,6 +483,11 @@ function hasCurrentUniformSchema(value: unknown): value is DofShaderUniforms {
     'hmDofEnabled',
     'hmDofBlur',
     'hmDofMinBlur',
+    'hmDepthFocusEnabled',
+    'hmDepthFocusPlane',
+    'hmDepthFocusScale',
+    'hmDepthFocusAperture',
+    'hmDepthFocusMaxBlur',
     'hmPlaneSize',
     'hmFocusMask',
     'hmFocusCenter',
@@ -489,7 +532,23 @@ export function updateDepthOfFieldShader(
 ) {
   installDepthOfFieldShader(material)
   const uniforms = material.userData.hyperMotionDofUniforms as DofShaderUniforms
-  uniforms.hmDofEnabled.value = state.enabled && state.blurPx > 0.05 ? 1 : 0
+  const depthFocus = state.enabled && !state.focusMask
+    ? normalizeDepthFocus(state.depthFocus)
+    : null
+  const maximumBlur = depthFocus
+    ? depthFocus.aperture > 0 ? depthFocus.maxBlurPx : 0
+    : state.blurPx
+  uniforms.hmDofEnabled.value = state.enabled && maximumBlur > 0.05 ? 1 : 0
+  uniforms.hmDepthFocusEnabled.value = depthFocus ? 1 : 0
+  uniforms.hmDepthFocusPlane.value.set(
+    depthFocus?.normal.x ?? 0,
+    depthFocus?.normal.y ?? 0,
+    depthFocus?.normal.z ?? 1,
+    depthFocus?.constant ?? 0,
+  )
+  uniforms.hmDepthFocusScale.value = depthFocus?.depthScale ?? 80
+  uniforms.hmDepthFocusAperture.value = depthFocus?.aperture ?? 0
+  uniforms.hmDepthFocusMaxBlur.value = depthFocus?.maxBlurPx ?? 0
   uniforms.hmClipMap.value = state.clipMap ? 1 : 0
   uniforms.hmDofBlur.value = Math.max(0, state.blurPx)
   uniforms.hmDofMinBlur.value = Math.max(
@@ -608,6 +667,52 @@ export function updateDepthOfFieldShader(
   uniforms.hmBendDiffuse.value = clamp(shadingBend?.diffuse ?? 0.28, 0, 2)
   uniforms.hmBendSpecular.value = clamp(shadingBend?.specular ?? 0.12, 0, 2)
   uniforms.hmBendRoughness.value = clamp(shadingBend?.roughness ?? 0.62, 0, 1)
+}
+
+/**
+ * Update a moving lens plane without revisiting the layer's aperture kernel,
+ * geometry, masks, or Bend stack. Mode/installation changes require full sync.
+ */
+export function updateDepthFocusPlane(
+  material: THREE.MeshBasicMaterial,
+  depthFocus: NonNullable<PlaneDepthOfFieldShaderState['depthFocus']>,
+): boolean {
+  const uniforms = material.userData.hyperMotionDofUniforms
+  if (
+    material.userData.hyperMotionDofShaderKey !== DOF_SHADER_KEY ||
+    !hasCurrentUniformSchema(uniforms) ||
+    uniforms.hmDepthFocusEnabled.value !== 1 ||
+    uniforms.hmFocusMask.value !== 0
+  ) return false
+  const normalized = normalizeDepthFocus(depthFocus)
+  if (!normalized) return false
+  uniforms.hmDepthFocusPlane.value.set(
+    normalized.normal.x,
+    normalized.normal.y,
+    normalized.normal.z,
+    normalized.constant,
+  )
+  uniforms.hmDepthFocusScale.value = normalized.depthScale
+  uniforms.hmDepthFocusAperture.value = normalized.aperture
+  uniforms.hmDepthFocusMaxBlur.value = normalized.maxBlurPx
+  uniforms.hmDofEnabled.value = normalized.aperture > 0 && normalized.maxBlurPx > 0.05 ? 1 : 0
+  return true
+}
+
+function normalizeDepthFocus(
+  value: PlaneDepthFocusShaderState | null | undefined,
+): PlaneDepthFocusShaderState | null {
+  if (!value) return null
+  const { x, y, z } = value.normal
+  const length = Math.hypot(x, y, z)
+  if (![x, y, z, value.constant, length].every(Number.isFinite) || length < 0.000001) return null
+  return {
+    normal: { x: x / length, y: y / length, z: z / length },
+    constant: value.constant / length,
+    depthScale: Number.isFinite(value.depthScale) ? Math.max(80, value.depthScale) : 80,
+    aperture: Number.isFinite(value.aperture) ? Math.max(0, value.aperture) : 0,
+    maxBlurPx: Number.isFinite(value.maxBlurPx) ? Math.max(0, value.maxBlurPx) : 0,
+  }
 }
 
 const BEND_VERTEX_DECLARATIONS = `

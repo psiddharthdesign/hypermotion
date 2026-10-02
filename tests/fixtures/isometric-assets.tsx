@@ -10,6 +10,7 @@ import { getAnimEngine, type AnimatedValue } from '../../src/anim'
 import { addKeyframe } from '../../src/anim/tracks'
 import { createIsometricAsset } from '../../src/ui/isometricAssetAuthoring'
 import { applyIsometricLoop } from '../../src/ui/isometricLoopAuthoring'
+import { createFlowConnection } from '../../src/ui/flowConnectionAuthoring'
 
 const WIDTH = 960
 const HEIGHT = 540
@@ -18,9 +19,9 @@ const checks: boolean[] = []
 const host = document.getElementById('root')!
 host.innerHTML = `<style>
 body{margin:0;padding:24px;background:#111823;color:#eaf1fb;font:14px system-ui}h1{font-size:24px;margin:0 0 12px}h2{font-size:18px;margin:24px 0 12px}p{max-width:1000px;color:#c6d0df;line-height:1.5}
-#status{position:sticky;top:0;padding:12px 0;background:#111823;font-weight:700}#views,#motion,#occlusion{display:grid;grid-template-columns:repeat(3,minmax(210px,1fr));gap:12px}figure{margin:0}canvas{display:block;width:100%;height:auto;border:1px solid #3a475b}figcaption{padding:6px 0 12px;font-size:12px}table{border-collapse:collapse;width:100%;margin-top:20px}td,th{padding:8px;text-align:left;border-bottom:1px solid #344157}.pass{color:#80dfaa}.fail{color:#ff9090}#live{position:fixed;left:-1300px;top:0;width:960px;height:540px}#live>div{position:absolute;inset:0}
+#status{position:sticky;top:0;padding:12px 0;background:#111823;font-weight:700}#views,#motion,#occlusion,#connections{display:grid;grid-template-columns:repeat(3,minmax(210px,1fr));gap:12px}figure{margin:0}canvas{display:block;width:100%;height:auto;border:1px solid #3a475b}figcaption{padding:6px 0 12px;font-size:12px}table{border-collapse:collapse;width:100%;margin-top:20px}td,th{padding:8px;text-align:left;border-bottom:1px solid #344157}.pass{color:#80dfaa}.fail{color:#ff9090}#live{position:fixed;left:-1300px;top:0;width:960px;height:540px}#live>div{position:absolute;inset:0}
 </style><h1>Isometric assets: real renderer checks</h1><p>Editable blocks, circular platforms and server modules render through ThreeSceneViewport. Each of the four orthographic views compares depth enabled, flattened shapes, and a 3840 × 2160 final render reduced to preview size. Animation checks use the actual keyframe engine for camera movement, extrusion depth, and complete motion loops.</p>
-<div id="status" role="status">Preparing isolated scene…</div><h2>Four views — solids, flat comparison, 4K export</h2><div id="views"></div><h2>Camera, depth, and editable loop animation</h2><div id="motion"></div><h2>Depth occlusion independent of layer order</h2><div id="occlusion"></div><table><thead><tr><th>Result</th><th>Check</th><th>Pixel evidence</th></tr></thead><tbody id="results"></tbody></table><div id="live"></div>`
+<div id="status" role="status">Preparing isolated scene…</div><h2>Four views — solids, flat comparison, 4K export</h2><div id="views"></div><h2>Camera, depth, and editable loop animation</h2><div id="motion"></div><h2>Attached flow lines — live motion and 4K export</h2><div id="connections"></div><h2>Depth occlusion independent of layer order</h2><div id="occlusion"></div><table><thead><tr><th>Result</th><th>Check</th><th>Pixel evidence</th></tr></thead><tbody id="results"></tbody></table><div id="live"></div>`
 
 type Capture = { canvas: HTMLCanvasElement; pixels: Uint8ClampedArray }
 function record(name: string, passed: boolean, evidence: string) {
@@ -157,6 +158,28 @@ async function run() {
     record('Bloom and vignette actually affect solid assets', effectChange.mean > 1, `Mean RGB change ${effectChange.mean.toFixed(4)}/255`)
     record('Bloom and vignette preserve preview / final parity on solids', effectParity.mean < 2, `Mean RGB difference ${effectParity.mean.toFixed(4)}/255`)
     engine.pause()
+
+    const plainCamera = api.getActiveCamera()!
+    const unconnected = await capture(plainCamera, {}, 1, 0)
+    const line = createFlowConnection(api, [block, server])
+    const secondLine = createFlowConnection(api, [platform, server])
+    Object.assign(layout, solveLayout(yoga, api, rootId, { width: WIDTH, height: HEIGHT }))
+    version++
+    const connected = await capture(plainCamera, {}, 1, 0)
+    const flowing = await capture(plainCamera, {}, 1, 0.5)
+    const connectedExport = await capture(plainCamera, {}, 4, 0)
+    show(connected, 'Attached elbow connections · 0 seconds', 'connections')
+    show(flowing, 'Moving flow pulses · 0.5 seconds', 'connections')
+    show(connectedExport, 'Attached connections · 4K final render', 'connections')
+    const lineChange = difference(unconnected, connected)
+    const pulseChange = difference(connected, flowing)
+    const lineParity = difference(connected, connectedExport)
+    record('Attached connections appear between asset surfaces', lineChange.changed > 100, `${lineChange.changed} pixels show the added lines`)
+    record('Flow advances from scene time without asset keyframes', pulseChange.changed > 20, `${pulseChange.changed} pixels changed as pulses advanced`)
+    record('Attached flow lines preserve preview / 4K parity', lineParity.mean < 2, `Mean RGB difference ${lineParity.mean.toFixed(4)}/255`)
+    api.setNodeProperty(line, 'visible', false)
+    api.setNodeProperty(secondLine, 'visible', false)
+    version++
 
     // Deliberately add the farther object last: depth must defeat paint order.
     const front = createIsometricAsset(api, 'block', { center: { x: 480, y: 270 } })

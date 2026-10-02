@@ -77,6 +77,10 @@ export interface AnimatedValue {
   /** Uneased position between the active text animation's authored keys. */
   textTimelineProgress?: number
   textAnimation?: TextAnimationConfig
+  connectionWidth?: number
+  connectionFlowSpeed?: number
+  connectionFlowDistance?: number
+  connectionFlowPhase?: number
   extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
@@ -114,6 +118,12 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusRadius?: number
   focusFalloff?: number
   pointOfInterestX?: number

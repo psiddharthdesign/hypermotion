@@ -55,6 +55,69 @@ describe('extrusion geometry', () => {
       }
     }
   })
+  it('keeps side normals and shading continuous through rounded corners and cylinders', () => {
+    for (const options of [
+      { kind: 'rect' as const, width: 224, height: 138, depth: 60, cornerRadius: 36 },
+      { kind: 'rect' as const, width: 90, height: 180, depth: 60, cornerRadius: 120 },
+      { kind: 'ellipse' as const, width: 224, height: 138, depth: 60 },
+    ]) {
+      const geometry = createExtrusionBodyGeometry(options)
+      const positions = geometry.getAttribute('position'), normals = geometry.getAttribute('normal'), colors = geometry.getAttribute('color')
+      const shared = new Map<string, { normal: Vector3; color: number }>()
+      let joins = 0
+      for (let i = 0; i < positions.count; i++) {
+        if (Math.abs(normals.getZ(i)) > 0.1) continue
+        const key = [positions.getX(i), positions.getY(i), positions.getZ(i)].map(value => value.toFixed(5)).join(',')
+        const normal = new Vector3().fromBufferAttribute(normals, i)
+        expect(normal.length()).toBeCloseTo(1, 6)
+        const previous = shared.get(key)
+        if (previous) {
+          expect(normal.distanceTo(previous.normal)).toBeLessThan(1e-6)
+          expect(colors.getX(i)).toBeCloseTo(previous.color, 7)
+          joins++
+        } else shared.set(key, { normal, color: colors.getX(i) })
+      }
+      expect(joins).toBeGreaterThan(24)
+      geometry.dispose()
+    }
+  })
+  it('preserves hard box corners instead of smoothing them into rounded lighting', () => {
+    const geometry = createExtrusionBodyGeometry({ kind: 'rect', width: 100, height: 100, depth: 40, cornerRadius: 0 })
+    const positions = geometry.getAttribute('position'), normals = geometry.getAttribute('normal')
+    const cornerNormals = []
+    for (let i = 0; i < positions.count; i++) {
+      if (positions.getX(i) === -50 && positions.getY(i) === -50 && positions.getZ(i) === 0) cornerNormals.push([normals.getX(i) || 0, normals.getY(i) || 0])
+    }
+    expect(cornerNormals).toContainEqual([-1, 0])
+    expect(cornerNormals).toContainEqual([0, -1])
+    geometry.dispose()
+  })
+  it('keeps the authored circular cap radius while dimensions and nonuniform display scale change', () => {
+    for (const [width, height] of [[240, 160], [320, 230], [100, 180]]) {
+      const radius = 36
+      const outline = extrusionOutline({ kind: 'rect', width, height, depth: 60, cornerRadius: radius })
+      const cornerCenter = { x: width / 2 - radius, y: -height / 2 + radius }
+      const corner = outline.filter(point => point.x >= cornerCenter.x - 1e-7 && point.y <= cornerCenter.y + 1e-7)
+      expect(corner.length).toBeGreaterThan(10)
+      for (const point of corner) {
+        // Front texture and body inherit the same 112% / 138% layer transform.
+        const scaledX = (point.x - cornerCenter.x) * 1.12, scaledY = (point.y - cornerCenter.y) * 1.38
+        expect((scaledX / (radius * 1.12)) ** 2 + (scaledY / (radius * 1.38)) ** 2).toBeCloseTo(1, 6)
+      }
+    }
+  })
+  it('increases rounded tessellation to meet the curved cap on larger shapes', () => {
+    const radius = 600
+    const outline = extrusionOutline({ kind: 'rect', width: 1600, height: 1400, depth: 80, cornerRadius: radius })
+    const center = { x: 800 - radius, y: -700 + radius }
+    const corner = outline.filter(point => point.x >= center.x - 1e-7 && point.y <= center.y + 1e-7)
+    expect(corner.length).toBeGreaterThan(13)
+    for (let i = 1; i < corner.length; i++) {
+      const a = corner[i - 1]!, b = corner[i]!
+      const midRadius = Math.hypot((a.x + b.x) / 2 - center.x, (a.y + b.y) / 2 - center.y)
+      expect(radius - midRadius).toBeLessThanOrEqual(0.100001)
+    }
+  })
   it('produces no geometry for flat or invalid sizes', () => {
     for (const options of [{ width: 100, height: 100, depth: 0 }, { width: NaN, height: 20, depth: 10 }, { width: 20, height: -1, depth: 10 }]) {
       expect(createExtrusionGeometry({ kind: 'rect', ...options }).getAttribute('position')).toBeUndefined()

@@ -87,6 +87,18 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'transform.anchorZ', group: 'transform', label: 'Anchor Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
+  'connection.width': {
+    id: 'connection.width', group: 'transform', label: 'Connection width',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 4,
+  },
+  'connection.flowSpeed': {
+    id: 'connection.flowSpeed', group: 'transform', label: 'Flow speed',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 120,
+  },
+  'connection.flowPhase': {
+    id: 'connection.flowPhase', group: 'transform', label: 'Flow phase',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
   'extrusion.depth': {
     id: 'extrusion.depth', group: 'transform', label: 'Extrusion depth',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
@@ -230,6 +242,30 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   'camera.focusWorldZ': {
     id: 'camera.focusWorldZ', group: 'camera', label: 'Focus Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneX': {
+    id: 'camera.focusPlaneX', group: 'camera', label: 'Focus Plane X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneY': {
+    id: 'camera.focusPlaneY', group: 'camera', label: 'Focus Plane Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneZ': {
+    id: 'camera.focusPlaneZ', group: 'camera', label: 'Focus Plane Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationX': {
+    id: 'camera.focusPlaneRotationX', group: 'camera', label: 'Focus Plane Rotate X',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationY': {
+    id: 'camera.focusPlaneRotationY', group: 'camera', label: 'Focus Plane Rotate Y',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationZ': {
+    id: 'camera.focusPlaneRotationZ', group: 'camera', label: 'Focus Plane Rotate Z',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
   },
   'camera.focusRadius': {
     id: 'camera.focusRadius', group: 'camera', label: 'Focus Radius',

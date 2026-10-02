@@ -12,6 +12,8 @@ export interface ExtrusionHit {
   /** Centered local XY and Z in [0, depth]. */
   localPoint: Vec3
   surface: 'front' | 'back' | 'side'
+  /** Outward unit normal in the solid's centered local coordinates. */
+  localNormal: Vec3
 }
 
 /**
@@ -44,13 +46,15 @@ export function intersectExtrusion(
   let exit = Infinity
   let enterSurface: ExtrusionHit['surface'] = 'front'
   let exitSurface: ExtrusionHit['surface'] = 'back'
+  let enterNormal = { x: 0, y: 0, z: -1 }
+  let exitNormal = { x: 0, y: 0, z: 1 }
   const clip = (nx: number, ny: number, nz: number, limit: number, surface: ExtrusionHit['surface']) => {
     const numerator = limit - nx * origin.x - ny * origin.y - nz * origin.z
     const denominator = nx * direction.x + ny * direction.y + nz * direction.z
     if (Math.abs(denominator) < 1e-12) return numerator >= -1e-8
     const t = numerator / denominator
-    if (denominator < 0 && t > enter) { enter = t; enterSurface = surface }
-    if (denominator > 0 && t < exit) { exit = t; exitSurface = surface }
+    if (denominator < 0 && t > enter) { enter = t; enterSurface = surface; enterNormal = { x: nx, y: ny, z: nz } }
+    if (denominator > 0 && t < exit) { exit = t; exitSurface = surface; exitNormal = { x: nx, y: ny, z: nz } }
     return enter <= exit + 1e-8
   }
   if (!clip(0, 0, -1, 0, 'front') || !clip(0, 0, 1, depth, 'back')) return null
@@ -69,5 +73,6 @@ export function intersectExtrusion(
     point: { x: ray.origin.x + d.x * t, y: ray.origin.y + d.y * t, z: ray.origin.z + d.z * t },
     localPoint: { x: origin.x + direction.x * t, y: origin.y + direction.y * t, z: origin.z + direction.z * t },
     surface: enter > 1e-8 ? enterSurface : exitSurface,
+    localNormal: enter > 1e-8 ? enterNormal : exitNormal,
   }
 }

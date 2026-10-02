@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { integratedFlowDistance } from './flowSpeed'
+
 import type {
   BlendMode,
   FlexDirection,
@@ -136,6 +138,10 @@ export interface AnimatedValue {
   /** Text effect config attached to the active text.progress track. */
   textAnimation?: TextAnimationConfig
   /** 0→1 progress for a generic layer motion path. */
+  connectionWidth?: number
+  connectionFlowSpeed?: number
+  connectionFlowDistance?: number
+  connectionFlowPhase?: number
   extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
@@ -173,6 +179,12 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusRadius?: number
   focusFalloff?: number
   pointOfInterestX?: number
@@ -435,6 +447,7 @@ function createAnimEngine(): AnimEngine {
       const track = trackPreview?.get(authoredTrack.id) ?? authoredTrack
       const value = out[track.nodeId] ?? { ...EMPTY_VALUE }
       applyTrack(track, playhead, value, evaluatorCache)
+      if (track.propertyId === 'connection.flowSpeed') value.connectionFlowDistance = integratedFlowDistance(track, playhead)
       out[track.nodeId] = value
     }
     for (const group of compiledTextTrackGroups) {
@@ -920,6 +933,9 @@ function writeProperty(
     case 'text.progress':
       into.textProgress = value
       break
+    case 'connection.width': into.connectionWidth = value; break
+    case 'connection.flowSpeed': into.connectionFlowSpeed = value; break
+    case 'connection.flowPhase': into.connectionFlowPhase = value; break
     case 'extrusion.depth':
       into.extrusionDepth = value
       break
@@ -1024,6 +1040,24 @@ function writeProperty(
       break
     case 'camera.focusWorldZ':
       into.focusWorldZ = value
+      break
+    case 'camera.focusPlaneX':
+      into.focusPlaneX = value
+      break
+    case 'camera.focusPlaneY':
+      into.focusPlaneY = value
+      break
+    case 'camera.focusPlaneZ':
+      into.focusPlaneZ = value
+      break
+    case 'camera.focusPlaneRotationX':
+      into.focusPlaneRotationX = value
+      break
+    case 'camera.focusPlaneRotationY':
+      into.focusPlaneRotationY = value
+      break
+    case 'camera.focusPlaneRotationZ':
+      into.focusPlaneRotationZ = value
       break
     case 'camera.focusRadius':
       into.focusRadius = value

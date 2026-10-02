@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { remapFlowConnections } from '@/scene/flowConnection'
+
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import type { ContextMenuItem } from '@/state/ui'
@@ -189,6 +191,7 @@ function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
   if (!original || !original.parent) return null
   if (original.kind === 'component') return instantiateComponent(api, original.id)
 
+  const nodeMap = new Map<NodeId, NodeId>()
   const cloneSubtree = (srcId: NodeId, parent: NodeId): NodeId => {
     const src = api.getNode(srcId)
     if (!src) return parent
@@ -200,6 +203,7 @@ function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
       ...rest,
       name: src.name + ' copy',
     } as Partial<typeof src>)
+    nodeMap.set(srcId, newId)
     for (const child of api.getChildren(srcId)) {
       cloneSubtree(child.id, newId)
     }
@@ -207,6 +211,7 @@ function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
   }
 
   const newId = cloneSubtree(id, original.parent)
+  remapFlowConnections(api, nodeMap)
   const copy = api.getNode(newId)
   if (copy) {
     api.setNodeProperty(newId, 'transform', {

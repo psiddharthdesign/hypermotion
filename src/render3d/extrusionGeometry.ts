@@ -14,6 +14,31 @@ export interface ExtrusionGeometryOptions {
 
 export interface ExtrusionPoint { x: number; y: number }
 
+function effectiveCornerRadius(options: ExtrusionGeometryOptions): number {
+  return Math.min(options.width / 2, options.height / 2, Math.max(0, Number.isFinite(options.cornerRadius) ? options.cornerRadius ?? 0 : 0))
+}
+
+/** Analytic normals keep curved wall shading continuous across tessellation joins. */
+function curvedWallNormal(options: ExtrusionGeometryOptions, point: ExtrusionPoint): ExtrusionPoint | null {
+  let nx: number, ny: number
+  if (options.kind === 'ellipse') {
+    nx = point.x / (options.width * options.width / 4)
+    ny = point.y / (options.height * options.height / 4)
+  } else {
+    const radius = effectiveCornerRadius(options)
+    if (radius <= 0) return null
+    const innerW = options.width / 2 - radius, innerH = options.height / 2 - radius
+    nx = point.x - Math.max(-innerW, Math.min(innerW, point.x))
+    ny = point.y - Math.max(-innerH, Math.min(innerH, point.y))
+  }
+  const length = Math.hypot(nx, ny)
+  return length > 1e-10 ? { x: nx / length, y: ny / length } : null
+}
+
+function sideShade(normal: ExtrusionPoint): number {
+  return 0.7 + 0.24 * Math.max(0, normal.x * -0.6 + normal.y * -0.8)
+}
+
 /** Shared tessellation keeps side picking identical to the visible solid. */
 export function extrusionOutline(options: ExtrusionGeometryOptions): ExtrusionPoint[] {
   const { kind, width, height } = options
@@ -26,7 +51,7 @@ export function extrusionOutline(options: ExtrusionGeometryOptions): ExtrusionPo
       return { x: halfW * Math.cos(angle), y: halfH * Math.sin(angle) }
     })
   }
-  const radius = Math.min(halfW, halfH, Math.max(0, Number.isFinite(options.cornerRadius) ? options.cornerRadius ?? 0 : 0))
+  const radius = effectiveCornerRadius(options)
   if (radius === 0) return [
     { x: -halfW, y: -halfH }, { x: halfW, y: -halfH },
     { x: halfW, y: halfH }, { x: -halfW, y: halfH },
@@ -37,10 +62,13 @@ export function extrusionOutline(options: ExtrusionGeometryOptions): ExtrusionPo
     { x: -halfW + radius, y: halfH - radius, angle: Math.PI / 2 },
     { x: -halfW + radius, y: -halfH + radius, angle: Math.PI },
   ]
+  // Keep the polygon within 0.1 layer pixels of the same circular cap path.
+  // Large radii need more segments, especially after a high-resolution export.
+  const cornerSegments = Math.max(12, Math.min(64, Math.ceil((Math.PI / 2) / (2 * Math.acos(Math.max(-1, 1 - 0.1 / radius))))))
   const outline: ExtrusionPoint[] = []
   for (const corner of corners) {
-    for (let i = 0; i <= 12; i++) {
-      const angle = corner.angle + i * Math.PI / 24
+    for (let i = 0; i <= cornerSegments; i++) {
+      const angle = corner.angle + i * Math.PI / (cornerSegments * 2)
       const point = { x: corner.x + radius * Math.cos(angle), y: corner.y + radius * Math.sin(angle) }
       const previous = outline.at(-1)
       if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) > 1e-8) outline.push(point)
@@ -92,13 +120,15 @@ export function createExtrusionGeometry(options: ExtrusionGeometryOptions): Buff
     const length = Math.hypot(dx, dy)
     const nx = dy / length
     const ny = -dx / length
-    const shade = 0.7 + 0.24 * Math.max(0, nx * -0.6 + ny * -0.8)
-    vertex(a, 0, nx, ny, 0, shade)
-    vertex(b, 0, nx, ny, 0, shade)
-    vertex(a, depth, nx, ny, 0, shade)
-    vertex(b, 0, nx, ny, 0, shade)
-    vertex(b, depth, nx, ny, 0, shade)
-    vertex(a, depth, nx, ny, 0, shade)
+    const normalA = curvedWallNormal(options, a) ?? { x: nx, y: ny }
+    const normalB = curvedWallNormal(options, b) ?? { x: nx, y: ny }
+    const shadeA = sideShade(normalA), shadeB = sideShade(normalB)
+    vertex(a, 0, normalA.x, normalA.y, 0, shadeA)
+    vertex(b, 0, normalB.x, normalB.y, 0, shadeB)
+    vertex(a, depth, normalA.x, normalA.y, 0, shadeA)
+    vertex(b, 0, normalB.x, normalB.y, 0, shadeB)
+    vertex(b, depth, normalB.x, normalB.y, 0, shadeB)
+    vertex(a, depth, normalA.x, normalA.y, 0, shadeA)
   }
   geometry.addGroup(frontCount, positions.length / 3 - frontCount, 1)
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))

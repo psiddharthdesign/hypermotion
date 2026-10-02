@@ -530,6 +530,8 @@ transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY,
 transform.anchorX, transform.anchorY, transform.anchorZ,
 camera.focusDistance, camera.focusX, camera.focusY,
 camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ,
+camera.focusPlaneX, camera.focusPlaneY, camera.focusPlaneZ,
+camera.focusPlaneRotationX, camera.focusPlaneRotationY, camera.focusPlaneRotationZ,
 camera.focusRadius, camera.focusFalloff,
 camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ,
 camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip,
@@ -763,5 +765,22 @@ Rectangles and complete ellipses can carry `extrusion: { depth, sideColor }`.
 Depth extends behind the front face in local +Z, clamps to 0–100000 pixels, and
 is keyframeable as `extrusion.depth`. Omit or clear extrusion for a flat layer.
 Use uniform corners without smoothing. The first version has plain shaded
-sides; full solid silhouette depth-of-field, world-plane snapping, and face
-push/pull are not yet supported. See [docs/isometric-assets.md](./docs/isometric-assets.md).
+sides; full solid silhouette depth-of-field is not yet supported. Face push/pull
+supports dimensions, depth, and keyframes. Optional editor grid snapping uses
+world coordinates. `preventOverlap: true` on a solid or asset group protects
+manual placement and face editing; either protected member blocks overlap,
+while parts within the same protected assembly may intersect. Playback is not
+collision-resolved; this setting is not animated. See [docs/isometric-assets.md](./docs/isometric-assets.md).
+
+
+### Attached flow connections
+
+An ordinary vector layer may carry `connection` with `version: 1`, `sourceId`,
+`targetId`, `routing: 'elbow' | 'straight'`, `color`, `width`, `flowEnabled`,
+`flowColor`, `flowSpeed`, `flowSpacing`, `flowSize`, and `flowPhase`. Create it
+under the scene root with absolute position and no fill/stroke. Its world-space
+geometry follows its endpoint assets, including grouped solids and animation;
+its own transform and storage rectangle do not determine the path. Numeric
+tracks `connection.width`, `connection.flowSpeed`, and `connection.flowPhase`
+are supported. With speed 0, phase 0→1 is one complete pulse cycle. See
+[isometric assets](docs/isometric-assets.md) for direct face editing and limits.

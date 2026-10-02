@@ -145,6 +145,7 @@ export function paintVectorNodeToCanvas(
   height: number,
   trim: VectorTrimState = vectorTrimState(node),
 ): void {
+  if (node.connection) return
   const vb = node.viewBox
   const sx = width / Math.max(0.0001, vb.width)
   const sy = height / Math.max(0.0001, vb.height)

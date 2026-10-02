@@ -6,6 +6,10 @@ import { CameraZoomKeyframeButton } from './CameraZoomKeyframeButton'
 import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
 import { CameraCompositionGuideField } from './CameraCompositionGuideField'
 import { ExtrusionSection } from './ExtrusionSection'
+import { SolidFaceEditingButton } from './SolidFaceEditingButton'
+import { SolidPlacementSection } from './SolidPlacementSection'
+import { createSolidInspectorPositionConstraint, isSolidPositionPatch, type SolidInspectorPositionConstraint } from './solidInspectorPosition'
+import { FlowConnectionSection } from './FlowConnectionSection'
 
 import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
@@ -113,7 +117,8 @@ import {
   readMediaFileAsDataUrl,
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
-import { nearestLayerFocus } from '@/ui/cameraFocus'
+import { alignedFocusPlanePose, nearestLayerFocus } from '@/ui/cameraFocus'
+import { FocusPlaneDistanceField } from '@/ui/FocusPlaneDistanceField'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
 import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
@@ -3150,6 +3155,8 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
+  const solidPositionScrub = useRef<{ nodeId: NodeId; constraint: SolidInspectorPositionConstraint | null } | null>(null)
+  useEffect(() => { solidPositionScrub.current = null }, [node.id])
   const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
   const setFocusPickingCameraId = useUI(
     (state) => state.setFocusPickingCameraId,
@@ -3217,7 +3224,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
-    !cursorInstance
+    !cursorInstance &&
+    !node.connection
   const motionPath =
     supportsMotionPath ? normalizeLayerMotionPath(node.motionPath) : null
   const liveMotionPathProgress =
@@ -3225,7 +3233,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const supportsBend =
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
-    node.kind !== 'audio'
+    node.kind !== 'audio' &&
+    !node.connection
   const bend = supportsBend
     ? normalizeLayerDeformation(node.deformation)
     : null
@@ -3441,7 +3450,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       stampToActiveTracksForPatch(api, node.id, ui.playhead, group, patch)
     }
   }
-  const patchTransform = (patch: Partial<Transform>) => {
+  const patchTransform = (patch: Partial<Transform>, fromScrub = false) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      const constraint = fromScrub && solidPositionScrub.current?.nodeId === node.id
+        ? solidPositionScrub.current.constraint
+        : createSolidInspectorPositionConstraint(api, node.id)
+      patch = constraint?.commit(patch) ?? patch
+    }
+    solidPositionScrub.current = null
     // Read the FRESHEST transform from the api at call time, not from
     // the React closure's `node.transform` snapshot. Two back-to-back
     // calls (e.g. the linked Scale axes calling onCommitX + onCommitY
@@ -3589,10 +3605,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const previewNodeVisual = (patch: AnimatedValue) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      if (solidPositionScrub.current?.nodeId !== node.id) {
+        solidPositionScrub.current = { nodeId: node.id, constraint: createSolidInspectorPositionConstraint(api, node.id) }
+      }
+      patch = solidPositionScrub.current.constraint?.preview(patch) ?? patch
+    }
     nodeTransformPreviewStore.preview({ [node.id]: patch })
   }
   const commitTransformScrub = (patch: Partial<Transform>) => {
-    patchTransform(patch)
+    patchTransform(patch, true)
     nodeTransformPreviewStore.finish()
   }
   const commitAppearanceScrub = (patch: Partial<Appearance>) => {
@@ -3605,7 +3627,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     patchEllipseArc(patch)
     nodeTransformPreviewStore.finish()
   }
-  const cancelNodeVisualPreview = () => nodeTransformPreviewStore.clear()
+  const cancelNodeVisualPreview = () => {
+    solidPositionScrub.current = null
+    nodeTransformPreviewStore.clear()
+  }
   const patchSize = (patch: Partial<Size>) => {
     const current = api.getNode(node.id)
     if (!current || !('size' in current)) return
@@ -3728,6 +3753,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focusWorldX'
         | 'focusWorldY'
         | 'focusWorldZ'
+        | 'focusPlaneRotationX'
+        | 'focusPlaneRotationY'
+        | 'focusPlaneRotationZ'
+        | 'focusPlaneX'
+        | 'focusPlaneY'
+        | 'focusPlaneZ'
+        | 'focusPlaneInitialized'
         | 'focusRadius'
         | 'focusFalloff'
         | 'focusTargetNodeId'
@@ -3792,6 +3824,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.focusWorldZ !== undefined) {
       api.setNodeProperty(node.id, 'focusWorldZ', patch.focusWorldZ)
+    }
+    for (const field of ['focusPlaneX', 'focusPlaneY', 'focusPlaneZ', 'focusPlaneRotationX', 'focusPlaneRotationY', 'focusPlaneRotationZ', 'focusPlaneInitialized'] as const) {
+      if (patch[field] !== undefined) api.setNodeProperty(node.id, field, patch[field])
     }
     if (patch.focusRadius !== undefined) {
       api.setNodeProperty(node.id, 'focusRadius', patch.focusRadius)
@@ -3931,6 +3966,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const cancelCameraPropertiesPreview = () => {
     if (node.kind !== 'camera') return
     cameraPreviewStore.clear(node.id)
+  }
+  const currentAlignedFocusPlanePose = () => {
+    if (node.kind !== 'camera') return {}
+    const snapshot = getAnimEngine().getSnapshot()
+    return alignedFocusPlanePose(api, node, getLastSolvedLayout(), {
+      ...snapshot, [node.id]: { ...snapshot[node.id], ...anim },
+    })
   }
   const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
@@ -4243,6 +4285,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </>
       )}
 
+      <SolidFaceEditingButton api={api} selection={[node.id]} />
+      <SolidPlacementSection api={api} node={node} />
+      {node.kind === 'vector' && node.connection && (
+        <FlowConnectionSection api={api} node={node} anim={anim} />
+      )}
+
       {supportsMotionPath && (
         <MotionPathSection
           nodeId={node.id}
@@ -4254,7 +4302,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         />
       )}
 
-      {node.kind !== 'camera' && node.kind !== 'audio' && (
+      {node.kind !== 'camera' && node.kind !== 'audio' && !node.connection && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
         <AlignTools api={api} selection={[node.id]} />
@@ -5007,12 +5055,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </Section>
       )}
 
-      {'size' in node && node.kind !== 'audio' && (
+      {'size' in node && node.kind !== 'audio' && !node.connection && (
         <Section
           title={`Size · W ${formatInspectorSizeAxis(liveWidth ?? node.size.width)} × H ${formatInspectorSizeAxis(liveHeight ?? node.size.height)}`}
         >
           <FieldRow
-            label="Width"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter X" : "Width"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -5030,7 +5078,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </FieldRow>
           <FieldRow
-            label="Height"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter Y" : "Height"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -5113,6 +5161,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           />
+          {!node.connection && <>
           <FieldRow
             label="Blend"
             keyframe={
@@ -5308,16 +5357,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           ) : null}
+          </>}
         </Section>
       ) : (
         <>{/* camera path emits its own sections below */}</>
       )}
 
-      {node.kind === 'vector' ? (
+      {node.kind === 'vector' && !node.connection ? (
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && (
+      {node.kind !== 'camera' && !node.connection && (
         <EffectsSection
           nodeId={node.id}
           value={node.appearance.effects ?? []}
@@ -5465,8 +5515,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       { value: 'plane', label: 'Distance' },
                       { value: 'screen', label: 'Point' },
                       { value: 'target', label: 'Object' },
+                      { value: 'spatial', label: 'Focus plane' },
                     ]}
                     onCommit={(focusMode) => {
+                      setFocusPickingCameraId(null)
+                      if (focusMode === 'spatial' && node.focusMode !== 'spatial') {
+                        const pose = node.focusPlaneInitialized ? {} : currentAlignedFocusPlanePose()
+                        api.doc.transact(() => patchCamera({
+                          focusMode,
+                          focusTargetNodeId: null,
+                          showFocusPlane: true,
+                          ...pose,
+                          focusPlaneInitialized: true,
+                        }), UNDOABLE_GESTURE_ORIGIN)
+                        return
+                      }
                       const targetId =
                         focusMode === 'target'
                           ? node.focusTargetNodeId ??
@@ -5481,22 +5544,24 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
                 <p className="text-[11px] leading-relaxed text-text-muted">
                   {node.focusMode === 'plane'
-                    ? 'Layers at the focus distance are sharp. Layers nearer or farther away blur with depth.'
+                    ? 'Surfaces at this distance are sharp. Focus changes continuously across tilted surfaces.'
+                    : node.focusMode === 'spatial'
+                      ? 'Move and tilt a focus plane anywhere in the scene. Surfaces become sharp as they cross it.'
                     : node.focusMode === 'target'
                       ? 'Focus follows the target layer’s depth as it moves.'
                       : 'Point keeps a screen area sharp. Use Distance or Object to focus by 3D depth.'}
                 </p>
-                <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
+                {node.focusMode === 'plane' ? <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
                   title="Set the focus distance to the nearest layer in view at the current playhead"
                   onClick={() => {
                     const layout = getLastSolvedLayout()
                     if (!layout) return
                     const nearest = nearestLayerFocus(api, node, layout, getAnimEngine().getSnapshot())
                     if (nearest) api.doc.transact(() => patchCamera({ focusMode: 'plane', focusDistance: nearest.distance, focusTargetNodeId: null }), UNDOABLE_GESTURE_ORIGIN)
-                  }}>Focus nearest layer</button>
+                  }}>Focus nearest layer</button> : null}
 
                 {node.focusMode === 'plane' ? (
-                  <FieldRow label="Focus point">
+                  <FieldRow label="Sample depth">
                     <button
                       type="button"
                       disabled={node.locked}
@@ -5509,7 +5574,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           : 'border-border bg-app-bg text-text-muted hover:border-border-strong hover:text-text',
                       ].join(' ')}
                     >
-                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Pick focus point'}
+                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Sample surface depth'}
                     </button>
                   </FieldRow>
                 ) : null}
@@ -5531,7 +5596,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       width="w-full"
                     />
                   </FieldRow>
-                ) : (
+                ) : node.focusMode !== 'spatial' ? (
                   <KeyframeSliderRow
                     label="Focus distance"
                     value={liveFocusDistance}
@@ -5567,7 +5632,47 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       />
                     }
                   />
-                )}
+                ) : null}
+
+                {node.focusMode === 'spatial' ? (
+                  <>
+                    <FocusPlaneDistanceField camera={node} cameraAnim={anim} viewport={api.getMeta().canvas}
+                      onCommit={patch => api.doc.transact(() => patchCamera(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onPreview={previewCameraProperties}
+                      onScrubCommit={patch => api.doc.transact(() => commitCameraPropertiesScrub(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onCancel={cancelCameraPropertiesPreview} />
+                    <button type="button" disabled={node.locked}
+                      className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text"
+                      onClick={() => api.doc.transact(() => patchCamera({
+                        ...currentAlignedFocusPlanePose(),
+                        focusPlaneInitialized: true,
+                        showFocusPlane: true,
+                      }), UNDOABLE_GESTURE_ORIGIN)}>
+                      Align plane with camera
+                    </button>
+                    {([
+                      ['focusPlaneX', 'Position X', 'px'],
+                      ['focusPlaneY', 'Position Y', 'px'],
+                      ['focusPlaneZ', 'Position Z', 'px'],
+                      ['focusPlaneRotationX', 'Tilt X', '°'],
+                      ['focusPlaneRotationY', 'Tilt Y', '°'],
+                      ['focusPlaneRotationZ', 'Rotate Z', '°'],
+                    ] as const).map(([field, label, suffix]) => {
+                      const value = anim?.[field] ?? node[field] ?? 0
+                      return <KeyframeSliderRow key={field} label={label} value={value}
+                        onCommit={(v) => patchCamera({ [field]: v })}
+                        onScrubPreview={(v) => previewCameraProperties({ [field]: v })}
+                        onScrubCommit={(v) => commitCameraPropertiesScrub({ [field]: v })}
+                        onScrubCancel={cancelCameraPropertiesPreview}
+                        adaptiveSpan={suffix === '°' ? 180 : 2000} step={suffix === '°' ? 0.1 : 1} suffix={suffix}
+                        keyframe={<KeyframeButton nodeId={node.id} propertyId={`camera.${field}`} currentValue={value} />}
+                      />
+                    })}
+                    <p className="text-[11px] leading-relaxed text-text-muted">
+                      Drag the plane handle to move it across the view. Drag its depth handle to move it nearer or farther away.
+                    </p>
+                  </>
+                ) : null}
 
                 {node.focusMode === 'screen' ? (
                   <>

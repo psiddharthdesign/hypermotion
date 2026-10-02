@@ -4,6 +4,7 @@ import type {
   PaperShaderParams,
   PaperShaderType,
 } from '@/scene/paperShaders'
+import type { FlowConnection } from '@/scene/flowConnection'
 import type { Extrusion } from '@/scene/extrusion'
 import type { LayerMotionPath } from '@/anim/layerMotionPath'
 import type { CameraCompositionGuide } from '@/scene/cameraCompositionGuide'
@@ -567,6 +568,8 @@ interface NodeBase {
    * view, or export output.
    */
   workspaceOnly?: boolean
+  /** Opt-in placement guard; an enabled ancestor protects all its solid parts. */
+  preventOverlap?: boolean
   /** Original timeline origin retained by procedural effects after a scene split. */
   proceduralTimeOffset?: number
   /**
@@ -584,6 +587,8 @@ interface NodeBase {
    * renderers do not need kind-specific path logic.
    */
   /** Opt-in solid depth for rectangles and ellipses; absent preserves flat layers. */
+  /** Automatic attached path settings; valid on vector layers only. */
+  connection?: FlowConnection
   extrusion?: Extrusion
   motionPath?: LayerMotionPath | null
   /** Optional non-destructive layer deformation evaluated by the GPU renderer. */
@@ -1060,7 +1065,7 @@ export interface CameraNode extends NodeBase {
   /** Enables camera depth-of-field blur. */
   depthOfField: boolean
   /** Camera focus behavior. Screen focus is the editor default. */
-  focusMode: 'plane' | 'target' | 'screen'
+  focusMode: 'plane' | 'target' | 'screen' | 'spatial'
   /** Camera-viewport point used by screen-focus mode and as picker metadata. */
   focusX: number
   focusY: number
@@ -1068,6 +1073,16 @@ export interface CameraNode extends NodeBase {
   focusWorldX: number
   focusWorldY: number
   focusWorldZ: number
+  /** Independent focus-plane position in world canvas units. */
+  focusPlaneX: number
+  focusPlaneY: number
+  focusPlaneZ: number
+  /** Whether the independent plane has an authored pose to preserve. */
+  focusPlaneInitialized: boolean
+  /** Independent world-space focus-plane Euler rotation in degrees. */
+  focusPlaneRotationX: number
+  focusPlaneRotationY: number
+  focusPlaneRotationZ: number
   /** Target node used by target-focus mode. Null when no target is bound. */
   focusTargetNodeId: NodeId | null
   /** Z-depth plane that remains sharp, in canvas depth units. */
@@ -1346,6 +1361,9 @@ export type PropertyId =
   | 'transform.anchorY'
   | 'transform.anchorZ'
   // generic layer motion path — resolves into post-layout transform values
+  | 'connection.width'
+  | 'connection.flowSpeed'
+  | 'connection.flowPhase'
   | 'extrusion.depth'
   | 'motionPath.progress'
   // non-destructive layer deformation — post-layout, GPU evaluated
@@ -1383,6 +1401,12 @@ export type PropertyId =
   | 'camera.focusWorldX'
   | 'camera.focusWorldY'
   | 'camera.focusWorldZ'
+  | 'camera.focusPlaneX'
+  | 'camera.focusPlaneY'
+  | 'camera.focusPlaneZ'
+  | 'camera.focusPlaneRotationX'
+  | 'camera.focusPlaneRotationY'
+  | 'camera.focusPlaneRotationZ'
   | 'camera.focusRadius'
   | 'camera.focusFalloff'
   | 'camera.pointOfInterestX'

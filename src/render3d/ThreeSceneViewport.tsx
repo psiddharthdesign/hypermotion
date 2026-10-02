@@ -22,9 +22,14 @@ import { programMediaRate } from '@/state/sequenceMediaClock'
 import { videoVisibleAtTime } from '@/scene/mediaClip'
 import { createVideoTexture, ensureVideoTexture } from './videoTextureResource'
 import { createPlaybackVideo, masterVideoPrewarm } from './videoPrewarm'
-import { depthOfFieldTexturePadding } from './depthOfFieldPadding'
+import { depthOfFieldTexturePadding, retainDepthOfFieldPadding, type DepthOfFieldPadding } from './depthOfFieldPadding'
 import { installDepthOfFieldRenderTargetScale } from './depthOfFieldRenderTarget'
 import { createExtrusionBodyGeometry } from './extrusionGeometry'
+import { parseCanvasSolidColor } from './canvasSolidColor'
+import { resolveFlowConnections } from './flowConnections'
+import { FlowConnectionsRenderer } from './flowConnectionsRenderer'
+import { SolidGridRenderer } from './solidGrid'
+import { samePlaneSyncCameraInputs } from './planeSyncPolicy'
 import { extrusionShapeForPlane } from './extrusionScene'
 import { syncExtrusionMaterial } from './extrusionMaterial'
 import { bloomReferenceSize } from './SceneBloomPass'
@@ -91,7 +96,8 @@ import { displayedText } from '@/scene'
 import {
   buildWorldPlanes,
   cameraSpaceDepth,
-  cameraFrustumCorners,
+  focusPlaneCorners,
+  focusPlaneShaderState,
   createPlaneBuildContext,
   depthBlurAmount,
   effectiveApertureStrength,
@@ -119,6 +125,7 @@ import {
 import {
   depthOfFieldSampleCount,
   installDepthOfFieldShader,
+  updateDepthFocusPlane,
   MAX_BEND_DEFORMERS,
   updateDepthOfFieldShader,
 } from '@/render3d/depthOfFieldShader'
@@ -209,6 +216,8 @@ interface ThreeSceneViewportProps {
    */
   hiddenNodeIds?: readonly NodeId[]
   showHelpers?: boolean
+  /** World-space placement lattice; omitted for preview/export surfaces. */
+  editorGridSpacing?: number | null
   showPlanes?: boolean
   focusWorldPoint?: { x: number; y: number; z: number } | null
   exportable?: boolean
@@ -249,6 +258,7 @@ interface ThreeSceneViewportProps {
 const EMPTY_HIDDEN_NODE_IDS: readonly NodeId[] = Object.freeze([])
 
 interface PlaneRecord {
+  dofPadding?: DepthOfFieldPadding
   solidBody?: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
   solidOutline?: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>
   solidSignature?: string
@@ -379,9 +389,7 @@ interface HelperBundle {
 const RENDER3D_VIDEO_REGISTRY = '__hypermotionRender3dVideos'
 const VIDEO_READY_EVENT = 'hypermotion-video-ready'
 const EMPTY_PLANES: Plane3D[] = []
-const parsedCanvasColorCache = new Map<string, string | null>()
 const helperBundles = new WeakMap<THREE.Group, HelperBundle>()
-let canvasColorParserContext: CanvasRenderingContext2D | null | undefined
 const IDENTITY_MATRIX_2D: Matrix2D = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
 const IDENTITY_SUBTREE_TRANSFORM: SubtreeTransformContext = {
   x: 0,
@@ -605,6 +613,7 @@ export function ThreeSceneViewport({
   selectedIds,
   hiddenNodeIds = EMPTY_HIDDEN_NODE_IDS,
   showHelpers = true,
+  editorGridSpacing = null,
   showPlanes = true,
   focusWorldPoint = null,
   exportable = false,
@@ -634,6 +643,8 @@ export function ThreeSceneViewport({
     playhead: number
   } | null>(null)
   const planesRef = useRef<Map<NodeId, PlaneRecord>>(new Map())
+  const flowRendererRef = useRef(new FlowConnectionsRenderer())
+  const solidGridRef = useRef(new SolidGridRenderer())
   const withBloomSource = useMemo(() => (draw: () => void) => {
     withBloomRasterOverrides(bloomRasterOverrides(planesRef.current.values()), draw)
   }, [])
@@ -759,6 +770,11 @@ export function ThreeSceneViewport({
       showPlanes,
     ],
   )
+  const connectionPlanes = useMemo(() => {
+    if (!showPlanes || !planes.some(plane => plane.node.kind === 'vector' && plane.node.connection)) return EMPTY_PLANES
+    return buildWorldPlanes(api, layout, worldPlaneAnimation, baseCamera, { context: planeBuildContext, independentNodes: true })
+  }, [showPlanes, planes, api, layout, worldPlaneAnimation, baseCamera, planeBuildContext])
+  const flowConnections = useMemo(() => resolveFlowConnections(planeBuildContext.nodesById, connectionPlanes, animated), [planeBuildContext, connectionPlanes, animated])
   const playheadDrivenTextureRanges = useMemo(() => {
     void sceneVersion
     const ranges = new Map<NodeId, PlayheadDrivenTextureRange>()
@@ -843,6 +859,8 @@ export function ThreeSceneViewport({
     const host = hostRef.current
     if (!host) return
     const planes = planesRef.current
+    const flowRenderer = flowRendererRef.current
+    const solidGrid = solidGridRef.current
     let renderer: THREE.WebGLRenderer
     try {
       renderer = new THREE.WebGLRenderer({
@@ -897,6 +915,8 @@ export function ThreeSceneViewport({
         ;(record.outline.material as THREE.Material).dispose()
       }
       planes.clear()
+      flowRenderer.dispose()
+      solidGrid.dispose()
       planeSyncRef.current = null
       publishRender3dVideos(planes)
       clearHelperGroup(helpers)
@@ -995,7 +1015,7 @@ export function ThreeSceneViewport({
     // synchronization on every pass so a follow-up request can initiate the
     // exact seek and then paint the decoded presentation frame.
     const requestedVideoSync = hasVideoPlane && (renderRequest !== null || !playing)
-    const planeStateChanged =
+    const planeContentChanged =
       !previousPlaneSync ||
       previousPlaneSync.planes !== planes ||
       // The world-plane projection deliberately ignores text/paint values.
@@ -1013,16 +1033,39 @@ export function ThreeSceneViewport({
       previousPlaneSync.texturePixelRatio !== stableTexturePixelRatio ||
       previousPlaneSync.width !== width ||
       previousPlaneSync.height !== height ||
+      requestedVideoSync ||
+      playheadDrivenTextureChanged
+    const planeQualityChanged = !previousPlaneSync ||
       previousPlaneSync.playing !== playing ||
       previousPlaneSync.interactiveCameraPreview !== interactiveCameraPreview ||
       previousPlaneSync.finalRender !== finalRender ||
-      previousPlaneSync.bloomRasterActive !== bloomRasterActive ||
-      (bloomRasterActive && previousPlaneSync.camera !== resolvedCamera) ||
-      (hasSegmentTextPlane && previousPlaneSync.camera !== resolvedCamera) ||
-      requestedVideoSync ||
-      playheadDrivenTextureChanged ||
+      previousPlaneSync.bloomRasterActive !== bloomRasterActive
+    let planeStateChanged = planeContentChanged || planeQualityChanged ||
+      (hasSegmentTextPlane && previousPlaneSync?.camera !== resolvedCamera) ||
+      (bloomRasterActive && previousPlaneSync?.camera !== resolvedCamera) ||
       hasDynamicDepthOfField ||
-      previousPlaneSync.dynamicDepthOfField !== hasDynamicDepthOfField
+      previousPlaneSync?.dynamicDepthOfField !== hasDynamicDepthOfField
+
+    // Moving only the focus plane changes a handful of shader uniforms. It
+    // must not traverse every layer's content, repaint textures, or rebuild
+    // text geometry. Camera pose, paint, lens support and quality changes
+    // still take the complete synchronization path.
+    if (planeStateChanged && !planeContentChanged && !planeQualityChanged &&
+      previousPlaneSync && hasDynamicDepthOfField &&
+      resolvedCamera.focusMode !== 'screen' &&
+      previousPlaneSync.camera.focusMode === resolvedCamera.focusMode &&
+      samePlaneSyncCameraInputs(previousPlaneSync.camera, resolvedCamera)) {
+      const depthFocus = focusPlaneShaderState(resolvedCamera)!
+      let updated = true
+      for (const record of planesRef.current.values()) {
+        if (!updateDepthFocusPlane(record.mesh.material, depthFocus) ||
+          (record.beamOverlay && !updateDepthFocusPlane(record.beamOverlay.material, depthFocus))) {
+          updated = false
+          break
+        }
+      }
+      if (updated) planeStateChanged = false
+    }
 
     if (planeStateChanged) {
       if (showPlanes) {
@@ -1066,6 +1109,8 @@ export function ThreeSceneViewport({
         }
       }
     }
+    solidGridRef.current.sync(scene, finalRender || !showPlanes ? null : editorGridSpacing, width, height)
+    flowRendererRef.current.sync(scene, showPlanes ? flowConnections : [], playhead, hiddenNodeIds, finalRender ? [] : selectedIds)
     // Keep the comparison snapshot current even when a camera-only preview
     // reused every plane. GPU DOF changes uniforms only; sharp plane textures
     // stay cached while timeline and camera gestures run.
@@ -1218,6 +1263,8 @@ export function ThreeSceneViewport({
     planeBuildContext,
     layout,
     planes,
+    flowConnections,
+    editorGridSpacing,
     resolvedCamera,
     sceneFill,
     selectedIds,
@@ -1479,9 +1526,13 @@ function syncPlanes(
     apertureStrength > 0 &&
     maximumBlurLevel > 0
   for (const sourcePlane of planes) {
-    const padding = sourcePlane.renderKind === 'canvas' && sourcePlane.node.kind !== 'video' && apertureStrength > 0
+    // Connections own world-space procedural meshes, never a vector proxy bitmap.
+    if (sourcePlane.node.kind === 'vector' && sourcePlane.node.connection) continue
+    const requestedPadding = sourcePlane.renderKind === 'canvas' && sourcePlane.node.kind !== 'video' && apertureStrength > 0
       ? depthOfFieldTexturePadding(sourcePlane, camera, maximumBlurLevel)
       : { x: 0, y: 0 }
+    const padding = retainDepthOfFieldPadding(requestedPadding, records.get(sourcePlane.nodeId)?.dofPadding,
+      !bloomRasterActive && !finalRender && (playing || interactiveCameraPreview))
     const sourceRect = sourcePlane.textureRect ?? sourcePlane.rect
     const plane = padding.x > 0 || padding.y > 0
       ? {
@@ -1787,6 +1838,7 @@ function syncPlanes(
         }
       }
     }
+    record.dofPadding = padding
     const material = record.mesh.material as THREE.MeshBasicMaterial
     // Do not key material state to animated Bend values. Crossing zero used
     // to flip ALPHATEST and force a shader-program rebuild on the settling
@@ -1807,6 +1859,7 @@ function syncPlanes(
     material.polygonOffsetFactor = material.polygonOffset ? -1 : 0
     material.polygonOffsetUnits = material.polygonOffset ? -1 : 0
     const depthOfFieldOptions = {
+      depthFocus: focusPlaneShaderState(camera),
       enabled: camera.depthOfField && apertureStrength > 0,
       blurPx: blur,
       minimumBlurPx: minimumBlur,
@@ -2336,6 +2389,7 @@ function syncTextSegmentPlane({
     maximumSegmentBlur = Math.max(maximumSegmentBlur, state.dofBlur)
   }
   updateTextSegmentMaterialShader(record.mesh.material, {
+    depthFocus: focusPlaneShaderState(camera),
     enabled:
       camera.depthOfField &&
       apertureStrength > 0 &&
@@ -4328,7 +4382,7 @@ function syncHelpers(
   syncThreeCamera(bundle.camera, camera, width, height)
   bundle.frustum.update()
 
-  const corners = cameraFrustumCorners(camera, { width, height }, camera.focusDistance)
+  const corners = focusPlaneCorners(camera, { width, height })
   updateLinePositions(bundle.focusPlane.geometry, [
     corners[0]!,
     corners[1]!,
@@ -4336,11 +4390,7 @@ function syncHelpers(
     corners[3]!,
     corners[0]!,
   ])
-  const focusCenter = focusWorldPoint ?? {
-    x: (corners[0]!.x + corners[2]!.x) / 2,
-    y: (corners[0]!.y + corners[2]!.y) / 2,
-    z: (corners[0]!.z + corners[2]!.z) / 2,
-  }
+  const focusCenter = camera.focusMode === 'screen' && focusWorldPoint ? focusWorldPoint : camera.focusWorld
   updateLinePositions(bundle.focusLine.geometry, [camera.position, focusCenter])
   bundle.marker.position.set(focusCenter.x, focusCenter.y, focusCenter.z)
 }
@@ -5173,46 +5223,6 @@ function addCanvasStops(gradient: CanvasGradient, stops: GradientStop[]) {
   }
 }
 
-function parseCanvasSolidColor(css: string): string | null {
-  const value = css.trim()
-  if (!value || value.includes('gradient(') || value.startsWith('url(')) {
-    return null
-  }
-  const cached = parsedCanvasColorCache.get(value)
-  if (cached !== undefined || parsedCanvasColorCache.has(value)) return cached ?? null
-
-  // Camera-only playback calls `syncBackground` every display frame. The old
-  // parser allocated a fresh canvas/context for the unchanged fill each time,
-  // creating hundreds of short-lived GPU-backed objects during Space-bar
-  // playback. Keep one tiny parser context and cache the normalized result.
-  if (canvasColorParserContext === undefined) {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1
-    canvas.height = 1
-    canvasColorParserContext = canvas.getContext('2d')
-  }
-  const ctx = canvasColorParserContext
-  if (!ctx) {
-    parsedCanvasColorCache.set(value, value)
-    return value
-  }
-  ctx.clearRect(0, 0, 1, 1)
-  ctx.fillStyle = '#000000'
-  ctx.fillStyle = value
-  ctx.fillRect(0, 0, 1, 1)
-  // Canvas retains modern inputs such as `oklch(...)` in fillStyle, while
-  // Three's color parser does not understand that syntax. Sampling the
-  // painted pixel converts every browser-supported solid color to sRGB.
-  // Emit hex rather than modern space-separated rgb(): the pinned Three.js
-  // parser accepts legacy comma rgb() only and otherwise silently leaves the
-  // background at its previous color.
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
-  const parsed = `#${[r, g, b]
-    .map((channel) => channel.toString(16).padStart(2, '0'))
-    .join('')}`
-  parsedCanvasColorCache.set(value, parsed)
-  return parsed
-}
 
 function paintImageFill(
   ctx: CanvasRenderingContext2D,

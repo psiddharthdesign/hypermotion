@@ -4,6 +4,25 @@ import { cameraSpaceDepth, projectWorldPoint, type Plane3D, type ResolvedCamera3
 import { add3, mul3 } from './math'
 
 type PaddingPlane = Pick<Plane3D, 'rect' | 'textureRect' | 'center' | 'textureCenter' | 'right' | 'down' | 'scaleX' | 'scaleY'>
+export type DepthOfFieldPadding = { x: number; y: number }
+const MAX_DEPTH_OF_FIELD_PADDING = 1024
+
+/**
+ * Keep the largest support needed during a realtime session so camera motion
+ * cannot repeatedly shrink and grow the same canvas texture. Pausing restores
+ * the exact requested bounds; disabling blur immediately releases the gutter.
+ */
+export function retainDepthOfFieldPadding(
+  requested: DepthOfFieldPadding,
+  previous: DepthOfFieldPadding | undefined,
+  realtime: boolean,
+): DepthOfFieldPadding {
+  if (!realtime || !previous || (requested.x === 0 && requested.y === 0)) return requested
+  return {
+    x: Math.min(MAX_DEPTH_OF_FIELD_PADDING, Math.max(requested.x, previous.x)),
+    y: Math.min(MAX_DEPTH_OF_FIELD_PADDING, Math.max(requested.y, previous.y)),
+  }
+}
 
 /**
  * Transparent source pixels are part of the aperture convolution. Without a
@@ -17,7 +36,7 @@ export function depthOfFieldTexturePadding(
   plane: PaddingPlane,
   camera: ResolvedCamera3D,
   maximumBlur: number,
-): { x: number; y: number } {
+): DepthOfFieldPadding {
   if (!camera.depthOfField || !Number.isFinite(maximumBlur) || maximumBlur <= 0.05) {
     return { x: 0, y: 0 }
   }
@@ -43,7 +62,7 @@ export function depthOfFieldTexturePadding(
   const apertureStretch = Math.max(Math.sqrt(ratio), 1 / Math.sqrt(ratio))
   // Include the sparse-kernel mip prefilter as well as the aperture radius.
   const support = (maximumBlur * apertureStretch * 2 + 2) * perspectiveMargin
-  const bucket = (value: number) => Math.min(1024, Math.ceil(Math.max(0, value) / 16) * 16)
+  const bucket = (value: number) => Math.min(MAX_DEPTH_OF_FIELD_PADDING, Math.ceil(Math.max(0, value) / 16) * 16)
   return {
     x: bucket(support * Math.hypot(yx, yy) / Math.max(0.000001, determinant)),
     y: bucket(support * Math.hypot(xx, xy) / Math.max(0.000001, determinant)),

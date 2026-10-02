@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Euler, Matrix4, Vector3 } from 'three'
+import { resolveFlowConnections, intersectFlowConnection } from './flowConnections'
 import { resolveNodeExtrusion, extrusionShapeForPlane, extrusionWorldMatrix } from './extrusionScene'
 import { intersectExtrusion } from './extrusionPicking'
 import type { Extrusion } from '@/scene/extrusion'
@@ -66,6 +68,10 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
   /** Authored point-focus center in top-left-origin composition pixels. */
   focusScreen: { x: number; y: number }
   focusWorld: Vec3
+  /** World-space basis of the sharp plane, shared by shading and focus guides. */
+  focusPlaneNormal: Vec3
+  focusPlaneRight: Vec3
+  focusPlaneDown: Vec3
   focusDistance: number
   focusRadius: number
   focusFalloff: number
@@ -80,6 +86,8 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 }
 
 export interface Plane3D {
+  /** Resolved stroke width for discrete native connection picking. */
+  connectionWidth?: number
   extrusion?: Extrusion
   extrusionCornerRadius?: number
   nodeId: NodeId
@@ -361,6 +369,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
         segmentTextNodeIds.has(childId) ||
         layerHasBendDeformation(child) ||
         ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
+        (child.kind === 'vector' && !!child.connection) ||
         isAlwaysOnTopNode(child) ||
         childRenderMode === 'plane' ||
         childRenderMode === 'group3d' ||
@@ -409,6 +418,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
         child.kind === 'video' ||
         layerHasBendDeformation(child) ||
         ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
+        (child.kind === 'vector' && !!child.connection) ||
         isAlwaysOnTopNode(child) ||
         renderMode === 'plane' ||
         renderMode === 'group3d' ||
@@ -561,11 +571,26 @@ export function resolveCamera3D(
   const planeFocusDepth = authoredPlaneDistance > 0
     ? authoredPlaneDistance
     : targetDepth
-  const focusWorld = focusWorldOverride ?? (
-    focusMode === 'plane'
+  const focusWorld = focusMode === 'target' && focusWorldOverride ? focusWorldOverride : (
+    focusMode === 'spatial'
+      ? {
+          x: animated?.focusPlaneX ?? camera.focusPlaneX ?? viewport.width / 2,
+          y: animated?.focusPlaneY ?? camera.focusPlaneY ?? viewport.height / 2,
+          z: animated?.focusPlaneZ ?? camera.focusPlaneZ ?? 0,
+        }
+      : focusMode === 'plane'
       ? add3(position, mul3(basis.forward, planeFocusDepth))
       : authoredFocusWorld
   )
+  const planeRotation = {
+    x: animated?.focusPlaneRotationX ?? camera.focusPlaneRotationX ?? 0,
+    y: animated?.focusPlaneRotationY ?? camera.focusPlaneRotationY ?? 0,
+    z: animated?.focusPlaneRotationZ ?? camera.focusPlaneRotationZ ?? 0,
+  }
+  const rotatePlane = (v: Vec3) => rotateEuler(v, planeRotation.x, planeRotation.y, planeRotation.z)
+  const focusPlaneNormal = focusMode === 'spatial' ? rotatePlane({ x: 0, y: 0, z: 1 }) : basis.forward
+  const focusPlaneRight = focusMode === 'spatial' ? rotatePlane({ x: 1, y: 0, z: 0 }) : basis.right
+  const focusPlaneDown = focusMode === 'spatial' ? rotatePlane({ x: 0, y: 1, z: 0 }) : basis.down
   const focusDepth = Math.max(0.001, dot3(sub3(focusWorld, position), basis.forward))
   const nearClip = Math.max(0.001, animated?.nearClip ?? camera.nearClip ?? 1)
   const authoredFarClip = Math.max(1, animated?.farClip ?? camera.farClip ?? 100000)
@@ -591,6 +616,9 @@ export function resolveCamera3D(
     focusMode,
     focusScreen,
     focusWorld,
+    focusPlaneNormal,
+    focusPlaneRight,
+    focusPlaneDown,
     focusDistance: focusDepth,
     focusRadius: Math.max(1, animated?.focusRadius ?? camera.focusRadius ?? 160),
     focusFalloff: Math.max(1, animated?.focusFalloff ?? camera.focusFalloff ?? 180),
@@ -1049,6 +1077,7 @@ export function buildWorldPlanes(
       (segmentText ||
         deformedNode ||
         !!extrusion ||
+        (node.kind === 'vector' && !!node.connection) ||
         isAlwaysOnTopNode(node) ||
         independentNodes ||
         videoStackSibling ||
@@ -1135,6 +1164,7 @@ export function buildWorldPlanes(
         node,
         rect,
         extrusion,
+        connectionWidth: node.connection ? animated[id]?.connectionWidth : undefined,
         extrusionCornerRadius: (animated[id]?.fullRadius ?? (node.appearance.fullRadius ? 1 : 0)) >= 0.5
           ? Math.min(rect.width, rect.height) / 2
           : animated[id]?.cornerRadius ?? node.appearance.cornerRadius,
@@ -1295,7 +1325,12 @@ export function hitTestPlanes(
   ray: Ray3,
   camera: ResolvedCamera3D,
   viewport: ViewportSize,
+  connectionPlanes: readonly Plane3D[] = planes,
 ): FocusHit3D | null {
+  const flowHits = new Map(planes.some(plane => !!plane.node.connection)
+    ? resolveFlowConnections(new Map(connectionPlanes.map(plane => [plane.nodeId, plane.node])), connectionPlanes, {}).map(connection => [connection.nodeId, intersectFlowConnection(connection, ray)] as const)
+    : [])
+  const depthAware = (plane: Plane3D | undefined) => !!plane?.extrusion || !!plane?.node.connection
   let bestOverlay: (FocusHit3D & { t: number }) | null = null
   let bestScene: (FocusHit3D & { t: number }) | null = null
   for (let i = planes.length - 1; i >= 0; i--) {
@@ -1310,21 +1345,24 @@ export function hitTestPlanes(
     // Ordinary design planes retain their authored paint order. Solids also
     // write depth, so another solid must be compared at its actual surface.
     // The explicit overlay band bypasses scene depth and retains paint order.
-    if (best && (overlay || !plane.extrusion || !planes.find(p => p.nodeId === best.nodeId)?.extrusion)) continue
+    if (best && (overlay || !depthAware(plane) || !depthAware(planes.find(p => p.nodeId === best.nodeId)))) continue
+    const flowHit = plane.node.connection ? flowHits.get(plane.nodeId) : undefined
+    if (plane.node.connection && !flowHit) continue
     const shape = extrusionShapeForPlane(plane)
     const solidHit = shape && shape.depth > 0 ? intersectExtrusion(ray, shape, extrusionWorldMatrix(plane)) : null
     if (shape && shape.depth > 0 && !solidHit) continue
+    const nativeHit = flowHit ?? solidHit
     const denom = dot3(ray.direction, plane.normal)
-    if (!solidHit && Math.abs(denom) < 0.0001) continue
-    const t = solidHit?.t ?? dot3(sub3(plane.center, ray.origin), plane.normal) / denom
+    if (!nativeHit && Math.abs(denom) < 0.0001) continue
+    const t = nativeHit?.t ?? dot3(sub3(plane.center, ray.origin), plane.normal) / denom
     if (t <= 0) continue
     if (best && t >= best.t) continue
-    const point = solidHit?.point ?? add3(ray.origin, mul3(ray.direction, t))
+    const point = nativeHit?.point ?? add3(ray.origin, mul3(ray.direction, t))
     if (plane.clips?.some((clip) => !clipContainsPoint(clip, point))) continue
     const rel = sub3(point, plane.center)
     const localX = (solidHit?.localPoint.x ?? dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX))) + plane.rect.width / 2
     const localY = (solidHit?.localPoint.y ?? dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY))) + plane.rect.height / 2
-    if (!solidHit && (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height)) continue
+    if (!nativeHit && (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height)) continue
     const hit = {
       nodeId: plane.nodeId,
       point,
@@ -1369,6 +1407,52 @@ export function depthBlurAmount(
     : 0
   const combined = Math.max(depthBlur, pointBlur)
   return Math.max(0, Math.min(blurLevel, blurLevel * combined))
+}
+
+/** Lens plane in Three's view coordinates, including camera orbit and roll. */
+export function focusPlaneShaderState(camera: ResolvedCamera3D) {
+  if (camera.focusMode === 'screen' || !camera.depthOfField) return undefined
+  const basis = cameraBasis(camera)
+  const normal = camera.focusPlaneNormal
+  return {
+    normal: {
+      x: dot3(normal, basis.right),
+      y: -dot3(normal, basis.down),
+      z: -dot3(normal, basis.forward),
+    },
+    constant: dot3(normal, sub3(camera.position, camera.focusWorld)),
+    depthScale: Math.max(80, camera.focalLength * 0.35),
+    aperture: effectiveApertureStrength(camera.aperture, camera.fStop),
+    maxBlurPx: Math.max(0, camera.blurLevel),
+  }
+}
+
+/** Start a free focus plane exactly where the current lens is focused. */
+export function focusPlanePose(camera: ResolvedCamera3D) {
+  const vector = (v: Vec3) => new Vector3(v.x, v.y, v.z)
+  const euler = new Euler().setFromRotationMatrix(new Matrix4().makeBasis(
+    vector(camera.focusPlaneRight), vector(camera.focusPlaneDown), vector(camera.focusPlaneNormal),
+  ), 'ZYX')
+  const degrees = 180 / Math.PI
+  return {
+    focusPlaneX: camera.focusWorld.x,
+    focusPlaneY: camera.focusWorld.y,
+    focusPlaneZ: camera.focusWorld.z,
+    focusPlaneRotationX: euler.x * degrees,
+    focusPlaneRotationY: euler.y * degrees,
+    focusPlaneRotationZ: euler.z * degrees,
+  }
+}
+
+export function focusPlaneCorners(camera: ResolvedCamera3D, viewport: ViewportSize): Vec3[] {
+  if (camera.focusMode !== 'spatial') return cameraFrustumCorners(camera, viewport, camera.focusDistance)
+  const halfH = camera.projection === 'orthographic'
+    ? Math.max(80, viewport.height / camera.zoomY * 0.3)
+    : Math.max(80, camera.focusDistance * viewport.height / camera.focalLength * 0.3)
+  const halfW = halfH * viewport.width / viewport.height
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) =>
+    add3(add3(camera.focusWorld, mul3(camera.focusPlaneRight, x! * halfW)), mul3(camera.focusPlaneDown, y! * halfH)),
+  )
 }
 
 export function cameraFrustumCorners(camera: ResolvedCamera3D, viewport: ViewportSize, depth: number): Vec3[] {

@@ -577,6 +577,12 @@ function remapNodeReferences(
   const targetId = nodeMap.get(sourceId)
   if (!sourceNode || !targetId) return
 
+  if (sourceNode.kind === 'vector' && sourceNode.connection) {
+    target.setNodeProperty(targetId, 'connection', { ...sourceNode.connection,
+      sourceId: nodeMap.get(sourceNode.connection.sourceId) ?? sourceNode.connection.sourceId,
+      targetId: nodeMap.get(sourceNode.connection.targetId) ?? sourceNode.connection.targetId,
+    })
+  }
   if (sourceNode.componentSourceId) {
     target.setNodeProperty(
       targetId,

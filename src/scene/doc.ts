@@ -57,6 +57,7 @@ import { normalizeLayerEffects } from '@/scene/effects'
 import { normalizeEllipseArc } from '@/scene/ellipseArc'
 import { normalizeLayerBend } from '@/scene/layerBend'
 import { normalizeLayerZIndex } from '@/scene/zIndex'
+import { normalizeFlowConnection, type FlowConnection } from '@/scene/flowConnection'
 import { normalizeExtrusion, type Extrusion } from '@/scene/extrusion'
 import { normalizeLayerDeformation } from '@/scene/deformation'
 
@@ -237,6 +238,7 @@ export interface SceneAPI {
 export interface NodeBaseMutable {
   name: string
   workspaceOnly: boolean
+  preventOverlap: boolean | undefined
   proceduralTimeOffset: number
   componentSourceId: NodeId | null
   componentId: NodeId
@@ -253,6 +255,7 @@ export interface NodeBaseMutable {
   zIndex: number
   isMask: boolean
   maskMode: 'alpha' | undefined
+  connection: FlowConnection | undefined
   extrusion: Extrusion | undefined
   motionPath: LayerMotionPath | null
   deformation: LayerDeformation | null
@@ -339,12 +342,19 @@ export interface NodeBaseMutable {
   nearClip: number
   farClip: number
   depthOfField: boolean
-  focusMode: 'plane' | 'target' | 'screen'
+  focusMode: CameraNode['focusMode']
   focusX: number
   focusY: number
   focusWorldX: number
   focusWorldY: number
   focusWorldZ: number
+  focusPlaneX: number
+  focusPlaneY: number
+  focusPlaneZ: number
+  focusPlaneInitialized: boolean
+  focusPlaneRotationX: number
+  focusPlaneRotationY: number
+  focusPlaneRotationZ: number
   focusTargetNodeId: NodeId | null
   focusDistance: number
   focusRadius: number
@@ -693,9 +703,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       componentSourceId:
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
+      ...(y.get('preventOverlap') === true ? { preventOverlap: true } : {}),
       proceduralTimeOffset: finiteNumber(y.get('proceduralTimeOffset') as number | undefined, 0),
       ...((kind === 'rect' || kind === 'ellipse') && y.has('extrusion')
         ? { extrusion: normalizeExtrusion(y.get('extrusion')) } : {}),
+      ...(kind === 'vector' && y.has('connection') ? { connection: normalizeFlowConnection(y.get('connection')) } : {}),
       motionPath: normalizeLayerMotionPath(y.get('motionPath')),
       deformation: normalizeLayerDeformation(y.get('deformation')),
       layerBend: normalizeLayerBend(y.get('layerBend')),
@@ -996,6 +1008,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             ((y.get('focusDistance') as number | undefined) ?? 0),
           focusTargetNodeId:
             (y.get('focusTargetNodeId') as NodeId | null | undefined) ?? null,
+          focusPlaneX: (y.get('focusPlaneX') as number | undefined) ?? 0,
+          focusPlaneY: (y.get('focusPlaneY') as number | undefined) ?? 0,
+          focusPlaneZ: (y.get('focusPlaneZ') as number | undefined) ?? 0,
+          focusPlaneInitialized: (y.get('focusPlaneInitialized') as boolean | undefined) ?? (y.get('focusMode') === 'spatial'),
+          focusPlaneRotationX: (y.get('focusPlaneRotationX') as number | undefined) ?? 0,
+          focusPlaneRotationY: (y.get('focusPlaneRotationY') as number | undefined) ?? 0,
+          focusPlaneRotationZ: (y.get('focusPlaneRotationZ') as number | undefined) ?? 0,
           focusDistance: (y.get('focusDistance') as number | undefined) ?? 0,
           focusRadius: (y.get('focusRadius') as number | undefined) ?? 160,
           focusFalloff: (y.get('focusFalloff') as number | undefined) ?? 180,
@@ -1238,6 +1257,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           (props as { componentSourceId?: NodeId | null })?.componentSourceId ?? null,
         )
         y.set('workspaceOnly', (props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
+        if (props?.preventOverlap === true) y.set('preventOverlap', true)
         y.set('proceduralTimeOffset', finiteNumber((props as { proceduralTimeOffset?: number })?.proceduralTimeOffset, 0))
         y.set(
           'motionPath',
@@ -1281,6 +1301,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         }
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
+        }
+        if (kind === 'vector') {
+          const connection = normalizeFlowConnection(props?.connection)
+          if (connection) y.set('connection', connection)
         }
         if (kind === 'rect' || kind === 'ellipse') {
           const extrusion = normalizeExtrusion(props?.extrusion)
@@ -1497,6 +1521,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('focusWorldX', cp?.focusWorldX ?? (cp?.focusX ?? centerX))
           y.set('focusWorldY', cp?.focusWorldY ?? (cp?.focusY ?? centerY))
           y.set('focusWorldZ', cp?.focusWorldZ ?? (cp?.focusDistance ?? 0))
+          y.set('focusPlaneX', cp?.focusPlaneX ?? 0)
+          y.set('focusPlaneY', cp?.focusPlaneY ?? 0)
+          y.set('focusPlaneZ', cp?.focusPlaneZ ?? 0)
+          y.set('focusPlaneInitialized', cp?.focusPlaneInitialized ?? (cp?.focusMode === 'spatial'))
+          y.set('focusPlaneRotationX', cp?.focusPlaneRotationX ?? 0)
+          y.set('focusPlaneRotationY', cp?.focusPlaneRotationY ?? 0)
+          y.set('focusPlaneRotationZ', cp?.focusPlaneRotationZ ?? 0)
           y.set('focusTargetNodeId', cp?.focusTargetNodeId ?? null)
           y.set('focusDistance', cp?.focusDistance ?? 0)
           y.set('focusRadius', cp?.focusRadius ?? 160)
@@ -1643,6 +1674,18 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
                         ),
                 }),
           })
+          return
+        }
+        if (key === 'preventOverlap') {
+          if (value === true) y.set('preventOverlap', true)
+          else y.delete('preventOverlap')
+          return
+        }
+        if (key === 'connection') {
+          if (y.get('kind') !== 'vector') return
+          const connection = normalizeFlowConnection(value)
+          if (connection) y.set('connection', connection)
+          else y.delete('connection')
           return
         }
         if (key === 'extrusion') {

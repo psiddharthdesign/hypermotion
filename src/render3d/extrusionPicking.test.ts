@@ -9,9 +9,9 @@ const identity = new Matrix4().toArray()
 describe('extrusion picking', () => {
   it('selects front, back and side surfaces, including edge-on views', () => {
     const front = intersectExtrusion({ origin: { x: 10, y: 5, z: -40 }, direction: { x: 0, y: 0, z: 1 } }, box, identity)!
-    expect(front).toMatchObject({ t: 40, point: { x: 10, y: 5, z: 0 }, surface: 'front' })
-    expect(intersectExtrusion({ origin: { x: 0, y: 0, z: 50 }, direction: { x: 0, y: 0, z: -1 } }, box, identity)).toMatchObject({ t: 30, surface: 'back' })
-    expect(intersectExtrusion({ origin: { x: 80, y: 0, z: 10 }, direction: { x: -1, y: 0, z: 0 } }, box, identity)).toMatchObject({ t: 30, point: { x: 50, y: 0, z: 10 }, surface: 'side' })
+    expect(front).toMatchObject({ t: 40, point: { x: 10, y: 5, z: 0 }, surface: 'front', localNormal: { x: 0, y: 0, z: -1 } })
+    expect(intersectExtrusion({ origin: { x: 0, y: 0, z: 50 }, direction: { x: 0, y: 0, z: -1 } }, box, identity)).toMatchObject({ t: 30, surface: 'back', localNormal: { x: 0, y: 0, z: 1 } })
+    expect(intersectExtrusion({ origin: { x: 80, y: 0, z: 10 }, direction: { x: -1, y: 0, z: 0 } }, box, identity)).toMatchObject({ t: 30, point: { x: 50, y: 0, z: 10 }, surface: 'side', localNormal: { x: 1, y: 0, z: 0 } })
   })
   it('returns the forward exit for a ray starting inside a solid', () => {
     expect(intersectExtrusion({ origin: { x: 0, y: 0, z: 10 }, direction: { x: 0, y: 1, z: 0 } }, box, identity)).toMatchObject({ t: 30, surface: 'side' })

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { remapFlowConnections } from '@/scene/flowConnection'
+
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
@@ -924,12 +926,14 @@ function duplicateNode(
   if (original.kind === 'camera') return null
   if (original.kind === 'component') return instantiateComponent(api, original.id)
 
+  const nodeMap = new Map<NodeId, NodeId>()
   const cloneSubtree = (src: SceneNode, parent: NodeId): NodeId => {
     const newId = api.createNode(src.kind, parent, {
       // Strip the id / parent / children — createNode provides fresh ones.
       name: src.name + ' copy',
       ...stripLinks(src),
     } as Partial<SceneNode>)
+    nodeMap.set(src.id, newId)
     // Carry the animation with the duplicate. Every track on the source
     // node gets recreated against `newId` with fresh track + keyframe ids;
     // timing, values, and easings are preserved byte-for-byte. Without
@@ -952,6 +956,7 @@ function duplicateNode(
   }
 
   const newId = cloneSubtree(original, original.parent)
+  remapFlowConnections(api, nodeMap)
   const copy = api.getNode(newId)
   if (copy) {
     // Only nudge the transform when the parent is 'none' (free canvas).

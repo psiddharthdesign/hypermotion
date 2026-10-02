@@ -115,6 +115,7 @@ export type PaperShaderTypeJson = (typeof PAPER_SHADER_TYPES)[number]
 export type NodeKindJson =
   | 'frame'
   | 'rect'
+  | 'vector'
   | 'ellipse'
   | 'text'
   | 'image'
@@ -128,6 +129,8 @@ export type NodeKindJson =
 export const NODE_KINDS = [
   'frame',
   'rect',
+  // Authoring vector layers currently requires an attached connection.
+  'vector',
   'ellipse',
   'text',
   'image',
@@ -240,6 +243,21 @@ export interface PaddingJson {
   left: number
 }
 
+export interface FlowConnectionJson {
+  version?: 1
+  sourceId: string
+  targetId: string
+  routing?: 'elbow' | 'straight'
+  color?: string
+  width?: number
+  flowEnabled?: boolean
+  flowColor?: string
+  flowSpeed?: number
+  flowSpacing?: number
+  flowSize?: number
+  flowPhase?: number
+}
+
 export interface NodeJson {
   id: string
   kind: NodeKindJson
@@ -255,12 +273,16 @@ export interface NodeJson {
   maskMode?: 'alpha'
   componentSourceId?: string | null
   workspaceOnly?: boolean
+  /** Editing aid: prevent this asset or its solid descendants overlapping another asset. */
+  preventOverlap?: boolean
   /** Optional pixel-space Bézier rail followed by this layer. */
   motionPath?: LayerMotionPathJson | null
   /** Optional non-destructive layer deformation. */
   deformation?: LayerDeformationJson | null
   /** Non-destructive volume for rectangles and full ellipses. */
   extrusion?: { depth?: number; sideColor?: string } | null
+  /** Attached route on a vector layer; endpoint ids are the declared node ids. */
+  connection?: FlowConnectionJson | null
   transform?: {
     x: number
     y: number
@@ -371,12 +393,19 @@ export interface NodeJson {
   nearClip?: number
   farClip?: number
   depthOfField?: boolean
-  focusMode?: 'plane' | 'target' | 'screen'
+  focusMode?: 'plane' | 'target' | 'screen' | 'spatial'
   focusX?: number
   focusY?: number
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneInitialized?: boolean
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusTargetNodeId?: string | null
   focusDistance?: number
   focusRadius?: number
@@ -553,6 +582,9 @@ export interface AppearanceJson {
 }
 
 export const PROPERTY_IDS = [
+  'connection.width',
+  'connection.flowSpeed',
+  'connection.flowPhase',
   'extrusion.depth',
   'transform.x',
   'transform.y',
@@ -571,6 +603,12 @@ export const PROPERTY_IDS = [
   'camera.focusWorldX',
   'camera.focusWorldY',
   'camera.focusWorldZ',
+  'camera.focusPlaneX',
+  'camera.focusPlaneY',
+  'camera.focusPlaneZ',
+  'camera.focusPlaneRotationX',
+  'camera.focusPlaneRotationY',
+  'camera.focusPlaneRotationZ',
   'camera.focusRadius',
   'camera.focusFalloff',
   'camera.pointOfInterestX',
@@ -1347,7 +1385,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('nodes', nodes)
 
   for (const node of Object.values(json.nodes ?? {})) {
-    assertNodeKindCanBeAuthored(node.id, node.kind)
+    assertNodeKindCanBeAuthored(node.id, node.kind, node.connection)
     const y = new Y.Map<unknown>()
     y.set('id', node.id)
     y.set('kind', node.kind)
@@ -1363,7 +1401,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set(
       'transform',
       mergeWithDefaults(
-        DEFAULT_TRANSFORM,
+        node.kind === 'vector' ? { ...DEFAULT_TRANSFORM, renderMode: 'plane' as const } : DEFAULT_TRANSFORM,
         node.transform,
       ),
     )
@@ -1376,12 +1414,13 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     )
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
-    y.set('position', node.position ?? 'flow')
+    y.set('position', node.position ?? (node.kind === 'vector' ? 'absolute' : 'flow'))
     y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
     if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
+    if (node.preventOverlap === true) y.set('preventOverlap', true)
     // Keep older scene snapshots byte-compatible when no layer rail was
     // supplied. The desktop reader already treats a missing value as null.
     if (node.motionPath !== undefined) {
@@ -1392,6 +1431,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     }
     const extrusion = normalizeExtrusion(node.extrusion)
     if (extrusion) y.set('extrusion', extrusion)
+    if (node.kind === 'vector') {
+      const connection = normalizeFlowConnection(node.connection)
+      if (connection) y.set('connection', connection)
+    }
 
     // kind-specific fields
     if (node.kind === 'frame' || node.kind === 'component') {
@@ -1422,8 +1465,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
         y.set('interactions', node.interactions ?? [])
       }
     }
-    if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
-      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image' || node.kind === 'vector') {
+      y.set('size', mergeWithDefaults(node.kind === 'vector' ? { width: 1, height: 1 } : DEFAULT_SIZE, node.size))
     }
     if (node.kind === 'ellipse') {
       y.set('arc', normalizeEllipseArcJson(node.arc))
@@ -1532,6 +1575,13 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
       y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
       y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+      y.set('focusPlaneX', node.focusPlaneX ?? 0)
+      y.set('focusPlaneY', node.focusPlaneY ?? 0)
+      y.set('focusPlaneZ', node.focusPlaneZ ?? 0)
+      y.set('focusPlaneInitialized', node.focusPlaneInitialized ?? (node.focusMode === 'spatial'))
+      y.set('focusPlaneRotationX', node.focusPlaneRotationX ?? 0)
+      y.set('focusPlaneRotationY', node.focusPlaneRotationY ?? 0)
+      y.set('focusPlaneRotationZ', node.focusPlaneRotationZ ?? 0)
       y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
       y.set('focusDistance', node.focusDistance ?? 0)
       y.set('focusRadius', node.focusRadius ?? 160)
@@ -2658,11 +2708,10 @@ function isNodeKind(value: unknown): value is NodeKindJson | 'vector' {
   )
 }
 
-function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown): void {
-  // Vector nodes are valid in app-authored files (including the built-in
-  // Cursor component), but the JSON authoring surface cannot yet reconstruct
-  // their preserved SVG/vector payload without losing fidelity.
-  if (kind === 'primitive3d' || kind === 'vector') {
+function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown, connection?: unknown): void {
+  // Attached connections need no SVG payload. Other vector creation remains
+  // unsupported; existing imported vectors may still be read and patched.
+  if (kind === 'primitive3d' || (kind === 'vector' && !normalizeFlowConnection(connection))) {
     throw new Error(
       `node ${String(nodeId)} has unsupported kind: ${String(kind)}`,
     )
@@ -3006,11 +3055,21 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       return
     case 'setNode': {
       const node = getNodeMap(scene, op.nodeId)
+      const kind = op.patch.kind ?? node.get('kind')
       for (const [k, v] of Object.entries(op.patch)) {
-        if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v)
+        if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v, op.patch.connection ?? node.get('connection'))
         if (k === 'zIndex') node.set(k, normalizeLayerZIndex(v))
         else if (k === 'vignetteEnabled') node.set(k, v === true)
         else if (k === 'vignetteAmount' || k === 'vignetteSize' || k === 'vignetteFeather') node.set(k, normalizeVignetteValue(v, k === 'vignetteAmount' ? 0.35 : 0.5))
+        else if (k === 'preventOverlap') {
+          if (v === true) node.set(k, true)
+          else node.delete(k)
+        }
+        else if (k === 'connection') {
+          const connection = kind === 'vector' ? normalizeFlowConnection(v) : undefined
+          if (connection) node.set(k, connection)
+          else node.delete(k)
+        }
         else if (k === 'extrusion') {
           const extrusion = normalizeExtrusion(v)
           if (extrusion) node.set(k, extrusion)
@@ -3021,12 +3080,13 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
         else if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
+      if (kind !== 'vector') node.delete('connection')
       return
     }
     case 'setNodeProperty': {
       const node = getNodeMap(scene, op.nodeId)
       if (op.key === 'kind') {
-        assertNodeKindCanBeAuthored(op.nodeId, op.value)
+        assertNodeKindCanBeAuthored(op.nodeId, op.value, node.get('connection'))
       }
       if (op.key === 'zIndex') {
         node.set(op.key, normalizeLayerZIndex(op.value))
@@ -3034,6 +3094,13 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
         node.set(op.key, op.value === true)
       } else if (op.key === 'vignetteAmount' || op.key === 'vignetteSize' || op.key === 'vignetteFeather') {
         node.set(op.key, normalizeVignetteValue(op.value, op.key === 'vignetteAmount' ? 0.35 : 0.5))
+      } else if (op.key === 'preventOverlap') {
+        if (op.value === true) node.set(op.key, true)
+        else node.delete(op.key)
+      } else if (op.key === 'connection') {
+        const connection = node.get('kind') === 'vector' ? normalizeFlowConnection(op.value) : undefined
+        if (connection) node.set(op.key, connection)
+        else node.delete(op.key)
       } else if (op.key === 'extrusion') {
         const extrusion = normalizeExtrusion(op.value)
         if (extrusion) node.set(op.key, extrusion)
@@ -3047,6 +3114,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       } else {
         node.set(op.key, op.value)
       }
+      if (op.key === 'kind' && op.value !== 'vector') node.delete('connection')
       return
     }
     case 'appendChild': {
@@ -3094,7 +3162,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
 }
 
 function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unknown> {
-  assertNodeKindCanBeAuthored(node.id, node.kind)
+  assertNodeKindCanBeAuthored(node.id, node.kind, node.connection)
   const y = new Y.Map<unknown>()
   const handledKeys = new Set([
     'id',
@@ -3112,9 +3180,11 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'maskMode',
     'componentSourceId',
     'workspaceOnly',
+    'preventOverlap',
     'motionPath',
     'deformation',
     'extrusion',
+    'connection',
   ])
   y.set('id', node.id)
   y.set('kind', node.kind)
@@ -3127,25 +3197,30 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set(
     'transform',
     mergeWithDefaults(
-      DEFAULT_TRANSFORM,
+      node.kind === 'vector' ? { ...DEFAULT_TRANSFORM, renderMode: 'plane' as const } : DEFAULT_TRANSFORM,
       node.transform as Partial<typeof DEFAULT_TRANSFORM>,
     ),
   )
   y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
-  y.set('position', node.position ?? 'flow')
+  y.set('position', node.position ?? (node.kind === 'vector' ? 'absolute' : 'flow'))
   y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
   if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
+  if (node.preventOverlap === true) y.set('preventOverlap', true)
   if (node.motionPath !== undefined) y.set('motionPath', node.motionPath)
   if (node.deformation !== undefined) {
     y.set('deformation', node.deformation)
   }
   const extrusion = normalizeExtrusion(node.extrusion)
   if (extrusion) y.set('extrusion', extrusion)
+  if (node.kind === 'vector') {
+    const connection = normalizeFlowConnection(node.connection)
+    if (connection) y.set('connection', connection)
+  }
   if (node.kind === 'text') {
     for (const key of [
       'size',
@@ -3171,9 +3246,9 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('textAlign', node.textAlign ?? 'start')
     y.set('color', node.color ?? '#0a0a0c')
   }
-  if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
+  if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image' || node.kind === 'vector') {
     handledKeys.add('size')
-    y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    y.set('size', mergeWithDefaults(node.kind === 'vector' ? { width: 1, height: 1 } : DEFAULT_SIZE, node.size))
   }
   if (node.kind === 'ellipse') {
     handledKeys.add('arc')
@@ -3297,6 +3372,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'focusWorldX',
       'focusWorldY',
       'focusWorldZ',
+      'focusPlaneX',
+      'focusPlaneY',
+      'focusPlaneZ',
+      'focusPlaneInitialized',
+      'focusPlaneRotationX',
+      'focusPlaneRotationY',
+      'focusPlaneRotationZ',
       'focusTargetNodeId',
       'focusDistance',
       'focusRadius',
@@ -3354,6 +3436,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
     y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
     y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+    y.set('focusPlaneX', node.focusPlaneX ?? 0)
+    y.set('focusPlaneY', node.focusPlaneY ?? 0)
+    y.set('focusPlaneZ', node.focusPlaneZ ?? 0)
+    y.set('focusPlaneInitialized', node.focusPlaneInitialized ?? (node.focusMode === 'spatial'))
+    y.set('focusPlaneRotationX', node.focusPlaneRotationX ?? 0)
+    y.set('focusPlaneRotationY', node.focusPlaneRotationY ?? 0)
+    y.set('focusPlaneRotationZ', node.focusPlaneRotationZ ?? 0)
     y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
     y.set('focusDistance', node.focusDistance ?? 0)
     y.set('focusRadius', node.focusRadius ?? 160)
@@ -3390,6 +3479,23 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set(k, v)
   }
   return y
+}
+
+/** Kept aligned with desktop scene/flowConnection; the CLI ships independently. */
+function normalizeFlowConnection(value: unknown): Required<FlowConnectionJson> | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Partial<FlowConnectionJson>
+  if (typeof v.sourceId !== 'string' || !v.sourceId || typeof v.targetId !== 'string' || !v.targetId || v.sourceId === v.targetId) return undefined
+  const color = (candidate: unknown, fallback: string) => typeof candidate === 'string' && candidate.trim() && candidate.length <= 256 ? candidate : fallback
+  const number = (candidate: unknown, fallback: number, min: number, max: number) => typeof candidate === 'number' && Number.isFinite(candidate) ? Math.max(min, Math.min(max, candidate)) : fallback
+  return {
+    version: 1, sourceId: v.sourceId, targetId: v.targetId,
+    routing: v.routing === 'straight' ? 'straight' : 'elbow',
+    color: color(v.color, '#2563eb'), width: number(v.width, 4, 0.25, 128),
+    flowEnabled: v.flowEnabled !== false, flowColor: color(v.flowColor, '#93c5fd'),
+    flowSpeed: number(v.flowSpeed, 120, -2000, 2000), flowSpacing: number(v.flowSpacing, 120, 8, 4000),
+    flowSize: number(v.flowSize, 12, 1, 128), flowPhase: number(v.flowPhase, 0, 0, 1),
+  }
 }
 
 /** Kept aligned with the desktop scene/extrusion normalizer. */
@@ -3692,6 +3798,7 @@ function defaultName(
   switch (kind) {
     case 'frame': return 'Frame'
     case 'rect': return 'Rectangle'
+    case 'vector': return 'Connection'
     case 'ellipse': return 'Ellipse'
     case 'text': return 'Text'
     case 'image': return 'Image'
@@ -3707,6 +3814,7 @@ function defaultName(
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
   if (
     kind === 'text' ||
+    kind === 'vector' ||
     kind === 'video' ||
     kind === 'audio' ||
     kind === 'shader'

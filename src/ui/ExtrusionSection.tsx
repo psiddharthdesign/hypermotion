@@ -45,8 +45,8 @@ export function ExtrusionSection({ node, api, anim }: {
       )}
       {extrusion && (
         <fieldset disabled={!supported} className="min-w-0 space-y-3 border-0 p-0">
-          <FieldRow label="Depth" keyframe={<KeyframeButton nodeId={node.id} propertyId="extrusion.depth" currentValue={supported ? depth : null} />}>
-            <NumberField value={depth} ariaLabel="3D depth" min={0} max={MAX_EXTRUSION_DEPTH} suffix="px"
+          <FieldRow label={node.kind === 'ellipse' ? "Height" : "Depth"} keyframe={<KeyframeButton nodeId={node.id} propertyId="extrusion.depth" currentValue={supported ? depth : null} />}>
+            <NumberField value={depth} ariaLabel={node.kind === 'ellipse' ? "Cylinder height" : "3D depth"} min={0} max={MAX_EXTRUSION_DEPTH} suffix="px"
               onCommit={commitDepth}
               onScrubPreview={value => nodeTransformPreviewStore.preview({ [node.id]: { extrusionDepth: normalizeExtrusionDepth(value) } })}
               onScrubCommit={value => {

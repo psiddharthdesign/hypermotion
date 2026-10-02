@@ -309,6 +309,12 @@ export function applyJsonToScene(doc: Y.Doc, json: Scene): SceneAPI {
   for (const [agentId, node] of Object.entries(json.nodes ?? {})) {
     const realId = idMap.get(agentId)
     if (!realId) continue
+    if (node.kind === 'vector' && node.connection) {
+      api.setNodeProperty(realId, 'connection', { ...node.connection,
+        sourceId: idMap.get(node.connection.sourceId) ?? node.connection.sourceId,
+        targetId: idMap.get(node.connection.targetId) ?? node.connection.targetId,
+      })
+    }
     if (typeof node.componentSourceId === 'string') {
       const componentSourceId = idMap.get(node.componentSourceId)
       if (componentSourceId) {

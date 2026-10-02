@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+
+import { remapFlowConnections } from '@/scene/flowConnection'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { transferCompositionScenes } from './sceneTransfer'
 import { rebaseSceneNodes, sceneSplitTime, sliceComposition, splitOccurrence, type SplitSceneResult } from './splitScene'
@@ -493,6 +495,7 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
 
       api.doc.transact(() => {
         newRoot = cloneSubtree(api, source.rootNodeId, null, nodeMap)
+        remapFlowConnections(api, nodeMap)
       }, 'scene-duplicate')
 
       const newCameraIds: NodeId[] = []

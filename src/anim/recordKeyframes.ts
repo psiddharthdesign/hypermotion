@@ -122,6 +122,12 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   focusWorldX: 'camera.focusWorldX',
   focusWorldY: 'camera.focusWorldY',
   focusWorldZ: 'camera.focusWorldZ',
+  focusPlaneX: 'camera.focusPlaneX',
+  focusPlaneY: 'camera.focusPlaneY',
+  focusPlaneZ: 'camera.focusPlaneZ',
+  focusPlaneRotationX: 'camera.focusPlaneRotationX',
+  focusPlaneRotationY: 'camera.focusPlaneRotationY',
+  focusPlaneRotationZ: 'camera.focusPlaneRotationZ',
   focusRadius: 'camera.focusRadius',
   focusFalloff: 'camera.focusFalloff',
   pointOfInterestX: 'camera.pointOfInterestX',
@@ -176,6 +182,7 @@ export type PatchGroup =
   | 'shape'
   | 'size'
   | 'camera'
+  | 'connection'
   | 'extrusion'
   | 'motionPath'
   | 'deformation'
@@ -345,7 +352,9 @@ export function stampToActiveTracksForPatch(
 function propertyMapForGroup(
   group: PatchGroup,
 ): Partial<Record<string, PropertyId>> {
-  return group === 'extrusion'
+  return group === 'connection'
+    ? { width: 'connection.width', flowSpeed: 'connection.flowSpeed', flowPhase: 'connection.flowPhase' }
+    : group === 'extrusion'
     ? { depth: 'extrusion.depth' }
     : group === 'transform'
     ? TRANSFORM_PROP_IDS

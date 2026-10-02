@@ -377,6 +377,9 @@ function writeProperty(
     case 'camera.bloomStrength': into.bloomStrength = value; break
     case 'camera.bloomRadius': into.bloomRadius = value; break
     case 'camera.bloomThreshold': into.bloomThreshold = value; break
+    case 'connection.width': into.connectionWidth = value; break
+    case 'connection.flowSpeed': into.connectionFlowSpeed = value; break
+    case 'connection.flowPhase': into.connectionFlowPhase = value; break
     case 'extrusion.depth': into.extrusionDepth = value; break
     case 'camera.vignetteAmount': into.vignetteAmount = value; break
     case 'camera.vignetteSize': into.vignetteSize = value; break
