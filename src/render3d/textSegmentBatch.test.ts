@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from 'vitest'
+import { Matrix4, Vector3 } from 'three'
 import type { Plane3D } from './scene3d'
 import {
   TEXT_SEGMENT_BUFFER_CHANGE,
@@ -138,6 +139,22 @@ describe('text segment batch geometry', () => {
     ])
     expect(Array.from(buffers.dofBlur)).toEqual([80, 80, 80, 80])
     expect(Array.from(buffers.uvBounds.slice(0, 4))).toEqual([0, 0, 0.5, 1])
+  })
+
+  it('preserves the full Arrangement depth axis while text glyphs flip', () => {
+    const buffers = createTextSegmentBuffers(1)
+    const transformMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0.25, 2, 0, 100, 50, 0, 1]
+    writeTextSegmentBuffers({ buffers, entries: [entry(10, 0)], states: [{ ...state(0), rotationX: Math.PI / 2 }],
+      plane: { ...plane, transformMatrix }, cameraPosition: { x: 0, y: 0, z: -1000 }, cameraForward: { x: 0, y: 0, z: 1 } })
+    const world = new Matrix4().fromArray(transformMatrix)
+    const corners = [[10, 20], [30, 20], [10, 60], [30, 60]]
+    for (let index = 0; index < corners.length; index++) {
+      const [x, y] = corners[index]!
+      const expected = new Vector3(x! - 100, 40 - 50, -(y! - 40)).applyMatrix4(world)
+      expect(buffers.positions[index * 3]).toBeCloseTo(expected.x)
+      expect(buffers.positions[index * 3 + 1]).toBeCloseTo(expected.y)
+      expect(buffers.positions[index * 3 + 2]).toBeCloseTo(expected.z)
+    }
   })
 
   it('sorts transparent quad indices from far to near', () => {

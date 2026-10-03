@@ -25,6 +25,8 @@ export function extrusionShapeForPlane(plane: Plane3D): ExtrusionGeometryOptions
 
 /** Keep picking's affine transform identical to applyPlaneTransform in the renderer. */
 export function extrusionWorldMatrix(plane: Plane3D): number[] {
+  if (plane.transformMatrix) return new Matrix4().fromArray(plane.transformMatrix)
+    .setPosition(plane.center.x, plane.center.y, plane.center.z).toArray()
   const radians = Math.PI / 180
   return new Matrix4().compose(
     new Vector3(plane.center.x, plane.center.y, plane.center.z),

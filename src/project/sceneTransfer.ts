@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { remapArrangement } from '@/scene/arrangement'
 
 import * as Y from 'yjs'
 import {
@@ -583,6 +584,13 @@ function remapNodeReferences(
       targetId: nodeMap.get(sourceNode.connection.targetId) ?? sourceNode.connection.targetId,
     })
   }
+  if (sourceNode.arrangement) target.setNodeProperty(targetId, 'arrangement', remapArrangement(sourceNode.arrangement, nodeMap))
+  if (sourceNode.transformParent) {
+    target.setNodeProperty(targetId, 'transformParent', {
+      ...sourceNode.transformParent,
+      nodeId: requiredMappedNode(sourceNode.transformParent.nodeId, nodeMap),
+    })
+  }
   if (sourceNode.componentSourceId) {
     target.setNodeProperty(
       targetId,
@@ -702,6 +710,8 @@ function remapComposition(
 function nodeReferences(node: Node): NodeId[] {
   const references: NodeId[] = []
   if (node.componentSourceId) references.push(node.componentSourceId)
+  if (node.arrangement) references.push(...node.arrangement.memberIds)
+  if (node.transformParent) references.push(node.transformParent.nodeId)
   if (node.kind === 'shader' && node.sourceNodeId) {
     references.push(node.sourceNodeId)
   }

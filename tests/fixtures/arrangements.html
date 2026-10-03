@@ -1,0 +1,14 @@
+<!doctype html>
+<html data-theme="light">
+  <head><meta charset="UTF-8"><title>Arrangement controls check</title></head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // The scene context must never connect this fixture to editor autosave.
+      const fixtureUrl = new URL(location.href);
+      fixtureUrl.searchParams.set('render-window', '1');
+      history.replaceState(null, '', fixtureUrl);
+    </script>
+    <script type="module" src="./arrangements.tsx"></script>
+  </body>
+</html>

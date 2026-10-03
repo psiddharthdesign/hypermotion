@@ -38,6 +38,7 @@ export function samePlaneSyncCameraInputs(left: ResolvedCamera3D, right: Resolve
       case 'position':
       case 'rotation':
       case 'pointOfInterest':
+      case 'rigDown':
         if (!sameVector(left[property], right[property])) return false
         break
       default:

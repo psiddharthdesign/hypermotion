@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyNullPlaneMatrix } from './nullPlaneMatrix'
 import { createMaskRasterCache, maskRasterKey } from './maskRasterCache'
 
 import { siblingMask } from '@/render/maskShape'
@@ -4083,6 +4084,7 @@ function renderSharpPlaneCanvas(
 }
 
 function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
+  if (applyNullPlaneMatrix(object, plane)) return
   object.position.set(plane.center.x, plane.center.y, plane.center.z)
   object.rotation.set(
     THREE.MathUtils.degToRad(plane.rotation.x),
@@ -4094,6 +4096,7 @@ function applyPlaneTransform(object: THREE.Object3D, plane: Plane3D) {
 }
 
 function applyPlaneTextureTransform(object: THREE.Object3D, plane: Plane3D) {
+  if (applyNullPlaneMatrix(object, plane, true)) return
   const textureCenter = plane.textureCenter ?? plane.center
   object.position.set(textureCenter.x, textureCenter.y, textureCenter.z)
   object.rotation.set(

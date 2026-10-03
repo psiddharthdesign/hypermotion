@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Euler, Matrix4, Vector3 } from 'three'
+import { animatedArrangement } from '@/scene/arrangement'
+import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
 import { resolveFlowConnections, intersectFlowConnection } from './flowConnections'
 import { resolveNodeExtrusion, extrusionShapeForPlane, extrusionWorldMatrix } from './extrusionScene'
 import { intersectExtrusion } from './extrusionPicking'
@@ -59,6 +61,8 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
   position: Vec3
   rotation: Vec3
   pointOfInterest: Vec3
+  /** Camera down direction after a transform controller moves its rig. */
+  rigDown?: Vec3
   focalLength: number
   fieldOfView: number
   nearClip: number
@@ -86,6 +90,8 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 }
 
 export interface Plane3D {
+  /** Exact affine basis for controller transforms, including inherited shear. */
+  transformMatrix?: number[]
   /** Resolved stroke width for discrete native connection picking. */
   connectionWidth?: number
   extrusion?: Extrusion
@@ -249,6 +255,10 @@ const IDENTITY_INHERITED = {
 }
 
 interface Inherited3D {
+  nullRig?: boolean
+  translationBasisX?: Vec3
+  translationBasisY?: Vec3
+  translationBasisZ?: Vec3
   origin: Vec3
   anchor: Vec3
   basisX: Vec3
@@ -367,6 +377,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       const childRenderMode = child.transform.renderMode ?? 'flat'
       if (
         segmentTextNodeIds.has(childId) ||
+        hasNullTransform(child) ||
         layerHasBendDeformation(child) ||
         ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
         (child.kind === 'vector' && !!child.connection) ||
@@ -416,6 +427,7 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       const renderMode = child.transform.renderMode ?? 'flat'
       if (
         child.kind === 'video' ||
+        hasNullTransform(child) ||
         layerHasBendDeformation(child) ||
         ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
         (child.kind === 'vector' && !!child.connection) ||
@@ -524,8 +536,22 @@ export function resolveCamera3D(
       : focalLength) - dolly),
   }
   const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
-  const position = add3(pointOfInterest, orbitOffset)
-  const basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
+  let position = add3(pointOfInterest, orbitOffset)
+  let basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
+  let rigDown: Vec3 | undefined
+  const rig = animated?.parentMatrix ?? camera.transformOffset
+  if (rig) {
+    const matrix = new Matrix4().fromArray(rig)
+    const mapPoint = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(matrix)
+    const origin = mapPoint({ x: 0, y: 0, z: 0 })
+    const transformedDown = mapPoint(basis.down).sub(origin).normalize()
+    position = mapPoint(position)
+    Object.assign(pointOfInterest, mapPoint(pointOfInterest))
+    const forward = norm3(sub3(pointOfInterest, position))
+    const right = norm3(cross3(transformedDown, forward))
+    rigDown = norm3(cross3(forward, right))
+    basis = { right, down: rigDown, forward }
+  }
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
   const focusScreen = {
@@ -608,6 +634,7 @@ export function resolveCamera3D(
     position,
     rotation,
     pointOfInterest,
+    rigDown,
     focalLength,
     fieldOfView,
     nearClip,
@@ -676,6 +703,10 @@ function cameraBasisFromPosition(
 }
 
 export function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
+  if (camera.rigDown) {
+    const forward = norm3(sub3(camera.pointOfInterest, camera.position))
+    return { forward, down: camera.rigDown, right: norm3(cross3(camera.rigDown, forward)) }
+  }
   return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
 }
 
@@ -764,6 +795,21 @@ export function buildWorldPlanes(
   const getNode = (nodeId: NodeId): Node | null =>
     context.nodesById.get(nodeId) ?? null
   const segmentTextNodeIds = context.segmentTextNodeIds
+  const nullResolver = createNullResolver(getNode, animated)
+  // Arrangement membership is a presentation group, separate from the layer
+  // tree. Gate the entire member subtree without rewriting its authored flags.
+  const arrangementVisible = (node: Node): boolean => {
+    const visited = new Set<NodeId>()
+    let current: Node | null = node
+    while (current?.transformParent && !visited.has(current.id)) {
+      visited.add(current.id)
+      const owner = getNode(current.transformParent.nodeId)
+      if (!owner || (owner.kind !== 'null' && owner.kind !== 'arrangement')) break
+      if (owner.kind === 'arrangement' && owner.arrangement?.memberIds.includes(current.id) && !owner.visible) return false
+      current = owner
+    }
+    return true
+  }
 
   const mapPoint = (transform: Inherited3D, point: Vec3): Vec3 =>
     add3(
@@ -950,6 +996,14 @@ export function buildWorldPlanes(
     const basisYLength = len3(inherited.basisY)
     return {
       rect,
+      // Nonuniform controller scale plus member rotation can shear a frame.
+      // Its actual corners keep clipping and picking aligned with that mesh.
+      outline: inherited.nullRig ? [
+        { x: rect.x, y: rect.y, z: 0 },
+        { x: rect.x + rect.width, y: rect.y, z: 0 },
+        { x: rect.x + rect.width, y: rect.y + rect.height, z: 0 },
+        { x: rect.x, y: rect.y + rect.height, z: 0 },
+      ].map(point => mapPoint(inherited, point)) : undefined,
       center: mapPoint(inherited, {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
@@ -974,7 +1028,11 @@ export function buildWorldPlanes(
     const rotationY = a?.rotationY ?? node.transform.rotationY
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
-    const opacity = a?.opacity ?? node.appearance.opacity ?? 1
+    const arrangementParent = node.transformParent ? getNode(node.transformParent.nodeId) : null
+    const arrangement = arrangementParent?.kind === 'arrangement' &&
+      arrangementParent.arrangement?.memberIds.includes(node.id)
+      ? animatedArrangement(arrangementParent.arrangement, animated[arrangementParent.id]?.arrangement) : null
+    const opacity = (a?.opacity ?? node.appearance.opacity ?? 1) * (arrangement?.opacity ?? 1)
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -991,7 +1049,8 @@ export function buildWorldPlanes(
     const localBasisX = rotateEuler({ x: isRoot ? 1 : scaleX, y: 0, z: 0 }, rotationX, rotationY, rotation)
     const localBasisY = rotateEuler({ x: 0, y: isRoot ? 1 : scaleY, z: 0 }, rotationX, rotationY, rotation)
     const localBasisZ = rotateEuler({ x: 0, y: 0, z: 1 }, rotationX, rotationY, rotation)
-    return {
+    const nextInherited: Inherited3D = {
+      nullRig: inherited.nullRig || hasNullTransform(node),
       origin: add3(mapPoint(inherited, anchorPoint), translation),
       anchor: anchorPoint,
       basisX: mapLocalVector(inherited, localBasisX),
@@ -1003,7 +1062,40 @@ export function buildWorldPlanes(
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
+      translationBasisX: inherited.basisX,
+      translationBasisY: inherited.basisY,
+      translationBasisZ: inherited.basisZ,
     }
+    if (hasNullTransform(node)) {
+      const delta = a?.parentMatrix ? new Matrix4().fromArray(a.parentMatrix) : nullResolver.delta(node)
+      const point = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(delta)
+      const origin = point({ x: 0, y: 0, z: 0 })
+      const vector = (v: Vec3) => point(v).sub(origin)
+      nextInherited.origin = point(nextInherited.origin)
+      nextInherited.basisX = vector(nextInherited.basisX)
+      nextInherited.basisY = vector(nextInherited.basisY)
+      nextInherited.basisZ = vector(nextInherited.basisZ)
+      nextInherited.translationBasisX = vector(inherited.basisX)
+      nextInherited.translationBasisY = vector(inherited.basisY)
+      nextInherited.translationBasisZ = vector(inherited.basisZ)
+    }
+    if (nextInherited.nullRig) {
+      nextInherited.scaleX = len3(nextInherited.basisX)
+      nextInherited.scaleY = len3(nextInherited.basisY)
+    }
+    if (arrangement?.orientation === 'screen') {
+      const centerPoint = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, z: 0 }
+      const center = mapPoint(nextInherited, centerPoint)
+      const basis = cameraBasis(camera)
+      const angle = rotation * Math.PI / 180
+      nextInherited.basisX = mul3(add3(mul3(basis.right, Math.cos(angle)), mul3(basis.down, Math.sin(angle))), nextInherited.scaleX)
+      nextInherited.basisY = mul3(add3(mul3(basis.right, -Math.sin(angle)), mul3(basis.down, Math.cos(angle))), nextInherited.scaleY)
+      // Positive extrusion depth stays behind the front face. Preserve the
+      // third-axis scale as well, so whole solid assets face the camera intact.
+      nextInherited.basisZ = mul3(basis.forward, len3(nextInherited.basisZ))
+      nextInherited.origin = add3(nextInherited.origin, sub3(center, mapPoint(nextInherited, centerPoint)))
+    }
+    return nextInherited
   }
 
   const visit = (
@@ -1016,14 +1108,14 @@ export function buildWorldPlanes(
     if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
     const rect = layout[id]
-    if (!node || !rect || node.kind === 'camera' || (node.isMask && !options.includeMaskGuides)) return
+    if (!node || !rect || node.kind === 'camera' || node.kind === 'null' || node.kind === 'arrangement' || (node.isMask && !options.includeMaskGuides)) return
     // Visibility is hierarchical. The WebGL compositor emits some descendants
     // as independent planes (group3d children, videos, and explicit planes),
     // so checking only each emitted plane's own `visible` flag lets those
     // descendants survive when their parent is hidden. Stop the walk at the
     // first hidden node: this matches the DOM renderer and also removes hidden
     // descendants from rendering, outlines, and hit testing in one place.
-    if (!node.visible) return
+    if (!node.visible || !arrangementVisible(node)) return
     const alwaysOnTop =
       insideAlwaysOnTopSubtree || isAlwaysOnTopNode(node)
     const a = animated[id]
@@ -1075,6 +1167,7 @@ export function buildWorldPlanes(
       isRequestedNode &&
       !isRoot &&
       (segmentText ||
+        hasNullTransform(node) ||
         deformedNode ||
         !!extrusion ||
         (node.kind === 'vector' && !!node.connection) ||
@@ -1105,7 +1198,9 @@ export function buildWorldPlanes(
       const rotZ = nextInherited.rotation
       const right = norm3(nextInherited.basisX)
       const down = norm3(nextInherited.basisY)
-      const normal = norm3(nextInherited.basisZ)
+      const normal = nextInherited.nullRig
+        ? norm3(cross3(nextInherited.basisX, nextInherited.basisY))
+        : norm3(nextInherited.basisZ)
       const contentMode =
         !effectRasterBoundary &&
         (segmentText ||
@@ -1155,10 +1250,13 @@ export function buildWorldPlanes(
       // current x/y/z translation. Motion paths are added to those translation
       // channels in the incoming parent basis, so subtracting the sampled
       // offset in that same basis recovers the stable authored path origin.
-      const motionPathOrigin = sub3(
-        nextInherited.origin,
-        mapLocalVector(inherited, motionPathOffset),
-      )
+      const translationBasisX = nextInherited.translationBasisX ?? inherited.basisX
+      const translationBasisY = nextInherited.translationBasisY ?? inherited.basisY
+      const translationBasisZ = nextInherited.translationBasisZ ?? inherited.basisZ
+      const motionPathOrigin = sub3(nextInherited.origin, add3(
+        add3(mul3(translationBasisX, motionPathOffset.x), mul3(translationBasisY, motionPathOffset.y)),
+        mul3(translationBasisZ, motionPathOffset.z),
+      ))
       planes.push({
         nodeId: id,
         node,
@@ -1181,6 +1279,12 @@ export function buildWorldPlanes(
         // represented once by this material opacity.
         opacity: nextInherited.opacity,
         center,
+        transformMatrix: nextInherited.nullRig ? [
+          nextInherited.basisX.x, nextInherited.basisX.y, nextInherited.basisX.z, 0,
+          nextInherited.basisY.x, nextInherited.basisY.y, nextInherited.basisY.z, 0,
+          nextInherited.basisZ.x, nextInherited.basisZ.y, nextInherited.basisZ.z, 0,
+          center.x, center.y, center.z, 1,
+        ] : undefined,
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
         scaleY: nextInherited.scaleY,
@@ -1189,9 +1293,9 @@ export function buildWorldPlanes(
         down,
         normal,
         motionPathOrigin,
-        motionPathBasisX: { ...inherited.basisX },
-        motionPathBasisY: { ...inherited.basisY },
-        motionPathBasisZ: { ...inherited.basisZ },
+        motionPathBasisX: { ...translationBasisX },
+        motionPathBasisY: { ...translationBasisY },
+        motionPathBasisZ: { ...translationBasisZ },
         cameraDepth: cameraSpaceDepth(center, camera),
         bendSources: bendSources.length
           ? bendSources.map((source) => ({
@@ -1360,8 +1464,11 @@ export function hitTestPlanes(
     const point = nativeHit?.point ?? add3(ray.origin, mul3(ray.direction, t))
     if (plane.clips?.some((clip) => !clipContainsPoint(clip, point))) continue
     const rel = sub3(point, plane.center)
-    const localX = (solidHit?.localPoint.x ?? dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX))) + plane.rect.width / 2
-    const localY = (solidHit?.localPoint.y ?? dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY))) + plane.rect.height / 2
+    const affineLocal = !solidHit && plane.transformMatrix
+      ? new Vector3(point.x, point.y, point.z).applyMatrix4(new Matrix4().fromArray(plane.transformMatrix).invert())
+      : undefined
+    const localX = (solidHit?.localPoint.x ?? affineLocal?.x ?? dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX))) + plane.rect.width / 2
+    const localY = (solidHit?.localPoint.y ?? affineLocal?.y ?? dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY))) + plane.rect.height / 2
     if (!nativeHit && (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height)) continue
     const hit = {
       nodeId: plane.nodeId,

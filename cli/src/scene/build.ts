@@ -113,6 +113,8 @@ export const PAPER_SHADER_TYPES = [
 export type PaperShaderTypeJson = (typeof PAPER_SHADER_TYPES)[number]
 
 export type NodeKindJson =
+  | 'null'
+  | 'arrangement'
   | 'frame'
   | 'rect'
   | 'vector'
@@ -127,6 +129,8 @@ export type NodeKindJson =
   | 'camera'
 
 export const NODE_KINDS = [
+  'null',
+  'arrangement',
   'frame',
   'rect',
   // Authoring vector layers currently requires an attached connection.
@@ -273,6 +277,9 @@ export interface NodeJson {
   maskMode?: 'alpha'
   componentSourceId?: string | null
   workspaceOnly?: boolean
+  transformParent?: { nodeId: string; inverseBind: number[] } | null
+  arrangement?: { version?: 1; mode?: 'rectangular' | 'radial' | 'path' | 'spherical'; memberIds?: string[]; [key: string]: unknown } | null
+  transformOffset?: number[] | null
   /** Editing aid: prevent this asset or its solid descendants overlapping another asset. */
   preventOverlap?: boolean
   /** Optional pixel-space Bézier rail followed by this layer. */
@@ -667,6 +674,40 @@ export const PROPERTY_IDS = [
   'textShimmer.range', 'textShimmer.duration',
   'textShimmer.shimmerWidth',
   'motionPath.progress',
+  'arrangement.mode',
+  'arrangement.orientation',
+  'arrangement.scaleMode',
+  'arrangement.shape',
+  'arrangement.path',
+  'arrangement.columns',
+  'arrangement.spacingX',
+  'arrangement.spacingY',
+  'arrangement.radius',
+  'arrangement.spread',
+  'arrangement.orbit',
+  'arrangement.rotation',
+  'arrangement.rotationX',
+  'arrangement.rotationY',
+  'arrangement.opacity',
+  'arrangement.scaleFront',
+  'arrangement.scaleBack',
+  'arrangement.scaleDirection',
+  'arrangement.rippleFocus',
+  'arrangement.scaleFalloff',
+  'arrangement.depth',
+  'arrangement.depthAnchor',
+  'arrangement.pathScaleX',
+  'arrangement.pathScaleY',
+  'arrangement.polygonPoints',
+  'arrangement.trimStart',
+  'arrangement.trimEnd',
+  'arrangement.progress',
+  'arrangement.pathSpread',
+  'arrangement.pitch',
+  'arrangement.focusTarget',
+  'arrangement.shuffle',
+  'arrangement.randomOffset',
+  'arrangement.seed',
   'deformation.bend.waveAmplitude',
   'deformation.bend.waveFrequency',
   'deformation.bend.wavePhase',
@@ -1414,12 +1455,15 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     )
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
-    y.set('position', node.position ?? (node.kind === 'vector' ? 'absolute' : 'flow'))
+    y.set('position', node.position ?? ((node.kind === 'vector' || node.kind === 'null' || node.kind === 'arrangement') ? 'absolute' : 'flow'))
     y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
     if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
+    if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
+    if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
+    if (node.arrangement !== undefined) y.set('arrangement', node.arrangement)
     if (node.preventOverlap === true) y.set('preventOverlap', true)
     // Keep older scene snapshots byte-compatible when no layer rail was
     // supplied. The desktop reader already treats a missing value as null.
@@ -1914,6 +1958,39 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       errors.push(
         `node ${id} zIndex must be an integer between ${MIN_LAYER_Z_INDEX} and ${MAX_LAYER_Z_INDEX}`,
       )
+    }
+    if ((node.kind === 'null' || node.kind === 'arrangement') && (!node.parent || id === root)) {
+      errors.push(`null node ${id} must belong to a composition root`)
+    }
+    const validMatrix = (value: unknown) => Array.isArray(value) && value.length === 16 && value.every((n) => typeof n === 'number' && Number.isFinite(n))
+    if (node.transformOffset != null && !validMatrix(node.transformOffset)) {
+      errors.push(`node ${id} transformOffset must be a finite 4x4 matrix`)
+    }
+    if (node.transformParent != null) {
+      const link = asRecord(node.transformParent)
+      if (typeof link.nodeId !== 'string' || !['null', 'arrangement'].includes(String(asRecord(nodes[String(link.nodeId)]).kind))) {
+        errors.push(`node ${id} transformParent must reference a Null or Arrangement controller`)
+      }
+      if (!validMatrix(link.inverseBind)) errors.push(`node ${id} transformParent.inverseBind must be a finite 4x4 matrix`)
+      const visited = new Set([id])
+      let parentId = link.nodeId
+      while (typeof parentId === 'string') {
+        if (visited.has(parentId)) { errors.push(`node ${id} has a cyclic Null connection`); break }
+        visited.add(parentId)
+        parentId = asRecord(asRecord(nodes[parentId]).transformParent).nodeId
+      }
+    }
+    if (node.kind === 'arrangement') {
+      const arrangement = asRecord(node.arrangement)
+      if (arrangement.mode !== undefined && !['rectangular', 'radial', 'path', 'spherical'].includes(String(arrangement.mode))) errors.push(`node ${id} has an unsupported arrangement mode`)
+      if (arrangement.memberIds !== undefined && !Array.isArray(arrangement.memberIds)) errors.push(`node ${id} arrangement.memberIds must be an array`)
+      const members = Array.isArray(arrangement.memberIds) ? arrangement.memberIds : []
+      if (new Set(members).size !== members.length) errors.push(`node ${id} arrangement has duplicate members`)
+      for (const memberId of members) {
+        const member = asRecord(nodes[String(memberId)])
+        if (typeof memberId !== 'string' || !nodes[memberId] || ['camera', 'audio', 'null', 'arrangement'].includes(String(member.kind)) || (member.kind === 'vector' && !!member.connection)) errors.push(`node ${id} has an invalid arrangement member: ${String(memberId)}`)
+        if (asRecord(member.transformParent).nodeId !== id) errors.push(`node ${id} arrangement member ${String(memberId)} must link to this arrangement`)
+      }
     }
     validateLayerMotionPath(id, node, root, errors)
     validateLayerDeformation(id, node, root, errors)
@@ -3182,6 +3259,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'workspaceOnly',
     'preventOverlap',
     'motionPath',
+    'arrangement',
     'deformation',
     'extrusion',
     'connection',
@@ -3204,12 +3282,15 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
-  y.set('position', node.position ?? (node.kind === 'vector' ? 'absolute' : 'flow'))
+  y.set('position', node.position ?? ((node.kind === 'vector' || node.kind === 'null' || node.kind === 'arrangement') ? 'absolute' : 'flow'))
   y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
   if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
+  if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
+  if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
+  if (node.arrangement !== undefined) y.set('arrangement', node.arrangement)
   if (node.preventOverlap === true) y.set('preventOverlap', true)
   if (node.motionPath !== undefined) y.set('motionPath', node.motionPath)
   if (node.deformation !== undefined) {
@@ -3807,12 +3888,15 @@ function defaultName(
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
+    case 'arrangement': return 'Arrangement'
+    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
   if (
+    kind === 'null' || kind === 'arrangement' ||
     kind === 'text' ||
     kind === 'vector' ||
     kind === 'video' ||

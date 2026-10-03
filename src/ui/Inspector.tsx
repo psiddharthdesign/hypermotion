@@ -1,3 +1,5 @@
+import { ArrangementSection } from '@/ui/ArrangementSection'
+import { NullParentSection } from '@/ui/NullParentSection'
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
@@ -542,6 +544,10 @@ function formatInspectorSizeAxis(value: Size['width']): string {
 
 function inspectorIconForNode(node: Node): AppIconName {
   switch (node.kind) {
+    case 'arrangement':
+      return 'grid'
+    case 'null':
+      return 'null'
     case 'camera':
       return 'camera'
     case 'text':
@@ -3221,6 +3227,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       : node.appearance.fill
   const cursorInstance = isCursorInstance(api, node)
   const supportsMotionPath =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
@@ -3231,6 +3238,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const liveMotionPathProgress =
     anim?.motionPathProgress ?? motionPath?.progress ?? 0
   const supportsBend =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
@@ -3367,7 +3375,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       .map((id) => api.getNode(id))
       .filter(
         (candidate): candidate is Node =>
-          !!candidate && candidate.kind !== 'camera' && candidate.id !== node.id,
+          !!candidate &&
+          candidate.kind !== 'camera' &&
+          candidate.kind !== 'audio' &&
+          candidate.kind !== 'null' &&
+          candidate.kind !== 'arrangement' &&
+          !candidate.connection &&
+          candidate.id !== node.id,
       )
       .map((candidate) => ({
         value: candidate.id,
@@ -4005,6 +4019,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       if (isAutoLayout) {
         api.doc.transact(() => {
           for (const child of api.getChildren(node.id)) {
+            if ((child.kind === 'null' || child.kind === 'arrangement')) continue
             if (child.position !== 'flow') {
               api.setNodeProperty(child.id, 'position', 'flow')
             }
@@ -4114,7 +4129,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ExposeComponentPropertiesSection node={node} api={api} />
       )}
 
-      {node.kind !== 'audio' && <PositionSection node={node} api={api} />}
+      <ArrangementSection node={node} api={api} />
+      {node.kind !== 'arrangement' && api.getNode(node.transformParent?.nodeId ?? '')?.kind !== 'arrangement' && <NullParentSection node={node} api={api} />}
+
+      {node.kind !== 'audio' && node.kind !== 'null' && node.kind !== 'arrangement' && <PositionSection node={node} api={api} />}
 
       {node.kind === 'camera' && (
         <>
@@ -4305,7 +4323,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {node.kind !== 'camera' && node.kind !== 'audio' && !node.connection && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
-        <AlignTools api={api} selection={[node.id]} />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && <AlignTools api={api} selection={[node.id]} />}
         <KeyframeSliderRow
           label="Position X"
           value={liveX}
@@ -4437,6 +4455,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
           onScrubCancel={cancelNodeVisualPreview}
         />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && (
         <InspectorDisclosure
           storageKey="advanced-transform"
           title="Advanced transform"
@@ -4585,6 +4604,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             }
           />
         </InspectorDisclosure>
+        )}
       </Section>
       )}
 
@@ -5138,7 +5158,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           apply to a viewpoint. A camera-specific section with
           projection + a future "enabled" toggle slots in here when we
           expand the camera feature surface. */}
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' && (node.kind !== 'null' && node.kind !== 'arrangement') ? (
         <Section title="Appearance">
           <KeyframeSliderRow
             label="Opacity"
@@ -5367,7 +5387,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && !node.connection && (
+      {node.kind !== 'camera' && node.kind !== 'null' && node.kind !== 'arrangement' && !node.connection && (
         <EffectsSection
           nodeId={node.id}
           value={node.appearance.effects ?? []}

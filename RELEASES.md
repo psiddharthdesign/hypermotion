@@ -27,6 +27,16 @@ entry below for each corresponding tag.
   drawing new face regions, cast shadows, and depth-of-field blur for solid silhouettes
   remain follow-up work. See [isometric assets](docs/isometric-assets.md).
 
+### Native arrangements
+
+- Restore Arrangement beside Scene layers, including blue square defaults,
+  rectangular, radial, path, and spherical patterns, and collapsible member groups.
+- Animate XYZ pattern rotation and radial Orbit independently, with Face camera
+  and other card-facing modes in perspective and orthographic views.
+- Preserve individual layer animation, effects, membership, and native scene
+  files; support isometric solid members and their attached flow connections.
+- Hide an Arrangement without overwriting its members' saved visibility.
+
 ### Camera effects and export quality
 
 - Add a keyframeable Vignette effect with amount, size, and feather controls.

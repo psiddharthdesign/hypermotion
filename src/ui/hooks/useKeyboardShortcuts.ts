@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { dissolveArrangement, duplicateArrangement } from '@/scene/arrangementActions'
+
+import { detachNullDependents } from '@/scene/nullObject'
 
 import { remapFlowConnections } from '@/scene/flowConnection'
 
@@ -487,7 +491,8 @@ export function useKeyboardShortcuts() {
           if (!n) continue
           if (id === api.getRoot()) continue
           if (n.kind === 'camera') continue
-          api.deleteNode(id)
+          if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+          else api.deleteNode(id)
         }
         clearSelection()
         return
@@ -786,7 +791,11 @@ export function useKeyboardShortcuts() {
             }
             continue
           }
-          if (n.parent || n.workspaceOnly) api.deleteNode(id)
+          if (n.parent || n.workspaceOnly) api.doc.transact(() => {
+            if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+            if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+            else api.deleteNode(id)
+          }, UNDOABLE_GESTURE_ORIGIN)
         }
         if (fallbackCameraId) setSelection([fallbackCameraId])
         else if (retainedCameraId) setSelection([retainedCameraId])
@@ -923,6 +932,7 @@ function duplicateNode(
 ): NodeId | null {
   const original = api.getNode(id)
   if (!original || !original.parent) return null
+  if (original.kind === 'arrangement') return duplicateArrangement(api, id)
   if (original.kind === 'camera') return null
   if (original.kind === 'component') return instantiateComponent(api, original.id)
 
@@ -1446,6 +1456,7 @@ function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolea
       (effect, index) => effectStableId(effect, index) === effectId,
     )
   }
+  if (propertyId.startsWith('arrangement.')) return node.kind === 'arrangement'
   if (propertyId.startsWith('camera.')) return node.kind === 'camera'
   if (propertyId === 'text.progress') return node.kind === 'text'
   if (propertyId === 'variant') return node.kind === 'instance'

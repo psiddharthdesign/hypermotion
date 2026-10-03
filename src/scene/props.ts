@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ARRANGEMENT_CHOICES, ARRANGEMENT_NUMBERS } from '@/scene/arrangement'
 
 import type {
   EffectBlurPropertyId,
@@ -42,6 +43,11 @@ export interface PropertyDescriptor {
 type StaticPropertyId = Exclude<PropertyId, EffectBlurPropertyId | EffectBeamRangePropertyId>
 
 export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
+  ...Object.fromEntries(Object.entries(ARRANGEMENT_NUMBERS).map(([key, value]) => [
+    `arrangement.${key}`, { id: `arrangement.${key}`, group: 'transform', label: value.label, layoutAffecting: false, interpolation: key === 'columns' || key === 'polygonPoints' || key === 'shuffle' || key === 'seed' ? 'discrete' : 'numeric', defaultValue: value.value },
+  ])) as Record<`arrangement.${import('@/scene/arrangement').ArrangementNumber}`, PropertyDescriptor>,
+  ...Object.fromEntries(Object.entries(ARRANGEMENT_CHOICES).map(([key, spec]) => [`arrangement.${key}`, { id: `arrangement.${key}`, group: 'transform', label: spec.label, layoutAffecting: false, interpolation: 'discrete', defaultValue: spec.value }])) as Record<`arrangement.${import('@/scene/arrangement').ArrangementChoice}`, PropertyDescriptor>,
+  'arrangement.path': { id: 'arrangement.path', group: 'transform', label: 'Arrangement path', layoutAffecting: false, interpolation: 'path', defaultValue: null },
   // transform group — applied after layout, no relayout needed
   'transform.x': {
     id: 'transform.x', group: 'transform', label: 'X',

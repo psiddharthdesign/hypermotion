@@ -56,13 +56,15 @@ describe('flow connection authoring', () => {
     api.doc.destroy()
   })
 
-  it('rejects scene, camera, audio, missing and existing-connection endpoints', () => {
+  it('rejects scene, camera, audio, controllers, missing and existing-connection endpoints', () => {
     const { api, source, target } = scene()
     const audio = api.createNode('audio', api.getRoot())
     const camera = api.getActiveCameraId() ?? api.createNode('camera', null)
     const connection = createFlowConnection(api, [source, target])
+    const nullController = api.createNode('null', api.getRoot())
+    const arrangement = api.createNode('arrangement', api.getRoot())
     const before = api.getAllNodeIds()
-    for (const rejected of [api.getRoot(), camera, audio, 'missing', connection]) {
+    for (const rejected of [api.getRoot(), camera, audio, nullController, arrangement, 'missing', connection]) {
       expect(validateFlowConnectionSelection(api, [source, rejected])).toMatchObject({ valid: false })
       expect(() => createFlowConnection(api, [source, rejected])).toThrow('Choose two visual assets')
     }

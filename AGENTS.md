@@ -429,6 +429,35 @@ Every paintable node carries:
 Backwards-compatible with the desktop app's inspector — the same
 schema renders inside the editor exactly as it does in the saved file.
 
+### Arrangements and transform controllers
+
+Use **Arrangement** beside Scene layers to arrange selected layers, or create
+nine editable blue squares when no eligible layers are selected. Supported
+patterns are rectangular, radial, path, and spherical. Members appear grouped
+in Layers while retaining their real layout parents and independent keyframes.
+See [docs/arrangements.md](./docs/arrangements.md) for all controls.
+
+Author `kind: 'arrangement'` under the composition root with an `arrangement`
+object containing `version: 1`, `mode`, and ordered `memberIds`. Members use
+`transformParent: { nodeId, inverseBind }`, where `inverseBind` is a 16-number
+column-major matrix capturing their relationship to the controller. Native
+creation actions calculate this matrix from the current world pose.
+
+Animate numeric `arrangement.*` fields such as `radius`, `spacingX`, `spacingY`,
+`rotationX`, `rotationY`, `rotation`, and `orbit`. Radial `orbit` moves members
+along a fixed tilted ring; 0–360 degrees makes one lap. `orientation: 'screen'`
+keeps members facing the active camera, including orthographic cameras. Other
+choices are `forward`, `center`, `outward`, and `path`. Pattern and orientation
+keyframes switch discretely. Arrangement opacity multiplies member opacity.
+
+Null controllers use `kind: 'null'` under the composition root with ordinary
+transform properties and the same transform-parent relationship. Cameras remain
+scene-level (`parent: null`) even when connected. `transformOffset` optionally
+preserves a detached pose. Controllers do not paint or consume a layout slot.
+Do not use controllers or procedural flow connections as Arrangement members.
+Grid snapping and overlap protection apply to direct solid editing; procedural
+Arrangement motion and keyframes retain the authored layout.
+
 ### Beam layer effect
 
 `appearance.effects` accepts `kind: "border-beam"` for the Border, Compact,

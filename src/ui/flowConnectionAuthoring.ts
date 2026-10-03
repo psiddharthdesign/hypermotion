@@ -16,8 +16,8 @@ export function validateFlowConnectionSelection(api: SceneAPI, selection: readon
   const rootId = api.getRoot()
   for (const id of ids) {
     const node = api.getNode(id)
-    if (!node || id === rootId || node.kind === 'camera' || node.kind === 'audio' || node.connection) {
-      return { valid: false, message: 'Choose two visual assets, rather than a scene, camera, or existing connection.' }
+    if (!node || id === rootId || node.kind === 'camera' || node.kind === 'audio' || node.kind === 'null' || node.kind === 'arrangement' || node.connection) {
+      return { valid: false, message: 'Choose two visual assets, rather than a scene, camera, controller, or existing connection.' }
     }
   }
   for (const id of ids) {

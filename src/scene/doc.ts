@@ -1,3 +1,5 @@
+import { normalizeArrangement } from '@/scene/arrangement'
+import { detachNullDependents, normalizeTransformMatrix, normalizeTransformParent } from '@/scene/nullObject'
 import { normalizeCameraProjection } from '@/scene/cameraProjection'
 import { normalizeCameraCompositionGuide } from '@/scene/cameraCompositionGuide'
 import { normalizeTextShimmer } from '@/anim/textShimmerEffect'
@@ -236,6 +238,7 @@ export interface SceneAPI {
 
 /** A mutable view of node fields that may be set via setNodeProperty. */
 export interface NodeBaseMutable {
+  arrangement: import('@/scene/arrangement').Arrangement | null
   name: string
   workspaceOnly: boolean
   preventOverlap: boolean | undefined
@@ -243,6 +246,8 @@ export interface NodeBaseMutable {
   componentSourceId: NodeId | null
   componentId: NodeId
   transform: Transform
+  transformParent: import('@/scene/types').TransformParent | null
+  transformOffset: number[] | null
   appearance: Appearance
   layout: Layout
   size: Size
@@ -470,7 +475,7 @@ const VECTOR_DEFAULT_APPEARANCE: Appearance = {
 function defaultAppearanceForKind(kind: NodeKind): Appearance {
   if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
   if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
-  if (kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
+  if ((kind === 'null' || kind === 'arrangement') || kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
   return DEFAULT_APPEARANCE
 }
 
@@ -677,6 +682,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       kind,
       parent: (y.get('parent') as NodeId | null) ?? null,
       children,
+      transformParent: normalizeTransformParent(y.get('transformParent')),
+      transformOffset: normalizeTransformMatrix(y.get('transformOffset')),
+      arrangement: kind === 'arrangement' ? normalizeArrangement(y.get('arrangement')) : null,
       // Ensure `z` exists on every read — older docs predate the
       // 3D-camera era and persisted Transform without `z`. Spread
       // defaults under the persisted shape so the field is always
@@ -699,7 +707,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       // mask feature. createNode writes false explicitly so newly-
       // created nodes are also non-masks until the user opts in.
       isMask: ((y.get('isMask') as boolean | undefined) ?? false),
-      maskMode: y.get('maskMode') === 'alpha' ? 'alpha' : undefined,
+      maskMode: y.get('maskMode') === 'alpha' ? 'alpha' as const : undefined,
       componentSourceId:
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
@@ -713,6 +721,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       layerBend: normalizeLayerBend(y.get('layerBend')),
     }
     switch (kind) {
+      case 'arrangement':
+        return { ...base, kind }
+      case 'null':
+        return { ...base, kind }
       case 'frame':
         return {
           ...base,
@@ -1220,6 +1232,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('kind', kind)
         y.set('name', props?.name ?? generatedName)
         y.set('parent', parent)
+        y.set('transformParent', normalizeTransformParent(props?.transformParent))
+        y.set('transformOffset', normalizeTransformMatrix(props?.transformOffset))
+        y.set('arrangement', kind === 'arrangement' ? normalizeArrangement(props?.arrangement ?? {}) : null)
         y.set('children', new Y.Array<NodeId>())
         y.set('transform', {
           ...DEFAULT_TRANSFORM,
@@ -1244,7 +1259,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         // auto layout. Callers can override via props (e.g. drawn-into
         // a flex parent might want 'absolute' so the user's drop point
         // is honored — see Step 3.66 follow-up).
-        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? 'flow')
+        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? ((kind === 'null' || kind === 'arrangement') ? 'absolute' : 'flow'))
         y.set(
           'zIndex',
           normalizeLayerZIndex((props as { zIndex?: number })?.zIndex),
@@ -1578,7 +1593,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           arr.push([id])
         } else if (
           !scene.get('root') &&
-          kind !== 'camera' &&
+          kind !== 'camera' && kind !== 'null' && kind !== 'arrangement' &&
           !((props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
         ) {
           // First parentless non-camera node becomes the root. Cameras
@@ -1594,6 +1609,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       const y = nodes.get(id)
       if (!y) return
       doc.transact(() => {
+        // A controller never owns its linked layers; deletion only detaches links.
+        if (y.get('kind') === 'null' || y.get('kind') === 'arrangement') detachNullDependents(api, id)
+        const arrangementOwner = normalizeTransformParent(y.get('transformParent'))
+        const owner = arrangementOwner ? api.getNode(arrangementOwner.nodeId) : null
+        if (owner?.arrangement) api.setNodeProperty(owner.id, 'arrangement', { ...owner.arrangement, memberIds: owner.arrangement.memberIds.filter((memberId) => memberId !== id) })
         // Detach from parent
         const parent = y.get('parent') as NodeId | null
         if (parent) {
@@ -1695,6 +1715,10 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           else y.delete('extrusion')
           return
         }
+        if (key === 'arrangement') {
+          y.set('arrangement', normalizeArrangement(value))
+          return
+        }
         if (key === 'motionPath') {
           y.set('motionPath', normalizeLayerMotionPath(value))
           return
@@ -1760,6 +1784,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     appendChild: (parent, child) => {
       const p = ensureNode(parent)
       const c = ensureNode(child)
+      if ((c.get('kind') === 'null' || c.get('kind') === 'arrangement') && parent !== api.getRoot()) return
       doc.transact(() => {
         const oldParent = c.get('parent') as NodeId | null
         if (oldParent) {
@@ -2130,6 +2155,8 @@ function defaultName(kind: NodeKind): string {
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
+    case 'arrangement': return 'Arrangement'
+    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }

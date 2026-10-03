@@ -3,6 +3,7 @@
 import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { effectBlurPropertyId } from '@/scene/props'
+import { ARRANGEMENT_CHOICES, ARRANGEMENT_NUMBERS } from '@/scene/arrangement'
 import { addKeyframe, findTrack } from './tracks'
 
 /**
@@ -176,7 +177,13 @@ const BEND_PROP_IDS: Partial<Record<string, PropertyId>> = {
   left: 'bend.left',
 }
 
+const ARRANGEMENT_PROP_IDS = Object.fromEntries(
+  [...Object.keys(ARRANGEMENT_NUMBERS), ...Object.keys(ARRANGEMENT_CHOICES), 'path']
+    .map(key => [key, `arrangement.${key}`]),
+) as Partial<Record<string, PropertyId>>
+
 export type PatchGroup =
+  | 'arrangement'
   | 'transform'
   | 'appearance'
   | 'shape'
@@ -352,7 +359,9 @@ export function stampToActiveTracksForPatch(
 function propertyMapForGroup(
   group: PatchGroup,
 ): Partial<Record<string, PropertyId>> {
-  return group === 'connection'
+  return group === 'arrangement'
+    ? ARRANGEMENT_PROP_IDS
+    : group === 'connection'
     ? { width: 'connection.width', flowSpeed: 'connection.flowSpeed', flowPhase: 'connection.flowPhase' }
     : group === 'extrusion'
     ? { depth: 'extrusion.depth' }
