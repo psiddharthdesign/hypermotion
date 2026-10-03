@@ -10,9 +10,194 @@ import {
   MAX_BEND_DEFORMERS,
   MAX_DOF_KERNEL_SAMPLES,
   updateDepthOfFieldShader,
+  updateDepthFocusPlane,
+  type PlaneDepthOfFieldShaderState,
 } from './depthOfFieldShader'
 
+const depthFocusState: PlaneDepthOfFieldShaderState = {
+  enabled: true, blurPx: 0, minimumBlurPx: 0,
+  planeWidth: 400, planeHeight: 240,
+  focusMask: false, focusX: 0, focusY: 0, focusRadius: 0, focusFalloff: 1,
+  screenPixelRatio: 1, sampleCount: 24, bladeCount: 7, bladeRotation: 0, bokehRatio: 1,
+  depthFocus: { normal: { x: 0, y: 0, z: 1 }, constant: 1000, depthScale: 350, aperture: 1, maxBlurPx: 24 },
+}
+
 describe('GPU depth-of-field policy', () => {
+  it('keeps depth blur active when the card centre lies exactly on the focus plane', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, depthFocusState)
+    const uniforms = material.userData.hyperMotionDofUniforms
+    expect(uniforms.hmDofEnabled.value).toBe(1)
+    expect(uniforms.hmDofBlur.value).toBe(0)
+    expect(uniforms.hmDepthFocusEnabled.value).toBe(1)
+    expect(uniforms.hmDepthFocusPlane.value.toArray()).toEqual([0, 0, 1, 1000])
+    expect(uniforms.hmDepthFocusMaxBlur.value).toBe(24)
+  })
+
+  it('uses final projected vertex depth after Bend, batching and instancing', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, { ...depthFocusState, blurPx: 18, minimumBlurPx: 18 })
+    const shader = {
+      uniforms: {},
+      vertexShader: THREE.ShaderLib.basic.vertexShader,
+      fragmentShader: THREE.ShaderLib.basic.fragmentShader,
+    }
+    material.onBeforeCompile(shader as never, {} as never)
+    const vertex = shader.vertexShader.replace('#include <project_vertex>', THREE.ShaderChunk.project_vertex)
+    const capture = vertex.indexOf('hmBentViewPosition = mvPosition.xyz;')
+    expect(capture).toBeGreaterThan(vertex.indexOf('transformed = hmApplyBendStack(transformed);'))
+    expect(capture).toBeGreaterThan(vertex.indexOf('mvPosition = batchingMatrix * mvPosition;'))
+    expect(capture).toBeGreaterThan(vertex.indexOf('mvPosition = instanceMatrix * mvPosition;'))
+    expect(capture).toBeGreaterThan(vertex.indexOf('mvPosition = modelViewMatrix * mvPosition;'))
+    const depthBranch = shader.fragmentShader.slice(
+      shader.fragmentShader.indexOf('if ( hmDepthFocusEnabled'),
+      shader.fragmentShader.indexOf('float hmLocalBlur = hmLensBlur;'),
+    )
+    expect(depthBranch).toContain('dot( hmDepthFocusPlane.xyz, hmBentViewPosition ) + hmDepthFocusPlane.w')
+    expect(depthBranch).toContain('hmLensBlur = hmDepthFocusMaxBlur * (')
+    expect(depthBranch).not.toContain('hmDofMinBlur')
+    expect(depthBranch).not.toContain('hmDofBlur')
+  })
+
+  it('updates and normalizes focus planes without rebuilding the shader', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, depthFocusState)
+    const version = material.version
+    const compile = material.onBeforeCompile
+    const uniforms = material.userData.hyperMotionDofUniforms
+    updateDepthOfFieldShader(material, {
+      ...depthFocusState,
+      depthFocus: { normal: { x: 0, y: 3, z: 4 }, constant: 500, depthScale: 30, aperture: 2, maxBlurPx: 36 },
+    })
+    expect(material.version).toBe(version)
+    expect(material.onBeforeCompile).toBe(compile)
+    expect(material.userData.hyperMotionDofUniforms).toBe(uniforms)
+    expect(uniforms.hmDepthFocusPlane.value.toArray()).toEqual([0, 0.6, 0.8, 100])
+    expect(uniforms.hmDepthFocusScale.value).toBe(80)
+    expect(uniforms.hmDepthFocusAperture.value).toBe(2)
+    expect(uniforms.hmDepthFocusMaxBlur.value).toBe(36)
+  })
+
+  it('updates just the moving focus plane while preserving masks, bends and the aperture kernel', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, {
+      ...depthFocusState, clipMap: true, screenPixelRatio: 2, bladeCount: 5, bladeRotation: 35, bokehRatio: 1.7,
+      bends: [{
+        enabled: true, mode: 'wave', waveAmplitude: 30, wavePhase: 65,
+        angle: 45, factor: 0.8, bothDirections: true, limitToRegion: false,
+        captureDirection: { x: 1, y: 0, z: 0 }, captureRotation: 10,
+        upDirection: { x: 0, y: 0, z: 1 }, upRotation: 15, bendRotation: 20,
+        captureOrigin: { x: 10, y: 20, z: 30 }, resolvedLength: 350,
+        surfaceShading: true, lightAzimuth: 90, lightElevation: 50,
+        ambient: 0.7, diffuse: 0.3, specular: 0.2, roughness: 0.5,
+      }],
+    })
+    const uniforms = material.userData.hyperMotionDofUniforms
+    const untouched = () => Object.fromEntries(Object.entries(uniforms).filter(([key]) =>
+      !['hmDepthFocusPlane', 'hmDepthFocusScale', 'hmDepthFocusAperture', 'hmDepthFocusMaxBlur', 'hmDofEnabled'].includes(key),
+    ))
+    const before = JSON.stringify(untouched())
+    const kernel = uniforms.hmDofKernel.value
+    const bends = uniforms.hmBendAngle.value
+    const plane = uniforms.hmDepthFocusPlane.value
+    const compile = material.onBeforeCompile
+    const version = material.version
+    expect(updateDepthFocusPlane(material, {
+      normal: { x: 0, y: 3, z: 4 }, constant: 500, depthScale: 30, aperture: 2, maxBlurPx: 36,
+    })).toBe(true)
+    expect(uniforms.hmDepthFocusPlane.value.toArray()).toEqual([0, 0.6, 0.8, 100])
+    expect(uniforms.hmDepthFocusScale.value).toBe(80)
+    expect(uniforms.hmDepthFocusAperture.value).toBe(2)
+    expect(uniforms.hmDepthFocusMaxBlur.value).toBe(36)
+    expect(JSON.stringify(untouched())).toBe(before)
+    expect(uniforms.hmDofKernel.value).toBe(kernel)
+    expect(uniforms.hmBendAngle.value).toBe(bends)
+    expect(uniforms.hmDepthFocusPlane.value).toBe(plane)
+    expect(material.onBeforeCompile).toBe(compile)
+    expect(material.version).toBe(version)
+  })
+
+  it.each([
+    { normal: { x: 2, y: -3, z: 4 }, constant: -200, depthScale: 10, aperture: 3, maxBlurPx: 30 },
+    { normal: { x: 0, y: 0, z: 1 }, constant: 400, depthScale: 350, aperture: 0, maxBlurPx: 24 },
+    { normal: { x: 0, y: 0, z: 1 }, constant: 500, depthScale: NaN, aperture: NaN, maxBlurPx: -8 },
+  ])('matches a full shader update for normalized plane values %#', (depthFocus) => {
+    const fast = new THREE.MeshBasicMaterial()
+    const full = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(fast, depthFocusState)
+    updateDepthOfFieldShader(full, { ...depthFocusState, depthFocus })
+    expect(updateDepthFocusPlane(fast, depthFocus)).toBe(true)
+    expect(fast.userData.hyperMotionDofUniforms).toEqual(full.userData.hyperMotionDofUniforms)
+    // Closing the aperture disables blur without disabling the depth-focus mode.
+    // Reopening must remain eligible for this same fast path.
+    expect(updateDepthFocusPlane(fast, depthFocusState.depthFocus!)).toBe(true)
+    expect(fast.userData.hyperMotionDofUniforms.hmDofEnabled.value).toBe(1)
+  })
+
+  it('refuses absent or stale shader installations without installing or changing them', () => {
+    const absent = new THREE.MeshBasicMaterial()
+    const absentVersion = absent.version
+    expect(updateDepthFocusPlane(absent, depthFocusState.depthFocus!)).toBe(false)
+    expect(absent.userData.hyperMotionDofUniforms).toBeUndefined()
+    expect(absent.version).toBe(absentVersion)
+    for (const staleKind of ['key', 'schema'] as const) {
+      const material = new THREE.MeshBasicMaterial()
+      updateDepthOfFieldShader(material, depthFocusState)
+      if (staleKind === 'key') material.userData.hyperMotionDofShaderKey = 'retired-before-depth-focus'
+      else delete material.userData.hyperMotionDofUniforms.hmBendWavePhase
+      const before = JSON.stringify(material.userData)
+      const version = material.version
+      expect(updateDepthFocusPlane(material, depthFocusState.depthFocus!)).toBe(false)
+      expect(JSON.stringify(material.userData)).toBe(before)
+      expect(material.version).toBe(version)
+    }
+  })
+
+  it('refuses Point focus, disabled depth focus and invalid equations without changing other state', () => {
+    for (const patch of [{ focusMask: true }, { enabled: false }, { depthFocus: undefined }]) {
+      const material = new THREE.MeshBasicMaterial()
+      updateDepthOfFieldShader(material, { ...depthFocusState, ...patch })
+      const before = JSON.stringify(material.userData)
+      expect(updateDepthFocusPlane(material, depthFocusState.depthFocus!)).toBe(false)
+      expect(JSON.stringify(material.userData)).toBe(before)
+    }
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, depthFocusState)
+    const before = JSON.stringify(material.userData)
+    expect(updateDepthFocusPlane(material, {
+      ...depthFocusState.depthFocus!, normal: { x: 0, y: 0, z: 0 },
+    })).toBe(false)
+    expect(JSON.stringify(material.userData)).toBe(before)
+  })
+
+  it('clears depth uniforms when switching to Point focus or disabling the lens', () => {
+    const material = new THREE.MeshBasicMaterial()
+    for (const patch of [{ focusMask: true }, { enabled: false }, { depthFocus: undefined }]) {
+      updateDepthOfFieldShader(material, depthFocusState)
+      updateDepthOfFieldShader(material, { ...depthFocusState, blurPx: 12, ...patch })
+      const uniforms = material.userData.hyperMotionDofUniforms
+      expect(uniforms.hmDepthFocusEnabled.value).toBe(0)
+      expect(uniforms.hmDepthFocusAperture.value).toBe(0)
+      expect(uniforms.hmDepthFocusMaxBlur.value).toBe(0)
+      expect(uniforms.hmDofEnabled.value).toBe(patch.enabled === false ? 0 : 1)
+    }
+  })
+
+  it('disables a closed depth lens and rejects invalid plane equations', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateDepthOfFieldShader(material, {
+      ...depthFocusState, blurPx: 18,
+      depthFocus: { ...depthFocusState.depthFocus!, aperture: 0 },
+    })
+    expect(material.userData.hyperMotionDofUniforms.hmDofEnabled.value).toBe(0)
+    updateDepthOfFieldShader(material, {
+      ...depthFocusState,
+      depthFocus: { ...depthFocusState.depthFocus!, normal: { x: 0, y: 0, z: 0 } },
+    })
+    expect(material.userData.hyperMotionDofUniforms.hmDepthFocusEnabled.value).toBe(0)
+    expect(material.userData.hyperMotionDofUniforms.hmDepthFocusPlane.value.toArray().every(Number.isFinite)).toBe(true)
+  })
+
   it('caps timeline and camera interaction at the realtime sample budget', () => {
     expect(
       depthOfFieldSampleCount('high', 32, {

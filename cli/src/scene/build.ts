@@ -113,8 +113,11 @@ export const PAPER_SHADER_TYPES = [
 export type PaperShaderTypeJson = (typeof PAPER_SHADER_TYPES)[number]
 
 export type NodeKindJson =
+  | 'null'
+  | 'arrangement'
   | 'frame'
   | 'rect'
+  | 'vector'
   | 'ellipse'
   | 'text'
   | 'image'
@@ -126,8 +129,12 @@ export type NodeKindJson =
   | 'camera'
 
 export const NODE_KINDS = [
+  'null',
+  'arrangement',
   'frame',
   'rect',
+  // Authoring vector layers currently requires an attached connection.
+  'vector',
   'ellipse',
   'text',
   'image',
@@ -240,6 +247,21 @@ export interface PaddingJson {
   left: number
 }
 
+export interface FlowConnectionJson {
+  version?: 1
+  sourceId: string
+  targetId: string
+  routing?: 'elbow' | 'straight'
+  color?: string
+  width?: number
+  flowEnabled?: boolean
+  flowColor?: string
+  flowSpeed?: number
+  flowSpacing?: number
+  flowSize?: number
+  flowPhase?: number
+}
+
 export interface NodeJson {
   id: string
   kind: NodeKindJson
@@ -255,10 +277,19 @@ export interface NodeJson {
   maskMode?: 'alpha'
   componentSourceId?: string | null
   workspaceOnly?: boolean
+  transformParent?: { nodeId: string; inverseBind: number[] } | null
+  arrangement?: { version?: 1; mode?: 'rectangular' | 'radial' | 'path' | 'spherical'; memberIds?: string[]; [key: string]: unknown } | null
+  transformOffset?: number[] | null
+  /** Editing aid: prevent this asset or its solid descendants overlapping another asset. */
+  preventOverlap?: boolean
   /** Optional pixel-space Bézier rail followed by this layer. */
   motionPath?: LayerMotionPathJson | null
   /** Optional non-destructive layer deformation. */
   deformation?: LayerDeformationJson | null
+  /** Non-destructive volume for rectangles and full ellipses. */
+  extrusion?: { depth?: number; sideColor?: string } | null
+  /** Attached route on a vector layer; endpoint ids are the declared node ids. */
+  connection?: FlowConnectionJson | null
   transform?: {
     x: number
     y: number
@@ -355,9 +386,11 @@ export interface NodeJson {
       division: 1 | 2 | 4 | 8 | 16 | 32
     }>
   }
-  projection?: '2d' | 'perspective'
+  projection?: '2d' | 'perspective' | 'orthographic'
   enabled?: boolean
   background?: FillJson | null
+  /** Editor-only composition overlay; excluded from rendered output. */
+  compositionGuide?: 'none' | 'thirds' | 'center' | 'diagonals' | 'diamond' | 'diamond-grid' | 'isometric' | 'golden-ratio' | 'grid' | 'safe-areas'
   focalLength?: number
   scrollSensitivity?: number
   fieldOfView?: number
@@ -367,12 +400,19 @@ export interface NodeJson {
   nearClip?: number
   farClip?: number
   depthOfField?: boolean
-  focusMode?: 'plane' | 'target' | 'screen'
+  focusMode?: 'plane' | 'target' | 'screen' | 'spatial'
   focusX?: number
   focusY?: number
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneInitialized?: boolean
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusTargetNodeId?: string | null
   focusDistance?: number
   focusRadius?: number
@@ -549,6 +589,10 @@ export interface AppearanceJson {
 }
 
 export const PROPERTY_IDS = [
+  'connection.width',
+  'connection.flowSpeed',
+  'connection.flowPhase',
+  'extrusion.depth',
   'transform.x',
   'transform.y',
   'transform.z',
@@ -566,6 +610,12 @@ export const PROPERTY_IDS = [
   'camera.focusWorldX',
   'camera.focusWorldY',
   'camera.focusWorldZ',
+  'camera.focusPlaneX',
+  'camera.focusPlaneY',
+  'camera.focusPlaneZ',
+  'camera.focusPlaneRotationX',
+  'camera.focusPlaneRotationY',
+  'camera.focusPlaneRotationZ',
   'camera.focusRadius',
   'camera.focusFalloff',
   'camera.pointOfInterestX',
@@ -624,6 +674,40 @@ export const PROPERTY_IDS = [
   'textShimmer.range', 'textShimmer.duration',
   'textShimmer.shimmerWidth',
   'motionPath.progress',
+  'arrangement.mode',
+  'arrangement.orientation',
+  'arrangement.scaleMode',
+  'arrangement.shape',
+  'arrangement.path',
+  'arrangement.columns',
+  'arrangement.spacingX',
+  'arrangement.spacingY',
+  'arrangement.radius',
+  'arrangement.spread',
+  'arrangement.orbit',
+  'arrangement.rotation',
+  'arrangement.rotationX',
+  'arrangement.rotationY',
+  'arrangement.opacity',
+  'arrangement.scaleFront',
+  'arrangement.scaleBack',
+  'arrangement.scaleDirection',
+  'arrangement.rippleFocus',
+  'arrangement.scaleFalloff',
+  'arrangement.depth',
+  'arrangement.depthAnchor',
+  'arrangement.pathScaleX',
+  'arrangement.pathScaleY',
+  'arrangement.polygonPoints',
+  'arrangement.trimStart',
+  'arrangement.trimEnd',
+  'arrangement.progress',
+  'arrangement.pathSpread',
+  'arrangement.pitch',
+  'arrangement.focusTarget',
+  'arrangement.shuffle',
+  'arrangement.randomOffset',
+  'arrangement.seed',
   'deformation.bend.waveAmplitude',
   'deformation.bend.waveFrequency',
   'deformation.bend.wavePhase',
@@ -1342,7 +1426,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   scene.set('nodes', nodes)
 
   for (const node of Object.values(json.nodes ?? {})) {
-    assertNodeKindCanBeAuthored(node.id, node.kind)
+    assertNodeKindCanBeAuthored(node.id, node.kind, node.connection)
     const y = new Y.Map<unknown>()
     y.set('id', node.id)
     y.set('kind', node.kind)
@@ -1358,7 +1442,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     y.set(
       'transform',
       mergeWithDefaults(
-        DEFAULT_TRANSFORM,
+        node.kind === 'vector' ? { ...DEFAULT_TRANSFORM, renderMode: 'plane' as const } : DEFAULT_TRANSFORM,
         node.transform,
       ),
     )
@@ -1371,12 +1455,16 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     )
     y.set('visible', node.visible ?? true)
     y.set('locked', node.locked ?? false)
-    y.set('position', node.position ?? 'flow')
+    y.set('position', node.position ?? ((node.kind === 'vector' || node.kind === 'null' || node.kind === 'arrangement') ? 'absolute' : 'flow'))
     y.set('zIndex', normalizeLayerZIndex(node.zIndex))
     y.set('isMask', node.isMask ?? false)
     if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
     y.set('componentSourceId', node.componentSourceId ?? null)
     y.set('workspaceOnly', node.workspaceOnly ?? false)
+    if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
+    if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
+    if (node.arrangement !== undefined) y.set('arrangement', node.arrangement)
+    if (node.preventOverlap === true) y.set('preventOverlap', true)
     // Keep older scene snapshots byte-compatible when no layer rail was
     // supplied. The desktop reader already treats a missing value as null.
     if (node.motionPath !== undefined) {
@@ -1384,6 +1472,12 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     }
     if (node.deformation !== undefined) {
       y.set('deformation', node.deformation)
+    }
+    const extrusion = normalizeExtrusion(node.extrusion)
+    if (extrusion) y.set('extrusion', extrusion)
+    if (node.kind === 'vector') {
+      const connection = normalizeFlowConnection(node.connection)
+      if (connection) y.set('connection', connection)
     }
 
     // kind-specific fields
@@ -1415,8 +1509,8 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
         y.set('interactions', node.interactions ?? [])
       }
     }
-    if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
-      y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image' || node.kind === 'vector') {
+      y.set('size', mergeWithDefaults(node.kind === 'vector' ? { width: 1, height: 1 } : DEFAULT_SIZE, node.size))
     }
     if (node.kind === 'ellipse') {
       y.set('arc', normalizeEllipseArcJson(node.arc))
@@ -1503,9 +1597,10 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
     if (node.kind === 'camera') {
       const centerX = metaIn.canvas.width / 2
       const centerY = metaIn.canvas.height / 2
-      y.set('projection', node.projection ?? '2d')
+      y.set('projection', normalizeCameraProjection(node.projection))
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
+      y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))
       y.set('focalLength', node.focalLength ?? 1000)
       y.set(
         'scrollSensitivity',
@@ -1524,6 +1619,13 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
       y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
       y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+      y.set('focusPlaneX', node.focusPlaneX ?? 0)
+      y.set('focusPlaneY', node.focusPlaneY ?? 0)
+      y.set('focusPlaneZ', node.focusPlaneZ ?? 0)
+      y.set('focusPlaneInitialized', node.focusPlaneInitialized ?? (node.focusMode === 'spatial'))
+      y.set('focusPlaneRotationX', node.focusPlaneRotationX ?? 0)
+      y.set('focusPlaneRotationY', node.focusPlaneRotationY ?? 0)
+      y.set('focusPlaneRotationZ', node.focusPlaneRotationZ ?? 0)
       y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
       y.set('focusDistance', node.focusDistance ?? 0)
       y.set('focusRadius', node.focusRadius ?? 160)
@@ -1856,6 +1958,39 @@ export function validateScene(bytes: Uint8Array): SceneValidationResult {
       errors.push(
         `node ${id} zIndex must be an integer between ${MIN_LAYER_Z_INDEX} and ${MAX_LAYER_Z_INDEX}`,
       )
+    }
+    if ((node.kind === 'null' || node.kind === 'arrangement') && (!node.parent || id === root)) {
+      errors.push(`null node ${id} must belong to a composition root`)
+    }
+    const validMatrix = (value: unknown) => Array.isArray(value) && value.length === 16 && value.every((n) => typeof n === 'number' && Number.isFinite(n))
+    if (node.transformOffset != null && !validMatrix(node.transformOffset)) {
+      errors.push(`node ${id} transformOffset must be a finite 4x4 matrix`)
+    }
+    if (node.transformParent != null) {
+      const link = asRecord(node.transformParent)
+      if (typeof link.nodeId !== 'string' || !['null', 'arrangement'].includes(String(asRecord(nodes[String(link.nodeId)]).kind))) {
+        errors.push(`node ${id} transformParent must reference a Null or Arrangement controller`)
+      }
+      if (!validMatrix(link.inverseBind)) errors.push(`node ${id} transformParent.inverseBind must be a finite 4x4 matrix`)
+      const visited = new Set([id])
+      let parentId = link.nodeId
+      while (typeof parentId === 'string') {
+        if (visited.has(parentId)) { errors.push(`node ${id} has a cyclic Null connection`); break }
+        visited.add(parentId)
+        parentId = asRecord(asRecord(nodes[parentId]).transformParent).nodeId
+      }
+    }
+    if (node.kind === 'arrangement') {
+      const arrangement = asRecord(node.arrangement)
+      if (arrangement.mode !== undefined && !['rectangular', 'radial', 'path', 'spherical'].includes(String(arrangement.mode))) errors.push(`node ${id} has an unsupported arrangement mode`)
+      if (arrangement.memberIds !== undefined && !Array.isArray(arrangement.memberIds)) errors.push(`node ${id} arrangement.memberIds must be an array`)
+      const members = Array.isArray(arrangement.memberIds) ? arrangement.memberIds : []
+      if (new Set(members).size !== members.length) errors.push(`node ${id} arrangement has duplicate members`)
+      for (const memberId of members) {
+        const member = asRecord(nodes[String(memberId)])
+        if (typeof memberId !== 'string' || !nodes[memberId] || ['camera', 'audio', 'null', 'arrangement'].includes(String(member.kind)) || (member.kind === 'vector' && !!member.connection)) errors.push(`node ${id} has an invalid arrangement member: ${String(memberId)}`)
+        if (asRecord(member.transformParent).nodeId !== id) errors.push(`node ${id} arrangement member ${String(memberId)} must link to this arrangement`)
+      }
     }
     validateLayerMotionPath(id, node, root, errors)
     validateLayerDeformation(id, node, root, errors)
@@ -2650,11 +2785,10 @@ function isNodeKind(value: unknown): value is NodeKindJson | 'vector' {
   )
 }
 
-function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown): void {
-  // Vector nodes are valid in app-authored files (including the built-in
-  // Cursor component), but the JSON authoring surface cannot yet reconstruct
-  // their preserved SVG/vector payload without losing fidelity.
-  if (kind === 'primitive3d' || kind === 'vector') {
+function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown, connection?: unknown): void {
+  // Attached connections need no SVG payload. Other vector creation remains
+  // unsupported; existing imported vectors may still be read and patched.
+  if (kind === 'primitive3d' || (kind === 'vector' && !normalizeFlowConnection(connection))) {
     throw new Error(
       `node ${String(nodeId)} has unsupported kind: ${String(kind)}`,
     )
@@ -2998,20 +3132,38 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
       return
     case 'setNode': {
       const node = getNodeMap(scene, op.nodeId)
+      const kind = op.patch.kind ?? node.get('kind')
       for (const [k, v] of Object.entries(op.patch)) {
-        if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v)
+        if (k === 'kind') assertNodeKindCanBeAuthored(op.nodeId, v, op.patch.connection ?? node.get('connection'))
         if (k === 'zIndex') node.set(k, normalizeLayerZIndex(v))
         else if (k === 'vignetteEnabled') node.set(k, v === true)
         else if (k === 'vignetteAmount' || k === 'vignetteSize' || k === 'vignetteFeather') node.set(k, normalizeVignetteValue(v, k === 'vignetteAmount' ? 0.35 : 0.5))
+        else if (k === 'preventOverlap') {
+          if (v === true) node.set(k, true)
+          else node.delete(k)
+        }
+        else if (k === 'connection') {
+          const connection = kind === 'vector' ? normalizeFlowConnection(v) : undefined
+          if (connection) node.set(k, connection)
+          else node.delete(k)
+        }
+        else if (k === 'extrusion') {
+          const extrusion = normalizeExtrusion(v)
+          if (extrusion) node.set(k, extrusion)
+          else node.delete(k)
+        }
+        else if (k === 'projection') node.set(k, normalizeCameraProjection(v))
+        else if (k === 'compositionGuide') node.set(k, normalizeCameraCompositionGuide(v))
         else if (k === 'children' && Array.isArray(v)) node.set(k, arrayToY(v))
         else node.set(k, v)
       }
+      if (kind !== 'vector') node.delete('connection')
       return
     }
     case 'setNodeProperty': {
       const node = getNodeMap(scene, op.nodeId)
       if (op.key === 'kind') {
-        assertNodeKindCanBeAuthored(op.nodeId, op.value)
+        assertNodeKindCanBeAuthored(op.nodeId, op.value, node.get('connection'))
       }
       if (op.key === 'zIndex') {
         node.set(op.key, normalizeLayerZIndex(op.value))
@@ -3019,11 +3171,27 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
         node.set(op.key, op.value === true)
       } else if (op.key === 'vignetteAmount' || op.key === 'vignetteSize' || op.key === 'vignetteFeather') {
         node.set(op.key, normalizeVignetteValue(op.value, op.key === 'vignetteAmount' ? 0.35 : 0.5))
+      } else if (op.key === 'preventOverlap') {
+        if (op.value === true) node.set(op.key, true)
+        else node.delete(op.key)
+      } else if (op.key === 'connection') {
+        const connection = node.get('kind') === 'vector' ? normalizeFlowConnection(op.value) : undefined
+        if (connection) node.set(op.key, connection)
+        else node.delete(op.key)
+      } else if (op.key === 'extrusion') {
+        const extrusion = normalizeExtrusion(op.value)
+        if (extrusion) node.set(op.key, extrusion)
+        else node.delete(op.key)
+      } else if (op.key === 'projection') {
+        node.set(op.key, normalizeCameraProjection(op.value))
+      } else if (op.key === 'compositionGuide') {
+        node.set(op.key, normalizeCameraCompositionGuide(op.value))
       } else if (op.key === 'children' && Array.isArray(op.value)) {
         node.set(op.key, arrayToY(op.value))
       } else {
         node.set(op.key, op.value)
       }
+      if (op.key === 'kind' && op.value !== 'vector') node.delete('connection')
       return
     }
     case 'appendChild': {
@@ -3071,7 +3239,7 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
 }
 
 function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unknown> {
-  assertNodeKindCanBeAuthored(node.id, node.kind)
+  assertNodeKindCanBeAuthored(node.id, node.kind, node.connection)
   const y = new Y.Map<unknown>()
   const handledKeys = new Set([
     'id',
@@ -3089,8 +3257,12 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'maskMode',
     'componentSourceId',
     'workspaceOnly',
+    'preventOverlap',
     'motionPath',
+    'arrangement',
     'deformation',
+    'extrusion',
+    'connection',
   ])
   y.set('id', node.id)
   y.set('kind', node.kind)
@@ -3103,22 +3275,32 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   y.set(
     'transform',
     mergeWithDefaults(
-      DEFAULT_TRANSFORM,
+      node.kind === 'vector' ? { ...DEFAULT_TRANSFORM, renderMode: 'plane' as const } : DEFAULT_TRANSFORM,
       node.transform as Partial<typeof DEFAULT_TRANSFORM>,
     ),
   )
   y.set('appearance', mergeWithDefaults(defaultAppearance(node.kind), node.appearance))
   y.set('visible', node.visible ?? true)
   y.set('locked', node.locked ?? false)
-  y.set('position', node.position ?? 'flow')
+  y.set('position', node.position ?? ((node.kind === 'vector' || node.kind === 'null' || node.kind === 'arrangement') ? 'absolute' : 'flow'))
   y.set('zIndex', normalizeLayerZIndex(node.zIndex))
   y.set('isMask', node.isMask ?? false)
   if (node.maskMode === 'alpha') y.set('maskMode', 'alpha')
   y.set('componentSourceId', node.componentSourceId ?? null)
   y.set('workspaceOnly', node.workspaceOnly ?? false)
+  if (node.transformParent !== undefined) y.set('transformParent', node.transformParent)
+  if (node.transformOffset !== undefined) y.set('transformOffset', node.transformOffset)
+  if (node.arrangement !== undefined) y.set('arrangement', node.arrangement)
+  if (node.preventOverlap === true) y.set('preventOverlap', true)
   if (node.motionPath !== undefined) y.set('motionPath', node.motionPath)
   if (node.deformation !== undefined) {
     y.set('deformation', node.deformation)
+  }
+  const extrusion = normalizeExtrusion(node.extrusion)
+  if (extrusion) y.set('extrusion', extrusion)
+  if (node.kind === 'vector') {
+    const connection = normalizeFlowConnection(node.connection)
+    if (connection) y.set('connection', connection)
   }
   if (node.kind === 'text') {
     for (const key of [
@@ -3145,9 +3327,9 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('textAlign', node.textAlign ?? 'start')
     y.set('color', node.color ?? '#0a0a0c')
   }
-  if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image') {
+  if (node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'image' || node.kind === 'vector') {
     handledKeys.add('size')
-    y.set('size', mergeWithDefaults(DEFAULT_SIZE, node.size))
+    y.set('size', mergeWithDefaults(node.kind === 'vector' ? { width: 1, height: 1 } : DEFAULT_SIZE, node.size))
   }
   if (node.kind === 'ellipse') {
     handledKeys.add('arc')
@@ -3255,6 +3437,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'projection',
       'enabled',
       'background',
+      'compositionGuide',
       'focalLength',
       'scrollSensitivity',
       'fieldOfView',
@@ -3270,6 +3453,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
       'focusWorldX',
       'focusWorldY',
       'focusWorldZ',
+      'focusPlaneX',
+      'focusPlaneY',
+      'focusPlaneZ',
+      'focusPlaneInitialized',
+      'focusPlaneRotationX',
+      'focusPlaneRotationY',
+      'focusPlaneRotationZ',
       'focusTargetNodeId',
       'focusDistance',
       'focusRadius',
@@ -3305,9 +3495,10 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     }
     const centerX = meta.canvas.width / 2
     const centerY = meta.canvas.height / 2
-    y.set('projection', node.projection ?? '2d')
+    y.set('projection', normalizeCameraProjection(node.projection))
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
+    y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))
     y.set('focalLength', node.focalLength ?? 1000)
     y.set(
       'scrollSensitivity',
@@ -3326,6 +3517,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     y.set('focusWorldX', node.focusWorldX ?? node.focusX ?? centerX)
     y.set('focusWorldY', node.focusWorldY ?? node.focusY ?? centerY)
     y.set('focusWorldZ', node.focusWorldZ ?? node.focusDistance ?? 0)
+    y.set('focusPlaneX', node.focusPlaneX ?? 0)
+    y.set('focusPlaneY', node.focusPlaneY ?? 0)
+    y.set('focusPlaneZ', node.focusPlaneZ ?? 0)
+    y.set('focusPlaneInitialized', node.focusPlaneInitialized ?? (node.focusMode === 'spatial'))
+    y.set('focusPlaneRotationX', node.focusPlaneRotationX ?? 0)
+    y.set('focusPlaneRotationY', node.focusPlaneRotationY ?? 0)
+    y.set('focusPlaneRotationZ', node.focusPlaneRotationZ ?? 0)
     y.set('focusTargetNodeId', node.focusTargetNodeId ?? null)
     y.set('focusDistance', node.focusDistance ?? 0)
     y.set('focusRadius', node.focusRadius ?? 160)
@@ -3364,11 +3562,62 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   return y
 }
 
+/** Kept aligned with desktop scene/flowConnection; the CLI ships independently. */
+function normalizeFlowConnection(value: unknown): Required<FlowConnectionJson> | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Partial<FlowConnectionJson>
+  if (typeof v.sourceId !== 'string' || !v.sourceId || typeof v.targetId !== 'string' || !v.targetId || v.sourceId === v.targetId) return undefined
+  const color = (candidate: unknown, fallback: string) => typeof candidate === 'string' && candidate.trim() && candidate.length <= 256 ? candidate : fallback
+  const number = (candidate: unknown, fallback: number, min: number, max: number) => typeof candidate === 'number' && Number.isFinite(candidate) ? Math.max(min, Math.min(max, candidate)) : fallback
+  return {
+    version: 1, sourceId: v.sourceId, targetId: v.targetId,
+    routing: v.routing === 'straight' ? 'straight' : 'elbow',
+    color: color(v.color, '#2563eb'), width: number(v.width, 4, 0.25, 128),
+    flowEnabled: v.flowEnabled !== false, flowColor: color(v.flowColor, '#93c5fd'),
+    flowSpeed: number(v.flowSpeed, 120, -2000, 2000), flowSpacing: number(v.flowSpacing, 120, 8, 4000),
+    flowSize: number(v.flowSize, 12, 1, 128), flowPhase: number(v.flowPhase, 0, 0, 1),
+  }
+}
+
+/** Kept aligned with the desktop scene/extrusion normalizer. */
+function normalizeExtrusion(value: unknown): { depth: number; sideColor: string } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const depth = typeof source.depth === 'number' && Number.isFinite(source.depth)
+    ? Math.max(0, Math.min(100000, source.depth)) : 0
+  const sideColor = typeof source.sideColor === 'string' && source.sideColor.trim().length > 0 && source.sideColor.length <= 256
+    ? source.sideColor.trim() : '#2563eb'
+  return { depth, sideColor }
+}
+
 function normalizeVignetteValue(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, Math.min(1, value))
     : fallback
 }
+
+function normalizeCameraProjection(value: unknown): NonNullable<NodeJson['projection']> {
+  return value === 'orthographic' || value === 'perspective' ? value : '2d'
+}
+
+// Kept local because the CLI is published independently of the desktop app.
+function normalizeCameraCompositionGuide(value: unknown): NonNullable<NodeJson['compositionGuide']> {
+  switch (value) {
+    case 'thirds':
+    case 'center':
+    case 'diagonals':
+    case 'diamond':
+    case 'diamond-grid':
+    case 'isometric':
+    case 'golden-ratio':
+    case 'grid':
+    case 'safe-areas':
+      return value
+    default:
+      return 'none'
+  }
+}
+
 
 function normalizeCameraScrollSensitivity(value: unknown): number {
   const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 1
@@ -3630,6 +3879,7 @@ function defaultName(
   switch (kind) {
     case 'frame': return 'Frame'
     case 'rect': return 'Rectangle'
+    case 'vector': return 'Connection'
     case 'ellipse': return 'Ellipse'
     case 'text': return 'Text'
     case 'image': return 'Image'
@@ -3638,13 +3888,17 @@ function defaultName(
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
+    case 'arrangement': return 'Arrangement'
+    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }
 
 function defaultAppearance(kind: NodeKindJson): Record<string, unknown> {
   if (
+    kind === 'null' || kind === 'arrangement' ||
     kind === 'text' ||
+    kind === 'vector' ||
     kind === 'video' ||
     kind === 'audio' ||
     kind === 'shader'

@@ -1,4 +1,7 @@
+import { remapArrangement } from '@/scene/arrangement'
 // SPDX-License-Identifier: Apache-2.0
+
+import { remapFlowConnections } from '@/scene/flowConnection'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { transferCompositionScenes } from './sceneTransfer'
 import { rebaseSceneNodes, sceneSplitTime, sliceComposition, splitOccurrence, type SplitSceneResult } from './splitScene'
@@ -493,6 +496,7 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
 
       api.doc.transact(() => {
         newRoot = cloneSubtree(api, source.rootNodeId, null, nodeMap)
+        remapFlowConnections(api, nodeMap)
       }, 'scene-duplicate')
 
       const newCameraIds: NodeId[] = []
@@ -504,6 +508,14 @@ export function createProjectAPI(api: SceneAPI): ProjectAPI {
           nodeMap.set(cameraId, duplicateId)
           cloneTracks(api, camera.id, duplicateId)
           newCameraIds.push(duplicateId)
+        }
+        for (const [sourceId, targetId] of nodeMap) {
+          const arrangement = api.getNode(sourceId)?.arrangement
+          if (arrangement) api.setNodeProperty(targetId, 'arrangement', remapArrangement(arrangement, nodeMap))
+          const link = api.getNode(sourceId)?.transformParent
+          if (!link) continue
+          const parentId = nodeMap.get(link.nodeId)
+          api.setNodeProperty(targetId, 'transformParent', parentId ? { ...link, nodeId: parentId } : null)
         }
       }, 'scene-duplicate')
 

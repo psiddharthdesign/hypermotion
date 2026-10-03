@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ARRANGEMENT_CHOICES, ARRANGEMENT_NUMBERS, interpolateArrangementPath, type ArrangementChoice, type ArrangementNumber } from '@/scene/arrangement'
+
+import { applyNullTransforms, hasNullTransform } from '@/scene/nullObject'
+
+import { integratedFlowDistance } from './flowSpeed'
 
 import type {
   BlendMode,
@@ -80,6 +85,9 @@ import {
  * after animating in from x=580.
  */
 export interface AnimatedValue {
+  arrangement?: import('@/scene/arrangement').ArrangementAnimation
+  /** World-space controller delta, resolved after keyframes. */
+  parentMatrix?: number[]
   x?: number
   y?: number
   /** Z depth on the camera's optical axis. 0 = focal plane. */
@@ -136,6 +144,11 @@ export interface AnimatedValue {
   /** Text effect config attached to the active text.progress track. */
   textAnimation?: TextAnimationConfig
   /** 0→1 progress for a generic layer motion path. */
+  connectionWidth?: number
+  connectionFlowSpeed?: number
+  connectionFlowDistance?: number
+  connectionFlowPhase?: number
+  extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
   bendWaveFrequency?: number
@@ -172,6 +185,12 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusRadius?: number
   focusFalloff?: number
   pointOfInterestX?: number
@@ -219,6 +238,7 @@ const EMPTY_VALUE: AnimatedValue = {}
 
 export interface AnimEngine {
   attach(api: SceneAPI): void
+  getSceneAPI(): SceneAPI | null
   play(): void
   pause(): void
   isPlaying(): boolean
@@ -299,6 +319,7 @@ function createAnimEngine(): AnimEngine {
   let compiledTracks: Track[] = []
   let compiledTextTrackGroups: CompiledTextTrackGroup[] = []
   let compiledLayerMotionPaths: CompiledLayerMotionPath[] = []
+  let compiledNullNodes = new Map<NodeId, import('@/scene/types').Node>()
   let compiledCursorVariantBindings: CompiledCursorVariantBinding[] = []
   let trackPreview: ReadonlyMap<TrackId, Track> | null = null
 
@@ -403,8 +424,10 @@ function createAnimEngine(): AnimEngine {
         compiledTextTrackGroups.push({ nodeId, tracks })
       }
       compiledLayerMotionPaths = []
+      compiledNullNodes = new Map()
       for (const nodeId of api.getAllNodeIds()) {
         const node = api.getNode(nodeId)
+        if (node && ((node.kind === 'null' || node.kind === 'arrangement') || hasNullTransform(node))) compiledNullNodes.set(nodeId, node)
         if (
           !node?.motionPath ||
           (node.kind === 'instance' &&
@@ -434,6 +457,7 @@ function createAnimEngine(): AnimEngine {
       const track = trackPreview?.get(authoredTrack.id) ?? authoredTrack
       const value = out[track.nodeId] ?? { ...EMPTY_VALUE }
       applyTrack(track, playhead, value, evaluatorCache)
+      if (track.propertyId === 'connection.flowSpeed') value.connectionFlowDistance = integratedFlowDistance(track, playhead)
       out[track.nodeId] = value
     }
     for (const group of compiledTextTrackGroups) {
@@ -453,11 +477,13 @@ function createAnimEngine(): AnimEngine {
       out[binding.nodeId] = value
     }
     applyCursorVariantBindings(out, compiledCursorVariantBindings)
+    applyNullTransforms(api, out, compiledNullNodes)
     snapshot = out
     notify()
   }
 
   return {
+    getSceneAPI: () => api,
     attach(a) {
       // Fast Refresh and provider remounts can reattach the singleton. Keep
       // exactly one scene listener; leaked subscriptions multiply every
@@ -682,7 +708,9 @@ function applyTrack(
 
   const av = a.value
   const bv = b.value
-  if (typeof av === 'number' && typeof bv === 'number') {
+  if (track.propertyId === 'arrangement.path') {
+    writeProperty(track.propertyId, interpolateArrangementPath(av, bv, u, rawU), into)
+  } else if (typeof av === 'number' && typeof bv === 'number') {
     const val = av + (bv - av) * u
     writeProperty(track.propertyId, val, into)
   } else if (typeof av === 'string' && typeof bv === 'string') {
@@ -828,6 +856,19 @@ function writeProperty(
     if (value === 'row' || value === 'column') into.layoutDirection = value
     return
   }
+  if (id.startsWith('arrangement.')) {
+    const key = id.slice(12)
+    if (key === 'path') {
+      const path = interpolateArrangementPath(value, value, 0)
+      if (path) (into.arrangement ??= {}).path = path
+    } else if (Object.hasOwn(ARRANGEMENT_CHOICES, key)) {
+      const spec = ARRANGEMENT_CHOICES[key as ArrangementChoice]
+      if (typeof value === 'string' && (spec.values as readonly string[]).includes(value)) Object.assign(into.arrangement ??= {}, { [key]: value })
+    } else if (Object.hasOwn(ARRANGEMENT_NUMBERS, key) && typeof value === 'number' && Number.isFinite(value)) {
+      (into.arrangement ??= {})[key as ArrangementNumber] = value
+    }
+    return
+  }
   if (typeof value !== 'number') return
   const effectId = effectIdFromBlurPropertyId(id)
   if (effectId) {
@@ -918,6 +959,12 @@ function writeProperty(
       break
     case 'text.progress':
       into.textProgress = value
+      break
+    case 'connection.width': into.connectionWidth = value; break
+    case 'connection.flowSpeed': into.connectionFlowSpeed = value; break
+    case 'connection.flowPhase': into.connectionFlowPhase = value; break
+    case 'extrusion.depth':
+      into.extrusionDepth = value
       break
     case 'motionPath.progress':
       into.motionPathProgress = value
@@ -1020,6 +1067,24 @@ function writeProperty(
       break
     case 'camera.focusWorldZ':
       into.focusWorldZ = value
+      break
+    case 'camera.focusPlaneX':
+      into.focusPlaneX = value
+      break
+    case 'camera.focusPlaneY':
+      into.focusPlaneY = value
+      break
+    case 'camera.focusPlaneZ':
+      into.focusPlaneZ = value
+      break
+    case 'camera.focusPlaneRotationX':
+      into.focusPlaneRotationX = value
+      break
+    case 'camera.focusPlaneRotationY':
+      into.focusPlaneRotationY = value
+      break
+    case 'camera.focusPlaneRotationZ':
+      into.focusPlaneRotationZ = value
       break
     case 'camera.focusRadius':
       into.focusRadius = value

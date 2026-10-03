@@ -3,6 +3,7 @@
 import type { KeyframeValue, NodeId, PropertyId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import { effectBlurPropertyId } from '@/scene/props'
+import { ARRANGEMENT_CHOICES, ARRANGEMENT_NUMBERS } from '@/scene/arrangement'
 import { addKeyframe, findTrack } from './tracks'
 
 /**
@@ -122,6 +123,12 @@ const CAMERA_PROP_IDS: Partial<Record<string, PropertyId>> = {
   focusWorldX: 'camera.focusWorldX',
   focusWorldY: 'camera.focusWorldY',
   focusWorldZ: 'camera.focusWorldZ',
+  focusPlaneX: 'camera.focusPlaneX',
+  focusPlaneY: 'camera.focusPlaneY',
+  focusPlaneZ: 'camera.focusPlaneZ',
+  focusPlaneRotationX: 'camera.focusPlaneRotationX',
+  focusPlaneRotationY: 'camera.focusPlaneRotationY',
+  focusPlaneRotationZ: 'camera.focusPlaneRotationZ',
   focusRadius: 'camera.focusRadius',
   focusFalloff: 'camera.focusFalloff',
   pointOfInterestX: 'camera.pointOfInterestX',
@@ -170,12 +177,20 @@ const BEND_PROP_IDS: Partial<Record<string, PropertyId>> = {
   left: 'bend.left',
 }
 
+const ARRANGEMENT_PROP_IDS = Object.fromEntries(
+  [...Object.keys(ARRANGEMENT_NUMBERS), ...Object.keys(ARRANGEMENT_CHOICES), 'path']
+    .map(key => [key, `arrangement.${key}`]),
+) as Partial<Record<string, PropertyId>>
+
 export type PatchGroup =
+  | 'arrangement'
   | 'transform'
   | 'appearance'
   | 'shape'
   | 'size'
   | 'camera'
+  | 'connection'
+  | 'extrusion'
   | 'motionPath'
   | 'deformation'
   | 'layout'
@@ -344,7 +359,13 @@ export function stampToActiveTracksForPatch(
 function propertyMapForGroup(
   group: PatchGroup,
 ): Partial<Record<string, PropertyId>> {
-  return group === 'transform'
+  return group === 'arrangement'
+    ? ARRANGEMENT_PROP_IDS
+    : group === 'connection'
+    ? { width: 'connection.width', flowSpeed: 'connection.flowSpeed', flowPhase: 'connection.flowPhase' }
+    : group === 'extrusion'
+    ? { depth: 'extrusion.depth' }
+    : group === 'transform'
     ? TRANSFORM_PROP_IDS
     : group === 'appearance'
       ? APPEARANCE_PROP_IDS

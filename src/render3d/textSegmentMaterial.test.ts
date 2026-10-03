@@ -32,6 +32,7 @@ function compile(material: THREE.MeshBasicMaterial) {
     vertexShader: `#include <common>
 void main() {
   #include <begin_vertex>
+  #include <project_vertex>
 }`,
     fragmentShader: `#include <common>
 #include <map_pars_fragment>
@@ -45,6 +46,38 @@ void main() {
 }
 
 describe('batched text-segment material shader', () => {
+  it('keeps continuous depth focus before combining animated text effect blur', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateTextSegmentMaterialShader(material, {
+      ...dofState, blurPx: 0, minimumBlurPx: 0, focusMask: false,
+      depthFocus: { normal: { x: 0, y: 0, z: 1 }, constant: 1000, depthScale: 350, aperture: 1, maxBlurPx: 24 },
+    })
+    const shader = compile(material)
+    const fromSegment = shader.fragmentShader.indexOf('max( vHmDofBlur, hmDofMinBlur )')
+    const fromDepth = shader.fragmentShader.indexOf('hmLensBlur = hmDepthFocusMaxBlur * (')
+    const effectMix = shader.fragmentShader.indexOf('float hmLocalBlur = max( hmEffectBlur, hmLensBlur );')
+    expect(fromSegment).toBeGreaterThan(-1)
+    expect(fromDepth).toBeGreaterThan(fromSegment)
+    expect(effectMix).toBeGreaterThan(fromDepth)
+    expect(shader.fragmentShader.match(/float hmLensBlur =/g)).toHaveLength(1)
+    expect(shader.fragmentShader).toContain('hmEffectOffset * hmEffectRadiusPx')
+    expect(shader.vertexShader).toContain('#include <project_vertex>\nhmBentViewPosition = mvPosition.xyz;')
+    expect(material.userData.hyperMotionDofUniforms.hmDofEnabled.value).toBe(1)
+    expect(material.userData.hyperMotionDofUniforms.hmDepthFocusEnabled.value).toBe(1)
+  })
+
+  it('preserves ordinary animated text blur when camera depth of field is off', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateTextSegmentMaterialShader(material, { ...dofState, enabled: false })
+    const shader = compile(material)
+    expect(material.userData.hyperMotionDofUniforms.hmDofEnabled.value).toBe(0)
+    expect(material.userData.hyperMotionDofUniforms.hmDepthFocusEnabled.value).toBe(0)
+    expect(shader.fragmentShader).toContain('float hmLensBlur = hmDofEnabled > 0.5')
+    expect(shader.fragmentShader).toContain('float hmEffectBlur = max( vHmEffectBlur, 0.0 );')
+    expect(shader.fragmentShader).toContain('if ( hmLocalBlur > 0.05 && hmActiveSampleCount > 0.5 )')
+    expect(shader.fragmentShader).not.toContain('if ( hmDofEnabled > 0.5 && hmKernelBlur')
+  })
+
   it('composes the existing DOF shader with per-vertex segment attributes', () => {
     const material = new THREE.MeshBasicMaterial()
     updateTextSegmentMaterialShader(material, dofState)
@@ -155,7 +188,7 @@ describe('batched text-segment material shader', () => {
     installDepthOfFieldShader(baseMaterial)
     expect(cacheKey).toContain(baseMaterial.customProgramCacheKey())
     expect(cacheKey).not.toBe(baseMaterial.customProgramCacheKey())
-    expect(cacheKey).toContain('hypermotion-text-segment-v3')
+    expect(cacheKey).toContain('hypermotion-text-segment-depth-v4')
   })
 
   it('replaces a stale HMR wrapper without duplicating shader declarations', () => {
@@ -175,5 +208,17 @@ describe('batched text-segment material shader', () => {
     expect(
       material.userData.hyperMotionDofUniforms.hmSampleCount.value,
     ).toBe(12)
+  })
+
+  it('restores the text wrapper when only the base depth schema becomes stale', () => {
+    const material = new THREE.MeshBasicMaterial()
+    updateTextSegmentMaterialShader(material, dofState)
+    delete material.userData.hyperMotionDofUniforms.hmDepthFocusPlane
+    updateTextSegmentMaterialShader(material, dofState)
+    const shader = compile(material)
+    expect(shader.vertexShader.match(/attribute float hmOpacity;/g)).toHaveLength(1)
+    expect(shader.fragmentShader.match(/uniform vec4 hmDepthFocusPlane;/g)).toHaveLength(1)
+    expect(shader.fragmentShader).toContain('float hmLocalBlur = max( hmEffectBlur, hmLensBlur );')
+    expect(material.userData.hyperMotionDofUniforms.hmDofBlur.value).toBe(18)
   })
 })

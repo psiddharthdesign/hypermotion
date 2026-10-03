@@ -429,6 +429,35 @@ Every paintable node carries:
 Backwards-compatible with the desktop app's inspector — the same
 schema renders inside the editor exactly as it does in the saved file.
 
+### Arrangements and transform controllers
+
+Use **Arrangement** beside Scene layers to arrange selected layers, or create
+nine editable blue squares when no eligible layers are selected. Supported
+patterns are rectangular, radial, path, and spherical. Members appear grouped
+in Layers while retaining their real layout parents and independent keyframes.
+See [docs/arrangements.md](./docs/arrangements.md) for all controls.
+
+Author `kind: 'arrangement'` under the composition root with an `arrangement`
+object containing `version: 1`, `mode`, and ordered `memberIds`. Members use
+`transformParent: { nodeId, inverseBind }`, where `inverseBind` is a 16-number
+column-major matrix capturing their relationship to the controller. Native
+creation actions calculate this matrix from the current world pose.
+
+Animate numeric `arrangement.*` fields such as `radius`, `spacingX`, `spacingY`,
+`rotationX`, `rotationY`, `rotation`, and `orbit`. Radial `orbit` moves members
+along a fixed tilted ring; 0–360 degrees makes one lap. `orientation: 'screen'`
+keeps members facing the active camera, including orthographic cameras. Other
+choices are `forward`, `center`, `outward`, and `path`. Pattern and orientation
+keyframes switch discretely. Arrangement opacity multiplies member opacity.
+
+Null controllers use `kind: 'null'` under the composition root with ordinary
+transform properties and the same transform-parent relationship. Cameras remain
+scene-level (`parent: null`) even when connected. `transformOffset` optionally
+preserves a detached pose. Controllers do not paint or consume a layout slot.
+Do not use controllers or procedural flow connections as Arrangement members.
+Grid snapping and overlap protection apply to direct solid editing; procedural
+Arrangement motion and keyframes retain the authored layout.
+
 ### Beam layer effect
 
 `appearance.effects` accepts `kind: "border-beam"` for the Border, Compact,
@@ -462,6 +491,19 @@ Set `deformation.mode: 'wave'` for a directional sine wave. Animate
 These use `deformation.bend.<field>` property ids. Capture rotation controls
 wave direction; the up axis chooses canvas displacement or 3D depth. Omitted
 mode preserves the original arc bend. Radial ripples are not supported.
+
+### Isometric cameras and composition guides
+
+Set a camera's `projection` to `orthographic` for parallel projection. Camera
+`transform.scaleX` is the uniform view extent: `0.5` gives 200% zoom; legacy
+`scaleY` values remain stored but do not distort the camera. XYZ rotation,
+position and zoom use the normal keyframe tracks. Four named isometric views
+are available at the top of camera Properties and with Alt/Option+1–4.
+
+The static `compositionGuide` camera field accepts `none`, `thirds`, `center`,
+`diagonals`, `diamond`, `diamond-grid`, `isometric`, `golden-ratio`, `grid`, or
+`safe-areas`. These are editor-only framing overlays, excluded from exports.
+They do not snap or move assets. See [docs/camera-guides.md](./docs/camera-guides.md).
 
 ### Layer motion paths
 
@@ -517,6 +559,8 @@ transform.rotationX, transform.rotationY, transform.scaleX, transform.scaleY,
 transform.anchorX, transform.anchorY, transform.anchorZ,
 camera.focusDistance, camera.focusX, camera.focusY,
 camera.focusWorldX, camera.focusWorldY, camera.focusWorldZ,
+camera.focusPlaneX, camera.focusPlaneY, camera.focusPlaneZ,
+camera.focusPlaneRotationX, camera.focusPlaneRotationY, camera.focusPlaneRotationZ,
 camera.focusRadius, camera.focusFalloff,
 camera.pointOfInterestX, camera.pointOfInterestY, camera.pointOfInterestZ,
 camera.focalLength, camera.fieldOfView, camera.nearClip, camera.farClip,
@@ -743,3 +787,29 @@ welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR.
 ## License
 
 Apache 2.0. See [LICENSE](./LICENSE).
+
+### Isometric solid assets
+
+Rectangles and complete ellipses can carry `extrusion: { depth, sideColor }`.
+Depth extends behind the front face in local +Z, clamps to 0–100000 pixels, and
+is keyframeable as `extrusion.depth`. Omit or clear extrusion for a flat layer.
+Use uniform corners without smoothing. The first version has plain shaded
+sides; full solid silhouette depth-of-field is not yet supported. Face push/pull
+supports dimensions, depth, and keyframes. Optional editor grid snapping uses
+world coordinates. `preventOverlap: true` on a solid or asset group protects
+manual placement and face editing; either protected member blocks overlap,
+while parts within the same protected assembly may intersect. Playback is not
+collision-resolved; this setting is not animated. See [docs/isometric-assets.md](./docs/isometric-assets.md).
+
+
+### Attached flow connections
+
+An ordinary vector layer may carry `connection` with `version: 1`, `sourceId`,
+`targetId`, `routing: 'elbow' | 'straight'`, `color`, `width`, `flowEnabled`,
+`flowColor`, `flowSpeed`, `flowSpacing`, `flowSize`, and `flowPhase`. Create it
+under the scene root with absolute position and no fill/stroke. Its world-space
+geometry follows its endpoint assets, including grouped solids and animation;
+its own transform and storage rectangle do not determine the path. Numeric
+tracks `connection.width`, `connection.flowSpeed`, and `connection.flowPhase`
+are supported. With speed 0, phase 0→1 is one complete pulse cycle. See
+[isometric assets](docs/isometric-assets.md) for direct face editing and limits.

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CSSProperties } from 'react'
-import { fillToCss, imageBackgroundStyle } from '@/scene'
+import { fillToCss, imageBackgroundStyle } from '@/scene/fill'
 import type { CameraNode, Fill, NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
 import type { Rect, SolvedLayout } from '@/layout'
 import type { AnimatedValue } from '@/ui/hooks/useAnimatedValues'
-import { resolveCameraDomProjection } from '@/render/cameraDomProjection'
 import {
   buildWorldPlanes,
   effectiveApertureStrength,
@@ -268,18 +267,26 @@ export function computeCameraDepthOfField(
   focusWorldOverride?: Vec3 | null,
 ): CameraDepthOfField | null {
   if (!camera || !camera.depthOfField) return null
-  const focusDistance = cameraAnim?.focusDistance ?? camera.focusDistance ?? 0
+  const mode = camera.focusMode ?? 'screen'
+  const viewport = { width: canvasWidth, height: canvasHeight }
+  // Resolve once so the guide and renderer share the same animated focus plane.
+  // Saved Point coordinates must not move Distance focus off the camera axis.
+  const resolved = resolveCamera3D(
+    camera,
+    cameraAnim,
+    viewport,
+    mode === 'target' ? focusWorldOverride : undefined,
+  )
+  const focusWorld = resolved.focusWorld
+  const focusDistance = resolved.focusDistance
   const aperture = Math.max(0, cameraAnim?.aperture ?? camera.aperture ?? 0)
   const fStop = Math.max(0.1, cameraAnim?.fStop ?? camera.fStop ?? 2.8)
-  const focusZ = cameraAnim?.focusWorldZ ?? camera.focusWorldZ ?? focusDistance
+  const focusZ = focusWorld.z
   const maxBlur = Math.max(
     0,
     Math.min(128, cameraAnim?.blurLevel ?? camera.blurLevel ?? 1),
   )
-  const focalLength = resolveCameraDomProjection(camera, cameraAnim, {
-    width: canvasWidth,
-    height: canvasHeight,
-  }).focalLength
+  const focalLength = resolved.focalLength
   const cameraZ = cameraAnim?.z ?? camera.transform.z
   const rotationX = cameraAnim?.rotationX ?? camera.transform.rotationX
   const rotationY = cameraAnim?.rotationY ?? camera.transform.rotationY
@@ -308,47 +315,9 @@ export function computeCameraDepthOfField(
     1,
     cameraAnim?.focusFalloff ?? camera.focusFalloff ?? 180,
   )
-  const mode = camera.focusMode ?? 'screen'
-  const focusScreen = {
-    x:
-      cameraAnim?.focusX ??
-      cameraAnim?.focusWorldX ??
-      camera.focusX ??
-      camera.focusWorldX ??
-      canvasWidth / 2,
-    y:
-      cameraAnim?.focusY ??
-      cameraAnim?.focusWorldY ??
-      camera.focusY ??
-      camera.focusWorldY ??
-      canvasHeight / 2,
-  }
-  const focusWorld = focusWorldOverride ?? {
-    x:
-      cameraAnim?.focusWorldX ??
-      cameraAnim?.focusX ??
-      camera.focusWorldX ??
-      camera.focusX ??
-      focusScreen.x,
-    y:
-      cameraAnim?.focusWorldY ??
-      cameraAnim?.focusY ??
-      camera.focusWorldY ??
-      camera.focusY ??
-      focusScreen.y,
-    z: focusZ,
-  }
-  const projected =
-    mode === 'screen'
-      ? focusScreen
-      : projectWorldPoint(
-          focusWorld,
-          resolveCamera3D(camera, cameraAnim, {
-            width: canvasWidth,
-            height: canvasHeight,
-          }),
-          { width: canvasWidth, height: canvasHeight },
-        )
+  const projected = mode === 'screen'
+    ? resolved.focusScreen
+    : projectWorldPoint(focusWorld, resolved, viewport)
   return {
     enabled: true,
     mode,
@@ -359,7 +328,7 @@ export function computeCameraDepthOfField(
     focusWorldZ: focusWorld.z,
     focusRadius,
     focusFalloff,
-    focusDistance: mode === 'screen' ? focusDistance : focusWorld.z,
+    focusDistance,
     aperture,
     blurPx,
     featherPx: focusFalloff,

@@ -120,3 +120,27 @@ export function cameraZFromWheel(input: CameraWheelDollyInput): number {
   )
   return focalLength - nextDistance
 }
+
+export interface CameraWheelZoomInput extends Omit<CameraWheelDollyInput, 'currentZ' | 'focalLength'> {
+  currentScaleX: number
+  currentScaleY: number
+}
+
+/** Orthographic cameras zoom by changing their view size, not their depth. */
+export function cameraScaleFromWheel(input: CameraWheelZoomInput): { scaleX: number; scaleY: number } {
+  const delta = normalizedWheelDeltaY(input.deltaY, input.deltaMode, input.pageHeight)
+  const exponent = delta * DOLLY_SENSITIVITY *
+    normalizeCameraScrollSensitivity(input.scrollSensitivity) *
+    (input.fine ? FINE_DOLLY_FACTOR : 1)
+  return cameraScaleFromZoomDelta(input.currentScaleX, input.currentScaleY, exponent)
+}
+
+/** Camera zoom is uniform; hidden legacy Y tracks must not distort or limit it. */
+export function cameraScaleFromZoomDelta(scaleX: number, _scaleY: number, exponent: number): { scaleX: number; scaleY: number } {
+  const normalize = (value: number) => Number.isFinite(value) && value !== 0 ? Math.abs(value) : 1
+  const scale = normalize(scaleX)
+  const minFactor = Math.min(1, 0.001 / scale)
+  const maxFactor = Math.max(1, 1000 / scale)
+  const factor = clamp(Math.exp(clamp(Number.isFinite(exponent) ? exponent : 0, -20, 20)), minFactor, maxFactor)
+  return { scaleX: scale * factor, scaleY: scale * factor }
+}

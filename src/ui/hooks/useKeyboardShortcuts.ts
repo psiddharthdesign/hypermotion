@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { dissolveArrangement, duplicateArrangement } from '@/scene/arrangementActions'
+
+import { detachNullDependents } from '@/scene/nullObject'
+
+import { remapFlowConnections } from '@/scene/flowConnection'
 
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
@@ -64,6 +70,11 @@ import {
 } from '@/ui/CameraCutBar.helpers'
 import { planCameraCutShortcut } from '@/ui/cameraCutShortcut'
 import { cameraCutDeleteKeyGuard } from '@/ui/cameraCutKeyboard'
+import { isometricViewForShortcut } from '@/ui/isometricViewShortcut'
+import { applyIsometricCameraPreset } from '@/ui/cameraViewPreset'
+import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
+import { cameraPreviewStore } from '@/ui/cameraPreviewStore'
+import { resolveProgramCamera } from '@/sequence'
 
 /**
  * Global keyboard shortcuts.
@@ -229,6 +240,29 @@ export function useKeyboardShortcuts() {
       }
 
       if (inField) return
+
+      const isometricView = isometricViewForShortcut(e)
+      if (isometricView && !isEditableControl && !useUI.getState().contextMenu) {
+        const scene = project.getActiveScene()
+        if (!scene) return
+        const ui = useUI.getState()
+        const view = ui.previewScope === 'scene' ? ui.cameraViewByComposition[scene.id] : undefined
+        const time = currentAnimationAuthorTime()
+        const cameras = scene.cameraIds.flatMap(id => {
+          const camera = api.getNode(id)
+          return camera?.kind === 'camera' ? [{ id: camera.id, enabled: camera.enabled }] : []
+        })
+        const cameraId = view?.mode === 'camera' ? view.cameraId : resolveProgramCamera({
+          scene, localTime: time, frameRate: api.getMeta().frameRate,
+          cameras, fallbackCameraId: api.getActiveCameraId(),
+        }).cameraId
+        const camera = cameraId ? api.getNode(cameraId) : null
+        if (camera?.kind !== 'camera' || camera.locked || !camera.enabled || !scene.cameraIds.includes(camera.id)) return
+        e.preventDefault()
+        cameraPreviewStore.clear(camera.id)
+        applyIsometricCameraPreset(api, camera.id, time, ui.recording, isometricView)
+        return
+      }
 
       // Undo / redo. Read the ref instead of a closed-over variable so
       // the manager's identity can swap (when `api` changes) without
@@ -457,7 +491,8 @@ export function useKeyboardShortcuts() {
           if (!n) continue
           if (id === api.getRoot()) continue
           if (n.kind === 'camera') continue
-          api.deleteNode(id)
+          if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+          else api.deleteNode(id)
         }
         clearSelection()
         return
@@ -756,7 +791,11 @@ export function useKeyboardShortcuts() {
             }
             continue
           }
-          if (n.parent || n.workspaceOnly) api.deleteNode(id)
+          if (n.parent || n.workspaceOnly) api.doc.transact(() => {
+            if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+            if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+            else api.deleteNode(id)
+          }, UNDOABLE_GESTURE_ORIGIN)
         }
         if (fallbackCameraId) setSelection([fallbackCameraId])
         else if (retainedCameraId) setSelection([retainedCameraId])
@@ -893,15 +932,18 @@ function duplicateNode(
 ): NodeId | null {
   const original = api.getNode(id)
   if (!original || !original.parent) return null
+  if (original.kind === 'arrangement') return duplicateArrangement(api, id)
   if (original.kind === 'camera') return null
   if (original.kind === 'component') return instantiateComponent(api, original.id)
 
+  const nodeMap = new Map<NodeId, NodeId>()
   const cloneSubtree = (src: SceneNode, parent: NodeId): NodeId => {
     const newId = api.createNode(src.kind, parent, {
       // Strip the id / parent / children — createNode provides fresh ones.
       name: src.name + ' copy',
       ...stripLinks(src),
     } as Partial<SceneNode>)
+    nodeMap.set(src.id, newId)
     // Carry the animation with the duplicate. Every track on the source
     // node gets recreated against `newId` with fresh track + keyframe ids;
     // timing, values, and easings are preserved byte-for-byte. Without
@@ -924,6 +966,7 @@ function duplicateNode(
   }
 
   const newId = cloneSubtree(original, original.parent)
+  remapFlowConnections(api, nodeMap)
   const copy = api.getNode(newId)
   if (copy) {
     // Only nudge the transform when the parent is 'none' (free canvas).
@@ -1413,6 +1456,7 @@ function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolea
       (effect, index) => effectStableId(effect, index) === effectId,
     )
   }
+  if (propertyId.startsWith('arrangement.')) return node.kind === 'arrangement'
   if (propertyId.startsWith('camera.')) return node.kind === 'camera'
   if (propertyId === 'text.progress') return node.kind === 'text'
   if (propertyId === 'variant') return node.kind === 'instance'

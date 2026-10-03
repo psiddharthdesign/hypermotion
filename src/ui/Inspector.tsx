@@ -1,6 +1,17 @@
+import { ArrangementSection } from '@/ui/ArrangementSection'
+import { NullParentSection } from '@/ui/NullParentSection'
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
+import { applyIsometricCameraPreset, cameraZoomScale } from './cameraViewPreset'
+import { CameraZoomKeyframeButton } from './CameraZoomKeyframeButton'
+import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
+import { CameraCompositionGuideField } from './CameraCompositionGuideField'
+import { ExtrusionSection } from './ExtrusionSection'
+import { SolidFaceEditingButton } from './SolidFaceEditingButton'
+import { SolidPlacementSection } from './SolidPlacementSection'
+import { createSolidInspectorPositionConstraint, isSolidPositionPatch, type SolidInspectorPositionConstraint } from './solidInspectorPosition'
+import { FlowConnectionSection } from './FlowConnectionSection'
 
 import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
@@ -108,7 +119,8 @@ import {
   readMediaFileAsDataUrl,
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
-import { nearestLayerFocus } from '@/ui/cameraFocus'
+import { alignedFocusPlanePose, nearestLayerFocus } from '@/ui/cameraFocus'
+import { FocusPlaneDistanceField } from '@/ui/FocusPlaneDistanceField'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
 import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
@@ -532,6 +544,10 @@ function formatInspectorSizeAxis(value: Size['width']): string {
 
 function inspectorIconForNode(node: Node): AppIconName {
   switch (node.kind) {
+    case 'arrangement':
+      return 'grid'
+    case 'null':
+      return 'null'
     case 'camera':
       return 'camera'
     case 'text':
@@ -3145,6 +3161,8 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
+  const solidPositionScrub = useRef<{ nodeId: NodeId; constraint: SolidInspectorPositionConstraint | null } | null>(null)
+  useEffect(() => { solidPositionScrub.current = null }, [node.id])
   const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
   const setFocusPickingCameraId = useUI(
     (state) => state.setFocusPickingCameraId,
@@ -3209,18 +3227,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       : node.appearance.fill
   const cursorInstance = isCursorInstance(api, node)
   const supportsMotionPath =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
-    !cursorInstance
+    !cursorInstance &&
+    !node.connection
   const motionPath =
     supportsMotionPath ? normalizeLayerMotionPath(node.motionPath) : null
   const liveMotionPathProgress =
     anim?.motionPathProgress ?? motionPath?.progress ?? 0
   const supportsBend =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
-    node.kind !== 'audio'
+    node.kind !== 'audio' &&
+    !node.connection
   const bend = supportsBend
     ? normalizeLayerDeformation(node.deformation)
     : null
@@ -3353,7 +3375,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       .map((id) => api.getNode(id))
       .filter(
         (candidate): candidate is Node =>
-          !!candidate && candidate.kind !== 'camera' && candidate.id !== node.id,
+          !!candidate &&
+          candidate.kind !== 'camera' &&
+          candidate.kind !== 'audio' &&
+          candidate.kind !== 'null' &&
+          candidate.kind !== 'arrangement' &&
+          !candidate.connection &&
+          candidate.id !== node.id,
       )
       .map((candidate) => ({
         value: candidate.id,
@@ -3436,7 +3464,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       stampToActiveTracksForPatch(api, node.id, ui.playhead, group, patch)
     }
   }
-  const patchTransform = (patch: Partial<Transform>) => {
+  const patchTransform = (patch: Partial<Transform>, fromScrub = false) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      const constraint = fromScrub && solidPositionScrub.current?.nodeId === node.id
+        ? solidPositionScrub.current.constraint
+        : createSolidInspectorPositionConstraint(api, node.id)
+      patch = constraint?.commit(patch) ?? patch
+    }
+    solidPositionScrub.current = null
     // Read the FRESHEST transform from the api at call time, not from
     // the React closure's `node.transform` snapshot. Two back-to-back
     // calls (e.g. the linked Scale axes calling onCommitX + onCommitY
@@ -3584,10 +3619,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const previewNodeVisual = (patch: AnimatedValue) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      if (solidPositionScrub.current?.nodeId !== node.id) {
+        solidPositionScrub.current = { nodeId: node.id, constraint: createSolidInspectorPositionConstraint(api, node.id) }
+      }
+      patch = solidPositionScrub.current.constraint?.preview(patch) ?? patch
+    }
     nodeTransformPreviewStore.preview({ [node.id]: patch })
   }
   const commitTransformScrub = (patch: Partial<Transform>) => {
-    patchTransform(patch)
+    patchTransform(patch, true)
     nodeTransformPreviewStore.finish()
   }
   const commitAppearanceScrub = (patch: Partial<Appearance>) => {
@@ -3600,7 +3641,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     patchEllipseArc(patch)
     nodeTransformPreviewStore.finish()
   }
-  const cancelNodeVisualPreview = () => nodeTransformPreviewStore.clear()
+  const cancelNodeVisualPreview = () => {
+    solidPositionScrub.current = null
+    nodeTransformPreviewStore.clear()
+  }
   const patchSize = (patch: Partial<Size>) => {
     const current = api.getNode(node.id)
     if (!current || !('size' in current)) return
@@ -3723,6 +3767,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focusWorldX'
         | 'focusWorldY'
         | 'focusWorldZ'
+        | 'focusPlaneRotationX'
+        | 'focusPlaneRotationY'
+        | 'focusPlaneRotationZ'
+        | 'focusPlaneX'
+        | 'focusPlaneY'
+        | 'focusPlaneZ'
+        | 'focusPlaneInitialized'
         | 'focusRadius'
         | 'focusFalloff'
         | 'focusTargetNodeId'
@@ -3787,6 +3838,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.focusWorldZ !== undefined) {
       api.setNodeProperty(node.id, 'focusWorldZ', patch.focusWorldZ)
+    }
+    for (const field of ['focusPlaneX', 'focusPlaneY', 'focusPlaneZ', 'focusPlaneRotationX', 'focusPlaneRotationY', 'focusPlaneRotationZ', 'focusPlaneInitialized'] as const) {
+      if (patch[field] !== undefined) api.setNodeProperty(node.id, field, patch[field])
     }
     if (patch.focusRadius !== undefined) {
       api.setNodeProperty(node.id, 'focusRadius', patch.focusRadius)
@@ -3927,6 +3981,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     if (node.kind !== 'camera') return
     cameraPreviewStore.clear(node.id)
   }
+  const currentAlignedFocusPlanePose = () => {
+    if (node.kind !== 'camera') return {}
+    const snapshot = getAnimEngine().getSnapshot()
+    return alignedFocusPlanePose(api, node, getLastSolvedLayout(), {
+      ...snapshot, [node.id]: { ...snapshot[node.id], ...anim },
+    })
+  }
   const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
     if (!('layout' in node)) return
@@ -3958,6 +4019,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       if (isAutoLayout) {
         api.doc.transact(() => {
           for (const child of api.getChildren(node.id)) {
+            if ((child.kind === 'null' || child.kind === 'arrangement')) continue
             if (child.position !== 'flow') {
               api.setNodeProperty(child.id, 'position', 'flow')
             }
@@ -3975,6 +4037,39 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   }
   return (
     <div className="space-y-4">
+      {node.kind === 'camera' && (
+        <Section title="Camera view">
+          <FieldRow label="Projection">
+            <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
+              ariaLabel="Camera projection"
+              options={[{ value: 'perspective', label: 'Perspective' }, { value: 'orthographic', label: 'Orthographic' }]}
+              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection), UNDOABLE_GESTURE_ORIGIN)} />
+          </FieldRow>
+          <FieldRow label="Isometric view">
+            <SelectField value={node.projection === 'orthographic' ? ISOMETRIC_CAMERA_VIEWS.find(view =>
+              Math.abs(view.rotation.rotationX - liveRotX) < 0.01 && Math.abs(view.rotation.rotationY - liveRotY) < 0.01 && Math.abs(view.rotation.rotation - liveRot) < 0.01)?.id ?? '' : ''}
+              ariaLabel="Isometric view" options={[
+                { value: '', label: 'Choose view…' },
+                ...ISOMETRIC_CAMERA_VIEWS.map((view, index) => ({ value: view.id, label: `${view.label} · Alt/Option+${index + 1}` })),
+              ]} onCommit={value => {
+                const view = ISOMETRIC_CAMERA_VIEWS.find(candidate => candidate.id === value)
+                if (!view) return
+                cameraPreviewStore.clear(node.id)
+                applyIsometricCameraPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, view.id)
+              }} />
+          </FieldRow>
+          {node.projection === 'orthographic' && <>
+            <KeyframeSliderRow label="Zoom" value={100 / Math.max(0.01, liveSX)}
+              onCommit={value => { const scale = cameraZoomScale(value); patchTransform({ scaleX: scale }) }}
+              onScrubPreview={value => { const scale = cameraZoomScale(value); previewCameraTransform({ scaleX: scale }) }}
+              onScrubCommit={value => { const scale = cameraZoomScale(value); commitCameraTransformScrub({ scaleX: scale }) }}
+              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
+              min={1} max={10000} adaptiveSpan={400} step={1} suffix="%"
+              keyframe={<CameraZoomKeyframeButton nodeId={node.id} scale={liveSX} />} />
+            <p className="text-[11px] leading-relaxed text-text-muted">Parallel lines stay parallel at every depth. Pan, orbit, and zoom can be animated.</p>
+          </>}
+        </Section>
+      )}
       <Section title="Node">
         <FieldRow label="Name">
           <TextField
@@ -4034,11 +4129,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ExposeComponentPropertiesSection node={node} api={api} />
       )}
 
-      {node.kind !== 'audio' && <PositionSection node={node} api={api} />}
+      <ArrangementSection node={node} api={api} />
+      {node.kind !== 'arrangement' && api.getNode(node.transformParent?.nodeId ?? '')?.kind !== 'arrangement' && <NullParentSection node={node} api={api} />}
+
+      {node.kind !== 'audio' && node.kind !== 'null' && node.kind !== 'arrangement' && <PositionSection node={node} api={api} />}
 
       {node.kind === 'camera' && (
         <>
-          <CameraViewportControlsHint />
+          <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
 
           <Section
             title="Camera Position"
@@ -4205,6 +4303,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </>
       )}
 
+      <SolidFaceEditingButton api={api} selection={[node.id]} />
+      <SolidPlacementSection api={api} node={node} />
+      {node.kind === 'vector' && node.connection && (
+        <FlowConnectionSection api={api} node={node} anim={anim} />
+      )}
+
       {supportsMotionPath && (
         <MotionPathSection
           nodeId={node.id}
@@ -4216,10 +4320,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         />
       )}
 
-      {node.kind !== 'camera' && node.kind !== 'audio' && (
+      {node.kind !== 'camera' && node.kind !== 'audio' && !node.connection && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
-        <AlignTools api={api} selection={[node.id]} />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && <AlignTools api={api} selection={[node.id]} />}
         <KeyframeSliderRow
           label="Position X"
           value={liveX}
@@ -4351,6 +4455,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
           onScrubCancel={cancelNodeVisualPreview}
         />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && (
         <InspectorDisclosure
           storageKey="advanced-transform"
           title="Advanced transform"
@@ -4499,6 +4604,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             }
           />
         </InspectorDisclosure>
+        )}
       </Section>
       )}
 
@@ -4969,12 +5075,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </Section>
       )}
 
-      {'size' in node && node.kind !== 'audio' && (
+      {'size' in node && node.kind !== 'audio' && !node.connection && (
         <Section
           title={`Size · W ${formatInspectorSizeAxis(liveWidth ?? node.size.width)} × H ${formatInspectorSizeAxis(liveHeight ?? node.size.height)}`}
         >
           <FieldRow
-            label="Width"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter X" : "Width"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -4992,7 +5098,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </FieldRow>
           <FieldRow
-            label="Height"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter Y" : "Height"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -5010,6 +5116,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </FieldRow>
         </Section>
+      )}
+
+      {(node.kind === 'rect' || node.kind === 'ellipse') && (
+        <ExtrusionSection node={node} api={api} anim={anim} />
       )}
 
       {node.kind === 'text' && (
@@ -5048,7 +5158,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           apply to a viewpoint. A camera-specific section with
           projection + a future "enabled" toggle slots in here when we
           expand the camera feature surface. */}
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' && (node.kind !== 'null' && node.kind !== 'arrangement') ? (
         <Section title="Appearance">
           <KeyframeSliderRow
             label="Opacity"
@@ -5071,6 +5181,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           />
+          {!node.connection && <>
           <FieldRow
             label="Blend"
             keyframe={
@@ -5266,16 +5377,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           ) : null}
+          </>}
         </Section>
       ) : (
         <>{/* camera path emits its own sections below */}</>
       )}
 
-      {node.kind === 'vector' ? (
+      {node.kind === 'vector' && !node.connection ? (
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && (
+      {node.kind !== 'camera' && node.kind !== 'null' && node.kind !== 'arrangement' && !node.connection && (
         <EffectsSection
           nodeId={node.id}
           value={node.appearance.effects ?? []}
@@ -5291,8 +5403,15 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
+          <Section title="Composition guides">
+            <CameraCompositionGuideField value={node.compositionGuide}
+              onCommit={guide => api.doc.transact(() => api.setNodeProperty(node.id, 'compositionGuide', guide), UNDOABLE_GESTURE_ORIGIN)} />
+            <p className="text-[11px] leading-relaxed text-text-muted">
+              Framing guides stay fixed to the camera view and are hidden in exports.
+            </p>
+          </Section>
           <Section title="Lens">
-            <KeyframeSliderRow
+            {node.projection !== 'orthographic' && <KeyframeSliderRow
               label="Field of View"
               value={liveFieldOfView}
               onCommit={(v) =>
@@ -5321,7 +5440,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   variant="boxed"
                 />
               }
-            />
+            />}
             <KeyframeSliderRow
               label="Clip start"
               value={liveNearClip}
@@ -5416,8 +5535,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       { value: 'plane', label: 'Distance' },
                       { value: 'screen', label: 'Point' },
                       { value: 'target', label: 'Object' },
+                      { value: 'spatial', label: 'Focus plane' },
                     ]}
                     onCommit={(focusMode) => {
+                      setFocusPickingCameraId(null)
+                      if (focusMode === 'spatial' && node.focusMode !== 'spatial') {
+                        const pose = node.focusPlaneInitialized ? {} : currentAlignedFocusPlanePose()
+                        api.doc.transact(() => patchCamera({
+                          focusMode,
+                          focusTargetNodeId: null,
+                          showFocusPlane: true,
+                          ...pose,
+                          focusPlaneInitialized: true,
+                        }), UNDOABLE_GESTURE_ORIGIN)
+                        return
+                      }
                       const targetId =
                         focusMode === 'target'
                           ? node.focusTargetNodeId ??
@@ -5432,22 +5564,24 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
                 <p className="text-[11px] leading-relaxed text-text-muted">
                   {node.focusMode === 'plane'
-                    ? 'Layers at the focus distance are sharp. Layers nearer or farther away blur with depth.'
+                    ? 'Surfaces at this distance are sharp. Focus changes continuously across tilted surfaces.'
+                    : node.focusMode === 'spatial'
+                      ? 'Move and tilt a focus plane anywhere in the scene. Surfaces become sharp as they cross it.'
                     : node.focusMode === 'target'
                       ? 'Focus follows the target layer’s depth as it moves.'
                       : 'Point keeps a screen area sharp. Use Distance or Object to focus by 3D depth.'}
                 </p>
-                <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
+                {node.focusMode === 'plane' ? <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
                   title="Set the focus distance to the nearest layer in view at the current playhead"
                   onClick={() => {
                     const layout = getLastSolvedLayout()
                     if (!layout) return
                     const nearest = nearestLayerFocus(api, node, layout, getAnimEngine().getSnapshot())
                     if (nearest) api.doc.transact(() => patchCamera({ focusMode: 'plane', focusDistance: nearest.distance, focusTargetNodeId: null }), UNDOABLE_GESTURE_ORIGIN)
-                  }}>Focus nearest layer</button>
+                  }}>Focus nearest layer</button> : null}
 
                 {node.focusMode === 'plane' ? (
-                  <FieldRow label="Focus point">
+                  <FieldRow label="Sample depth">
                     <button
                       type="button"
                       disabled={node.locked}
@@ -5460,7 +5594,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           : 'border-border bg-app-bg text-text-muted hover:border-border-strong hover:text-text',
                       ].join(' ')}
                     >
-                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Pick focus point'}
+                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Sample surface depth'}
                     </button>
                   </FieldRow>
                 ) : null}
@@ -5482,7 +5616,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       width="w-full"
                     />
                   </FieldRow>
-                ) : (
+                ) : node.focusMode !== 'spatial' ? (
                   <KeyframeSliderRow
                     label="Focus distance"
                     value={liveFocusDistance}
@@ -5518,7 +5652,47 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       />
                     }
                   />
-                )}
+                ) : null}
+
+                {node.focusMode === 'spatial' ? (
+                  <>
+                    <FocusPlaneDistanceField camera={node} cameraAnim={anim} viewport={api.getMeta().canvas}
+                      onCommit={patch => api.doc.transact(() => patchCamera(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onPreview={previewCameraProperties}
+                      onScrubCommit={patch => api.doc.transact(() => commitCameraPropertiesScrub(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onCancel={cancelCameraPropertiesPreview} />
+                    <button type="button" disabled={node.locked}
+                      className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text"
+                      onClick={() => api.doc.transact(() => patchCamera({
+                        ...currentAlignedFocusPlanePose(),
+                        focusPlaneInitialized: true,
+                        showFocusPlane: true,
+                      }), UNDOABLE_GESTURE_ORIGIN)}>
+                      Align plane with camera
+                    </button>
+                    {([
+                      ['focusPlaneX', 'Position X', 'px'],
+                      ['focusPlaneY', 'Position Y', 'px'],
+                      ['focusPlaneZ', 'Position Z', 'px'],
+                      ['focusPlaneRotationX', 'Tilt X', '°'],
+                      ['focusPlaneRotationY', 'Tilt Y', '°'],
+                      ['focusPlaneRotationZ', 'Rotate Z', '°'],
+                    ] as const).map(([field, label, suffix]) => {
+                      const value = anim?.[field] ?? node[field] ?? 0
+                      return <KeyframeSliderRow key={field} label={label} value={value}
+                        onCommit={(v) => patchCamera({ [field]: v })}
+                        onScrubPreview={(v) => previewCameraProperties({ [field]: v })}
+                        onScrubCommit={(v) => commitCameraPropertiesScrub({ [field]: v })}
+                        onScrubCancel={cancelCameraPropertiesPreview}
+                        adaptiveSpan={suffix === '°' ? 180 : 2000} step={suffix === '°' ? 0.1 : 1} suffix={suffix}
+                        keyframe={<KeyframeButton nodeId={node.id} propertyId={`camera.${field}`} currentValue={value} />}
+                      />
+                    })}
+                    <p className="text-[11px] leading-relaxed text-text-muted">
+                      Drag the plane handle to move it across the view. Drag its depth handle to move it nearer or farther away.
+                    </p>
+                  </>
+                ) : null}
 
                 {node.focusMode === 'screen' ? (
                   <>
@@ -6387,12 +6561,12 @@ function MotionPathSection({
   )
 }
 
-function CameraViewportControlsHint() {
+function CameraViewportControlsHint({ orthographic = false }: { orthographic?: boolean }) {
   const recording = useUI((state) => state.recording)
   const controls = [
     { shortcut: 'MMB / Option-drag', action: 'Orbit' },
     { shortcut: 'Shift+MMB / Shift-scroll', action: 'Pan' },
-    { shortcut: 'Ctrl+MMB / Scroll', action: 'Dolly' },
+    { shortcut: 'Ctrl+MMB / Scroll', action: orthographic ? 'Zoom' : 'Dolly' },
     { shortcut: 'Cmd/Ctrl-scroll', action: 'Canvas zoom' },
   ] as const
 

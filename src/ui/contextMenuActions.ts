@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { createArrangement, dissolveArrangement, duplicateArrangement } from '@/scene/arrangementActions'
+
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { getAnimEngine } from '@/anim'
+import { detachNullDependents } from '@/scene/nullObject'
+
+import { remapFlowConnections } from '@/scene/flowConnection'
 
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
@@ -40,7 +48,7 @@ export function buildNodeContextMenu(
       (n) =>
         n!.parent === nodes[0]!.parent &&
         n!.parent !== null &&
-        n!.kind !== 'camera',
+        n!.kind !== 'camera' && n!.kind !== 'null' && n!.kind !== 'arrangement',
     )
   const singleFrame =
     ids.length === 1 && nodes[0] && nodes[0].kind === 'frame'
@@ -48,6 +56,13 @@ export function buildNodeContextMenu(
       : null
 
   const items: ContextMenuItem[] = []
+  if (nodes.some((node) => node.id !== api.getRoot() && !['camera', 'audio', 'null', 'arrangement'].includes(node.kind))) items.push({
+    label: 'Create arrangement',
+    onClick: () => {
+      const id = createArrangement(api, ids, getLastSolvedLayout() ?? {}, getAnimEngine().getSnapshot())
+      if (id) useUI.getState().setSelection([id])
+    },
+  })
 
   items.push({
     label: 'Wrap in group',
@@ -167,7 +182,11 @@ export function buildNodeContextMenu(
     onClick: () => {
       for (const id of ids) {
         const node = api.getNode(id)
-        if (node && node.parent) api.deleteNode(id)
+        if (node && node.parent) api.doc.transact(() => {
+          if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+          if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+          else api.deleteNode(id)
+        }, UNDOABLE_GESTURE_ORIGIN)
       }
       useUI.getState().clearSelection()
     },
@@ -187,8 +206,10 @@ export function buildNodeContextMenu(
 function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
   const original = api.getNode(id)
   if (!original || !original.parent) return null
+  if (original.kind === 'arrangement') return duplicateArrangement(api, id)
   if (original.kind === 'component') return instantiateComponent(api, original.id)
 
+  const nodeMap = new Map<NodeId, NodeId>()
   const cloneSubtree = (srcId: NodeId, parent: NodeId): NodeId => {
     const src = api.getNode(srcId)
     if (!src) return parent
@@ -200,6 +221,7 @@ function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
       ...rest,
       name: src.name + ' copy',
     } as Partial<typeof src>)
+    nodeMap.set(srcId, newId)
     for (const child of api.getChildren(srcId)) {
       cloneSubtree(child.id, newId)
     }
@@ -207,6 +229,7 @@ function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
   }
 
   const newId = cloneSubtree(id, original.parent)
+  remapFlowConnections(api, nodeMap)
   const copy = api.getNode(newId)
   if (copy) {
     api.setNodeProperty(newId, 'transform', {

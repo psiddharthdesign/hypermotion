@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Euler, Matrix4, Vector3 } from 'three'
+import { animatedArrangement } from '@/scene/arrangement'
+import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
+import { resolveFlowConnections, intersectFlowConnection } from './flowConnections'
+import { resolveNodeExtrusion, extrusionShapeForPlane, extrusionWorldMatrix } from './extrusionScene'
+import { intersectExtrusion } from './extrusionPicking'
+import type { Extrusion } from '@/scene/extrusion'
+import { orthographicCameraZoom } from '@/scene/cameraProjection'
 
 import { maskOutline, siblingMask } from '@/render/maskShape'
 import { clipContainsPoint } from './planeClipping'
@@ -47,9 +55,14 @@ export interface ViewportSize {
 
 export interface ResolvedCamera3D extends CameraPostEffectsState {
   nodeId: NodeId
+  projection: 'perspective' | 'orthographic'
+  zoomX: number
+  zoomY: number
   position: Vec3
   rotation: Vec3
   pointOfInterest: Vec3
+  /** Camera down direction after a transform controller moves its rig. */
+  rigDown?: Vec3
   focalLength: number
   fieldOfView: number
   nearClip: number
@@ -59,6 +72,10 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
   /** Authored point-focus center in top-left-origin composition pixels. */
   focusScreen: { x: number; y: number }
   focusWorld: Vec3
+  /** World-space basis of the sharp plane, shared by shading and focus guides. */
+  focusPlaneNormal: Vec3
+  focusPlaneRight: Vec3
+  focusPlaneDown: Vec3
   focusDistance: number
   focusRadius: number
   focusFalloff: number
@@ -73,6 +90,12 @@ export interface ResolvedCamera3D extends CameraPostEffectsState {
 }
 
 export interface Plane3D {
+  /** Exact affine basis for controller transforms, including inherited shear. */
+  transformMatrix?: number[]
+  /** Resolved stroke width for discrete native connection picking. */
+  connectionWidth?: number
+  extrusion?: Extrusion
+  extrusionCornerRadius?: number
   nodeId: NodeId
   node: Node
   /** Authored node bounds used for selection, hit testing, and outlines. */
@@ -232,6 +255,10 @@ const IDENTITY_INHERITED = {
 }
 
 interface Inherited3D {
+  nullRig?: boolean
+  translationBasisX?: Vec3
+  translationBasisY?: Vec3
+  translationBasisZ?: Vec3
   origin: Vec3
   anchor: Vec3
   basisX: Vec3
@@ -350,7 +377,10 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       const childRenderMode = child.transform.renderMode ?? 'flat'
       if (
         segmentTextNodeIds.has(childId) ||
+        hasNullTransform(child) ||
         layerHasBendDeformation(child) ||
+        ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
+        (child.kind === 'vector' && !!child.connection) ||
         isAlwaysOnTopNode(child) ||
         childRenderMode === 'plane' ||
         childRenderMode === 'group3d' ||
@@ -397,7 +427,10 @@ export function createPlaneBuildContext(api: SceneAPI): PlaneBuildContext {
       const renderMode = child.transform.renderMode ?? 'flat'
       if (
         child.kind === 'video' ||
+        hasNullTransform(child) ||
         layerHasBendDeformation(child) ||
+        ((child.kind === 'rect' || child.kind === 'ellipse') && !!child.extrusion) ||
+        (child.kind === 'vector' && !!child.connection) ||
         isAlwaysOnTopNode(child) ||
         renderMode === 'plane' ||
         renderMode === 'group3d' ||
@@ -481,6 +514,8 @@ export function resolveCamera3D(
       ),
   )
   const focalLength = Math.max(1, fovToFocalLength(fieldOfView, viewport.height))
+  // One uniform lens control prevents hidden legacy Y-scale keys from stretching the view.
+  const zoom = orthographicCameraZoom(animated?.scaleX ?? camera.transform.scaleX)
   const transformZ = animated?.z ?? camera.transform.z
   const dolly = transformZ
   const pointOfInterest = {
@@ -496,11 +531,27 @@ export function resolveCamera3D(
   const basePosition = {
     x: pointOfInterest.x,
     y: pointOfInterest.y,
-    z: pointOfInterest.z - Math.max(1, focalLength - dolly),
+    z: pointOfInterest.z - Math.max(1, (camera.projection === 'orthographic'
+      ? Math.max(1000, viewport.width * 2, viewport.height * 2)
+      : focalLength) - dolly),
   }
   const orbitOffset = rotateEuler(sub3(basePosition, pointOfInterest), -rotation.x, rotation.y, 0)
-  const position = add3(pointOfInterest, orbitOffset)
-  const basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
+  let position = add3(pointOfInterest, orbitOffset)
+  let basis = cameraBasisFromPosition(position, pointOfInterest, rotation.z)
+  let rigDown: Vec3 | undefined
+  const rig = animated?.parentMatrix ?? camera.transformOffset
+  if (rig) {
+    const matrix = new Matrix4().fromArray(rig)
+    const mapPoint = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(matrix)
+    const origin = mapPoint({ x: 0, y: 0, z: 0 })
+    const transformedDown = mapPoint(basis.down).sub(origin).normalize()
+    position = mapPoint(position)
+    Object.assign(pointOfInterest, mapPoint(pointOfInterest))
+    const forward = norm3(sub3(pointOfInterest, position))
+    const right = norm3(cross3(transformedDown, forward))
+    rigDown = norm3(cross3(forward, right))
+    basis = { right, down: rigDown, forward }
+  }
   const targetDepth = Math.max(1, dot3(sub3(pointOfInterest, position), basis.forward))
   const focusMode = camera.focusMode ?? 'screen'
   const focusScreen = {
@@ -546,11 +597,26 @@ export function resolveCamera3D(
   const planeFocusDepth = authoredPlaneDistance > 0
     ? authoredPlaneDistance
     : targetDepth
-  const focusWorld = focusWorldOverride ?? (
-    focusMode === 'plane'
+  const focusWorld = focusMode === 'target' && focusWorldOverride ? focusWorldOverride : (
+    focusMode === 'spatial'
+      ? {
+          x: animated?.focusPlaneX ?? camera.focusPlaneX ?? viewport.width / 2,
+          y: animated?.focusPlaneY ?? camera.focusPlaneY ?? viewport.height / 2,
+          z: animated?.focusPlaneZ ?? camera.focusPlaneZ ?? 0,
+        }
+      : focusMode === 'plane'
       ? add3(position, mul3(basis.forward, planeFocusDepth))
       : authoredFocusWorld
   )
+  const planeRotation = {
+    x: animated?.focusPlaneRotationX ?? camera.focusPlaneRotationX ?? 0,
+    y: animated?.focusPlaneRotationY ?? camera.focusPlaneRotationY ?? 0,
+    z: animated?.focusPlaneRotationZ ?? camera.focusPlaneRotationZ ?? 0,
+  }
+  const rotatePlane = (v: Vec3) => rotateEuler(v, planeRotation.x, planeRotation.y, planeRotation.z)
+  const focusPlaneNormal = focusMode === 'spatial' ? rotatePlane({ x: 0, y: 0, z: 1 }) : basis.forward
+  const focusPlaneRight = focusMode === 'spatial' ? rotatePlane({ x: 1, y: 0, z: 0 }) : basis.right
+  const focusPlaneDown = focusMode === 'spatial' ? rotatePlane({ x: 0, y: 1, z: 0 }) : basis.down
   const focusDepth = Math.max(0.001, dot3(sub3(focusWorld, position), basis.forward))
   const nearClip = Math.max(0.001, animated?.nearClip ?? camera.nearClip ?? 1)
   const authoredFarClip = Math.max(1, animated?.farClip ?? camera.farClip ?? 100000)
@@ -562,9 +628,13 @@ export function resolveCamera3D(
   return {
     ...postEffects,
     nodeId: camera.id,
+    projection: camera.projection === 'orthographic' ? 'orthographic' : 'perspective',
+    zoomX: zoom,
+    zoomY: zoom,
     position,
     rotation,
     pointOfInterest,
+    rigDown,
     focalLength,
     fieldOfView,
     nearClip,
@@ -573,6 +643,9 @@ export function resolveCamera3D(
     focusMode,
     focusScreen,
     focusWorld,
+    focusPlaneNormal,
+    focusPlaneRight,
+    focusPlaneDown,
     focusDistance: focusDepth,
     focusRadius: Math.max(1, animated?.focusRadius ?? camera.focusRadius ?? 160),
     focusFalloff: Math.max(1, animated?.focusFalloff ?? camera.focusFalloff ?? 180),
@@ -629,7 +702,11 @@ function cameraBasisFromPosition(
   return { right, down, forward }
 }
 
-function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
+export function cameraBasis(camera: ResolvedCamera3D): { right: Vec3; down: Vec3; forward: Vec3 } {
+  if (camera.rigDown) {
+    const forward = norm3(sub3(camera.pointOfInterest, camera.position))
+    return { forward, down: camera.rigDown, right: norm3(cross3(camera.rigDown, forward)) }
+  }
   return cameraBasisFromPosition(camera.position, camera.pointOfInterest, camera.rotation.z)
 }
 
@@ -639,12 +716,21 @@ export function viewportPointToRay(
   viewportY: number,
   viewport: ViewportSize,
 ): Ray3 {
+  const basis = cameraBasis(camera)
+  if (camera.projection === 'orthographic') {
+    return {
+      origin: add3(camera.position, add3(
+        mul3(basis.right, (viewportX - viewport.width / 2) / camera.zoomX),
+        mul3(basis.down, (viewportY - viewport.height / 2) / camera.zoomY),
+      )),
+      direction: basis.forward,
+    }
+  }
   const local = norm3({
     x: viewportX - viewport.width / 2,
     y: viewportY - viewport.height / 2,
     z: camera.focalLength,
   })
-  const basis = cameraBasis(camera)
   return {
     origin: camera.position,
     direction: norm3(
@@ -676,6 +762,12 @@ export function projectWorldPoint(
   viewport: ViewportSize,
 ): { x: number; y: number } {
   const cameraSpace = worldToCamera(point, camera)
+  if (camera.projection === 'orthographic') {
+    return {
+      x: viewport.width / 2 + cameraSpace.x * camera.zoomX,
+      y: viewport.height / 2 + cameraSpace.y * camera.zoomY,
+    }
+  }
   const z = Math.max(camera.nearClip, cameraSpace.z)
   const scale = camera.focalLength / z
   return {
@@ -703,6 +795,21 @@ export function buildWorldPlanes(
   const getNode = (nodeId: NodeId): Node | null =>
     context.nodesById.get(nodeId) ?? null
   const segmentTextNodeIds = context.segmentTextNodeIds
+  const nullResolver = createNullResolver(getNode, animated)
+  // Arrangement membership is a presentation group, separate from the layer
+  // tree. Gate the entire member subtree without rewriting its authored flags.
+  const arrangementVisible = (node: Node): boolean => {
+    const visited = new Set<NodeId>()
+    let current: Node | null = node
+    while (current?.transformParent && !visited.has(current.id)) {
+      visited.add(current.id)
+      const owner = getNode(current.transformParent.nodeId)
+      if (!owner || (owner.kind !== 'null' && owner.kind !== 'arrangement')) break
+      if (owner.kind === 'arrangement' && owner.arrangement?.memberIds.includes(current.id) && !owner.visible) return false
+      current = owner
+    }
+    return true
+  }
 
   const mapPoint = (transform: Inherited3D, point: Vec3): Vec3 =>
     add3(
@@ -889,6 +996,14 @@ export function buildWorldPlanes(
     const basisYLength = len3(inherited.basisY)
     return {
       rect,
+      // Nonuniform controller scale plus member rotation can shear a frame.
+      // Its actual corners keep clipping and picking aligned with that mesh.
+      outline: inherited.nullRig ? [
+        { x: rect.x, y: rect.y, z: 0 },
+        { x: rect.x + rect.width, y: rect.y, z: 0 },
+        { x: rect.x + rect.width, y: rect.y + rect.height, z: 0 },
+        { x: rect.x, y: rect.y + rect.height, z: 0 },
+      ].map(point => mapPoint(inherited, point)) : undefined,
       center: mapPoint(inherited, {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
@@ -913,7 +1028,11 @@ export function buildWorldPlanes(
     const rotationY = a?.rotationY ?? node.transform.rotationY
     const scaleX = a?.scaleX ?? node.transform.scaleX
     const scaleY = a?.scaleY ?? node.transform.scaleY
-    const opacity = a?.opacity ?? node.appearance.opacity ?? 1
+    const arrangementParent = node.transformParent ? getNode(node.transformParent.nodeId) : null
+    const arrangement = arrangementParent?.kind === 'arrangement' &&
+      arrangementParent.arrangement?.memberIds.includes(node.id)
+      ? animatedArrangement(arrangementParent.arrangement, animated[arrangementParent.id]?.arrangement) : null
+    const opacity = (a?.opacity ?? node.appearance.opacity ?? 1) * (arrangement?.opacity ?? 1)
     const anchor = {
       x: (a?.anchorX ?? node.transform.anchorX ?? 0.5) * rect.width,
       y: (a?.anchorY ?? node.transform.anchorY ?? 0.5) * rect.height,
@@ -930,7 +1049,8 @@ export function buildWorldPlanes(
     const localBasisX = rotateEuler({ x: isRoot ? 1 : scaleX, y: 0, z: 0 }, rotationX, rotationY, rotation)
     const localBasisY = rotateEuler({ x: 0, y: isRoot ? 1 : scaleY, z: 0 }, rotationX, rotationY, rotation)
     const localBasisZ = rotateEuler({ x: 0, y: 0, z: 1 }, rotationX, rotationY, rotation)
-    return {
+    const nextInherited: Inherited3D = {
+      nullRig: inherited.nullRig || hasNullTransform(node),
       origin: add3(mapPoint(inherited, anchorPoint), translation),
       anchor: anchorPoint,
       basisX: mapLocalVector(inherited, localBasisX),
@@ -942,7 +1062,40 @@ export function buildWorldPlanes(
       scaleX: isRoot ? inherited.scaleX : inherited.scaleX * scaleX,
       scaleY: isRoot ? inherited.scaleY : inherited.scaleY * scaleY,
       opacity: isRoot ? inherited.opacity : inherited.opacity * opacity,
+      translationBasisX: inherited.basisX,
+      translationBasisY: inherited.basisY,
+      translationBasisZ: inherited.basisZ,
     }
+    if (hasNullTransform(node)) {
+      const delta = a?.parentMatrix ? new Matrix4().fromArray(a.parentMatrix) : nullResolver.delta(node)
+      const point = (v: Vec3) => new Vector3(v.x, v.y, v.z).applyMatrix4(delta)
+      const origin = point({ x: 0, y: 0, z: 0 })
+      const vector = (v: Vec3) => point(v).sub(origin)
+      nextInherited.origin = point(nextInherited.origin)
+      nextInherited.basisX = vector(nextInherited.basisX)
+      nextInherited.basisY = vector(nextInherited.basisY)
+      nextInherited.basisZ = vector(nextInherited.basisZ)
+      nextInherited.translationBasisX = vector(inherited.basisX)
+      nextInherited.translationBasisY = vector(inherited.basisY)
+      nextInherited.translationBasisZ = vector(inherited.basisZ)
+    }
+    if (nextInherited.nullRig) {
+      nextInherited.scaleX = len3(nextInherited.basisX)
+      nextInherited.scaleY = len3(nextInherited.basisY)
+    }
+    if (arrangement?.orientation === 'screen') {
+      const centerPoint = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, z: 0 }
+      const center = mapPoint(nextInherited, centerPoint)
+      const basis = cameraBasis(camera)
+      const angle = rotation * Math.PI / 180
+      nextInherited.basisX = mul3(add3(mul3(basis.right, Math.cos(angle)), mul3(basis.down, Math.sin(angle))), nextInherited.scaleX)
+      nextInherited.basisY = mul3(add3(mul3(basis.right, -Math.sin(angle)), mul3(basis.down, Math.cos(angle))), nextInherited.scaleY)
+      // Positive extrusion depth stays behind the front face. Preserve the
+      // third-axis scale as well, so whole solid assets face the camera intact.
+      nextInherited.basisZ = mul3(basis.forward, len3(nextInherited.basisZ))
+      nextInherited.origin = add3(nextInherited.origin, sub3(center, mapPoint(nextInherited, centerPoint)))
+    }
+    return nextInherited
   }
 
   const visit = (
@@ -955,14 +1108,14 @@ export function buildWorldPlanes(
     if (targetPathNodeIds && !targetPathNodeIds.has(id)) return
     const node = getNode(id)
     const rect = layout[id]
-    if (!node || !rect || node.kind === 'camera' || (node.isMask && !options.includeMaskGuides)) return
+    if (!node || !rect || node.kind === 'camera' || node.kind === 'null' || node.kind === 'arrangement' || (node.isMask && !options.includeMaskGuides)) return
     // Visibility is hierarchical. The WebGL compositor emits some descendants
     // as independent planes (group3d children, videos, and explicit planes),
     // so checking only each emitted plane's own `visible` flag lets those
     // descendants survive when their parent is hidden. Stop the walk at the
     // first hidden node: this matches the DOM renderer and also removes hidden
     // descendants from rendering, outlines, and hit testing in one place.
-    if (!node.visible) return
+    if (!node.visible || !arrangementVisible(node)) return
     const alwaysOnTop =
       insideAlwaysOnTopSubtree || isAlwaysOnTopNode(node)
     const a = animated[id]
@@ -1009,11 +1162,15 @@ export function buildWorldPlanes(
     const segmentStackSibling = !!parent && hasDirectSegmentTextChild(parent)
     const splitsSegmentStack = hasDirectSegmentTextChild(node)
     const containsExplicit3DDescendant = hasExplicit3DDescendant(id)
+    const extrusion = resolveNodeExtrusion(node, animated[id])
     const shouldEmitPlane =
       isRequestedNode &&
       !isRoot &&
       (segmentText ||
+        hasNullTransform(node) ||
         deformedNode ||
+        !!extrusion ||
+        (node.kind === 'vector' && !!node.connection) ||
         isAlwaysOnTopNode(node) ||
         independentNodes ||
         videoStackSibling ||
@@ -1041,7 +1198,9 @@ export function buildWorldPlanes(
       const rotZ = nextInherited.rotation
       const right = norm3(nextInherited.basisX)
       const down = norm3(nextInherited.basisY)
-      const normal = norm3(nextInherited.basisZ)
+      const normal = nextInherited.nullRig
+        ? norm3(cross3(nextInherited.basisX, nextInherited.basisY))
+        : norm3(nextInherited.basisZ)
       const contentMode =
         !effectRasterBoundary &&
         (segmentText ||
@@ -1091,14 +1250,22 @@ export function buildWorldPlanes(
       // current x/y/z translation. Motion paths are added to those translation
       // channels in the incoming parent basis, so subtracting the sampled
       // offset in that same basis recovers the stable authored path origin.
-      const motionPathOrigin = sub3(
-        nextInherited.origin,
-        mapLocalVector(inherited, motionPathOffset),
-      )
+      const translationBasisX = nextInherited.translationBasisX ?? inherited.basisX
+      const translationBasisY = nextInherited.translationBasisY ?? inherited.basisY
+      const translationBasisZ = nextInherited.translationBasisZ ?? inherited.basisZ
+      const motionPathOrigin = sub3(nextInherited.origin, add3(
+        add3(mul3(translationBasisX, motionPathOffset.x), mul3(translationBasisY, motionPathOffset.y)),
+        mul3(translationBasisZ, motionPathOffset.z),
+      ))
       planes.push({
         nodeId: id,
         node,
         rect,
+        extrusion,
+        connectionWidth: node.connection ? animated[id]?.connectionWidth : undefined,
+        extrusionCornerRadius: (animated[id]?.fullRadius ?? (node.appearance.fullRadius ? 1 : 0)) >= 0.5
+          ? Math.min(rect.width, rect.height) / 2
+          : animated[id]?.cornerRadius ?? node.appearance.cornerRadius,
         renderKind: segmentText ? 'segment-text' : 'canvas',
         contentMode,
         paintOrder: paintOrder++,
@@ -1112,6 +1279,12 @@ export function buildWorldPlanes(
         // represented once by this material opacity.
         opacity: nextInherited.opacity,
         center,
+        transformMatrix: nextInherited.nullRig ? [
+          nextInherited.basisX.x, nextInherited.basisX.y, nextInherited.basisX.z, 0,
+          nextInherited.basisY.x, nextInherited.basisY.y, nextInherited.basisY.z, 0,
+          nextInherited.basisZ.x, nextInherited.basisZ.y, nextInherited.basisZ.z, 0,
+          center.x, center.y, center.z, 1,
+        ] : undefined,
         rotation: { x: rotX, y: rotY, z: rotZ },
         scaleX: nextInherited.scaleX,
         scaleY: nextInherited.scaleY,
@@ -1120,9 +1293,9 @@ export function buildWorldPlanes(
         down,
         normal,
         motionPathOrigin,
-        motionPathBasisX: { ...inherited.basisX },
-        motionPathBasisY: { ...inherited.basisY },
-        motionPathBasisZ: { ...inherited.basisZ },
+        motionPathBasisX: { ...translationBasisX },
+        motionPathBasisY: { ...translationBasisY },
+        motionPathBasisZ: { ...translationBasisZ },
         cameraDepth: cameraSpaceDepth(center, camera),
         bendSources: bendSources.length
           ? bendSources.map((source) => ({
@@ -1256,7 +1429,12 @@ export function hitTestPlanes(
   ray: Ray3,
   camera: ResolvedCamera3D,
   viewport: ViewportSize,
+  connectionPlanes: readonly Plane3D[] = planes,
 ): FocusHit3D | null {
+  const flowHits = new Map(planes.some(plane => !!plane.node.connection)
+    ? resolveFlowConnections(new Map(connectionPlanes.map(plane => [plane.nodeId, plane.node])), connectionPlanes, {}).map(connection => [connection.nodeId, intersectFlowConnection(connection, ray)] as const)
+    : [])
+  const depthAware = (plane: Plane3D | undefined) => !!plane?.extrusion || !!plane?.node.connection
   let bestOverlay: (FocusHit3D & { t: number }) | null = null
   let bestScene: (FocusHit3D & { t: number }) | null = null
   for (let i = planes.length - 1; i >= 0; i--) {
@@ -1267,17 +1445,31 @@ export function hitTestPlanes(
     // transparent layer planes compose like the DOM renderer. Traverse the
     // same list front-to-back and keep the first hit in each compositing band;
     // authored 3D depth remains available on the winning hit for controls/DOF.
-    if ((overlay && bestOverlay) || (!overlay && bestScene)) continue
+    const best = overlay ? bestOverlay : bestScene
+    // Ordinary design planes retain their authored paint order. Solids also
+    // write depth, so another solid must be compared at its actual surface.
+    // The explicit overlay band bypasses scene depth and retains paint order.
+    if (best && (overlay || !depthAware(plane) || !depthAware(planes.find(p => p.nodeId === best.nodeId)))) continue
+    const flowHit = plane.node.connection ? flowHits.get(plane.nodeId) : undefined
+    if (plane.node.connection && !flowHit) continue
+    const shape = extrusionShapeForPlane(plane)
+    const solidHit = shape && shape.depth > 0 ? intersectExtrusion(ray, shape, extrusionWorldMatrix(plane)) : null
+    if (shape && shape.depth > 0 && !solidHit) continue
+    const nativeHit = flowHit ?? solidHit
     const denom = dot3(ray.direction, plane.normal)
-    if (Math.abs(denom) < 0.0001) continue
-    const t = dot3(sub3(plane.center, ray.origin), plane.normal) / denom
+    if (!nativeHit && Math.abs(denom) < 0.0001) continue
+    const t = nativeHit?.t ?? dot3(sub3(plane.center, ray.origin), plane.normal) / denom
     if (t <= 0) continue
-    const point = add3(ray.origin, mul3(ray.direction, t))
+    if (best && t >= best.t) continue
+    const point = nativeHit?.point ?? add3(ray.origin, mul3(ray.direction, t))
     if (plane.clips?.some((clip) => !clipContainsPoint(clip, point))) continue
     const rel = sub3(point, plane.center)
-    const localX = dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX)) + plane.rect.width / 2
-    const localY = dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY)) + plane.rect.height / 2
-    if (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height) continue
+    const affineLocal = !solidHit && plane.transformMatrix
+      ? new Vector3(point.x, point.y, point.z).applyMatrix4(new Matrix4().fromArray(plane.transformMatrix).invert())
+      : undefined
+    const localX = (solidHit?.localPoint.x ?? affineLocal?.x ?? dot3(rel, plane.right) / Math.max(0.0001, Math.abs(plane.scaleX))) + plane.rect.width / 2
+    const localY = (solidHit?.localPoint.y ?? affineLocal?.y ?? dot3(rel, plane.down) / Math.max(0.0001, Math.abs(plane.scaleY))) + plane.rect.height / 2
+    if (!nativeHit && (localX < 0 || localX > plane.rect.width || localY < 0 || localY > plane.rect.height)) continue
     const hit = {
       nodeId: plane.nodeId,
       point,
@@ -1324,10 +1516,56 @@ export function depthBlurAmount(
   return Math.max(0, Math.min(blurLevel, blurLevel * combined))
 }
 
+/** Lens plane in Three's view coordinates, including camera orbit and roll. */
+export function focusPlaneShaderState(camera: ResolvedCamera3D) {
+  if (camera.focusMode === 'screen' || !camera.depthOfField) return undefined
+  const basis = cameraBasis(camera)
+  const normal = camera.focusPlaneNormal
+  return {
+    normal: {
+      x: dot3(normal, basis.right),
+      y: -dot3(normal, basis.down),
+      z: -dot3(normal, basis.forward),
+    },
+    constant: dot3(normal, sub3(camera.position, camera.focusWorld)),
+    depthScale: Math.max(80, camera.focalLength * 0.35),
+    aperture: effectiveApertureStrength(camera.aperture, camera.fStop),
+    maxBlurPx: Math.max(0, camera.blurLevel),
+  }
+}
+
+/** Start a free focus plane exactly where the current lens is focused. */
+export function focusPlanePose(camera: ResolvedCamera3D) {
+  const vector = (v: Vec3) => new Vector3(v.x, v.y, v.z)
+  const euler = new Euler().setFromRotationMatrix(new Matrix4().makeBasis(
+    vector(camera.focusPlaneRight), vector(camera.focusPlaneDown), vector(camera.focusPlaneNormal),
+  ), 'ZYX')
+  const degrees = 180 / Math.PI
+  return {
+    focusPlaneX: camera.focusWorld.x,
+    focusPlaneY: camera.focusWorld.y,
+    focusPlaneZ: camera.focusWorld.z,
+    focusPlaneRotationX: euler.x * degrees,
+    focusPlaneRotationY: euler.y * degrees,
+    focusPlaneRotationZ: euler.z * degrees,
+  }
+}
+
+export function focusPlaneCorners(camera: ResolvedCamera3D, viewport: ViewportSize): Vec3[] {
+  if (camera.focusMode !== 'spatial') return cameraFrustumCorners(camera, viewport, camera.focusDistance)
+  const halfH = camera.projection === 'orthographic'
+    ? Math.max(80, viewport.height / camera.zoomY * 0.3)
+    : Math.max(80, camera.focusDistance * viewport.height / camera.focalLength * 0.3)
+  const halfW = halfH * viewport.width / viewport.height
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) =>
+    add3(add3(camera.focusWorld, mul3(camera.focusPlaneRight, x! * halfW)), mul3(camera.focusPlaneDown, y! * halfH)),
+  )
+}
+
 export function cameraFrustumCorners(camera: ResolvedCamera3D, viewport: ViewportSize, depth: number): Vec3[] {
   const basis = cameraBasis(camera)
-  const halfH = (depth / camera.focalLength) * (viewport.height / 2)
-  const halfW = (depth / camera.focalLength) * (viewport.width / 2)
+  const halfH = (camera.projection === 'orthographic' ? 1 / camera.zoomY : depth / camera.focalLength) * (viewport.height / 2)
+  const halfW = (camera.projection === 'orthographic' ? 1 / camera.zoomX : depth / camera.focalLength) * (viewport.width / 2)
   const center = add3(camera.position, mul3(basis.forward, depth))
   return [
     add3(add3(center, mul3(basis.right, -halfW)), mul3(basis.down, -halfH)),

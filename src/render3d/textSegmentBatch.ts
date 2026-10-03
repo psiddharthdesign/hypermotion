@@ -98,11 +98,13 @@ export function textSegmentWorldUnitsPerScreenPixel({
   cameraDepth,
   focalLength,
   extraAwayDepth = 0,
+  orthographicZoom,
 }: {
   plane: Plane3D
   cameraDepth: (point: { x: number; y: number; z: number }) => number
   focalLength: number
   extraAwayDepth?: number
+  orthographicZoom?: number
 }): number {
   const halfWidth = Math.abs(plane.scaleX) * plane.rect.width / 2
   const halfHeight = Math.abs(plane.scaleY) * plane.rect.height / 2
@@ -132,7 +134,9 @@ export function textSegmentWorldUnitsPerScreenPixel({
   )
   return Math.max(
     0.25,
-    Math.min(8, farthestDepth / Math.max(1, focalLength) / localScale),
+    Math.min(8, (orthographicZoom == null
+      ? farthestDepth / Math.max(1, focalLength)
+      : 1 / Math.max(0.0001, orthographicZoom)) / localScale),
   )
 }
 
@@ -199,6 +203,11 @@ export function writeTextSegmentBuffers({
 
   const planeWidth = plane.rect.width
   const planeHeight = plane.rect.height
+  // A rig's depth axis can have independent scale or shear. Keep flipping
+  // glyphs on that exact affine axis rather than a normalized face normal.
+  const rigDepthX = plane.transformMatrix?.[8] ?? plane.normal.x * plane.scaleY
+  const rigDepthY = plane.transformMatrix?.[9] ?? plane.normal.y * plane.scaleY
+  const rigDepthZ = plane.transformMatrix?.[10] ?? plane.normal.z * plane.scaleY
   let changes = 0
   for (let segmentIndex = 0; segmentIndex < entries.length; segmentIndex++) {
     const entry = entries[segmentIndex]!
@@ -284,25 +293,25 @@ export function writeTextSegmentBuffers({
       // Local text Y points down, while THREE/CSS rotateX is defined from a
       // local-up axis. Negating the normal term keeps Flip's depth direction
       // identical to CSS rotateX() and ordinary PlaneGeometry.
-      const normalDistance = -localY * sinX * plane.scaleY
+      const normalDistance = -localY * sinX
       const rightDistance = localX * plane.scaleX
       const worldX =
         pivotWorldX +
         plane.right.x * rightDistance +
         plane.down.x * downDistance +
-        plane.normal.x * normalDistance +
+        rigDepthX * normalDistance +
         state.offset.x
       const worldY =
         pivotWorldY +
         plane.right.y * rightDistance +
         plane.down.y * downDistance +
-        plane.normal.y * normalDistance +
+        rigDepthY * normalDistance +
         state.offset.y
       const worldZ =
         pivotWorldZ +
         plane.right.z * rightDistance +
         plane.down.z * downDistance +
-        plane.normal.z * normalDistance +
+        rigDepthZ * normalDistance +
         state.offset.z
       const vertexIndex = segmentIndex * 4 + cornerIndex
       const positionOffset = vertexIndex * 3

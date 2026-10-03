@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
+import { CameraCompositionOverlay } from './CameraCompositionOverlay'
+import { SolidFaceSelectionOverlay } from './SolidFaceSelectionOverlay'
+import { createSolidMoveConstraint, type SolidMoveConstraint } from './solidMoveConstraint'
+
+import { NullObjectOverlay } from '@/ui/NullObjectOverlay'
+import { hasNullTransform } from '@/scene/nullObject'
+import { arrangementLayerOwner } from '@/ui/arrangementLayerTree'
 import { siblingMask } from '@/render/maskShape'
 import { resolveCornerAppearance, cornerShapePath } from '@/render/cornerShape'
 
 import { BorderBeamOverlay } from './BorderBeamOverlay'
 import { syncMediaPlayback } from '@/media/syncPlayback'
 import { textShimmerFill } from '@/anim/textShimmer'
-// SPDX-License-Identifier: Apache-2.0
 import { useSequenceExportPreview } from '@/export/sequencePreview'
 import { useSequenceMediaClock } from '@/state/sequenceMediaClock'
 
@@ -135,6 +141,8 @@ import {
   viewportPointToRay,
 } from '@/render3d/scene3d'
 import { pickLayerFocus } from '@/ui/cameraFocus'
+import { FocusPlaneOverlay, type FocusPlanePositionPatch } from '@/ui/FocusPlaneOverlay'
+import { viewportPointToMotionPathLocal } from '@/render3d/selectionProjection'
 import {
   getAnimEngine,
   recordKeyframesForPatch,
@@ -169,11 +177,16 @@ import {
   cameraOrbitFromWheel,
   cameraPanFromPointer,
   cameraPanFromWheel,
+  cameraScaleFromPointerDrag,
+  cameraNavigationTransformPatch,
   cameraZFromPointerDrag,
+  normalizedWheelDeltas,
   resolveCameraPointerNavigation,
   resolveCameraWheelNavigation,
   type CameraNavigationMode,
 } from '@/ui/cameraNavigation'
+import { cameraScaleFromWheel } from '@/ui/cameraWheel'
+import { cameraCanvasPoint, cameraOrthographicPan } from '@/ui/cameraNavigationProjection'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import {
   currentAnimationAuthorTime as resolveAnimationAuthorTime,
@@ -235,6 +248,7 @@ type CameraControlSample = {
 type CameraGestureSession = {
   cameraId: NodeId
   mode: CameraNavigationMode
+  projection: CameraNode['projection']
   transform: CameraNode['transform']
   latestTransform: CameraNode['transform']
   startPlayhead: number
@@ -279,6 +293,10 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   selectionOverlayHost,
   ...props
 }: AnimatedThreeSceneViewportProps) {
+  const exporting = useExportProgress(state => state.phase === 'rendering')
+  const editorGridSpacing = useUI(state => state.solidGridSnapEnabled && !state.playing ? state.solidGridSize : null)
+  const faceEditing = useUI(state => state.solidFaceEditing && !state.playing && state.tool === 'select')
+  const selectedConnectionIds = useMemo(() => { void props.sceneVersion; return props.selectedIds.filter(id => props.api.getNode(id)?.connection) }, [props.api, props.selectedIds, props.sceneVersion])
   const sceneAnimated = useAnimatedValues(animationIds)
   const geometryPreviewNodeIds = useSyncExternalStore(
     nodeGeometryPreviewStore.subscribe,
@@ -399,10 +417,11 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
         sceneFill={liveSceneFill}
         selectedIds={
           showSelectionOverlay
-            ? EMPTY_THREE_SELECTION_IDS
+            ? exporting ? EMPTY_THREE_SELECTION_IDS : selectedConnectionIds
             : props.selectedIds
         }
         hiddenNodeIds={hiddenGeometryTextIds}
+        editorGridSpacing={exporting ? null : editorGridSpacing}
         interactiveCameraPreview={!!cameraPreview}
         playhead={playbackPlayhead}
       />
@@ -411,7 +430,19 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
       !props.suspended &&
       selectionOverlayHost
         ? createPortal(
-            <CameraSelectionOverlay
+            faceEditing ? <SolidFaceSelectionOverlay
+              api={props.api}
+              layout={paintLayout}
+              animated={sceneAnimated}
+              camera={camera}
+              cameraAnim={cameraAnim}
+              selection={props.selectedIds}
+              width={props.width}
+              height={props.height}
+              zoom={editorZoom}
+              sceneVersion={props.sceneVersion ?? 0}
+              clientToViewport={clientToViewport}
+            /> : <CameraSelectionOverlay
               api={props.api}
               solved={props.layout}
               animated={sceneAnimated}
@@ -761,6 +792,10 @@ export function Canvas() {
     setLastSolvedLayout(solved)
   }, [solved])
 
+  const nullObjectIds = useMemo(() => {
+    void version
+    return api.getAllNodeIds().filter((id) => { const node = api.getNode(id); return (node?.kind === 'null' || node?.kind === 'arrangement') && node.parent === rootId })
+  }, [api, version, rootId])
   const renderOrder = useMemo<NodeId[]>(() => {
     void version
     if (!rootId) return []
@@ -994,7 +1029,7 @@ export function Canvas() {
       ),
     [camera, liveCameraAnim, canvasWidth, canvasHeight],
   )
-  const cameraFocalLength = cameraDomProjection.focalLength
+  const cameraPerspective = cameraDomProjection.perspective
   const cameraScaleFromZ = cameraDomProjection.scale
   const cameraTransform = cameraDomProjection.transform
   const cameraSceneContentStyle = useMemo<CSSProperties | undefined>(
@@ -1220,25 +1255,6 @@ export function Canvas() {
     return resolveAnimationAuthorTime()
   }, [])
 
-  const cameraControlPatch = useCallback(
-    (
-      mode: CameraNavigationMode,
-      transform: CameraNode['transform'],
-    ): Record<string, number> =>
-      mode === 'orbit'
-        ? {
-            rotationX: transform.rotationX,
-            rotationY: transform.rotationY,
-          }
-        : mode === 'pan'
-          ? {
-              x: transform.x,
-              y: transform.y,
-            }
-          : { z: transform.z },
-    [],
-  )
-
   const maybeStampCameraControlSample = useCallback(
     (
       cameraControl: CameraGestureSession,
@@ -1247,12 +1263,12 @@ export function Canvas() {
       const ui = useUI.getState()
       if (!ui.recording && !ui.playing) return
 
-      const nextPatch = cameraControlPatch(cameraControl.mode, nextTransform)
+      const nextPatch = cameraNavigationTransformPatch(cameraControl.mode, nextTransform, cameraControl.projection)
 
       if (ui.recording && !cameraControl.didStampStart) {
         cameraControl.samples.push({
           time: cameraControl.startPlayhead,
-          patch: cameraControlPatch(cameraControl.mode, cameraControl.transform),
+          patch: cameraNavigationTransformPatch(cameraControl.mode, cameraControl.transform, cameraControl.projection),
           mode: 'record',
         })
         cameraControl.didStampStart = true
@@ -1279,7 +1295,6 @@ export function Canvas() {
       cameraControl.lastSampleTime = sampleTime
     },
     [
-      cameraControlPatch,
       currentAnimationAuthorTime,
       frameStep,
       duration,
@@ -1304,9 +1319,10 @@ export function Canvas() {
                 (performance.now() - gesture.startPerfTime) / 1000,
             )
           : ui.playhead
-      const finalPatch = cameraControlPatch(
+      const finalPatch = cameraNavigationTransformPatch(
         gesture.mode,
         gesture.latestTransform,
+        gesture.projection,
       )
 
       // Persist one field-scoped transaction for the entire gesture. This
@@ -1347,7 +1363,6 @@ export function Canvas() {
     },
     [
       api,
-      cameraControlPatch,
       currentAnimationAuthorTime,
       duration,
       stampCanvasTransformPatch,
@@ -1478,7 +1493,13 @@ export function Canvas() {
         currentCamera,
         { independentNodes },
       )
-      return hitTestPlanes(
+      // Attached lines may reference children that a flat parent batches into
+      // one texture. Resolve those endpoints independently without changing
+      // the ordinary layer selection order.
+      const connectionPlanes = !independentNodes && planes3D.some(plane => plane.node.connection)
+        ? buildWorldPlanes(api, solved, hitAnimated, currentCamera, { independentNodes: true })
+        : planes3D
+      const hit = hitTestPlanes(
         planes3D,
         viewportPointToRay(
           currentCamera,
@@ -1488,7 +1509,9 @@ export function Canvas() {
         ),
         currentCamera,
         { width: canvasWidth, height: canvasHeight },
+        connectionPlanes,
       )
+      return hit ? { ...hit, plane: planes3D.find(plane => plane.nodeId === hit.nodeId), camera: currentCamera } : null
     },
     [
       camera,
@@ -1580,43 +1603,13 @@ export function Canvas() {
       // frame the camera wrapper sits in (origin = artboard top-left).
       const viewportPoint = clientToViewport(clientX, clientY)
       if (!viewportPoint) return null
-      let x = viewportPoint.x
-      let y = viewportPoint.y
-      // Step 2 — invert the camera transform if one is active.
-      //
-      // Forward (cameraTransform above):
-      //   P' = translate(W/2, H/2) · scale(sx,sy) · rotate(-r) ·
-      //        translate(-cx, -cy) · P
-      // Inverse:
-      //   P  = translate(cx, cy) · rotate(+r) · scale(1/sx, 1/sy) ·
-      //        translate(-W/2, -H/2) · P'
-      if (camera && camera.kind === 'camera') {
-        // REPLACE semantics — match the forward cameraTransform above.
-        const camCx = liveCameraAnim?.x ?? camera.transform.x
-        const camCy = liveCameraAnim?.y ?? camera.transform.y
-        const camR = liveCameraAnim?.rotation ?? camera.transform.rotation
-        const camSx = liveCameraAnim?.scaleX ?? camera.transform.scaleX
-        const camSy = liveCameraAnim?.scaleY ?? camera.transform.scaleY
-        const W = canvasWidth
-        const H = canvasHeight
-        // translate(-W/2, -H/2)
-        let px = x - W / 2
-        let py = y - H / 2
-        // scale(1/sx, 1/sy) — guard divide-by-zero on a degenerate camera
-        // (shouldn't happen in UI, but if someone types 0 into scale...)
-        px = camSx !== 0 ? px / camSx : px
-        py = camSy !== 0 ? py / camSy : py
-        // rotate(+r) around origin
-        const rad = (camR * Math.PI) / 180
-        const c = Math.cos(rad)
-        const s = Math.sin(rad)
-        const rx = px * c - py * s
-        const ry = px * s + py * c
-        // translate(cx, cy)
-        x = rx + camCx
-        y = ry + camCy
-      }
-      return { x, y }
+      if (!camera || camera.kind !== 'camera') return viewportPoint
+      const preview = cameraPreviewStore.getSnapshot()
+      const resolved = resolveCamera3D(camera, mergeCameraAnimationPreview(
+        getAnimEngine().getSnapshot()[camera.id] ?? liveCameraAnim,
+        preview?.cameraId === camera.id ? preview.value : undefined,
+      ), { width: canvasWidth, height: canvasHeight })
+      return cameraCanvasPoint(resolved, viewportPoint, { width: canvasWidth, height: canvasHeight })
     },
     [
       clientToViewport,
@@ -1694,6 +1687,7 @@ export function Canvas() {
         pointerId: e.pointerId,
         cameraId: current.id,
         mode,
+        projection: current.projection,
         startX: e.clientX,
         startY: e.clientY,
         transform: startTransform,
@@ -2223,7 +2217,9 @@ export function Canvas() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [tool, cancelPenSession, finishPenSession])
 
-	  const onBackgroundPointerDown = useCallback(
+  const solidCanvasMoveConstraint = useRef<SolidMoveConstraint | null>(null)
+  const solidCanvasDragPoint = useRef<((x: number, y: number) => { x: number; y: number } | null) | null>(null)
+  const onBackgroundPointerDown = useCallback(
 	    (e: React.PointerEvent<HTMLDivElement>) => {
       // Only left-button on the workspace background, not on a NodeView.
       if (e.button !== 0) return
@@ -2384,11 +2380,19 @@ export function Canvas() {
               : null
             const parentMode =
               parent && 'layout' in parent ? parent.layout.mode : 'none'
-            const start = clientToCanvas(e.clientX, e.clientY)
+            const placementConstraint = hitNode ? createSolidMoveConstraint(api, hitNode.id, solved, getAnimEngine().getSnapshot(), pointerHit.camera) : null
+            const frozenPlane = pointerHit.plane
+            const localPointer = placementConstraint && frozenPlane ? (x: number, y: number) => {
+              const point = clientToViewport(x, y)
+              return point ? viewportPointToMotionPathLocal(point, 0, frozenPlane, pointerHit.camera, { width: canvasWidth, height: canvasHeight }) : null
+            } : null
+            const localStart = localPointer?.(e.clientX, e.clientY)
+            const start = localStart ?? clientToCanvas(e.clientX, e.clientY)
             if (
               hitNode &&
               hitNode.id !== rootId &&
               !hitNode.locked &&
+              (!localPointer || localStart) &&
               start &&
               canMoveChildOnCanvas(hitNode.position, parentMode)
             ) {
@@ -2396,6 +2400,8 @@ export function Canvas() {
               const origin = nodeTransformDragOrigin(hitNode, engineValue)
               const startTransformX = origin.display.x
               const startTransformY = origin.display.y
+              solidCanvasMoveConstraint.current = placementConstraint
+              solidCanvasDragPoint.current = localStart ? localPointer : null
               canvasNodeDragRef.current = {
                 pointerId: e.pointerId,
                 nodeId: hitNode.id,
@@ -2491,9 +2497,12 @@ export function Canvas() {
 	      isDrawTool,
 	      clientToCanvas,
 	      clientToViewport,
+      canvasWidth,
+      canvasHeight,
       isInsideArtboard,
       hitTestWorkspace,
 	      hitTestCanvas3D,
+	      solved,
 	      api,
 	      project,
 	      rootId,
@@ -2529,7 +2538,7 @@ export function Canvas() {
       }
       const nodeDrag = canvasNodeDragRef.current
       if (nodeDrag && e.pointerId === nodeDrag.pointerId) {
-        const point = clientToCanvas(e.clientX, e.clientY)
+        const point = solidCanvasDragPoint.current ? solidCanvasDragPoint.current(e.clientX, e.clientY) : clientToCanvas(e.clientX, e.clientY)
         if (!point) return
         const clientDx = e.clientX - nodeDrag.startClientX
         const clientDy = e.clientY - nodeDrag.startClientY
@@ -2543,6 +2552,9 @@ export function Canvas() {
             nodeDrag.startTransformY +
             (point.y - nodeDrag.startPointerY),
         }
+        const requested = { x: nodeDrag.latest.x - nodeDrag.startTransformX, y: nodeDrag.latest.y - nodeDrag.startTransformY }
+        const allowed = solidCanvasMoveConstraint.current?.(requested, e.altKey) ?? requested
+        nodeDrag.latest = { x: nodeDrag.startTransformX + allowed.x, y: nodeDrag.startTransformY + allowed.y }
         nodeTransformPreviewStore.preview({
           [nodeDrag.nodeId]: nodeDrag.latest,
         })
@@ -2563,9 +2575,10 @@ export function Canvas() {
           return
         }
         cameraControl.moved = true
+        const cameraEngineValue = getAnimEngine().getSnapshot()[current.id]
         const effectiveCamera = resolveCamera3D(
           current,
-          cameraControl.transform,
+          { ...cameraEngineValue, ...cameraControl.transform },
           { width: canvasWidth, height: canvasHeight },
         )
         const cameraApparentScale =
@@ -2583,7 +2596,18 @@ export function Canvas() {
                 deltaY: dy,
               })
             : cameraControl.mode === 'pan'
-              ? cameraPanFromPointer({
+              ? current.projection === 'orthographic'
+                ? cameraOrthographicPan({
+                    camera: effectiveCamera,
+                    viewport: { width: canvasWidth, height: canvasHeight },
+                    parentMatrix: cameraEngineValue?.parentMatrix ?? current.transformOffset ?? undefined,
+                    startX: cameraControl.transform.x,
+                    startY: cameraControl.transform.y,
+                    deltaX: -dx,
+                    deltaY: -dy,
+                    workspaceZoom: view.zoom,
+                  })
+                : cameraPanFromPointer({
                   startX: cameraControl.transform.x,
                   startY: cameraControl.transform.y,
                   deltaX: dx,
@@ -2591,7 +2615,14 @@ export function Canvas() {
                   workspaceZoom: view.zoom,
                   cameraApparentScale,
                 })
-              : {
+              : current.projection === 'orthographic'
+                ? cameraScaleFromPointerDrag({
+                    startScaleX: cameraControl.transform.scaleX,
+                    startScaleY: cameraControl.transform.scaleY,
+                    deltaY: dy,
+                    scrollSensitivity: current.scrollSensitivity,
+                  })
+                : {
                   z: cameraZFromPointerDrag({
                     startZ: cameraControl.transform.z,
                     focalLength: effectiveCamera.focalLength,
@@ -3108,7 +3139,8 @@ export function Canvas() {
         if (
           activeGesture &&
           (activeGesture.cameraId !== current.id ||
-            activeGesture.mode !== mode)
+            activeGesture.mode !== mode ||
+            activeGesture.projection !== current.projection)
         ) {
           // A modifier change starts a distinct, undoable gesture and prevents
           // one mode from accidentally persisting another mode's axes.
@@ -3122,6 +3154,7 @@ export function Canvas() {
           gesture = {
             cameraId: current.id,
             mode,
+            projection: current.projection,
             transform: startTransform,
             latestTransform: startTransform,
             startPlayhead,
@@ -3146,6 +3179,13 @@ export function Canvas() {
         const cameraApparentScale =
           effectiveCamera.focalLength /
           Math.max(1, effectiveCamera.focalLength - baseTransform.z)
+        const wheelDelta = normalizedWheelDeltas({
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          pageWidth: el.clientWidth,
+          pageHeight: el.clientHeight,
+        })
         const patch =
           mode === 'orbit'
             ? cameraOrbitFromWheel({
@@ -3158,7 +3198,18 @@ export function Canvas() {
                 pageHeight: el.clientHeight,
               })
             : mode === 'pan'
-              ? cameraPanFromWheel({
+              ? current.projection === 'orthographic'
+                ? cameraOrthographicPan({
+                    camera: effectiveCamera,
+                    viewport: { width: canvasWidth, height: canvasHeight },
+                    parentMatrix: engineValue?.parentMatrix ?? current.transformOffset ?? undefined,
+                    startX: baseTransform.x,
+                    startY: baseTransform.y,
+                    deltaX: wheelDelta.x,
+                    deltaY: wheelDelta.y,
+                    workspaceZoom: useUI.getState().view.zoom,
+                  })
+                : cameraPanFromWheel({
                   currentX: baseTransform.x,
                   currentY: baseTransform.y,
                   deltaX: e.deltaX,
@@ -3169,7 +3220,16 @@ export function Canvas() {
                   workspaceZoom: useUI.getState().view.zoom,
                   cameraApparentScale,
                 })
-              : cameraDollyFromWheel({
+              : current.projection === 'orthographic'
+                ? cameraScaleFromWheel({
+                    currentScaleX: baseTransform.scaleX,
+                    currentScaleY: baseTransform.scaleY,
+                    deltaY: e.deltaY,
+                    deltaMode: e.deltaMode,
+                    pageHeight: el.clientHeight,
+                    scrollSensitivity: current.scrollSensitivity,
+                  })
+                : cameraDollyFromWheel({
                   currentZ: baseTransform.z,
                   focalLength: effectiveCamera.focalLength,
                   deltaY: e.deltaY,
@@ -3466,7 +3526,7 @@ export function Canvas() {
             // collapses 3D rotations to a flat shear). Matched to
             // FOCAL_LENGTH so the perceived 3D matches the same focal
             // length the perspective-scale code uses for cameraScaleFromZ.
-            perspective: cameraFocalLength,
+            perspective: cameraPerspective,
             perspectiveOrigin: 'center center',
           }}
           data-canvas-root
@@ -3565,6 +3625,7 @@ export function Canvas() {
                       clientToViewport={clientToViewport}
                       selectionOverlayHost={selectionOverlayHost}
                       camera={camera}
+                      cameraTransitions={editorCameraView?.mode !== 'camera'}
                       width={canvasWidth}
                       height={canvasHeight}
                       sceneFill={liveSceneFill}
@@ -3573,6 +3634,7 @@ export function Canvas() {
                       texturePixelRatio={pausedWebglPreviewPixelRatio}
                       showHelpers={
                         !isEditingText &&
+                        camera.focusMode !== 'spatial' &&
                         (focusPickingCameraId === camera.id ||
                           camera.showFocusPlane)
                       }
@@ -3656,6 +3718,8 @@ export function Canvas() {
           )}
         </div>
 
+        <NullObjectOverlay api={api} camera={camera?.kind === 'camera' ? camera : null}
+          ids={nullObjectIds} width={canvasWidth} height={canvasHeight} zoom={view.zoom} />
         <WorkspaceLayer
           sceneApi={api}
           order={workspaceOrder}
@@ -3718,10 +3782,13 @@ export function Canvas() {
             width: canvasWidth,
             height: canvasHeight,
             borderRadius: Math.max(0, sceneCorner),
-            perspective: cameraFocalLength,
+            perspective: cameraPerspective,
             perspectiveOrigin: 'center center',
           }}
         >
+          {camera?.kind === 'camera' ? (
+            <CameraCompositionOverlay guide={camera.compositionGuide} width={canvasWidth} height={canvasHeight} zoom={view.zoom} />
+          ) : null}
           {solved ? (
             <NodeGeometryPreviewOverlay
               api={api}
@@ -3817,6 +3884,13 @@ export function Canvas() {
             ) : null}
           </div>
         </div>
+        {camera?.kind === 'camera' && camera.depthOfField && camera.focusMode === 'spatial' && camera.showFocusPlane ? (
+          <AnimatedFocusPlaneOverlay camera={camera} width={canvasWidth} height={canvasHeight} zoom={view.zoom} playing={playing}
+            onCommit={(patch) => api.doc.transact(() => {
+              for (const field of ['focusPlaneX', 'focusPlaneY', 'focusPlaneZ'] as const) api.setNodeProperty(camera.id, field, patch[field])
+              stampCanvasCameraPatch(camera.id, patch)
+            }, UNDOABLE_GESTURE_ORIGIN)} />
+        ) : null}
         {camera &&
         camera.kind === 'camera' &&
         camera.depthOfField &&
@@ -3866,7 +3940,7 @@ export function Canvas() {
             ? 'Orbit'
             : cameraNavigationMode === 'pan'
               ? 'Pan'
-              : 'Dolly'}
+              : camera?.kind === 'camera' && camera.projection === 'orthographic' ? 'Zoom' : 'Dolly'}
         </div>
       ) : null}
 
@@ -4161,7 +4235,7 @@ export function SceneLayer({
     const walk = (id: NodeId, parentHidden: boolean) => {
       const n = api.getNode(id)
       if (!n) return
-      const eff = parentHidden || !n.visible || n.isMask
+      const eff = parentHidden || !n.visible || n.isMask || arrangementLayerOwner(api, n)?.visible === false
       if (eff) hidden.add(id)
       for (const c of api.getChildren(id)) walk(c.id, eff)
     }
@@ -4273,6 +4347,29 @@ export function SceneLayer({
     return map
   }, [api, rootId, solved, sceneVersion, animated, inherited])
 
+  const controllerTransforms = useMemo(() => {
+    void sceneVersion
+    if (!order.some((id) => { const node = api.getNode(id); return node && hasNullTransform(node) })) return {}
+    const camera = api.getActiveCamera()
+    if (!camera) return {}
+    const viewport = api.getMeta().canvas
+    const resolved = resolveCamera3D(camera, animated[camera.id], viewport)
+    const planes = buildWorldPlanes(api, solved, animated, resolved, { independentNodes: true })
+    return Object.fromEntries(planes.map((plane) => {
+      const x = { x: plane.right.x * plane.scaleX, y: plane.right.y * plane.scaleX, z: plane.right.z * plane.scaleX }
+      const y = { x: plane.down.x * plane.scaleY, y: plane.down.y * plane.scaleY, z: plane.down.z * plane.scaleY }
+      const w = plane.rect.width / 2
+      const h = plane.rect.height / 2
+      return [plane.nodeId, `matrix3d(${[
+        x.x, x.y, x.z, 0, y.x, y.y, y.z, 0,
+        plane.normal.x, plane.normal.y, plane.normal.z, 0,
+        plane.center.x - x.x * w - y.x * h - plane.rect.x,
+        plane.center.y - x.y * w - y.y * h - plane.rect.y,
+        plane.center.z - x.z * w - y.z * h, 1,
+      ].join(',')})`]
+    }))
+  }, [api, order, solved, animated, sceneVersion])
+
   const compositingOrder = partitionAlwaysOnTopSubtrees(api, order)
   const renderNode = (id: NodeId) => {
     const node = api.getNode(id)
@@ -4286,6 +4383,7 @@ export function SceneLayer({
         rect={rect}
         anim={animated[id]}
         inherit={inherit}
+        worldTransform={controllerTransforms[id]}
         isRoot={id === rootId}
         isSelected={selection.includes(id)}
         ancestorClip={ancestorClip[id]}
@@ -4310,6 +4408,7 @@ export function SceneLayer({
     return (
       <ClippedFrameStrokeOverlay
         key={`stroke-${id}`}
+        worldTransform={controllerTransforms[id]}
         node={node}
         rect={rect}
         anim={animated[id]}
@@ -4356,6 +4455,7 @@ export function SceneLayer({
 function ClippedFrameStrokeOverlay({
   maskedBy,
   node,
+  worldTransform,
   rect,
   anim,
   inherit,
@@ -4363,6 +4463,7 @@ function ClippedFrameStrokeOverlay({
 }: {
   maskedBy?: DomMask[]
   node: SceneNode
+  worldTransform?: string
   rect: Rect
   anim: AnimatedValue | undefined
   inherit: InheritedAnim
@@ -4418,8 +4519,8 @@ function ClippedFrameStrokeOverlay({
         width: rect.width,
         height: rect.height,
         opacity,
-        transform: parts.length > 0 ? parts.join(' ') : undefined,
-        transformOrigin,
+        transform: worldTransform ?? (parts.length > 0 ? parts.join(' ') : undefined),
+        transformOrigin: worldTransform ? '0 0' : transformOrigin,
         transformStyle: 'preserve-3d',
         ...domMaskStyle(node, rect, anim, inherit, maskedBy),
       }}
@@ -4560,6 +4661,13 @@ ScenePostProcessLayer.displayName = 'ScenePostProcessLayer'
  * the WebGL blur. Keeping this subscription in a tiny leaf avoids reconciling
  * Canvas, layout, selection, and the timeline for every animation frame.
  */
+const AnimatedFocusPlaneOverlay = memo(function AnimatedFocusPlaneOverlay({ camera, ...props }: {
+  camera: CameraNode; width: number; height: number; zoom: number; playing?: boolean; onCommit: (patch: FocusPlanePositionPatch) => void
+}) {
+  const { cameraAnim } = useLiveCameraAnimatedValue(camera.id)
+  return <FocusPlaneOverlay camera={camera} cameraAnim={cameraAnim} {...props} />
+})
+
 const AnimatedCameraFocusMaskOverlay = memo(
   function AnimatedCameraFocusMaskOverlay({
     camera,
@@ -4842,6 +4950,7 @@ function DomFocusPlaneOverlay({
  * onto other frames. Matches Figma / Jitter.
  */
 type NodeViewProps = {
+  worldTransform?: string
   node: SceneNode
   rect: Rect
   anim: AnimatedValue | undefined
@@ -4857,7 +4966,7 @@ type NodeViewProps = {
 }
 
 function NodeView(props: NodeViewProps) {
-  if (props.node.kind === 'audio') return null
+  if (props.node.kind === 'audio' || (props.node.kind === 'null' || props.node.kind === 'arrangement')) return null
   return <VisualNodeView {...props} />
 }
 
@@ -4907,6 +5016,7 @@ function domMaskStyleForMatrix(width: number, height: number, inverse: DOMMatrix
 }
 
 function VisualNodeView({
+  worldTransform,
   node,
   rect,
   anim,
@@ -5300,8 +5410,8 @@ function VisualNodeView({
         borderRadius: wrapperBorderRadius,
         boxShadow: composedBoxShadow || undefined,
         ...(strokeBorderCss ?? {}),
-        transform,
-        transformOrigin,
+        transform: worldTransform ?? transform,
+        transformOrigin: worldTransform ? '0 0' : transformOrigin,
         transformStyle: 'preserve-3d',
         // Frames act as design-tool compositing groups. Without isolation,
         // a child using mix-blend-mode can blend against unrelated canvas

@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { arrangementLayerOwner, layerPanelChildren, layerPanelParent } from '@/ui/arrangementLayerTree'
+import { addArrangementMembers, removeArrangementMember } from '@/scene/arrangementActions'
+import { CreateArrangementButton } from '@/ui/ArrangementSection'
+
+import { addNull } from '@/scene/nullObject'
 
 import {
   memo,
@@ -12,6 +17,11 @@ import {
   type RefObject,
 } from 'react'
 import { getAnimEngine } from '@/anim'
+import { resolveProgramCamera } from '@/sequence'
+import { IsometricAssetsPanel } from './IsometricAssetsPanel'
+import { applyIsometricCameraPreset } from './cameraViewPreset'
+import { currentAnimationAuthorTime } from './animationPlayhead'
+import { cameraPreviewStore } from './cameraPreviewStore'
 import { useProjectAPI } from '@/project'
 import { useSceneAPI, useSceneVersion } from '@/scene'
 import type { CameraNode, Node, NodeId, NodeKind } from '@/scene'
@@ -228,7 +238,13 @@ export function LayersPanel() {
           />
           {root ? (
             <>
-              <PanelSectionLabel label="Scene layers" />
+              <div className="flex items-center justify-between pr-3">
+                <PanelSectionLabel label="Scene layers" />
+                <CreateArrangementButton api={api} />
+                <button type="button" className="text-[11px] text-text-muted hover:text-text"
+                  onClick={() => { const id = addNull(api); if (id) useUI.getState().setSelection([id]) }}
+                  title="Add an invisible controller for layers and cameras">+ Null</button>
+              </div>
               <Row node={root} depth={0} rootId={rootId} />
             </>
           ) : (
@@ -319,12 +335,42 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
   useSceneVersion()
   const api = useSceneAPI()
   const components = listComponents(api)
+  const project = useProjectAPI()
+  const selection = useUI((state) => state.selection)
+  const playhead = useUI((state) => state.playhead)
+  const playing = useUI((state) => state.playing)
+  const [viewMessage, setViewMessage] = useState('')
+  const viewIsometric = () => {
+    const scene = project.getActiveScene()
+    if (!scene) return
+    const ui = useUI.getState()
+    const view = ui.previewScope === 'scene' ? ui.cameraViewByComposition[scene.id] : undefined
+    const time = currentAnimationAuthorTime()
+    const cameras = listSceneCameras(api).filter(camera => scene.cameraIds.includes(camera.id))
+    const cameraId = view?.mode === 'camera' ? view.cameraId : resolveProgramCamera({
+      scene, localTime: time, frameRate: api.getMeta().frameRate,
+      cameras, fallbackCameraId: api.getActiveCameraId(),
+    }).cameraId
+    const camera = cameraId ? api.getNode(cameraId) : null
+    if (camera?.kind !== 'camera' || camera.locked || !camera.enabled) {
+      setViewMessage('Choose an unlocked, enabled camera to use an isometric view.')
+      return
+    }
+    cameraPreviewStore.clear(camera.id)
+    applyIsometricCameraPreset(api, camera.id, time, ui.recording)
+    setViewMessage('Isometric view applied. Option/Alt + 1–4 switches the view.')
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+      <IsometricAssetsPanel api={api} parentId={api.getRoot()} selection={selection}
+        currentTime={currentAnimationAuthorTime({ ...useUI.getState(), playhead, playing })}
+        onCreated={id => useUI.getState().setSelection([id])}
+        onViewIsometric={viewIsometric} />
+      {viewMessage && <p role="status" className="px-3 pb-3 text-[11px] text-text-muted">{viewMessage}</p>}
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
         <span className="text-[11px] font-medium text-text-muted">
-          Asset library
+          Components
         </span>
         <div className="flex items-center gap-1">
           <span
@@ -938,7 +984,7 @@ function LayerSelectionReveal({
     while (current) {
       const node = api.getNode(current)
       if (!node) break
-      const parent: string | null = node.parent
+      const parent: string | null = layerPanelParent(api, node)
       if (parent && layersCollapsed.has(parent)) {
         toggleLayerCollapsed(parent)
       }
@@ -981,7 +1027,7 @@ const Row = memo(function LayerRow({
   // large imported Figma tree.
   const selected = useUI((s) => s.selection.includes(node.id))
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
-  const children = api.getChildren(node.id).filter((child) => child.kind !== 'audio')
+  const children = layerPanelChildren(api, node)
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(node.name)
@@ -994,7 +1040,7 @@ const Row = memo(function LayerRow({
   // through their component definition — dropping a foreign node inside
   // would break the instance contract, so we skip them too. Root is a
   // frame so it qualifies automatically.
-  const isContainer = node.kind === 'frame' || node.kind === 'component'
+  const isContainer = node.kind === 'frame' || node.kind === 'component' || node.kind === 'arrangement'
 
   const commitName = () => {
     const name = draftName.trim()
@@ -1043,6 +1089,27 @@ const Row = memo(function LayerRow({
     if (!srcId || srcId === node.id) return
     // Guard against cycles — can't drop a node into its own descendant.
     if (isDescendant(api, node.id, srcId)) return
+
+    const targetArrangement = edge === 'into' && node.kind === 'arrangement' ? node : edge !== 'into' ? arrangementLayerOwner(api, node) : null
+    if (targetArrangement) {
+      if (targetArrangement.locked) return
+      const layout = getLastSolvedLayout()
+      if (!layout) return
+      api.doc.transact(() => {
+        addArrangementMembers(api, targetArrangement.id, [srcId], layout, getAnimEngine().getSnapshot())
+        const current = api.getNode(targetArrangement.id)?.arrangement
+        if (!current?.memberIds.includes(srcId) || edge === 'into') return
+        const order = current.memberIds.filter((id) => id !== srcId)
+        const index = order.indexOf(node.id)
+        order.splice(index + (edge === 'below' ? 1 : 0), 0, srcId)
+        api.setNodeProperty(targetArrangement.id, 'arrangement', { ...current, memberIds: order })
+      }, UNDOABLE_GESTURE_ORIGIN)
+      return
+    }
+    const source = api.getNode(srcId)
+    const owner = source && arrangementLayerOwner(api, source)
+    if (source?.locked || owner?.locked) return
+    if (owner) removeArrangementMember(api, owner.id, srcId, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
 
     if (edge === 'into') {
       // Drop as a new child of this node. appendChild reparents and
@@ -1161,6 +1228,8 @@ const Row = memo(function LayerRow({
               toggleLayerCollapsed(node.id)
             }}
             title={collapsed ? 'Expand' : 'Collapse'}
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
+            aria-expanded={!collapsed}
             className="flex h-3 w-3 shrink-0 items-center justify-center text-[9px] text-text-dim hover:text-text"
           >
             {collapsed ? '▸' : '▾'}
@@ -1233,7 +1302,9 @@ const Row = memo(function LayerRow({
           active={node.visible}
           onClick={(e) => {
             e.stopPropagation()
-            api.setNodeProperty(node.id, 'visible', !node.visible)
+            api.doc.transact(() => {
+              api.setNodeProperty(node.id, 'visible', !node.visible)
+            }, UNDOABLE_GESTURE_ORIGIN)
           }}
           title={
             node.visible
@@ -1250,7 +1321,10 @@ const Row = memo(function LayerRow({
             // Cascade to descendants. A lock on a container implies its
             // children are locked too — otherwise the lock is meaningless
             // (you could still drag the inner badge of a "locked" card).
-            setLockedRecursive(api, node.id, !node.locked)
+            api.doc.transact(() => {
+              setLockedRecursive(api, node.id, !node.locked)
+              if (node.kind === 'arrangement') for (const member of children) setLockedRecursive(api, member.id, !node.locked)
+            }, UNDOABLE_GESTURE_ORIGIN)
           }}
           title={node.locked ? 'Unlock (cascades to children)' : 'Lock (cascades to children)'}
         >
@@ -1395,6 +1469,8 @@ function MaskGlyph() {
 }
 
 const KIND_ICONS: Record<NodeKind, AppIconName> = {
+  null: 'null',
+  arrangement: 'grid',
   frame: 'frame',
   rect: 'square',
   ellipse: 'circle',
@@ -1476,7 +1552,8 @@ function collectVisibleIds(
   const walk = (id: string) => {
     out.push(id)
     if (collapsed.has(id)) return
-    for (const child of api.getChildren(id)) walk(child.id)
+    const node = api.getNode(id)
+    if (node) for (const child of layerPanelChildren(api, node)) walk(child.id)
   }
   walk(rootId)
   return out
@@ -1602,9 +1679,11 @@ function filterDescendants(
   const set = new Set(ids)
   return ids.filter((id) => {
     let n = api.getNode(id)
-    while (n && n.parent) {
-      if (set.has(n.parent)) return false
-      n = api.getNode(n.parent)
+    while (n) {
+      const parent = layerPanelParent(api, n)
+      if (!parent) break
+      if (set.has(parent)) return false
+      n = api.getNode(parent)
     }
     return true
   })

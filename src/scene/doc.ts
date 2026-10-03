@@ -1,3 +1,7 @@
+import { normalizeArrangement } from '@/scene/arrangement'
+import { detachNullDependents, normalizeTransformMatrix, normalizeTransformParent } from '@/scene/nullObject'
+import { normalizeCameraProjection } from '@/scene/cameraProjection'
+import { normalizeCameraCompositionGuide } from '@/scene/cameraCompositionGuide'
 import { normalizeTextShimmer } from '@/anim/textShimmerEffect'
 // SPDX-License-Identifier: Apache-2.0
 
@@ -55,6 +59,8 @@ import { normalizeLayerEffects } from '@/scene/effects'
 import { normalizeEllipseArc } from '@/scene/ellipseArc'
 import { normalizeLayerBend } from '@/scene/layerBend'
 import { normalizeLayerZIndex } from '@/scene/zIndex'
+import { normalizeFlowConnection, type FlowConnection } from '@/scene/flowConnection'
+import { normalizeExtrusion, type Extrusion } from '@/scene/extrusion'
 import { normalizeLayerDeformation } from '@/scene/deformation'
 
 /**
@@ -232,12 +238,16 @@ export interface SceneAPI {
 
 /** A mutable view of node fields that may be set via setNodeProperty. */
 export interface NodeBaseMutable {
+  arrangement: import('@/scene/arrangement').Arrangement | null
   name: string
   workspaceOnly: boolean
+  preventOverlap: boolean | undefined
   proceduralTimeOffset: number
   componentSourceId: NodeId | null
   componentId: NodeId
   transform: Transform
+  transformParent: import('@/scene/types').TransformParent | null
+  transformOffset: number[] | null
   appearance: Appearance
   layout: Layout
   size: Size
@@ -250,6 +260,8 @@ export interface NodeBaseMutable {
   zIndex: number
   isMask: boolean
   maskMode: 'alpha' | undefined
+  connection: FlowConnection | undefined
+  extrusion: Extrusion | undefined
   motionPath: LayerMotionPath | null
   deformation: LayerDeformation | null
   layerBend: LayerBend
@@ -320,6 +332,8 @@ export interface NodeBaseMutable {
   beatAnalysis: import('@/audio/beatSync').BeatAnalysis | undefined
   beatGrid: import('@/audio/beatSync').AudioBeatGrid | undefined
   // camera-kind fields — settable via Inspector on CameraNode.
+  projection: CameraNode['projection']
+  compositionGuide: CameraNode['compositionGuide']
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
   /** Camera focal length in canvas-pixel units. Drives both Z-driven
@@ -333,12 +347,19 @@ export interface NodeBaseMutable {
   nearClip: number
   farClip: number
   depthOfField: boolean
-  focusMode: 'plane' | 'target' | 'screen'
+  focusMode: CameraNode['focusMode']
   focusX: number
   focusY: number
   focusWorldX: number
   focusWorldY: number
   focusWorldZ: number
+  focusPlaneX: number
+  focusPlaneY: number
+  focusPlaneZ: number
+  focusPlaneInitialized: boolean
+  focusPlaneRotationX: number
+  focusPlaneRotationY: number
+  focusPlaneRotationZ: number
   focusTargetNodeId: NodeId | null
   focusDistance: number
   focusRadius: number
@@ -454,7 +475,7 @@ const VECTOR_DEFAULT_APPEARANCE: Appearance = {
 function defaultAppearanceForKind(kind: NodeKind): Appearance {
   if (kind === 'text') return TEXT_DEFAULT_APPEARANCE
   if (kind === 'video' || kind === 'audio') return MEDIA_DEFAULT_APPEARANCE
-  if (kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
+  if ((kind === 'null' || kind === 'arrangement') || kind === 'vector' || kind === 'shader') return VECTOR_DEFAULT_APPEARANCE
   return DEFAULT_APPEARANCE
 }
 
@@ -661,6 +682,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       kind,
       parent: (y.get('parent') as NodeId | null) ?? null,
       children,
+      transformParent: normalizeTransformParent(y.get('transformParent')),
+      transformOffset: normalizeTransformMatrix(y.get('transformOffset')),
+      arrangement: kind === 'arrangement' ? normalizeArrangement(y.get('arrangement')) : null,
       // Ensure `z` exists on every read — older docs predate the
       // 3D-camera era and persisted Transform without `z`. Spread
       // defaults under the persisted shape so the field is always
@@ -683,16 +707,24 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       // mask feature. createNode writes false explicitly so newly-
       // created nodes are also non-masks until the user opts in.
       isMask: ((y.get('isMask') as boolean | undefined) ?? false),
-      maskMode: y.get('maskMode') === 'alpha' ? 'alpha' : undefined,
+      maskMode: y.get('maskMode') === 'alpha' ? 'alpha' as const : undefined,
       componentSourceId:
         (y.get('componentSourceId') as NodeId | null | undefined) ?? null,
       workspaceOnly: (y.get('workspaceOnly') as boolean | undefined) ?? false,
+      ...(y.get('preventOverlap') === true ? { preventOverlap: true } : {}),
       proceduralTimeOffset: finiteNumber(y.get('proceduralTimeOffset') as number | undefined, 0),
+      ...((kind === 'rect' || kind === 'ellipse') && y.has('extrusion')
+        ? { extrusion: normalizeExtrusion(y.get('extrusion')) } : {}),
+      ...(kind === 'vector' && y.has('connection') ? { connection: normalizeFlowConnection(y.get('connection')) } : {}),
       motionPath: normalizeLayerMotionPath(y.get('motionPath')),
       deformation: normalizeLayerDeformation(y.get('deformation')),
       layerBend: normalizeLayerBend(y.get('layerBend')),
     }
     switch (kind) {
+      case 'arrangement':
+        return { ...base, kind }
+      case 'null':
+        return { ...base, kind }
       case 'frame':
         return {
           ...base,
@@ -946,8 +978,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // Legacy-safe defaults: '2d' + enabled=true. Older persisted
           // cameras (if any exist before migration) will read through
           // these so the render path never sees undefined.
-          projection:
-            (y.get('projection') as CameraNode['projection'] | undefined) ?? '2d',
+          projection: normalizeCameraProjection(y.get('projection')),
+          compositionGuide: normalizeCameraCompositionGuide(y.get('compositionGuide')),
           enabled: (y.get('enabled') as boolean) ?? true,
           // Background fill predates v2 cameras → default null. The
           // renderer interprets null as "use workspace chrome behind
@@ -988,6 +1020,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
             ((y.get('focusDistance') as number | undefined) ?? 0),
           focusTargetNodeId:
             (y.get('focusTargetNodeId') as NodeId | null | undefined) ?? null,
+          focusPlaneX: (y.get('focusPlaneX') as number | undefined) ?? 0,
+          focusPlaneY: (y.get('focusPlaneY') as number | undefined) ?? 0,
+          focusPlaneZ: (y.get('focusPlaneZ') as number | undefined) ?? 0,
+          focusPlaneInitialized: (y.get('focusPlaneInitialized') as boolean | undefined) ?? (y.get('focusMode') === 'spatial'),
+          focusPlaneRotationX: (y.get('focusPlaneRotationX') as number | undefined) ?? 0,
+          focusPlaneRotationY: (y.get('focusPlaneRotationY') as number | undefined) ?? 0,
+          focusPlaneRotationZ: (y.get('focusPlaneRotationZ') as number | undefined) ?? 0,
           focusDistance: (y.get('focusDistance') as number | undefined) ?? 0,
           focusRadius: (y.get('focusRadius') as number | undefined) ?? 160,
           focusFalloff: (y.get('focusFalloff') as number | undefined) ?? 180,
@@ -1193,6 +1232,9 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         y.set('kind', kind)
         y.set('name', props?.name ?? generatedName)
         y.set('parent', parent)
+        y.set('transformParent', normalizeTransformParent(props?.transformParent))
+        y.set('transformOffset', normalizeTransformMatrix(props?.transformOffset))
+        y.set('arrangement', kind === 'arrangement' ? normalizeArrangement(props?.arrangement ?? {}) : null)
         y.set('children', new Y.Array<NodeId>())
         y.set('transform', {
           ...DEFAULT_TRANSFORM,
@@ -1217,7 +1259,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         // auto layout. Callers can override via props (e.g. drawn-into
         // a flex parent might want 'absolute' so the user's drop point
         // is honored — see Step 3.66 follow-up).
-        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? 'flow')
+        y.set('position', (props as { position?: 'flow' | 'absolute' })?.position ?? ((kind === 'null' || kind === 'arrangement') ? 'absolute' : 'flow'))
         y.set(
           'zIndex',
           normalizeLayerZIndex((props as { zIndex?: number })?.zIndex),
@@ -1230,6 +1272,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           (props as { componentSourceId?: NodeId | null })?.componentSourceId ?? null,
         )
         y.set('workspaceOnly', (props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
+        if (props?.preventOverlap === true) y.set('preventOverlap', true)
         y.set('proceduralTimeOffset', finiteNumber((props as { proceduralTimeOffset?: number })?.proceduralTimeOffset, 0))
         y.set(
           'motionPath',
@@ -1273,6 +1316,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
         }
         if (kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'vector') {
           y.set('size', (props as Partial<FrameNode>)?.size ?? DEFAULT_SIZE)
+        }
+        if (kind === 'vector') {
+          const connection = normalizeFlowConnection(props?.connection)
+          if (connection) y.set('connection', connection)
+        }
+        if (kind === 'rect' || kind === 'ellipse') {
+          const extrusion = normalizeExtrusion(props?.extrusion)
+          if (extrusion) y.set('extrusion', extrusion)
         }
         if (kind === 'ellipse') {
           y.set(
@@ -1450,7 +1501,8 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // view transform — inverse-applied to the artboard so
           // "camera x=100" pans the viewport right by 100px.
           const cp = props as Partial<CameraNode> | undefined
-          y.set('projection', cp?.projection ?? '2d')
+          y.set('projection', normalizeCameraProjection(cp?.projection))
+          y.set('compositionGuide', normalizeCameraCompositionGuide(cp?.compositionGuide))
           y.set('enabled', cp?.enabled ?? true)
           // Background defaults to null — the camera's viewport falls
           // back to the workspace chrome until the user picks a fill
@@ -1484,6 +1536,13 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           y.set('focusWorldX', cp?.focusWorldX ?? (cp?.focusX ?? centerX))
           y.set('focusWorldY', cp?.focusWorldY ?? (cp?.focusY ?? centerY))
           y.set('focusWorldZ', cp?.focusWorldZ ?? (cp?.focusDistance ?? 0))
+          y.set('focusPlaneX', cp?.focusPlaneX ?? 0)
+          y.set('focusPlaneY', cp?.focusPlaneY ?? 0)
+          y.set('focusPlaneZ', cp?.focusPlaneZ ?? 0)
+          y.set('focusPlaneInitialized', cp?.focusPlaneInitialized ?? (cp?.focusMode === 'spatial'))
+          y.set('focusPlaneRotationX', cp?.focusPlaneRotationX ?? 0)
+          y.set('focusPlaneRotationY', cp?.focusPlaneRotationY ?? 0)
+          y.set('focusPlaneRotationZ', cp?.focusPlaneRotationZ ?? 0)
           y.set('focusTargetNodeId', cp?.focusTargetNodeId ?? null)
           y.set('focusDistance', cp?.focusDistance ?? 0)
           y.set('focusRadius', cp?.focusRadius ?? 160)
@@ -1534,7 +1593,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           arr.push([id])
         } else if (
           !scene.get('root') &&
-          kind !== 'camera' &&
+          kind !== 'camera' && kind !== 'null' && kind !== 'arrangement' &&
           !((props as { workspaceOnly?: boolean })?.workspaceOnly ?? false)
         ) {
           // First parentless non-camera node becomes the root. Cameras
@@ -1550,6 +1609,11 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
       const y = nodes.get(id)
       if (!y) return
       doc.transact(() => {
+        // A controller never owns its linked layers; deletion only detaches links.
+        if (y.get('kind') === 'null' || y.get('kind') === 'arrangement') detachNullDependents(api, id)
+        const arrangementOwner = normalizeTransformParent(y.get('transformParent'))
+        const owner = arrangementOwner ? api.getNode(arrangementOwner.nodeId) : null
+        if (owner?.arrangement) api.setNodeProperty(owner.id, 'arrangement', { ...owner.arrangement, memberIds: owner.arrangement.memberIds.filter((memberId) => memberId !== id) })
         // Detach from parent
         const parent = y.get('parent') as NodeId | null
         if (parent) {
@@ -1593,6 +1657,14 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     setNodeProperty: (nodeId, key, value) => {
       const y = ensureNode(nodeId)
       doc.transact(() => {
+        if (key === 'projection') {
+          y.set(key, normalizeCameraProjection(value))
+          return
+        }
+        if (key === 'compositionGuide') {
+          y.set(key, normalizeCameraCompositionGuide(value))
+          return
+        }
         if (key === 'vignetteEnabled') {
           y.set(key, value === true)
           return
@@ -1622,6 +1694,29 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
                         ),
                 }),
           })
+          return
+        }
+        if (key === 'preventOverlap') {
+          if (value === true) y.set('preventOverlap', true)
+          else y.delete('preventOverlap')
+          return
+        }
+        if (key === 'connection') {
+          if (y.get('kind') !== 'vector') return
+          const connection = normalizeFlowConnection(value)
+          if (connection) y.set('connection', connection)
+          else y.delete('connection')
+          return
+        }
+        if (key === 'extrusion') {
+          if (y.get('kind') !== 'rect' && y.get('kind') !== 'ellipse') return
+          const extrusion = normalizeExtrusion(value)
+          if (extrusion) y.set('extrusion', extrusion)
+          else y.delete('extrusion')
+          return
+        }
+        if (key === 'arrangement') {
+          y.set('arrangement', normalizeArrangement(value))
           return
         }
         if (key === 'motionPath') {
@@ -1689,6 +1784,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
     appendChild: (parent, child) => {
       const p = ensureNode(parent)
       const c = ensureNode(child)
+      if ((c.get('kind') === 'null' || c.get('kind') === 'arrangement') && parent !== api.getRoot()) return
       doc.transact(() => {
         const oldParent = c.get('parent') as NodeId | null
         if (oldParent) {
@@ -2059,6 +2155,8 @@ function defaultName(kind: NodeKind): string {
     case 'audio': return 'Audio'
     case 'component': return 'Component'
     case 'instance': return 'Instance'
+    case 'arrangement': return 'Arrangement'
+    case 'null': return 'Null'
     case 'camera': return 'Camera'
   }
 }
