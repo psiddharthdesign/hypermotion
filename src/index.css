@@ -2,19 +2,19 @@
 @import "tailwindcss";
 
 /* Compact camera Properties layout from the branding reference. */
-[data-camera-inspector] [data-inspector-row] { position: relative; grid-template-columns: minmax(0, 1fr); column-gap: 0; }
-[data-camera-inspector] [data-inspector-row] > span,
-[data-camera-inspector] [data-inspector-value] { grid-column: 1; }
-[data-camera-inspector] [data-inspector-action] { position: absolute; right: 0; bottom: 0; width: 32px; z-index: 2; }
-[data-camera-inspector] [data-inspector-row]:has([data-inspector-keyframe]) .hm-inspector-value .hm-control-surface { padding-right: 32px; }
-[data-camera-inspector] [data-inspector-keyframe] .hm-keyframe-surface { width: 32px; background: transparent; box-shadow: none; clip-path: none !important; }
-[data-camera-inspector] [data-inspector-keyframe] .hm-squircle-surface-svg { display: none; }
+[data-properties-inspector] [data-inspector-row] { position: relative; grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+[data-properties-inspector] [data-inspector-row] > span,
+[data-properties-inspector] [data-inspector-value] { grid-column: 1; }
+[data-properties-inspector] [data-inspector-action] { position: absolute; right: 0; bottom: 0; width: 32px; z-index: 2; }
+[data-properties-inspector] [data-inspector-row]:has([data-inspector-keyframe]) .hm-inspector-value .hm-control-surface { padding-right: 32px; }
+[data-properties-inspector] [data-inspector-keyframe] .hm-keyframe-surface { width: 32px; background: transparent; box-shadow: none; clip-path: none !important; }
+[data-properties-inspector] [data-inspector-keyframe] .hm-squircle-surface-svg { display: none; }
 [data-camera-inspector] section > .space-y-2\.5 > :not(:last-child) { margin-block-end: 8px; }
 [data-camera-inspector] section:has([aria-label="Add camera effect"]) > div > .border-t:empty { display: none; }
 [data-camera-inspector] section:has([aria-label="Enable camera background"]) [data-inspector-row] > span:empty { display: none; }
 [data-camera-inspector] img { flex-shrink: 0; }
-:root[data-theme='dark'] [data-camera-inspector] img:not([src$='camera.svg']),
-:root[data-theme='dark'] [title^='Composition guides'] img { filter: invert(1); }
+:root[data-theme='dark'] .hm-eyedropper-icon,
+:root[data-theme='dark'] [data-camera-inspector] img:not([src$='camera.svg']) { filter: invert(1); }
 [data-camera-inspector] #inspector-properties-panel > div > section:first-child { border-top: 1px solid var(--color-border); padding-top: 16px; }
 [data-camera-inspector] p.px-2 { padding-inline: 0; }
 [data-camera-inspector] section:has([aria-label='Enable camera background']) > div:first-child > span,
@@ -24,8 +24,8 @@
   :root:not([data-theme]) [data-camera-inspector] { --color-panel: #fff; --color-control: var(--color-zinc-50); --color-text-muted: var(--color-zinc-600); }
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) [data-camera-inspector] img:not([src$='camera.svg']),
-  :root:not([data-theme]) [title^='Composition guides'] img { filter: invert(1); }
+  :root:not([data-theme]) .hm-eyedropper-icon,
+  :root:not([data-theme]) [data-camera-inspector] img:not([src$='camera.svg']) { filter: invert(1); }
 }
 [data-camera-inspector] .hm-control-surface { --hm-squircle-stroke: var(--color-border-strong); }
 

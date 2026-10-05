@@ -35,9 +35,7 @@ import { useProjectAPI, type ProjectAPI } from '@/project'
 import { useUI } from '@/state/ui'
 import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
 import {
-  MAX_CAMERA_SCROLL_SENSITIVITY,
   MAX_LAYER_Z_INDEX,
-  MIN_CAMERA_SCROLL_SENSITIVITY,
   MIN_LAYER_Z_INDEX,
   MAX_LAYER_BLUR_PX,
   DEFAULT_BEND_DEFORMATION,
@@ -375,6 +373,7 @@ export function Inspector() {
     <aside
       data-inspector-root="1"
       data-camera-inspector={singleNode?.kind === 'camera' && mode === 'properties' ? '1' : undefined}
+      data-properties-inspector={mode === 'properties' ? '1' : undefined}
       aria-label="Inspector"
       className="relative flex shrink-0 flex-col border-l border-border bg-panel"
       style={{ width }}
@@ -431,11 +430,11 @@ export function Inspector() {
             {mode === 'transitions' ? (<TransitionsPanel />) : mode === 'animate' ? (
               <PresetsPanel />
             ) : showScene ? (
-              <SceneDetails api={api} project={project} />
+              <CameraFieldContext.Provider value={true}><SceneDetails api={api} project={project} /></CameraFieldContext.Provider>
             ) : multiNodes && multiNodes.length > 1 ? (
-              <MultiNodeDetails nodes={multiNodes} api={api} />
+              <CameraFieldContext.Provider value={true}><MultiNodeDetails nodes={multiNodes} api={api} /></CameraFieldContext.Provider>
             ) : singleNode ? (
-              <CameraFieldContext.Provider value={singleNode.kind === 'camera'}>
+              <CameraFieldContext.Provider value={true}>
                 <NodeDetails node={singleNode} api={api} />
               </CameraFieldContext.Provider>
             ) : null}
@@ -771,6 +770,7 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
             allowEmpty={false}
           />
         </FieldRow>
+        <div className="grid grid-cols-2 gap-3">
         <KeyframeSliderRow
           label="Width"
           value={meta.canvas.width}
@@ -789,6 +789,7 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
           step={1}
           suffix="px"
         />
+        </div>
         <KeyframeSliderRow
           label="Duration"
           value={activeScene?.duration ?? meta.duration}
@@ -2991,7 +2992,7 @@ function MultiLayoutSection({
           stored padding while the mode is None, but do not expose a control
           that has no predictable effect on that mode. */}
       {!c.mode.mixed && c.mode.value !== 'none' ? (
-        (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+        <div className="grid grid-cols-2 gap-3">{(['top', 'right', 'bottom', 'left'] as const).map((side) => (
           <KeyframeSliderRow
             key={side}
             label={`Padding ${side.charAt(0).toUpperCase()}`}
@@ -3038,7 +3039,7 @@ function MultiLayoutSection({
               />
             }
           />
-        ))
+        ))}</div>
       ) : null}
     </Section>
   )
@@ -3318,10 +3319,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
   const liveFieldOfView =
     node.kind === 'camera' ? anim?.fieldOfView ?? node.fieldOfView ?? 35 : 35
-  const cameraScrollSensitivity =
-    node.kind === 'camera'
-      ? normalizeCameraScrollSensitivity(node.scrollSensitivity)
-      : 1
   const liveNearClip =
     node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
   const liveFarClip =
@@ -6394,17 +6391,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               </>
             ) : null}
           </Section>
-          <InspectorDisclosure storageKey="camera-advanced-settings" title="Advanced">
-            <FieldRow label="Name"><TextField value={node.name} onCommit={name => api.setNodeProperty(node.id, 'name', name)} allowEmpty={false} /></FieldRow>
-            <FieldRow label="Visible"><CheckboxField value={node.visible} onCommit={value => api.setNodeProperty(node.id, 'visible', value)} /></FieldRow>
-            <FieldRow label="Locked"><CheckboxField value={node.locked} onCommit={value => setLockedRecursive(api, node.id, value)} /></FieldRow>
-            <FieldRow label="Scroll intensity" layout="compound">
-              <SliderField value={Math.round(cameraScrollSensitivity * 100)} onCommit={percent => patchCamera({ scrollSensitivity: percent / 100 })}
-                min={MIN_CAMERA_SCROLL_SENSITIVITY * 100} max={MAX_CAMERA_SCROLL_SENSITIVITY * 100} step={5} suffix="%" />
-            </FieldRow>
-            <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
-            <CameraAnimationActions node={node} api={api} />
-          </InspectorDisclosure>
+          <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
         </>
       )}
     </div>
@@ -6648,28 +6635,6 @@ function CameraSectionResetButton({
  * keyframe their values, so keeping the old non-keyframing "Reset transform"
  * button here would expose two conflicting reset behaviors.
  */
-function CameraAnimationActions({ node, api }: { node: Node; api: SceneAPI }) {
-  const tracks = api.getTracksForNode(node.id)
-  if (tracks.length === 0) return null
-  return (
-    <div className="mt-2 flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={() => {
-          api.doc.transact(() => {
-            for (const t of tracks) removeTrack(api, t.id)
-          })
-        }}
-        title="Remove every animation track on the camera. Static transform stays."
-        className="rounded border border-border bg-panel px-2 py-1.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
-      >
-        Clear animation ({tracks.length}{' '}
-        {tracks.length === 1 ? 'track' : 'tracks'})
-      </button>
-    </div>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Uniform Scale — single percent field used for cameras. Anamorphic
 // camera scaling (X ≠ Y) isn't physically meaningful, and a single
@@ -10795,7 +10760,7 @@ function LayoutSection({
         </>
       ) : null}
       {layout.mode !== 'none'
-        ? (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+        ? <div className="grid grid-cols-2 gap-3">{(['top', 'right', 'bottom', 'left'] as const).map((side) => (
             <KeyframeSliderRow
               key={side}
               label={`Padding ${side.charAt(0).toUpperCase()}`}
@@ -10833,7 +10798,7 @@ function LayoutSection({
                 />
               }
             />
-          ))
+          ))}</div>
         : null}
     </Section>
   )
@@ -11050,16 +11015,7 @@ function AlignStretchIcon() {
   )
 }
 
-/**
- * SliderField — Framer's "32 ─────●─" pattern. Numeric input on the
- * left (compact, ~64px), accent-filled range track on the right.
- *
- * Implementation note: we use a native <input type="range"> for
- * accessibility and free keyboard support, but skin it heavily so it
- * matches the rest of the dark inspector. The fill below the thumb
- * is painted via a CSS linear-gradient on the track background — no
- * custom SVG, no JS-driven width math.
- */
+/** Shared numeric scrub presentation for formerly bounded slider fields. */
 function SliderField({
   value,
   onCommit,
@@ -11077,41 +11033,7 @@ function SliderField({
   suffix?: string
   disabled?: boolean
 }) {
-  // Visual fill: percentage of the way from min to max. Capped to the
-  // track range so a value > max (rare but possible from animated
-  // properties) still paints the track 100%.
-  const pct = Math.max(0, Math.min(1, (value - min) / Math.max(1, max - min)))
-  const fillPercent = Math.round(pct * 100)
-  return (
-    <div
-      className={[
-        'flex w-full items-center gap-2',
-        disabled ? 'pointer-events-none opacity-50' : '',
-      ].join(' ')}
-    >
-      <NumberField
-        value={value}
-        onCommit={onCommit}
-        min={min}
-        max={max}
-        step={step}
-        suffix={suffix}
-        width="w-16"
-      />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onCommit(Number(e.currentTarget.value))}
-        className="hyper-slider h-1.5 flex-1 cursor-pointer appearance-none rounded-full"
-        style={{
-          background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${fillPercent}%, var(--color-border) ${fillPercent}%, var(--color-border) 100%)`,
-        }}
-      />
-    </div>
-  )
+  return <NumberField value={value} onCommit={onCommit} min={min} max={max} step={step} suffix={suffix} disabled={disabled} width="w-full" />
 }
 
 // ---------------------------------------------------------------------------

@@ -3921,7 +3921,7 @@ export function Canvas() {
           frame the export pipeline captures — it's editor chrome,
           not scene content. */}
       <div
-        className="absolute bottom-3 right-3 flex items-center gap-1.5"
+        className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5"
         data-export-hide="1"
       >
         <CanvasGuidesControl camera={camera?.kind === 'camera' ? camera : null} api={api} />

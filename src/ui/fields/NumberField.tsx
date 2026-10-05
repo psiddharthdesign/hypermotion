@@ -49,6 +49,7 @@ export function NumberField({
   const [draft, setDraft] = useState(() => formatValue(value))
   const [focused, setFocused] = useState(false)
   const [invalid, setInvalid] = useState(false)
+  const [scrubbing, setScrubbing] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
   const skipNextBlurCommitRef = useRef(false)
   const latestRef = useRef({
@@ -151,11 +152,15 @@ export function NumberField({
       if (!scrub.scrubbing && Math.hypot(dx, dy) < 3) return
 
       scrub.scrubbing = true
+      setScrubbing(true)
       e.preventDefault()
       document.body.style.userSelect = 'none'
       document.documentElement.style.cursor = SCRUB_CURSOR
       document.body.style.cursor = SCRUB_CURSOR
-      ref.current?.blur()
+      if (document.activeElement === ref.current) {
+        skipNextBlurCommitRef.current = true
+        ref.current?.blur()
+      }
 
       const latest = latestRef.current
       const multiplier = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
@@ -170,17 +175,19 @@ export function NumberField({
       setDraft(latest.formatValue(next))
       if (latest.onScrubPreview) {
         scrub.deferredCommit = true
+        // Preview stores already coalesce packets at display cadence. Avoid
+        // another frame queue here, which adds a frame of visible latency.
+        latest.onScrubPreview(next)
+      } else {
+        queueScrub(next)
       }
-      // Publish at display cadence. Transient-preview callers avoid document
-      // writes entirely; the generic fallback is still live without reacting
-      // to every raw hardware packet.
-      queueScrub(next)
     }
 
     const finishPointerScrub = (e: PointerEvent, cancelled: boolean) => {
       const scrub = scrubRef.current
       if (!scrub || e.pointerId !== scrub.pointerId) return
       scrubRef.current = null
+      setScrubbing(false)
       document.body.style.userSelect = ''
       document.documentElement.style.cursor = scrub.previousCursor
       document.body.style.cursor = scrub.previousCursor
@@ -230,7 +237,9 @@ export function NumberField({
     document.body.style.userSelect = 'none'
     document.documentElement.style.cursor = SCRUB_CURSOR
     document.body.style.cursor = SCRUB_CURSOR
-    const parsed = latestRef.current.parseValue(draft) ?? latestRef.current.value
+    const parsed = focused
+      ? latestRef.current.parseValue(draft) ?? latestRef.current.value
+      : latestRef.current.value
     scrubRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
@@ -301,8 +310,8 @@ export function NumberField({
         inputMode="decimal"
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
-        value={focused || invalid ? draft : formatDisplayValue(value)}
-        style={cameraField ? { flex: '0 1 auto', width: `calc(${Math.max(1, (focused || invalid ? draft : formatDisplayValue(value)).length)}ch + ${(showScrubHandle ? 2 : 8) + (suffix ? 0 : 4)}px)` } : undefined}
+        value={focused || invalid || scrubbing ? draft : formatDisplayValue(value)}
+        style={cameraField ? { flex: '0 1 auto', width: `calc(${Math.max(1, (focused || invalid || scrubbing ? draft : formatDisplayValue(value)).length)}ch + ${(showScrubHandle ? 2 : 8) + (suffix ? 0 : 4)}px)` } : undefined}
         onChange={(e) => {
           setDraft(e.target.value)
           if (invalid) setInvalid(false)
