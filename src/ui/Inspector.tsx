@@ -1,16 +1,9 @@
 import { ArrangementSection, CreateArrangementButton } from '@/ui/ArrangementSection'
+import { CameraFieldContext } from './fields/CameraFieldContext'
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
-import { applyIsometricCameraPreset, cameraZoomScale } from './cameraViewPreset'
-import { CameraZoomKeyframeButton } from './CameraZoomKeyframeButton'
-import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
-import { CameraCompositionGuideField } from './CameraCompositionGuideField'
-import { ExtrusionSection } from './ExtrusionSection'
-import { SolidFaceEditingButton } from './SolidFaceEditingButton'
-import { SolidPlacementSection } from './SolidPlacementSection'
 import { createSolidInspectorPositionConstraint, isSolidPositionPatch, type SolidInspectorPositionConstraint } from './solidInspectorPosition'
-import { FlowConnectionSection } from './FlowConnectionSection'
 
 import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
@@ -381,6 +374,7 @@ export function Inspector() {
   return (
     <aside
       data-inspector-root="1"
+      data-camera-inspector={singleNode?.kind === 'camera' && mode === 'properties' ? '1' : undefined}
       aria-label="Inspector"
       className="relative flex shrink-0 flex-col border-l border-border bg-panel"
       style={{ width }}
@@ -430,7 +424,7 @@ export function Inspector() {
               },
             }}
           >
-            {mode === 'properties' && singleNode?.kind !== 'arrangement' && singleNode?.kind !== 'camera' && singleNode?.kind !== 'audio' && <section className="space-y-2 border-b border-border pb-3" aria-label="Add arrangement">
+            {mode === 'properties' && singleNode?.kind !== 'arrangement' && singleNode?.kind !== 'camera' && singleNode?.kind !== 'audio' && <section className="space-y-2 border-b border-border pb-3" aria-label="Add advanced layout">
               <CreateArrangementButton api={api} />
               <p className="text-[11px] text-text-muted">Arrange selected layers, or start with blue squares.</p>
             </section>}
@@ -441,7 +435,9 @@ export function Inspector() {
             ) : multiNodes && multiNodes.length > 1 ? (
               <MultiNodeDetails nodes={multiNodes} api={api} />
             ) : singleNode ? (
-              <NodeDetails node={singleNode} api={api} />
+              <CameraFieldContext.Provider value={singleNode.kind === 'camera'}>
+                <NodeDetails node={singleNode} api={api} />
+              </CameraFieldContext.Provider>
             ) : null}
           </motion.div>
         </AnimatePresence>
@@ -534,6 +530,7 @@ function InspectorContext({
 }
 
 function humanizeNodeKind(kind: Node['kind']): string {
+  if (kind === 'arrangement') return 'Advanced layout'
   return kind
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -4112,35 +4109,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           <FieldRow label="Projection">
             <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
               ariaLabel="Camera projection"
-              options={[{ value: 'perspective', label: 'Perspective' }, { value: 'orthographic', label: 'Orthographic' }]}
-              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection), UNDOABLE_GESTURE_ORIGIN)} />
+              options={[{ value: 'perspective', label: 'Perspective' }, ...(node.projection === 'orthographic' ? [{ value: 'orthographic', label: 'Orthographic (saved camera)' }] : [])]}
+              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection as CameraNode['projection']), UNDOABLE_GESTURE_ORIGIN)} />
           </FieldRow>
-          <FieldRow label="Isometric view">
-            <SelectField value={node.projection === 'orthographic' ? ISOMETRIC_CAMERA_VIEWS.find(view =>
-              Math.abs(view.rotation.rotationX - liveRotX) < 0.01 && Math.abs(view.rotation.rotationY - liveRotY) < 0.01 && Math.abs(view.rotation.rotation - liveRot) < 0.01)?.id ?? '' : ''}
-              ariaLabel="Isometric view" options={[
-                { value: '', label: 'Choose view…' },
-                ...ISOMETRIC_CAMERA_VIEWS.map((view, index) => ({ value: view.id, label: `${view.label} · Alt/Option+${index + 1}` })),
-              ]} onCommit={value => {
-                const view = ISOMETRIC_CAMERA_VIEWS.find(candidate => candidate.id === value)
-                if (!view) return
-                cameraPreviewStore.clear(node.id)
-                applyIsometricCameraPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, view.id)
-              }} />
-          </FieldRow>
-          {node.projection === 'orthographic' && <>
-            <KeyframeSliderRow label="Zoom" value={100 / Math.max(0.01, liveSX)}
-              onCommit={value => { const scale = cameraZoomScale(value); patchTransform({ scaleX: scale }) }}
-              onScrubPreview={value => { const scale = cameraZoomScale(value); previewCameraTransform({ scaleX: scale }) }}
-              onScrubCommit={value => { const scale = cameraZoomScale(value); commitCameraTransformScrub({ scaleX: scale }) }}
-              onScrubCancel={() => cameraPreviewStore.clear(node.id)}
-              min={1} max={10000} adaptiveSpan={400} step={1} suffix="%"
-              keyframe={<CameraZoomKeyframeButton nodeId={node.id} scale={liveSX} />} />
-            <p className="text-[11px] leading-relaxed text-text-muted">Parallel lines stay parallel at every depth. Pan, orbit, and zoom can be animated.</p>
-          </>}
         </Section>
       )}
-      <Section title="Node">
+      {node.kind !== 'camera' && <Section title="Node">
         <FieldRow label="Name">
           <TextField
             value={node.name}
@@ -4180,7 +4154,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </FieldRow>
         )}
-      </Section>
+      </Section>}
 
       {node.kind === 'audio' && (
         <>
@@ -4205,8 +4179,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
-          <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
-
           <Section
             title="Camera Position"
             action={
@@ -4274,18 +4246,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               }
             />
-            <FieldRow label="Scroll intensity" layout="compound">
-              <SliderField
-                value={Math.round(cameraScrollSensitivity * 100)}
-                onCommit={(percent) =>
-                  patchCamera({ scrollSensitivity: percent / 100 })
-                }
-                min={MIN_CAMERA_SCROLL_SENSITIVITY * 100}
-                max={MAX_CAMERA_SCROLL_SENSITIVITY * 100}
-                step={5}
-                suffix="%"
-              />
-            </FieldRow>
           </Section>
 
           <Section
@@ -4372,11 +4332,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </>
       )}
 
-      <SolidFaceEditingButton api={api} selection={[node.id]} />
-      <SolidPlacementSection api={api} node={node} />
-      {node.kind === 'vector' && node.connection && (
-        <FlowConnectionSection api={api} node={node} anim={anim} />
-      )}
 
       {supportsMotionPath && (
         <MotionPathSection
@@ -5136,9 +5091,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </Section>
       )}
 
-      {(node.kind === 'rect' || node.kind === 'ellipse') && (
-        <ExtrusionSection node={node} api={api} anim={anim} />
-      )}
 
       {node.kind === 'text' && (
         <TypographySection node={node} api={api} />
@@ -5421,13 +5373,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
       {node.kind === 'camera' && (
         <>
-          <Section title="Composition guides">
-            <CameraCompositionGuideField value={node.compositionGuide}
-              onCommit={guide => api.doc.transact(() => api.setNodeProperty(node.id, 'compositionGuide', guide), UNDOABLE_GESTURE_ORIGIN)} />
-            <p className="text-[11px] leading-relaxed text-text-muted">
-              Framing guides stay fixed to the camera view and are hidden in exports.
-            </p>
-          </Section>
           <Section title="Lens">
             {node.projection !== 'orthographic' && <KeyframeSliderRow
               label="Field of View"
@@ -5524,17 +5469,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               }
             />
-            <FillField
-              label="Background"
-              value={node.background ?? null}
-              onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
-            />
           </Section>
 
-          <Section title="Depth of Field">
-            <SectionToggleRow
-              label="Enable"
-              value={node.depthOfField ?? false}
+          <Section title="Depth of Field" action={
+            <CheckboxField value={node.depthOfField ?? false} ariaLabel="Enable depth of field"
               onCommit={(depthOfField) =>
                 patchCamera({
                   depthOfField,
@@ -5544,6 +5482,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 })
               }
             />
+          }>
             {node.depthOfField ? (
               <>
                 <FieldRow label="Focus mode" layout="compound">
@@ -6092,8 +6031,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               </p>
             )}
           </Section>
-          <Section title="Post Effects">
-            <SectionToggleRow
+          <CameraBackgroundSection node={node} api={api} />
+          <Section title="Effects" action={<CameraEffectsMenu node={node} onCommit={patchCamera} />}>
+            <CameraEffectHeading
               label="Chromatic aberration"
               value={node.chromaticAberrationEnabled ?? false}
               onCommit={(chromaticAberrationEnabled) =>
@@ -6173,7 +6113,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
             <div className="border-t border-border" />
 
-            <SectionToggleRow
+            <CameraEffectHeading
               label="Bloom"
               value={node.bloomEnabled ?? false}
               onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
@@ -6281,7 +6221,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
             <div className="border-t border-border" />
 
-            <SectionToggleRow
+            <CameraEffectHeading
               label="Vignette"
               value={node.vignetteEnabled ?? false}
               onCommit={(vignetteEnabled) => patchCamera({ vignetteEnabled })}
@@ -6312,7 +6252,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
             <div className="border-t border-border" />
 
-            <SectionToggleRow
+            <CameraEffectHeading
               label="VHS tape"
               value={node.vhsEnabled ?? false}
               onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
@@ -6454,7 +6394,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               </>
             ) : null}
           </Section>
-          <CameraAnimationActions node={node} api={api} />
+          <InspectorDisclosure storageKey="camera-advanced-settings" title="Advanced">
+            <FieldRow label="Name"><TextField value={node.name} onCommit={name => api.setNodeProperty(node.id, 'name', name)} allowEmpty={false} /></FieldRow>
+            <FieldRow label="Visible"><CheckboxField value={node.visible} onCommit={value => api.setNodeProperty(node.id, 'visible', value)} /></FieldRow>
+            <FieldRow label="Locked"><CheckboxField value={node.locked} onCommit={value => setLockedRecursive(api, node.id, value)} /></FieldRow>
+            <FieldRow label="Scroll intensity" layout="compound">
+              <SliderField value={Math.round(cameraScrollSensitivity * 100)} onCommit={percent => patchCamera({ scrollSensitivity: percent / 100 })}
+                min={MIN_CAMERA_SCROLL_SENSITIVITY * 100} max={MAX_CAMERA_SCROLL_SENSITIVITY * 100} step={5} suffix="%" />
+            </FieldRow>
+            <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
+            <CameraAnimationActions node={node} api={api} />
+          </InspectorDisclosure>
         </>
       )}
     </div>
@@ -6633,6 +6583,43 @@ function CameraViewportControlsHint({ orthographic = false }: { orthographic?: b
   )
 }
 
+function CameraBackgroundSection({ node, api }: { node: CameraNode; api: SceneAPI }) {
+  const previousFill = useRef(node.background ?? { kind: 'solid' as const, color: '#ffffff' })
+  if (node.background) previousFill.current = node.background
+  return <Section title="Background" action={<CheckboxField ariaLabel="Enable camera background" value={!!node.background}
+    onCommit={enabled => api.setNodeProperty(node.id, 'background', enabled ? previousFill.current : null)} />}>
+    {node.background ? <FillField label="" value={node.background} onCommit={fill => api.setNodeProperty(node.id, 'background', fill)} /> : null}
+  </Section>
+}
+
+const CAMERA_EFFECT_OPTIONS = [
+  ['chromaticAberrationEnabled', 'Chromatic aberration'],
+  ['bloomEnabled', 'Bloom'],
+  ['vignetteEnabled', 'Vignette'],
+  ['vhsEnabled', 'VHS tape'],
+] as const
+
+function CameraEffectsMenu({ node, onCommit }: { node: CameraNode; onCommit: (patch: Partial<CameraNode>) => void }) {
+  const ref = useRef<HTMLDetailsElement>(null)
+  return <details ref={ref} className="relative" onKeyDown={event => { if (event.key === 'Escape' && ref.current) ref.current.open = false }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null) && ref.current) ref.current.open = false }}>
+    <summary aria-label="Add camera effect" title="Add camera effect" className="flex h-6 w-8 cursor-pointer list-none items-center justify-center rounded hover:bg-control [&::-webkit-details-marker]:hidden">
+      <img src="./camera-inspector/plus.svg" alt="" />
+    </summary>
+    <div className="absolute right-0 top-7 z-50 min-w-44 rounded-md border border-border bg-panel p-1 shadow-lg">
+      {CAMERA_EFFECT_OPTIONS.map(([field, label]) => <button key={field} type="button" disabled={!!node[field]}
+        className="block w-full rounded px-2 py-1.5 text-left text-[11px] text-text hover:bg-control disabled:opacity-40"
+        onClick={() => { onCommit({ [field]: true }); if (ref.current) ref.current.open = false }}>{label}</button>)}
+    </div>
+  </details>
+}
+
+function CameraEffectHeading({ label, value, onCommit }: { label: string; value: boolean; onCommit: (value: boolean) => void }) {
+  return value ? <div className="flex h-6 items-center justify-between text-[11px] font-medium text-text">
+    {label}<button type="button" aria-label={`Remove ${label}`} title={`Remove ${label}`} onClick={() => onCommit(false)} className="flex h-6 w-8 items-center justify-center text-text-muted hover:text-text"><Trash2 size={13} /></button>
+  </div> : null
+}
+
 function CameraSectionResetButton({
   label,
   title,
@@ -6648,9 +6635,9 @@ function CameraSectionResetButton({
       aria-label={label}
       title={title}
       onClick={onClick}
-      className="rounded border border-border bg-panel px-1.5 py-1 text-[10px] font-medium text-text-muted hover:border-border-strong hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="flex h-6 w-8 items-center justify-center rounded text-text-muted hover:bg-control hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
-      Reset scene
+      <img src="./camera-inspector/reset.svg" alt="" />
     </button>
   )
 }

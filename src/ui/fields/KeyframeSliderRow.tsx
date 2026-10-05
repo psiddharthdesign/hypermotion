@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  useContext,
   useEffect,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
+import { CameraFieldContext } from './CameraFieldContext'
 import { NumberField } from './NumberField'
 import { FieldRow } from './FieldRow'
 import { SquircleSurface } from './SquircleSurface'
@@ -78,7 +80,8 @@ export function KeyframeSliderRow({
 }) {
   const rangeMin = sliderMin ?? min
   const rangeMax = sliderMax ?? max
-  const bounded = hasBoundedSliderDomain(rangeMin, rangeMax)
+  const cameraField = useContext(CameraFieldContext)
+  const bounded = !cameraField && hasBoundedSliderDomain(rangeMin, rangeMax)
   const initialDomain = resolveSliderDomain({
     value,
     min: rangeMin,

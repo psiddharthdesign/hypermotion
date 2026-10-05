@@ -11,10 +11,12 @@ export function CheckboxField({
   value,
   onCommit,
   mixed = false,
+  ariaLabel,
 }: {
   value: boolean
   onCommit: (next: boolean) => void
   mixed?: boolean
+  ariaLabel?: string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -26,6 +28,7 @@ export function CheckboxField({
     <input
       ref={inputRef}
       type="checkbox"
+      aria-label={ariaLabel}
       checked={mixed ? false : value}
       aria-checked={mixed ? 'mixed' : value}
       onChange={(e) => onCommit(e.target.checked)}

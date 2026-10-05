@@ -135,7 +135,7 @@ export function createArrangement(api: SceneAPI, ids: string[], layout: SolvedLa
   let id = ''
   api.doc.transact(() => {
     const canvas = api.getMeta().canvas
-    id = api.createNode('arrangement', root, { name: 'Arrangement', arrangement: defaultArrangement(mode), transform: { x: canvas.width / 2, y: canvas.height / 2, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1 } })
+    id = api.createNode('arrangement', root, { name: 'Advanced layout', arrangement: defaultArrangement(mode), transform: { x: canvas.width / 2, y: canvas.height / 2, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1 } })
     addArrangementMembers(api, id, ids, layout, animated)
     if (!api.getNode(id)!.arrangement!.memberIds.length) {
       const spacing = Math.max(32, Math.min(104, Math.floor(Math.min(canvas.width, canvas.height) / 4 / 8) * 8))

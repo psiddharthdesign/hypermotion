@@ -20,7 +20,7 @@ export function CreateArrangementButton({ api }: { api: SceneAPI }) {
   return <button type="button" className="hm-control-surface flex h-8 w-full items-center justify-center gap-2 rounded-md text-[12px] text-text hover:text-accent" title="Arrange selected layers in a grid, circle, path, or sphere" onClick={() => {
     const id = createArrangement(api, useUI.getState().selection, getLastSolvedLayout() ?? {}, getAnimEngine().getSnapshot())
     if (id) useUI.getState().setSelection([id])
-  }}><Grid2X2 size={14} />Add arrangement</button>
+  }}><Grid2X2 size={14} />Add advanced layout</button>
 }
 export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI }) {
   const [candidate, setCandidate] = useState('')
@@ -31,7 +31,7 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
   const parent = node.transformParent ? api.getNode(node.transformParent.nodeId) : null
   if (node.kind !== 'arrangement') return parent?.kind === 'arrangement' ? <section className="border-t border-border py-3">
     <button className="flex items-center gap-2 text-[12px] text-accent" onClick={() => useUI.getState().setSelection([parent.id])}><Grid2X2 size={14} />{parent.name}</button>
-    <p className="mt-1 text-[11px] text-text-muted">Edit this layer independently, or select its arrangement to change the pattern.</p>
+    <p className="mt-1 text-[11px] text-text-muted">Edit this layer independently, or select its advanced layout to change the pattern.</p>
     <button disabled={node.locked || parent.locked} className="mt-2 text-[11px] text-text-muted" onClick={() => removeArrangementMember(api, parent.id, node.id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)}>Detach from arrangement</button>
   </section> : null
   const a = node.arrangement
@@ -73,8 +73,8 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
     if (i < 0 || j < 0) return
     order.splice(i, 1); order.splice(j, 0, from); patch({ memberIds: order })
   }
-  return <section className="space-y-3 border-t border-border py-3" aria-label="Arrangement">
-    <div className="flex items-center gap-2 text-[12px] font-medium text-text"><Grid2X2 size={14} />Arrangement
+  return <section className="space-y-3 border-t border-border py-3" aria-label="Advanced layout">
+    <div className="flex items-center gap-2 text-[12px] font-medium text-text"><Grid2X2 size={14} />Advanced layout
       <button className="ml-auto" aria-label="Duplicate arrangement" title="Duplicate arrangement and its layers" onClick={() => { const id = duplicateArrangement(api, node.id); if (id) useUI.getState().setSelection([id]) }}><Copy size={14} /></button>
       <button disabled={node.locked || a.memberIds.some((id) => api.getNode(id)?.locked)} aria-label="Dissolve arrangement" title="Remove arrangement, retaining layers at their current positions" onClick={() => dissolveArrangement(api, node.id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)}><Unlink size={14} /></button>
     </div>

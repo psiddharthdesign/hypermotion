@@ -195,11 +195,7 @@ export function SceneCameraControls() {
     >
       <div className="mb-2 flex items-center gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Camera
-            size={14}
-            aria-hidden
-            className="shrink-0 text-accent"
-          />
+          <img src="./camera-inspector/camera.svg" alt="" className="shrink-0" />
           <h3
             id="camera-switching-heading"
             className="hm-section-heading truncate"

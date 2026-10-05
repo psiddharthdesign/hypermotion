@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { CameraCompositionOverlay } from './CameraCompositionOverlay'
+import { CanvasGuidesControl } from './CanvasGuidesControl'
 import { SolidFaceSelectionOverlay } from './SolidFaceSelectionOverlay'
 import { createSolidMoveConstraint, type SolidMoveConstraint } from './solidMoveConstraint'
 
@@ -3920,10 +3921,11 @@ export function Canvas() {
           frame the export pipeline captures — it's editor chrome,
           not scene content. */}
       <div
-        className="pointer-events-none absolute bottom-3 right-3 rounded bg-panel/80 px-2 py-1 font-mono text-[10px] text-text-muted backdrop-blur"
+        className="absolute bottom-3 right-3 flex items-center gap-1.5"
         data-export-hide="1"
       >
-        {Math.round(view.zoom * 100)}%
+        <CanvasGuidesControl camera={camera?.kind === 'camera' ? camera : null} api={api} />
+        <span className="pointer-events-none flex h-7 items-center rounded-md border border-border bg-control px-2 text-[12px] text-text-muted">{Math.round(view.zoom * 100)}%</span>
       </div>
 
       {/* Floating tool dock — sits inside the canvas zone, centered

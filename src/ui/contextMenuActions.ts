@@ -7,6 +7,7 @@ import { getAnimEngine } from '@/anim'
 import { detachNullDependents } from '@/scene/nullObject'
 
 import { duplicateSelection } from '@/ui/duplicateSelection'
+import { instantiateComponent } from '@/ui/actions'
 
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
@@ -53,7 +54,7 @@ export function buildNodeContextMenu(
 
   const items: ContextMenuItem[] = []
   if (nodes.some((node) => node.id !== api.getRoot() && !['camera', 'audio', 'null', 'arrangement'].includes(node.kind))) items.push({
-    label: 'Create arrangement',
+    label: 'Create advanced layout',
     onClick: () => {
       const id = createArrangement(api, ids, getLastSolvedLayout() ?? {}, getAnimEngine().getSnapshot())
       if (id) useUI.getState().setSelection([id])

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
+import { CameraFieldContext } from './CameraFieldContext'
 import {
   formatNumericDisplayValue,
   formatNumericValue,
@@ -44,6 +45,7 @@ export function NumberField({
   formatValue = formatNumericValue,
   formatDisplayValue = formatNumericDisplayValue,
 }: NumberFieldProps) {
+  const cameraField = useContext(CameraFieldContext)
   const [draft, setDraft] = useState(() => formatValue(value))
   const [focused, setFocused] = useState(false)
   const [invalid, setInvalid] = useState(false)
@@ -274,7 +276,7 @@ export function NumberField({
             >
               {prefix}
             </span>
-          ) : (
+          ) : cameraField ? <img src="./camera-inspector/scrub.svg" alt="" /> : (
             <svg
               width="13"
               height="13"
@@ -300,6 +302,7 @@ export function NumberField({
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
         value={focused || invalid ? draft : formatDisplayValue(value)}
+        style={cameraField ? { flex: '0 1 auto', width: `calc(${Math.max(1, (focused || invalid ? draft : formatDisplayValue(value)).length)}ch + ${(showScrubHandle ? 2 : 8) + (suffix ? 0 : 4)}px)` } : undefined}
         onChange={(e) => {
           setDraft(e.target.value)
           if (invalid) setInvalid(false)

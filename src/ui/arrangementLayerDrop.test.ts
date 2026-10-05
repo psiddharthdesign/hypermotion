@@ -60,7 +60,7 @@ describe('arrangement layer drops', () => {
   it('recognizes nested arrangement membership without showing cards outside it', async () => {
     const { api, root, arrangement, first, second, layout } = await setup()
     const container = api.createNode('frame', root)
-    api.setNodeProperty(arrangement, 'parent', container)
+    api.appendChild(container, arrangement)
     expect(dropLayersIntoArrangement(api, arrangement, [first, second], 'into', layout)).toEqual([first, second])
     expect(layerPanelChildren(api, api.getNode(arrangement)!).map(node => node.id)).toContain(first)
     expect(layerPanelChildren(api, api.getNode(root)!).map(node => node.id)).not.toContain(first)

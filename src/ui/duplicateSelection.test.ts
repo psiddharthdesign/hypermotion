@@ -38,7 +38,7 @@ describe('arrangement member duplication', () => {
   it('keeps duplicated cards inside a nested arrangement in the layer tree', () => {
     const { api, root, arrangement, members } = setup()
     const container = api.createNode('frame', root)
-    api.setNodeProperty(arrangement, 'parent', container)
+    api.appendChild(container, arrangement)
     for (const id of members) api.appendChild(container, id)
     const [copy] = duplicateSelection(api, [members[0]!])
     expect(layerPanelParent(api, api.getNode(copy!)!)).toBe(arrangement)
