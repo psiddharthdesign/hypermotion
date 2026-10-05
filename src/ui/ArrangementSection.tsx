@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Copy, GripVertical, Grid2X2, Unlink, X } from 'lucide-react'
+import { useMemo } from 'react'
+import { Copy, Grid2X2, Unlink } from 'lucide-react'
 import type { Node, SceneAPI, KeyframeValue } from '@/scene'
 import { ARRANGEMENT_NUMBERS, animatedArrangement, type Arrangement, type ArrangementNumber, type ArrangementChoice } from '@/scene/arrangement'
-import { addArrangementBlueSquares, arrangementMemberCandidates, addArrangementMembers, createArrangement, dissolveArrangement, duplicateArrangement, removeArrangementMember } from '@/scene/arrangementActions'
+import { addArrangementBlueSquares, createArrangement, dissolveArrangement, duplicateArrangement, removeArrangementMember } from '@/scene/arrangementActions'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { getAnimEngine, addKeyframe, findTrack } from '@/anim'
 import { useUI } from '@/state/ui'
@@ -23,9 +23,6 @@ export function CreateArrangementButton({ api }: { api: SceneAPI }) {
   }}><Grid2X2 size={14} />Add advanced layout</button>
 }
 export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI }) {
-  const [candidate, setCandidate] = useState('')
-  const [dragged, setDragged] = useState<string | null>(null)
-  const [error, setError] = useState('')
   const ids = useMemo(() => [node.id], [node.id])
   const animated = useInspectorAnimatedValues(ids)
   const parent = node.transformParent ? api.getNode(node.transformParent.nodeId) : null
@@ -45,7 +42,6 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
     if (useUI.getState().recording || findTrack(api, node.id, property)) addKeyframe(api, node.id, property, currentAnimationAuthorTime(), value)
   }, UNDOABLE_GESTURE_ORIGIN)
   const patch = (p: Partial<Arrangement>) => api.doc.transact(() => api.setNodeProperty(node.id, 'arrangement', { ...a, ...p }), UNDOABLE_GESTURE_ORIGIN)
-  const run = (fn: () => void) => { try { fn(); setError('') } catch (e) { setError(e instanceof Error ? e.message : 'Could not update arrangement.') } }
   const fields = (keys: ArrangementNumber[]) => keys.map((key) => {
     const spec = ARRANGEMENT_NUMBERS[key], property = `arrangement.${key}` as const
     // Multipliers and path progress need a useful authoring range, not degree-sized bounds.
@@ -67,12 +63,6 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
       <KeyframeButton nodeId={node.id} propertyId={`arrangement.${key}`} currentValue={node.locked ? null : live[key]} staggerable={false} />
     </div>
   </div>
-  const candidates = arrangementMemberCandidates(api, a.memberIds)
-  const reorder = (from: string, target: string) => {
-    const order = [...a.memberIds], i = order.indexOf(from), j = order.indexOf(target)
-    if (i < 0 || j < 0) return
-    order.splice(i, 1); order.splice(j, 0, from); patch({ memberIds: order })
-  }
   return <section className="space-y-3 border-t border-border py-3" aria-label="Advanced layout">
     <div className="flex items-center gap-2 text-[12px] font-medium text-text"><Grid2X2 size={14} />Advanced layout
       <button className="ml-auto" aria-label="Duplicate arrangement" title="Duplicate arrangement and its layers" onClick={() => { const id = duplicateArrangement(api, node.id); if (id) useUI.getState().setSelection([id]) }}><Copy size={14} /></button>
@@ -113,31 +103,6 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
       {fields(['scaleFront', ...(live.scaleMode !== 'off' ? ['scaleBack', 'scaleFalloff'] as ArrangementNumber[] : []), ...(live.scaleMode === 'linear' && live.mode !== 'spherical' ? ['scaleDirection'] as ArrangementNumber[] : []), ...(live.scaleMode === 'ripple' ? ['rippleFocus'] as ArrangementNumber[] : []), ...(live.mode !== 'spherical' ? ['depth', 'depthAnchor'] as ArrangementNumber[] : [])])}
     </details>
     <details className="space-y-2"><summary className="cursor-pointer text-[11px] font-medium text-text-muted">Randomness</summary>{fields(['shuffle', 'randomOffset', 'seed'])}</details>
-    <div className="space-y-2 border-t border-border pt-3">
-      <div className="text-[11px] font-medium text-text-muted">Members · {a.memberIds.length}</div>
-      {a.memberIds.length === 0 && <p className="text-[11px] text-text-muted">Add blue squares to try the pattern, or choose your own layers.</p>}
-      {a.memberIds.length === 0 && <button disabled={node.locked} className={control} onClick={() => addArrangementBlueSquares(api, node.id)}>Add blue squares</button>}
-      {a.memberIds.map((id, index) => { const item = api.getNode(id); return item && <div key={id} draggable={!node.locked} onDragStart={() => setDragged(id)} onDragEnd={() => setDragged(null)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (dragged && !node.locked) reorder(dragged, id); setDragged(null) }} className="flex items-center gap-1 rounded-md bg-panel-raised px-1 py-1.5 text-[11px]">
-        <GripVertical size={12} className="shrink-0 text-text-dim" /><span className="text-text-dim">{index + 1}</span>
-        <button className="min-w-0 flex-1 truncate text-left" onClick={() => useUI.getState().setSelection([id])}>{item.name}</button>
-        <button disabled={node.locked || index === 0} title="Move earlier" aria-label={`Move ${item.name} earlier`} onClick={() => reorder(id, a.memberIds[index - 1]!)}><ArrowUp size={12} /></button>
-        <button disabled={node.locked || index === a.memberIds.length - 1} title="Move later" aria-label={`Move ${item.name} later`} onClick={() => reorder(id, a.memberIds[index + 1]!)}><ArrowDown size={12} /></button>
-        <button disabled={node.locked || item.locked || !candidate} title="Replace with chosen layer" aria-label={`Replace ${item.name}`} onClick={() => run(() => {
-          const layout = getLastSolvedLayout(); if (!layout) return
-          api.doc.transact(() => {
-            addArrangementMembers(api, node.id, [candidate], layout, getAnimEngine().getSnapshot())
-            if (!api.getNode(node.id)?.arrangement?.memberIds.includes(candidate)) return
-            removeArrangementMember(api, node.id, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
-            api.setNodeProperty(node.id, 'arrangement', { ...api.getNode(node.id)!.arrangement!, memberIds: a.memberIds.map((key) => key === id ? candidate : key) })
-          }, UNDOABLE_GESTURE_ORIGIN)
-          setCandidate('')
-        })}><Copy size={12} /></button>
-        <button disabled={node.locked || item.locked} aria-label={`Detach ${item.name}`} onClick={() => removeArrangementMember(api, node.id, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)}><X size={12} /></button>
-      </div> })}
-      <select aria-label="Layer to add or replace" className={control} value={candidate} disabled={node.locked} onChange={(e) => setCandidate(e.target.value)}><option value="">Choose a layer…</option>{candidates.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-      <button disabled={!candidate || node.locked} className={`${control} disabled:opacity-40`} onClick={() => run(() => { const layout = getLastSolvedLayout(); if (layout) addArrangementMembers(api, node.id, [candidate], layout, getAnimEngine().getSnapshot()); setCandidate('') })}>Add layer</button>
-      <p className="text-[11px] text-text-dim">Drag to reorder without changing the layer stack. Choose a layer above to add it or replace an existing member.</p>
-      {error && <p role="alert" className="text-[11px] text-red-400">{error}</p>}
-    </div>
+    {a.memberIds.length === 0 && <button disabled={node.locked} className={control} onClick={() => addArrangementBlueSquares(api, node.id)}>Add blue squares</button>}
   </section>
 }

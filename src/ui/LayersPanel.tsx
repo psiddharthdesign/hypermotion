@@ -1247,6 +1247,18 @@ const Row = memo(function LayerRow({
             Show
           </button>
         ) : null}
+        {!isRoot && <button
+          type="button"
+          aria-label={`Delete ${node.name}`}
+          title="Delete layer"
+          disabled={node.locked || !!arrangementLayerOwner(api, node)?.locked}
+          onClick={(event) => {
+            event.stopPropagation()
+            const deletion = buildNodeContextMenu(api, [node.id]).find(item => item.kind !== 'separator' && 'label' in item && item.label === 'Delete')
+            if (deletion && 'onClick' in deletion) deletion.onClick?.()
+          }}
+          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-dim opacity-0 transition-colors hover:bg-panel-raised hover:text-red-500 group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-30"
+        ><AppIcon name="trash" size={11} /></button>}
         <IconToggle
           active={node.visible}
           onClick={(e) => {

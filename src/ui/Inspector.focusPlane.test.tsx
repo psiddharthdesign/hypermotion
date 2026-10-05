@@ -27,7 +27,7 @@ afterEach(() => {
 })
 
 describe('camera focus-plane Inspector', () => {
-  it.each(['perspective', 'orthographic'] as const)('retains camera rotation and independent focus controls for %s projection', projection => {
+  it.each(['perspective', 'orthographic'] as const)('keeps effects collapsed without altering focus-plane settings for %s projection', projection => {
     const api = createSceneAPI()
     api.createNode('frame', null, { size: { width: 960, height: 540 } })
     const camera = api.getActiveCamera()!
@@ -39,14 +39,16 @@ describe('camera focus-plane Inspector', () => {
     useUI.setState({ selection: [camera.id], inspectorMode: 'properties' })
     getAnimEngine().attach(api)
     const html = renderToStaticMarkup(<SceneContext.Provider value={api}><Inspector /></SceneContext.Provider>)
-    for (const label of ['Camera Rotation', 'Rotate X', 'Rotate Y', 'Rotate Z', 'Tilt X', 'Tilt Y', 'Position X', 'Position Y', 'Position Z', 'Align plane with camera', 'Focus plane distance']) {
+    for (const label of ['Camera Rotation', 'Rotate X', 'Rotate Y', 'Rotate Z', 'Position X', 'Position Y', 'Position Z', 'Edit Depth of field', 'Edit Bloom', 'Edit Vignette']) {
       expect(html.includes(label), label).toBe(true)
     }
-    expect(/<option value="spatial"[^>]*selected=""/.test(html)).toBe(true)
-    expect(html).toContain('value="25"')
-    expect(html).toContain('value="-35"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Tilt X')
+    expect(html).not.toContain('Depth of field settings')
     expect(html).not.toContain('Sample surface depth')
     expect(api.getActiveCamera()!.focusPlaneRotationX).toBe(25)
+    expect(api.getActiveCamera()!.focusPlaneRotationY).toBe(-35)
+    expect(api.getActiveCamera()!.focusMode).toBe('spatial')
     api.doc.destroy()
   })
 })

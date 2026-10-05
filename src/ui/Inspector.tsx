@@ -1,3 +1,4 @@
+import { CameraEffectCard } from './CameraEffectCard'
 import { ArrangementSection, CreateArrangementButton } from '@/ui/ArrangementSection'
 import { CameraFieldContext } from './fields/CameraFieldContext'
 import { setBeamRange } from '@/anim/beamTimingTrack'
@@ -188,7 +189,6 @@ import {
   resetInstanceComponentProperty,
   setComponentSourceProperty,
   setInstanceComponentProperty,
-  setLockedRecursive,
   updateComponentInteraction,
   updateComponentPropertyDefinition,
   upsertComponentVariant,
@@ -435,7 +435,7 @@ export function Inspector() {
               <CameraFieldContext.Provider value={true}><MultiNodeDetails nodes={multiNodes} api={api} /></CameraFieldContext.Provider>
             ) : singleNode ? (
               <CameraFieldContext.Provider value={true}>
-                <NodeDetails node={singleNode} api={api} />
+                <NodeDetails key={singleNode.id} node={singleNode} api={api} />
               </CameraFieldContext.Provider>
             ) : null}
           </motion.div>
@@ -1228,8 +1228,6 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   }
 
   // Shared values across the selection — `mixed` means they disagree.
-  const cVisible = common(liveNodes, (n) => n.visible)
-  const cLocked = common(liveNodes, (n) => n.locked)
   const cZIndex = common(liveNodes, (n) => n.zIndex)
 
   const cX = common(liveNodes, (n) => n.transform.x)
@@ -1308,32 +1306,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
         </div>
       </div>
 
-      <Section title="Node">
-        <FieldRow label="Visible">
-          <MixedCell mixed={cVisible.mixed}>
-            <CheckboxField
-              value={cVisible.value}
-              onCommit={(v) => {
-                for (const n of nodes)
-                  api.setNodeProperty(n.id, 'visible', v)
-              }}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow label="Locked">
-          <MixedCell mixed={cLocked.mixed}>
-            <CheckboxField
-              value={cLocked.value}
-              onCommit={(v) => {
-                // Cascade to descendants for each selected subtree — same
-                // rationale as the Layers panel toggle: a lock on a
-                // container implies its children are locked too.
-                for (const n of nodes) setLockedRecursive(api, n.id, v)
-              }}
-            />
-          </MixedCell>
-        </FieldRow>
-      </Section>
+
 
       {allCanSetZIndex ? (
         <Section title="Layout position">
@@ -3162,6 +3135,7 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
+  const [activeCameraEffect, setActiveCameraEffect] = useState<string | null>(null)
   const solidPositionScrub = useRef<{ nodeId: NodeId; constraint: SolidInspectorPositionConstraint | null } | null>(null)
   useEffect(() => { solidPositionScrub.current = null }, [node.id])
   const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
@@ -4119,29 +4093,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             allowEmpty={false}
           />
         </FieldRow>
-        <FieldRow label="Kind">
-          <span className="pr-1.5 text-[12px] text-text">
-            {node.kind}
-          </span>
-        </FieldRow>
-        <FieldRow label="Id">
-          <span className="pr-1.5 font-mono text-[11px] text-text-muted">
-            {node.id.slice(0, 8)}…
-          </span>
-        </FieldRow>
-        <FieldRow label="Visible">
-          <CheckboxField
-            value={node.visible}
-            onCommit={(v) => api.setNodeProperty(node.id, 'visible', v)}
-          />
-        </FieldRow>
-        <FieldRow label="Locked">
-          <CheckboxField
-            value={node.locked}
-            onCommit={(v) => setLockedRecursive(api, node.id, v)}
-          />
-        </FieldRow>
-        {node.kind === 'instance' && (
+      </Section>}
+      {node.kind === 'instance' && <Section title="Layer stacking">
           <FieldRow label="Always on top">
             <CheckboxField
               value={node.alwaysOnTop}
@@ -4150,7 +4103,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           </FieldRow>
-        )}
       </Section>}
 
       {node.kind === 'audio' && (
@@ -5468,18 +5420,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </Section>
 
-          <Section title="Depth of Field" action={
-            <CheckboxField value={node.depthOfField ?? false} ariaLabel="Enable depth of field"
-              onCommit={(depthOfField) =>
-                patchCamera({
-                  depthOfField,
-                  ...(depthOfField && (node.aperture ?? 0) <= 0
-                    ? { aperture: 1 }
-                    : {}),
-                })
-              }
-            />
-          }>
+          <CameraBackgroundSection node={node} api={api} />
+          <Section title="Camera effects">
+          <CameraEffectCard label="Depth of field" kind="depth" enabled={node.depthOfField ?? false}
+            open={activeCameraEffect === 'depth'} onOpen={() => setActiveCameraEffect('depth')} onClose={() => setActiveCameraEffect(null)}
+            onEnabledChange={(depthOfField) => patchCamera({ depthOfField, ...(depthOfField && (node.aperture ?? 0) <= 0 ? { aperture: 1 } : {}) })}>
             {node.depthOfField ? (
               <>
                 <FieldRow label="Focus mode" layout="compound">
@@ -5826,6 +5771,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 <div className="!mt-4 border-t border-border pt-3 text-[11px] font-medium uppercase tracking-wide text-text-dim">
                   Aperture
                 </div>
+                <div className="grid grid-cols-2 gap-3">
                 <KeyframeSliderRow
                   label="F-Stop"
                   value={liveFStop}
@@ -5941,6 +5887,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                </div>
                 <KeyframeSliderRow
                   label="Max blur"
                   value={Math.max(0, Math.min(128, liveBlurLevel))}
@@ -5971,6 +5918,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                <div className="grid grid-cols-2 gap-3">
                 <FieldRow label="Preview quality" layout="compound">
                   <SelectField<CameraNode['dofPreviewQuality']>
                     value={node.dofPreviewQuality ?? 'balanced'}
@@ -6017,6 +5965,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                </div>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Preview controls live smoothness. Export samples controls the
                   final rendered bokeh quality.
@@ -6027,16 +5976,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 Enable depth of field to configure focus, aperture and quality.
               </p>
             )}
-          </Section>
-          <CameraBackgroundSection node={node} api={api} />
-          <Section title="Effects" action={<CameraEffectsMenu node={node} onCommit={patchCamera} />}>
-            <CameraEffectHeading
-              label="Chromatic aberration"
-              value={node.chromaticAberrationEnabled ?? false}
-              onCommit={(chromaticAberrationEnabled) =>
-                patchCamera({ chromaticAberrationEnabled })
-              }
-            />
+          </CameraEffectCard>
+
+            <CameraEffectCard label="Chromatic aberration" kind="chromatic" enabled={node.chromaticAberrationEnabled ?? false}
+              open={activeCameraEffect === 'chromatic'} onOpen={() => setActiveCameraEffect('chromatic')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(chromaticAberrationEnabled) => patchCamera({ chromaticAberrationEnabled })}>
             {node.chromaticAberrationEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6107,14 +6051,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <CameraEffectHeading
-              label="Bloom"
-              value={node.bloomEnabled ?? false}
-              onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
-            />
+
+            <CameraEffectCard label="Bloom" kind="bloom" enabled={node.bloomEnabled ?? false}
+              open={activeCameraEffect === 'bloom'} onOpen={() => setActiveCameraEffect('bloom')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(bloomEnabled) => patchCamera({ bloomEnabled })}>
             {node.bloomEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6215,14 +6158,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <CameraEffectHeading
-              label="Vignette"
-              value={node.vignetteEnabled ?? false}
-              onCommit={(vignetteEnabled) => patchCamera({ vignetteEnabled })}
-            />
+
+            <CameraEffectCard label="Vignette" kind="vignette" enabled={node.vignetteEnabled ?? false}
+              open={activeCameraEffect === 'vignette'} onOpen={() => setActiveCameraEffect('vignette')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(vignetteEnabled) => patchCamera({ vignetteEnabled })}>
             {node.vignetteEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6246,14 +6188,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 })}
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <CameraEffectHeading
-              label="VHS tape"
-              value={node.vhsEnabled ?? false}
-              onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
-            />
+
+            <CameraEffectCard label="VHS tape" kind="vhs" enabled={node.vhsEnabled ?? false}
+              open={activeCameraEffect === 'vhs'} onOpen={() => setActiveCameraEffect('vhs')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(vhsEnabled) => patchCamera({ vhsEnabled })}>
             {node.vhsEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6390,6 +6331,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
           </Section>
           <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
         </>
@@ -6572,39 +6514,11 @@ function CameraViewportControlsHint({ orthographic = false }: { orthographic?: b
 
 function CameraBackgroundSection({ node, api }: { node: CameraNode; api: SceneAPI }) {
   const previousFill = useRef(node.background ?? { kind: 'solid' as const, color: '#ffffff' })
-  if (node.background) previousFill.current = node.background
+  useEffect(() => { if (node.background) previousFill.current = node.background }, [node.background])
   return <Section title="Background" action={<CheckboxField ariaLabel="Enable camera background" value={!!node.background}
     onCommit={enabled => api.setNodeProperty(node.id, 'background', enabled ? previousFill.current : null)} />}>
     {node.background ? <FillField label="" value={node.background} onCommit={fill => api.setNodeProperty(node.id, 'background', fill)} /> : null}
   </Section>
-}
-
-const CAMERA_EFFECT_OPTIONS = [
-  ['chromaticAberrationEnabled', 'Chromatic aberration'],
-  ['bloomEnabled', 'Bloom'],
-  ['vignetteEnabled', 'Vignette'],
-  ['vhsEnabled', 'VHS tape'],
-] as const
-
-function CameraEffectsMenu({ node, onCommit }: { node: CameraNode; onCommit: (patch: Partial<CameraNode>) => void }) {
-  const ref = useRef<HTMLDetailsElement>(null)
-  return <details ref={ref} className="relative" onKeyDown={event => { if (event.key === 'Escape' && ref.current) ref.current.open = false }}
-    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as globalThis.Node | null) && ref.current) ref.current.open = false }}>
-    <summary aria-label="Add camera effect" title="Add camera effect" className="flex h-6 w-8 cursor-pointer list-none items-center justify-center rounded hover:bg-control [&::-webkit-details-marker]:hidden">
-      <img src="./camera-inspector/plus.svg" alt="" />
-    </summary>
-    <div className="absolute right-0 top-7 z-50 min-w-44 rounded-md border border-border bg-panel p-1 shadow-lg">
-      {CAMERA_EFFECT_OPTIONS.map(([field, label]) => <button key={field} type="button" disabled={!!node[field]}
-        className="block w-full rounded px-2 py-1.5 text-left text-[11px] text-text hover:bg-control disabled:opacity-40"
-        onClick={() => { onCommit({ [field]: true }); if (ref.current) ref.current.open = false }}>{label}</button>)}
-    </div>
-  </details>
-}
-
-function CameraEffectHeading({ label, value, onCommit }: { label: string; value: boolean; onCommit: (value: boolean) => void }) {
-  return value ? <div className="flex h-6 items-center justify-between text-[11px] font-medium text-text">
-    {label}<button type="button" aria-label={`Remove ${label}`} title={`Remove ${label}`} onClick={() => onCommit(false)} className="flex h-6 w-8 items-center justify-center text-text-muted hover:text-text"><Trash2 size={13} /></button>
-  </div> : null
 }
 
 function CameraSectionResetButton({
