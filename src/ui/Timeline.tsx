@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { Camera as CameraIcon, Music2, Scissors, Wand2 } from 'lucide-react'
+import { Camera as CameraIcon, ChartSpline, Music2, Scissors, Wand2 } from 'lucide-react'
 import { useUI } from '@/state/ui'
 import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
 import { mediaClipRange } from '@/scene/mediaClip'
@@ -117,6 +117,7 @@ import {
 import { importAudioFile, importMediaFiles } from '@/ui/importMedia'
 import { TimelineInspectorPortal } from '@/ui/TimelineInspectorPortal'
 import { TimelineDurationControl } from '@/ui/TimelineDurationControl'
+import { GraphEditor } from '@/ui/GraphEditor'
 import {
   projectMasterBeatSourcesToScene,
   projectedMasterBeatMarkers,
@@ -218,6 +219,7 @@ function setBeatSnapTimes(times: number[]): void {
 }
 let smoothSeekAnimationId: number | null = null
 const ROW_HEIGHT = 24
+const TIMELINE_GRAPH_HEIGHT = 248
 type TimelineMode = 'animated' | 'sound'
 type MediaTimelineNode = Extract<SceneNode, { kind: 'audio' | 'video' }>
 
@@ -700,6 +702,9 @@ export function Timeline() {
   // tests; the store sees a serializable array.
   const [selectedKfs, setSelectedKfs] = useState<Set<string>>(() => new Set())
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('animated')
+  const [graphExpanded, setGraphExpanded] = useState(false)
+  const graphVisible = graphExpanded && timelineMode === 'animated'
+  const graphSelectedKeys = useMemo(() => Array.from(selectedKfs), [selectedKfs])
   const [beatSyncMessage, setBeatSyncMessage] = useState('')
   const [pendingBeatRespace, setPendingBeatRespace] =
     useState<BeatSyncRespaceProposal | null>(null)
@@ -744,6 +749,10 @@ export function Timeline() {
   const replaceKfs = useCallback((keys: string[]) => {
     setSelectedKfs(new Set(keys))
   }, [])
+  const selectGraphKeys = useCallback((keys: string[]) => {
+    replaceKfs(keys)
+    useUI.getState().setSelectedTrackIds([])
+  }, [replaceKfs])
   const clearKfs = useCallback(() => {
     setSelectedKfs((prev) => (prev.size === 0 ? prev : new Set()))
   }, [])
@@ -2748,7 +2757,7 @@ export function Timeline() {
     // double-check the data-* attributes for safety.
     const target = e.target as HTMLElement
     if (target.closest('[data-timeline-ruler]')) return
-    if (target.closest('[data-timeline-selection-surface]')) return
+    if (target.closest('[data-timeline-selection-surface], [data-graph-editor]')) return
     if (
       target.dataset.kfId ||
       target.dataset.segmentBar ||
@@ -3042,6 +3051,32 @@ export function Timeline() {
           frameRate={frameRate}
           onCycle={cycleRulerLabels}
         />
+
+        <button
+          type="button"
+          data-timeline-selection-surface="1"
+          aria-expanded={graphVisible}
+          aria-controls="timeline-graph-editor"
+          onClick={() => {
+            const expanded = !graphVisible
+            setTimelineMode('animated')
+            setGraphExpanded(expanded)
+            if (expanded) {
+              setTimelineHeight(Math.max(timelineHeight, 440))
+              scrollerRef.current?.scrollTo({ top: 0 })
+            }
+          }}
+          title={graphVisible ? 'Collapse graph editor' : 'Expand graph editor'}
+          className={[
+            'flex h-7 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] border px-2 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+            graphVisible
+              ? 'border-accent/40 bg-accent-soft text-accent'
+              : 'border-border bg-panel text-text-muted hover:border-border-strong hover:text-text',
+          ].join(' ')}
+        >
+          <ChartSpline size={13} aria-hidden="true" />
+          Graph
+        </button>
 
         {/* Spacer — pushes everything below to the right end. */}
         <div className="flex-1" />
@@ -3345,6 +3380,19 @@ export function Timeline() {
               column's ruler height directly. */}
           {normalizedWorkArea && (
             <div className="h-5 border-b border-border/50 bg-panel" />
+          )}
+          {graphVisible && (
+            <div
+              data-timeline-selection-surface="1"
+              className="border-b border-border bg-panel px-3 py-3"
+              style={{ height: TIMELINE_GRAPH_HEIGHT }}
+            >
+              <div className="text-[11px] font-semibold text-text">Graph editor</div>
+              <div className="mt-2 text-[10px] text-text-muted">Value ↑ · Time →</div>
+              <p className="mt-2 text-[10px] leading-relaxed text-text-dim">
+                Select keys to show curves. Shift-click to select more.
+              </p>
+            </div>
           )}
           {timelineMode === 'animated' && draftStaggerActive && (
             <StaggerDraftLeftRow
@@ -4011,6 +4059,25 @@ export function Timeline() {
               <div className="h-5 border-b border-border/50 bg-panel" />
             )}
 
+            {graphVisible && (
+              <div
+                id="timeline-graph-editor"
+                data-timeline-selection-surface="1"
+                role="region"
+                aria-label="Timeline graph editor"
+                className="bg-panel"
+                style={{ height: TIMELINE_GRAPH_HEIGHT, minWidth: totalWidth }}
+              >
+                <TimelineGraphLane
+                  width={totalWidth}
+                  pxPerSecond={pxPerSecond}
+                  duration={duration}
+                  frameRate={frameRate}
+                  selectedKeys={graphSelectedKeys}
+                  onSelectionChange={selectGraphKeys}
+                />
+              </div>
+            )}
             {timelineMode === 'animated' && draftStaggerActive && (
               <StaggerDraftRightRow
                 layerCount={draftStaggerLayerCount}
@@ -5053,6 +5120,32 @@ function StaggerSettingsModal({
         </footer>
       </div>
     </div>
+  )
+}
+
+/** Keep graph playhead updates out of the full timeline's render path. */
+function TimelineGraphLane({
+  width,
+  pxPerSecond,
+  duration,
+  frameRate,
+  selectedKeys,
+  onSelectionChange,
+}: {
+  width: number
+  pxPerSecond: number
+  duration: number
+  frameRate: number
+  selectedKeys: string[]
+  onSelectionChange: (keys: string[]) => void
+}) {
+  const playhead = useUI((state) => state.playhead)
+  return (
+    <GraphEditor
+      timeline={{ width, pxPerSecond, duration, frameRate, playhead }}
+      selectedKeys={selectedKeys}
+      onSelectionChange={onSelectionChange}
+    />
   )
 }
 

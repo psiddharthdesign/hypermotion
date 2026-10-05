@@ -29,7 +29,7 @@ export function NullObjectOverlay({ api, camera, ids, width, height, zoom }: {
   return <div data-export-hide="1" className="pointer-events-none absolute" style={{ left: -width / 2, top: -height / 2, width, height, zIndex: 30 }}>
     {ids.map((id) => {
       const node = api.getNode(id)
-      if (!node || !node.visible) return null
+      if (!node || !node.visible || (node.kind === 'arrangement' && node.arrangement?.showCrosshair === false)) return null
       const world = new Vector3().applyMatrix4(resolver.world(node))
       const screen = resolvedCamera ? projectWorldPoint(world, resolvedCamera, viewport) : world
       const ControllerIcon = node.kind === 'arrangement' ? Grid2X2 : SquareDashed

@@ -110,6 +110,7 @@ import {
   type ResolvedCamera3D,
 } from '@/render3d/scene3d'
 import { createWorldPlaneAnimationSelector } from '@/render3d/planeAnimationSnapshot'
+import { createWorldPlaneCameraSelector, hasCameraFacingArrangements } from './worldPlaneCamera'
 import {
   TEXT_SEGMENT_BUFFER_CHANGE,
   createTextSegmentBuffers,
@@ -713,11 +714,21 @@ export function ThreeSceneViewport({
   const worldPlaneAnimation = selectWorldPlaneAnimation(animated, planeBuildContext.nodesById)
 
   const baseCamera = useMemo(
-    // Plane topology/world transforms are camera-independent. Keep a static
-    // reference camera so camera keyframes do not rebuild the scene graph.
+    // Ordinary world transforms are camera-independent. Face-camera members
+    // opt into the live pose below without invalidating every other scene.
     () => resolveCamera3D(camera, undefined, { width, height }),
     [camera, width, height],
   )
+  const cameraFacingArrangements = useMemo(
+    () => hasCameraFacingArrangements(planeBuildContext.nodesById, worldPlaneAnimation),
+    [planeBuildContext, worldPlaneAnimation],
+  )
+  const liveCameraPose = useMemo(
+    () => resolveCamera3D(camera, cameraAnim, { width, height }),
+    [camera, cameraAnim, width, height],
+  )
+  const selectWorldPlaneCamera = useMemo(() => createWorldPlaneCameraSelector(), [])
+  const worldPlaneCamera = selectWorldPlaneCamera(baseCamera, liveCameraPose, cameraFacingArrangements)
   const focusTargetWorld = useMemo(() => {
     if ((camera.focusMode ?? 'screen') !== 'target' || !camera.focusTargetNodeId) {
       return null
@@ -726,7 +737,7 @@ export function ThreeSceneViewport({
       api,
       layout,
       worldPlaneAnimation,
-      baseCamera,
+      worldPlaneCamera,
       {
         context: planeBuildContext,
         independentNodes: true,
@@ -737,7 +748,7 @@ export function ThreeSceneViewport({
     api,
     layout,
     worldPlaneAnimation,
-    baseCamera,
+    worldPlaneCamera,
     planeBuildContext,
     camera.focusMode,
     camera.focusTargetNodeId,
@@ -756,7 +767,7 @@ export function ThreeSceneViewport({
     () => {
       void sceneVersion
       return showPlanes
-        ? buildWorldPlanes(api, layout, worldPlaneAnimation, baseCamera, {
+        ? buildWorldPlanes(api, layout, worldPlaneAnimation, worldPlaneCamera, {
             context: planeBuildContext,
           })
         : EMPTY_PLANES
@@ -765,7 +776,7 @@ export function ThreeSceneViewport({
       api,
       layout,
       worldPlaneAnimation,
-      baseCamera,
+      worldPlaneCamera,
       planeBuildContext,
       sceneVersion,
       showPlanes,
@@ -773,8 +784,8 @@ export function ThreeSceneViewport({
   )
   const connectionPlanes = useMemo(() => {
     if (!showPlanes || !planes.some(plane => plane.node.kind === 'vector' && plane.node.connection)) return EMPTY_PLANES
-    return buildWorldPlanes(api, layout, worldPlaneAnimation, baseCamera, { context: planeBuildContext, independentNodes: true })
-  }, [showPlanes, planes, api, layout, worldPlaneAnimation, baseCamera, planeBuildContext])
+    return buildWorldPlanes(api, layout, worldPlaneAnimation, worldPlaneCamera, { context: planeBuildContext, independentNodes: true })
+  }, [showPlanes, planes, api, layout, worldPlaneAnimation, worldPlaneCamera, planeBuildContext])
   const flowConnections = useMemo(() => resolveFlowConnections(planeBuildContext.nodesById, connectionPlanes, animated), [planeBuildContext, connectionPlanes, animated])
   const playheadDrivenTextureRanges = useMemo(() => {
     void sceneVersion
@@ -1225,7 +1236,18 @@ export function ThreeSceneViewport({
       }
       dissolveRef.current.captureIncoming(renderer)
       const outgoingAnimation = animated[outgoing.id] ?? (!finalRender ? getAnimEngine().getSnapshot()[outgoing.id] : undefined)
-      const target = outgoing.focusTargetNodeId ? planes.find(p => p.nodeId === outgoing.focusTargetNodeId)?.center : null
+      // Each dissolve pass needs its own billboard basis, including child
+      // focus targets and connection ports that rotate with arranged groups.
+      const outgoingPose = resolveCamera3D(outgoing, outgoingAnimation, { width, height })
+      const outgoingPlanes = showPlanes && cameraFacingArrangements
+        ? buildWorldPlanes(api, layout, worldPlaneAnimation, outgoingPose, { context: planeBuildContext })
+        : planes
+      const outgoingIndependentPlanes = showPlanes && cameraFacingArrangements &&
+        (connectionPlanes.length > 0 || outgoing.focusTargetNodeId)
+        ? buildWorldPlanes(api, layout, worldPlaneAnimation, outgoingPose, { context: planeBuildContext, independentNodes: true })
+        : outgoingPlanes
+      const target = outgoing.focusTargetNodeId
+        ? outgoingIndependentPlanes.find(p => p.nodeId === outgoing.focusTargetNodeId)?.center : null
       const outgoingCamera = resolveCamera3D(outgoing, outgoingAnimation, { width, height }, target)
       let outgoingThreeCamera = dissolveCameraRef.current
       if (!outgoingThreeCamera ||
@@ -1236,9 +1258,14 @@ export function ThreeSceneViewport({
         dissolveEffectsRef.current = null
       }
       syncThreeCamera(outgoingThreeCamera, outgoingCamera, width, height)
-      syncPlanes(scene, planesRef.current, api, planeBuildContext, layout, planes, selectedIds, hiddenNodeIds,
+      syncPlanes(scene, planesRef.current, api, planeBuildContext, layout, outgoingPlanes, selectedIds, hiddenNodeIds,
         outgoingCamera, renderer, outgoingThreeCamera, animated, playing, playhead, textureRevision,
         playheadDrivenTextureRanges, interactiveCameraPreview, finalRender, curvePreviewRevision, vectorEditPreview, stableTexturePixelRatio)
+      if (showPlanes && cameraFacingArrangements && connectionPlanes.length > 0) {
+        flowRendererRef.current.sync(scene,
+          resolveFlowConnections(planeBuildContext.nodesById, outgoingIndependentPlanes, animated),
+          playhead, hiddenNodeIds, finalRender ? [] : selectedIds)
+      }
       if (cameraPostEffectsActive(outgoingCamera)) {
         if (!dissolveEffectsRef.current) dissolveEffectsRef.current = new ScenePostEffectsRenderer(renderer, scene, outgoingThreeCamera, width, height, pixelRatio, withBloomSource)
         dissolveEffectsRef.current.configure(outgoingCamera, width, height, pixelRatio, playhead + (outgoing.proceduralTimeOffset ?? 0))
@@ -1265,6 +1292,9 @@ export function ThreeSceneViewport({
     layout,
     planes,
     flowConnections,
+    cameraFacingArrangements,
+    connectionPlanes,
+    worldPlaneAnimation,
     editorGridSpacing,
     resolvedCamera,
     sceneFill,

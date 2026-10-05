@@ -36,7 +36,7 @@ export const ARRANGEMENT_NUMBERS = {
 export type ArrangementNumber = keyof typeof ARRANGEMENT_NUMBERS
 export const ARRANGEMENT_CHOICES = {
   mode: { label: 'Pattern', values: ['rectangular', 'radial', 'path', 'spherical'], value: 'rectangular' },
-  orientation: { label: 'Orientation', values: ['forward', 'center', 'outward', 'screen', 'path'], value: 'forward' },
+  orientation: { label: 'Orientation', values: ['forward', 'center', 'outward', 'screen', 'fixed', 'path'], value: 'forward' },
   scaleMode: { label: 'Scale by position', values: ['off', 'linear', 'ripple'], value: 'off' },
   shape: { label: 'Path shape', values: ['custom', 'ellipse', 'rectangle', 'polygon', 'star'], value: 'ellipse' },
 } as const
@@ -47,7 +47,8 @@ export type Arrangement = Record<ArrangementNumber, number> & {
   version: 1
   mode: ArrangementMode
   memberIds: string[]
-  orientation: 'forward' | 'center' | 'outward' | 'screen' | 'path'
+  showCrosshair: boolean
+  orientation: 'forward' | 'center' | 'outward' | 'screen' | 'fixed' | 'path'
   scaleMode: 'off' | 'linear' | 'ripple'
   shape: 'custom' | 'ellipse' | 'rectangle' | 'polygon' | 'star'
   path: LayerMotionPath
@@ -63,10 +64,10 @@ export function normalizeArrangement(raw: unknown): Arrangement | null {
     const d = ARRANGEMENT_NUMBERS[key]
     numbers[key] = typeof r[key] === 'number' && Number.isFinite(r[key]) ? clamp(r[key]!, d.min, d.max) : d.value
   }
-  return { ...numbers, version: 1,
+  return { ...numbers, version: 1, showCrosshair: r.showCrosshair !== false,
     mode: ['rectangular', 'radial', 'path', 'spherical'].includes(r.mode ?? '') ? r.mode! : 'rectangular',
     memberIds: Array.isArray(r.memberIds) ? [...new Set(r.memberIds.filter((id): id is string => typeof id === 'string'))] : [],
-    orientation: ['forward', 'center', 'outward', 'screen', 'path'].includes(r.orientation ?? '') ? r.orientation! : 'forward',
+    orientation: ['forward', 'center', 'outward', 'screen', 'fixed', 'path'].includes(r.orientation ?? '') ? r.orientation! : 'forward',
     scaleMode: ['off', 'linear', 'ripple'].includes(r.scaleMode ?? '') ? r.scaleMode! : 'off',
     shape: ['custom', 'ellipse', 'rectangle', 'polygon', 'star'].includes(r.shape ?? '') ? r.shape! : 'ellipse',
     path: normalizeLayerMotionPath(r.path) ?? defaultLayerMotionPath(),
@@ -181,7 +182,7 @@ export function arrangementSlots(a: Arrangement): Map<string, ArrangementSlot> {
     if (a.scaleMode === 'ripple') weight = 1 - Math.abs((count <= 1 ? 0 : i / (count - 1)) - a.rippleFocus)
     weight = Math.pow(clamp(weight, 0, 1), a.scaleFalloff)
     const scale = a.scaleMode === 'off' ? a.scaleFront : a.scaleBack + (a.scaleFront - a.scaleBack) * weight
-    let q = globalRotation.clone()
+    let q = a.orientation === 'fixed' ? new Quaternion() : globalRotation.clone()
     if (a.orientation === 'center' || a.orientation === 'outward') {
       const facing = p.clone().multiplyScalar(a.orientation === 'center' ? -1 : 1)
       if (facing.lengthSq() > 1e-12) {

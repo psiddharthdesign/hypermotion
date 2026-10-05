@@ -2,6 +2,7 @@
 
 import type { EasingKind, Track } from '@/scene/types'
 import type { SceneAPI } from '@/scene/doc'
+import { evaluator } from '@/anim/easing'
 
 /** Convert every supported easing shape to graph-editable bezier controls. */
 export function graphBezierCoords(
@@ -13,10 +14,10 @@ export function graphBezierCoords(
     'ease-in-out': [0.42, 0, 0.58, 1],
     linear: [0, 0, 1, 1],
   }
-  if (!easing) return presets['ease-in-out']!
+  if (!easing) return presets.linear!
   if (typeof easing === 'string') return presets[easing] ?? presets.linear!
   if ('bezier' in easing) return easing.bezier
-  // Spring preview matches the animation engine's current graph fallback.
+  // A spring becomes this editable bezier only when a handle is moved.
   return presets['ease-out']!
 }
 
@@ -45,9 +46,9 @@ export function describeGraphTarget(
 }
 
 /**
- * Fit the value graph to both keyframe endpoints and easing handles.
- * Endpoint-only bounds clipped overshoot curves at roughly 100%; including
- * control values exposes the full 200-strength curve without changing data.
+ * Fit the value graph to keyframe endpoints, easing handles and spring samples.
+ * Springs use the same 65 samples as the drawn curve; their physical overshoot
+ * cannot be bounded by the bezier used only when converting a handle edit.
  */
 export function graphValueBounds(track: Track): { min: number; max: number } {
   const values = track.keyframes
@@ -62,11 +63,17 @@ export function graphValueBounds(track: Track): { min: number; max: number } {
     if (typeof start.value !== 'number' || typeof end.value !== 'number') {
       continue
     }
-    const [, y1, , y2] = graphBezierCoords(
-      start.easingOut ?? track.defaultEasing,
-    )
+    const easing = start.easingOut ?? track.defaultEasing
+    const [, y1, , y2] = graphBezierCoords(easing)
     const delta = end.value - start.value
     candidates.push(start.value + y1 * delta, start.value + y2 * delta)
+    if (easing && typeof easing === 'object' && 'spring' in easing) {
+      const evaluate = evaluator(easing)
+      for (let sample = 0; sample <= 64; sample++) {
+        const value = start.value + evaluate(sample / 64) * delta
+        if (Number.isFinite(value)) candidates.push(value)
+      }
+    }
   }
 
   const rawMin = Math.min(...candidates)

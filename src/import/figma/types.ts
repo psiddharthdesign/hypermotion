@@ -63,6 +63,11 @@ interface FigmaCapturedNodeBase {
   name: string
   visible: boolean
   locked: boolean
+  /** Figma masks apply to following siblings until the next mask. */
+  isMask?: boolean
+  maskType?: 'ALPHA' | 'VECTOR' | 'LUMINANCE'
+  /** Exact source for container masks and luminance-to-alpha conversion. */
+  maskSvg?: string
   /** 0..1 */
   opacity: number
   /** Position relative to the node's parent. */

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
-import { createArrangement, dissolveArrangement, duplicateArrangement } from '@/scene/arrangementActions'
+import { createArrangement, dissolveArrangement } from '@/scene/arrangementActions'
 
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { getAnimEngine } from '@/anim'
 import { detachNullDependents } from '@/scene/nullObject'
 
-import { remapFlowConnections } from '@/scene/flowConnection'
+import { duplicateSelection } from '@/ui/duplicateSelection'
 
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
@@ -14,7 +14,6 @@ import type { ContextMenuItem } from '@/state/ui'
 import { useUI } from '@/state/ui'
 import {
   createComponentFromSelection,
-  instantiateComponent,
   ungroupFrame,
   applyMaskToSelection,
   wrapInAutoLayout,
@@ -29,10 +28,7 @@ import {
  * reaches for dozens of times per session. More specialized commands
  * live in the Inspector.
  *
- * Duplicate is wired to the same logic as Cmd+D, but via a module
- * import from the keyboard-shortcuts hook would be circular. For MVP
- * we express it as a scene-graph clone locally. If the duplicate
- * behavior diverges, pull it into a shared helper.
+ * Duplicate shares the same selection action as Cmd+D.
  */
 export function buildNodeContextMenu(
   api: SceneAPI,
@@ -166,11 +162,7 @@ export function buildNodeContextMenu(
     label: 'Duplicate',
     shortcut: '⌘D',
     onClick: () => {
-      const newIds: NodeId[] = []
-      for (const id of ids) {
-        const dup = duplicateForContextMenu(api, id)
-        if (dup) newIds.push(dup)
-      }
+      const newIds = duplicateSelection(api, ids)
       if (newIds.length > 0) useUI.getState().setSelection(newIds)
     },
   })
@@ -193,50 +185,4 @@ export function buildNodeContextMenu(
   })
 
   return items
-}
-
-/**
- * Subtree clone used by the context menu's Duplicate action.
- *
- * The keyboard shortcut has a similar helper (private to that module).
- * Keeping a second copy here is deliberate: the menu's action surface
- * is stable even if the keyboard hook is rearranged. When both share
- * the same behavior we can hoist them into `actions.ts`.
- */
-function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
-  const original = api.getNode(id)
-  if (!original || !original.parent) return null
-  if (original.kind === 'arrangement') return duplicateArrangement(api, id)
-  if (original.kind === 'component') return instantiateComponent(api, original.id)
-
-  const nodeMap = new Map<NodeId, NodeId>()
-  const cloneSubtree = (srcId: NodeId, parent: NodeId): NodeId => {
-    const src = api.getNode(srcId)
-    if (!src) return parent
-    const { id: _i, parent: _p, children: _c, ...rest } = src
-    void _i
-    void _p
-    void _c
-    const newId = api.createNode(src.kind, parent, {
-      ...rest,
-      name: src.name + ' copy',
-    } as Partial<typeof src>)
-    nodeMap.set(srcId, newId)
-    for (const child of api.getChildren(srcId)) {
-      cloneSubtree(child.id, newId)
-    }
-    return newId
-  }
-
-  const newId = cloneSubtree(id, original.parent)
-  remapFlowConnections(api, nodeMap)
-  const copy = api.getNode(newId)
-  if (copy) {
-    api.setNodeProperty(newId, 'transform', {
-      ...copy.transform,
-      x: copy.transform.x + 16,
-      y: copy.transform.y + 16,
-    })
-  }
-  return newId
 }

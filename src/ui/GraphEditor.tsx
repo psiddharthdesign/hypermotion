@@ -1,502 +1,275 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef, useState } from 'react'
-import type { EasingKind, Track } from '@/scene'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import type { Track } from '@/scene'
+import { propertyDescriptor, useSceneAPI, useSceneVersion } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
-import {
-  effectIdFromBlurPropertyId,
-  effectIdFromBeamRangePropertyId,
-  useSceneAPI,
-  useSceneVersion,
-} from '@/scene'
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { evaluator, getAnimEngine } from '@/anim'
 import { useUI } from '@/state/ui'
-import { patchStaggerKeyframeBundle } from '@/anim/staggerSets'
+import { graphValueBounds } from './graphEditorMath'
 import {
-  describeGraphTarget,
-  graphBezierCoords,
-  graphValueBounds,
-} from './graphEditorMath'
+  commitGraphEasing,
+  commitGraphKeyframeDrag,
+  graphEditableBezierCoords,
+  graphEasingHandle,
+  graphKeyframeDragTarget,
+  isGraphEditableTrack,
+  previewGraphEasing,
+  previewGraphKeyframeDrag,
+  selectedGraphSegments,
+} from './graphKeyframeEditing'
 
-/**
- * After-Effects-style value-over-time graph editor.
- *
- * Mounted in the Animate panel whenever the timeline's keyframe
- * selection narrows to keyframes from a single numeric track. The
- * graph plots each keyframe as a control point and each between-
- * keyframe segment as a cubic bezier curve. Bezier handles are
- * draggable — committing one writes back the new
- * `easingOut: { bezier: [x1, y1, x2, y2] }` on the keyframe at the
- * segment's start.
- *
- * Bezier semantics match CSS: the (x1, y1) and (x2, y2) control
- * points live in the segment's local 0..1 box, where x is normalized
- * time (0 at the segment start, 1 at its end) and y is normalized
- * value (0 at the start value, 1 at the end value). For a downward
- * segment (end value < start value), the renderer flips the value
- * axis so an "ease-out" curve still reads as "decelerate to the
- * end value" — same as the engine evaluates it.
- *
- * Limitations (MVP):
- *   - Only numeric tracks. Variant / fill tracks fall back to a
- *     "no graph for this track" message.
- *   - Per-keyframe value editing isn't here yet — the user retimes
- *     keyframes on the timeline; this panel is the easing-curve
- *     editor only. Numeric value editing is on the roadmap (drag
- *     keyframe vertically to change value).
- *   - Spring easings show as their ease-out bezier approximation
- *     (matches what the engine renders).
- */
+type Point = { x: number; y: number }
+export type GraphTimeline = { width: number; pxPerSecond: number; duration: number; frameRate: number; playhead: number }
+type Props = { timeline?: GraphTimeline; selectedKeys?: string[]; onSelectionChange?: (keys: string[]) => void }
+const GRAPH_HEIGHT = 196
+const PADDING = 22
+const keyId = (track: Track, id: string) => `${track.id}:${id}`
+const format = (value: number) => Number(value.toFixed(2)).toString()
 
-const VIEW_W = 320
-const VIEW_H = 220
-const PAD_L = 36
-const PAD_R = 12
-const PAD_T = 12
-const PAD_B = 28
-
-type Pt = { x: number; y: number }
-
-export function GraphEditor() {
-  // Re-render whenever scene changes so live track edits show up.
-  // The version is ALSO threaded into the `target` memo's deps so
-  // that after each handle-drag mutation, we re-fetch the track and
-  // hand a fresh keyframes array down to GraphSurface. Without that,
-  // the memo would keep the stale reference and the curve would
-  // appear frozen even though the data underneath had changed —
-  // exactly the "handles don't move visually" symptom.
-  const version = useSceneVersion()
+/** A compact value graph, aligned with the timeline when mounted there. */
+export function GraphEditor({ timeline, selectedKeys: suppliedKeys, onSelectionChange }: Props = {}) {
+  useSceneVersion()
   const api = useSceneAPI()
-  const selectedKeys = useUI((s) => s.selectedKeyframes)
-  const target = useMemo(
-    () => describeGraphTarget(api, selectedKeys),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, selectedKeys, version],
-  )
-
-  if (!target) {
-    return (
-      <div className="rounded-md bg-app-bg p-3 shadow-[var(--shadow-control)]">
-        <div className="text-[12px] font-semibold text-text">
-          Graph editor
-        </div>
-        <div className="mt-1.5 text-[11px] text-text-dim leading-snug">
-          Select keyframes from a single numeric track on the timeline
-          to edit its easing curves with bezier handles. Mirrors the
-          After Effects graph editor — drag handles to retune the
-          curve, dot positions reflect time × value.
-        </div>
-      </div>
-    )
+  const storedKeys = useUI(s => s.selectedKeyframes)
+  const selectedKeys = suppliedKeys ?? storedKeys
+  const [pinnedTrackId, setPinnedTrackId] = useState<string | null>(null)
+  const selectedTracks = [...new Set(selectedKeys.map(key => key.slice(0, key.indexOf(':'))))]
+    .map(id => api.getTrack(id)).filter((track): track is Track => !!track && isGraphEditableTrack(track))
+  const pinned = pinnedTrackId ? api.getTrack(pinnedTrackId) : undefined
+  const track = selectedTracks.find(item => item.id === pinnedTrackId) ?? selectedTracks[0] ??
+    (pinned && isGraphEditableTrack(pinned) ? pinned : undefined)
+  const select = (keys: string[]) => {
+    if (track) setPinnedTrackId(track.id)
+    if (onSelectionChange) onSelectionChange(keys)
+    else useUI.getState().setSelectedKeyframes(keys)
   }
-
-  return (
-    <div className="rounded-md bg-app-bg p-2.5 shadow-[var(--shadow-control)]">
-      <div className="flex items-center justify-between">
-        <div className="text-[12px] font-semibold text-text">
-          Graph editor
-        </div>
-        <div className="font-mono text-[10px] text-text-dim">
-          {humanProperty(target.track.propertyId)} · {target.keyframes.length} kfs
-        </div>
-      </div>
-      <div className="mt-2">
-        <GraphSurface track={target.track} api={api} />
-      </div>
-      <div className="mt-2 text-[10px] leading-snug text-text-dim">
-        Drag the bezier handles to retune each segment. Each segment's
-        easing belongs to the keyframe at its start, written back as
-        a custom cubic-bezier.
-      </div>
+  const segments = track ? selectedGraphSegments(track, selectedKeys) : []
+  const preset = (bezier: [number, number, number, number]) => {
+    if (!track) return
+    api.doc.transact(() => {
+      for (const segment of segments) commitGraphEasing(api, track.id, segment.start.id, segment.end.id, bezier)
+    }, UNDOABLE_GESTURE_ORIGIN)
+  }
+  const label = (item: Track) => `${api.getNode(item.nodeId)?.name ?? 'Layer'} · ${propertyDescriptor(item.propertyId)?.label ?? item.propertyId}`
+  const content = <div data-graph-editor="1" data-timeline-selection-surface="1" className="flex h-[248px] flex-col bg-panel" onPointerDown={event => event.stopPropagation()}>
+    <div className="flex h-8 shrink-0 items-center gap-2 px-3 text-[11px]">
+      {selectedTracks.length > 1 ? <select aria-label="Graph property" value={track?.id} onChange={event => setPinnedTrackId(event.target.value)} className="h-6 max-w-64 rounded border border-border bg-panel px-2 text-text">
+        {selectedTracks.map(item => <option key={item.id} value={item.id}>{label(item)}</option>)}
+      </select> : <span className="max-w-64 truncate font-medium text-text">{track ? label(track) : 'Value graph'}</span>}
+      <button type="button" disabled={!segments.length} onClick={() => preset([1 / 3, 0, 2 / 3, 1])} title="Ease the curves adjoining the selected keys" className="h-6 rounded border border-border px-2 text-text-muted hover:bg-panel-raised disabled:opacity-40">Ease</button>
+      <button type="button" disabled={!segments.length} onClick={() => preset([1 / 3, 1 / 3, 2 / 3, 2 / 3])} title="Make the selected curves linear" className="h-6 rounded border border-border px-2 text-text-muted hover:bg-panel-raised disabled:opacity-40">Linear</button>
     </div>
-  )
+    {track ? <GraphSurface key={track.id} track={track} api={api} timeline={timeline} selectedKeys={selectedKeys} onSelectionChange={select} /> :
+      <div className="flex h-[196px] items-center px-6 text-[12px] text-text-dim">Select numeric keyframes on the timeline to edit their curves.</div>}
+    <div className="h-5 shrink-0 px-3 text-[10px] text-text-dim">Drag keys: time / value · Drag handles: easing · Shift-click: select more · Esc: cancel</div>
+  </div>
+  if (timeline) return content
+  return <details data-timeline-selection-surface="1" className="rounded-md border border-border bg-panel">
+    <summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold text-text">Graph editor</summary>
+    {content}
+  </details>
 }
 
-/**
- * The actual SVG surface. Plots keyframes in (time, value) space,
- * connects them with bezier paths derived from each keyframe's
- * easingOut, and renders draggable control handles for the two
- * bezier control points per segment.
- */
-function GraphSurface({ track, api }: { track: Track; api: SceneAPI }) {
+function GraphSurface({ track, api, timeline, selectedKeys, onSelectionChange }: {
+  track: Track; api: SceneAPI; timeline?: GraphTimeline; selectedKeys: string[]; onSelectionChange: (keys: string[]) => void
+}) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [dragBounds, setDragBounds] = useState<{
-    min: number
-    max: number
-  } | null>(null)
-  const kfs = track.keyframes
+  const cleanupRef = useRef<(() => void) | null>(null)
+  const [preview, setPreview] = useState<Track | null>(null)
+  const [lockedBounds, setLockedBounds] = useState<ReturnType<typeof graphValueBounds> | null>(null)
+  const [readout, setReadout] = useState('')
+  const visibleTrack = preview ?? track
+  const keys = visibleTrack.keyframes
+  const selected = new Set(selectedKeys)
+  const segments = selectedGraphSegments(visibleTrack, selectedKeys)
+  const width = timeline?.width ?? 600
+  const timeMin = timeline ? 0 : Math.max(0, keys[0]!.time - 0.1)
+  const timeMax = timeline?.duration ?? keys[keys.length - 1]!.time + 0.1
+  const left = timeline ? 0 : 42
+  const pixelsPerSecond = timeline?.pxPerSecond ?? (width - left - 20) / Math.max(0.2, timeMax - timeMin)
+  const bounds = lockedBounds ?? graphValueBounds(visibleTrack)
+  const span = bounds.max - bounds.min
+  const height = GRAPH_HEIGHT - 2 * PADDING
+  const dragOptions = { frameRate: timeline?.frameRate ?? api.getMeta().frameRate, duration: timeline?.duration ?? api.getMeta().duration }
+  const project = (time: number, value: number): Point => ({ x: left + (time - timeMin) * pixelsPerSecond, y: PADDING + (bounds.max - value) / span * height })
+  const unproject = (point: Point) => ({ time: timeMin + (point.x - left) / pixelsPerSecond, value: bounds.max - (point.y - PADDING) / height * span })
 
-  // Time + value extents. Value bounds include easing control points so
-  // high-strength overshoot handles remain visible and draggable.
-  const tMin = kfs[0]!.time
-  const tMax = kfs[kfs.length - 1]!.time
-  const tSpan = Math.max(1e-6, tMax - tMin)
-  const fittedBounds = graphValueBounds(track)
-  const { min: vMinPad, max: vMaxPad } = dragBounds ?? fittedBounds
+  useEffect(() => () => cleanupRef.current?.(), [])
+  // An external delete or a track switch must release transient engine state.
+  useEffect(() => {
+    if (!api.getTrack(track.id)) cleanupRef.current?.()
+  }, [api, track])
 
-  const innerW = VIEW_W - PAD_L - PAD_R
-  const innerH = VIEW_H - PAD_T - PAD_B
-
-  /** Map (time, value) → SVG coords (top-left origin). */
-  const project = (t: number, v: number): Pt => {
-    const xN = (t - tMin) / tSpan
-    const yN = (v - vMinPad) / (vMaxPad - vMinPad)
-    return {
-      x: PAD_L + xN * innerW,
-      // Y axis flipped — high values plot toward the top.
-      y: PAD_T + (1 - yN) * innerH,
-    }
-  }
-
-  /** Inverse of project — used by drag handlers to translate
-   * pointer coords back into (time, value) space. */
-  const unproject = (sx: number, sy: number): Pt => {
-    const xN = (sx - PAD_L) / innerW
-    const yN = 1 - (sy - PAD_T) / innerH
-    return {
-      x: tMin + xN * tSpan,
-      y: vMinPad + yN * (vMaxPad - vMinPad),
-    }
-  }
-
-  // Build SVG path data for the curve and gather handle positions.
-  // For each segment i (between kf[i] and kf[i+1]), the bezier
-  // control points are positioned at the keyframe's normalized
-  // (x1, y1) and (x2, y2) within the segment's local box.
-  const segments = useMemo(() => {
-    const out: Array<{
-      i: number
-      p0: Pt
-      p1: Pt
-      p2: Pt
-      p3: Pt
-      bz: [number, number, number, number]
-    }> = []
-    for (let i = 0; i < kfs.length - 1; i++) {
-      const a = kfs[i]!
-      const b = kfs[i + 1]!
-      const av = a.value as number
-      const bv = b.value as number
-      const tA = a.time
-      const tB = b.time
-      const dt = tB - tA
-      const dv = bv - av
-      const bz = graphBezierCoords(a.easingOut ?? track.defaultEasing)
-      // Bezier control coords in time/value space.
-      const p1Time = tA + bz[0] * dt
-      const p1Val = av + bz[1] * dv
-      const p2Time = tA + bz[2] * dt
-      const p2Val = av + bz[3] * dv
-      out.push({
-        i,
-        p0: project(tA, av),
-        p1: project(p1Time, p1Val),
-        p2: project(p2Time, p2Val),
-        p3: project(tB, bv),
-        bz,
-      })
-    }
-    return out
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kfs, tMin, tSpan, vMinPad, vMaxPad, innerW, innerH])
-
-  /**
-   * Drag a single control point. `which` selects p1 or p2 of the
-   * segment. We translate pointer movement into a change in the
-   * keyframe's easingOut bezier. Time component is clamped to
-   * [0, 1] (the bezier x-coord must stay monotonic for the engine
-   * to remain invertible); value component is unconstrained, since
-   * CSS allows over- and undershoot beziers (>1 or <0).
-   *
-   * Three subtle bits to get right:
-   *
-   *   1. Don't call `setPointerCapture` — the captured target is
-   *      a child of the SVG, and `setTrack` re-renders the SVG on
-   *      every move which can invalidate the capture. Using plain
-   *      window listeners + the SVG's bounding rect for hit math
-   *      is the bulletproof pattern.
-   *
-   *   2. Snapshot BOTH bezier coords at drag-start. Otherwise each
-   *      move re-derives `cur` from the keyframe's already-updated
-   *      easingOut and the un-dragged pair drifts. With a snapshot,
-   *      only the dragged pair changes; the other stays put.
-   *
-   *   3. Look up the latest track from `api` inside `onMove` rather
-   *      than closing over the render-time `track` constant. That
-   *      way, if the engine re-snapshots between moves, we still
-   *      write back to the right track id rather than stomping a
-   *      stale shape.
-   */
-  const onHandleDown = (
-    e: React.PointerEvent,
-    segIndex: number,
-    which: 1 | 2,
+  const beginDrag = (
+    event: ReactPointerEvent,
+    update: (dx: number, dy: number, event: PointerEvent) => { tracks: ReadonlyMap<string, Track>; description: string; commit: () => void } | null,
   ) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const svg = svgRef.current
-    if (!svg) return
-
-    // Drag-start snapshots — these stay constant for the whole drag.
-    const startKfs = kfs
-    const a = startKfs[segIndex]!
-    const b = startKfs[segIndex + 1]!
-    const av = a.value as number
-    const bv = b.value as number
-    const tA = a.time
-    const tB = b.time
-    const dt = Math.max(1e-6, tB - tA)
-    const dv = bv - av
-    const startBz = graphBezierCoords(a.easingOut ?? track.defaultEasing)
-    const trackId = track.id
-    // Keep the viewport stationary while the handle moves. Auto-fitting on
-    // every pointer event makes the graph zoom away from the cursor; release
-    // refits once to reveal the newly extended curve.
-    setDragBounds(fittedBounds)
-
-    const onMove = (ev: PointerEvent) => {
-      ev.preventDefault()
-      const rect = svg.getBoundingClientRect()
-      // Translate viewport client coords into our SVG viewBox coords.
-      const sx = ((ev.clientX - rect.left) / rect.width) * VIEW_W
-      const sy = ((ev.clientY - rect.top) / rect.height) * VIEW_H
-      const { x: tHere, y: vHere } = unproject(sx, sy)
-      // Convert to normalized segment coords (0..1 on the time axis).
-      const xn = clamp((tHere - tA) / dt, 0, 1)
-      const yn = dv === 0 ? 0 : (vHere - av) / dv
-      // Mutate one pair only; the other stays at the drag-start value.
-      const next: [number, number, number, number] = [...startBz]
-      if (which === 1) {
-        next[0] = xn
-        next[1] = yn
-      } else {
-        next[2] = xn
-        next[3] = yn
-      }
-      // Read the latest track from the api so concurrent edits to
-      // OTHER keyframes (e.g. someone retiming on the timeline) don't
-      // get clobbered when we write our segIndex update.
-      const live = api.getTrack(trackId)
-      if (!live) return
-      const liveKf = live.keyframes[segIndex]
-      if (!liveKf) return
-      if (
-        patchStaggerKeyframeBundle(api, trackId, liveKf.id, {
-          easingOut: { bezier: next } as EasingKind,
-          easingPreset: { presetId: 'custom', strength: 100 },
-        })
-      ) {
-        return
-      }
-      const updated = {
-        ...liveKf,
-        easingOut: { bezier: next } as EasingKind,
-        easingPreset: { presetId: 'custom' as const, strength: 100 },
-      }
-      const nextKfs = live.keyframes.map((k, i) =>
-        i === segIndex ? updated : k,
-      )
-      api.setTrack({ ...live, keyframes: nextKfs })
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    cleanupRef.current?.()
+    useUI.getState().setPlaying(false)
+    getAnimEngine().pause()
+    setLockedBounds(bounds)
+    const rect = svgRef.current!.getBoundingClientRect()
+    const start = { x: event.clientX, y: event.clientY }
+    const pointerId = event.pointerId
+    let latest: ReturnType<typeof update> = null
+    let pending: PointerEvent | null = null
+    let frame = 0
+    let moved = false
+    const apply = (ev: PointerEvent) => {
+      const dx = (ev.clientX - start.x) * width / rect.width
+      const dy = (ev.clientY - start.y) * GRAPH_HEIGHT / rect.height
+      if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 2) return
+      moved = true
+      latest = update(dx, dy, ev)
+      if (!latest) return
+      setPreview(latest.tracks.get(track.id) ?? null)
+      setReadout(latest.description)
+      getAnimEngine().setTrackPreview(latest.tracks)
     }
-    const onUp = () => {
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      ev.preventDefault()
+      pending = ev
+      if (frame) return
+      frame = requestAnimationFrame(() => { frame = 0; if (pending) apply(pending) })
+    }
+    const cleanup = () => {
+      cancelAnimationFrame(frame)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      setDragBounds(null)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', cancel)
+      getAnimEngine().setTrackPreview(null)
+      setPreview(null)
+      setLockedBounds(null)
+      setReadout('')
+      cleanupRef.current = null
     }
-    window.addEventListener('pointermove', onMove)
+    const cancel = () => cleanup()
+    const onCancel = (ev: PointerEvent) => { if (ev.pointerId === pointerId) cancel() }
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      apply(ev)
+      latest?.commit()
+      cleanup()
+    }
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); cancel() }
+    }
+    cleanupRef.current = cleanup
+    window.addEventListener('pointermove', onMove, { passive: false })
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', cancel)
   }
 
-  // Compose the path "d" string. Each segment is a single cubic.
-  const pathD = segments
-    .map(
-      (s, idx) =>
-        (idx === 0 ? `M ${s.p0.x},${s.p0.y} ` : '') +
-        `C ${s.p1.x},${s.p1.y} ${s.p2.x},${s.p2.y} ${s.p3.x},${s.p3.y}`,
-    )
-    .join(' ')
-
-  // Y-axis labels: min, mid, max value. Useful so the user can see
-  // approximately what value each control point represents.
-  const yMid = (vMinPad + vMaxPad) / 2
-  const yLabels = [
-    { v: vMaxPad, y: PAD_T + 0 },
-    { v: yMid, y: PAD_T + innerH / 2 },
-    { v: vMinPad, y: PAD_T + innerH },
-  ]
-
-  return (
-    <svg
-      ref={svgRef}
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-      className="h-auto w-full select-none rounded border border-border bg-panel"
-      role="img"
-      aria-label="Easing curve graph"
-    >
-      {/* Grid */}
-      <g stroke="var(--color-border)" strokeWidth={0.5}>
-        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + innerH} />
-        <line
-          x1={PAD_L}
-          y1={PAD_T + innerH}
-          x2={PAD_L + innerW}
-          y2={PAD_T + innerH}
-        />
-        <line
-          x1={PAD_L}
-          y1={PAD_T + innerH / 2}
-          x2={PAD_L + innerW}
-          y2={PAD_T + innerH / 2}
-          strokeDasharray="2 2"
-        />
-      </g>
-      {/* Axis labels */}
-      <g
-        fontFamily="var(--font-mono, monospace)"
-        fontSize={9}
-        fill="var(--color-text-dim)"
-      >
-        {yLabels.map((l, i) => (
-          <text key={i} x={PAD_L - 4} y={l.y + 3} textAnchor="end">
-            {formatNumber(l.v)}
-          </text>
-        ))}
-        <text x={PAD_L} y={VIEW_H - 8}>
-          {formatNumber(tMin)}s
-        </text>
-        <text x={PAD_L + innerW} y={VIEW_H - 8} textAnchor="end">
-          {formatNumber(tMax)}s
-        </text>
-      </g>
-
-      {/* Curve */}
-      <path
-        d={pathD}
-        fill="none"
-        stroke="var(--color-accent)"
-        strokeWidth={1.5}
-      />
-
-      {/* Per-segment control handles */}
-      {segments.map((s) => (
-        <g key={s.i}>
-          {/* Handle lines from anchor to control */}
-          <line
-            x1={s.p0.x}
-            y1={s.p0.y}
-            x2={s.p1.x}
-            y2={s.p1.y}
-            stroke="var(--color-accent)"
-            strokeOpacity={0.4}
-            strokeWidth={1}
-          />
-          <line
-            x1={s.p3.x}
-            y1={s.p3.y}
-            x2={s.p2.x}
-            y2={s.p2.y}
-            stroke="var(--color-accent)"
-            strokeOpacity={0.4}
-            strokeWidth={1}
-          />
-          {/* Out-handle of the segment-start keyframe */}
-          <circle
-            cx={s.p1.x}
-            cy={s.p1.y}
-            r={4}
-            fill="var(--color-panel-raised)"
-            stroke="var(--color-accent)"
-            strokeWidth={1.5}
-            style={{ cursor: 'grab' }}
-            onPointerDown={(e) => onHandleDown(e, s.i, 1)}
-          />
-          {/* In-handle of the segment-end keyframe */}
-          <circle
-            cx={s.p2.x}
-            cy={s.p2.y}
-            r={4}
-            fill="var(--color-panel-raised)"
-            stroke="var(--color-accent)"
-            strokeWidth={1.5}
-            style={{ cursor: 'grab' }}
-            onPointerDown={(e) => onHandleDown(e, s.i, 2)}
-          />
-        </g>
-      ))}
-
-      {/* Anchor (keyframe) points on top of everything */}
-      {kfs.map((kf, i) => {
-        const p = project(kf.time, kf.value as number)
-        return (
-          <rect
-            key={kf.id}
-            x={p.x - 3.5}
-            y={p.y - 3.5}
-            width={7}
-            height={7}
-            transform={`rotate(45 ${p.x} ${p.y})`}
-            fill="white"
-            stroke="var(--color-accent)"
-            strokeWidth={1.5}
-          >
-            <title>{`kf ${i + 1}: ${formatNumber(kf.time)}s → ${formatNumber(
-              kf.value as number,
-            )}`}</title>
-          </rect>
-        )
-      })}
-    </svg>
-  )
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n))
-}
-
-function formatNumber(n: number): string {
-  if (Math.abs(n) >= 100) return n.toFixed(0)
-  if (Math.abs(n) >= 10) return n.toFixed(1)
-  return n.toFixed(2)
-}
-
-function humanProperty(id: string): string {
-  if (effectIdFromBeamRangePropertyId(id)) return 'Beam'
-  if (effectIdFromBlurPropertyId(id)) return 'Blur'
-  const map: Record<string, string> = {
-    'textShimmer.range': 'Shimmer',
-    'transform.x': 'X',
-    'transform.y': 'Y',
-    'transform.z': 'Z',
-    'transform.rotation': 'Rotation',
-    'transform.rotationX': 'Rotate X',
-    'transform.rotationY': 'Rotate Y',
-    'transform.scaleX': 'Scale X',
-    'transform.scaleY': 'Scale Y',
-    'appearance.opacity': 'Opacity',
-    'appearance.cornerRadius': 'Corner',
-    'appearance.cornerSmoothing': 'Smoothing',
-    'appearance.cornerSmoothingEnabled': 'Squircle',
-    'appearance.fullRadius': 'Full radius',
-    'appearance.fill': 'Fill',
-    'vector.fill': 'Vector Fill',
-    'vector.geometry': 'Shape',
-    'deformation.bend.waveAmplitude': 'Wave amplitude',
-    'deformation.bend.waveFrequency': 'Wave frequency',
-    'deformation.bend.wavePhase': 'Wave phase',
-    'deformation.bend.waveStart': 'Wave start',
-    'deformation.bend.waveEnd': 'Wave end',
-    'deformation.bend.waveFalloff': 'Wave falloff',
-    'bend.tl': 'Bend TL',
-    'bend.tr': 'Bend TR',
-    'bend.br': 'Bend BR',
-    'bend.bl': 'Bend BL',
-    'bend.top': 'Bend Top',
-    'bend.right': 'Bend Right',
-    'bend.bottom': 'Bend Bottom',
-    'bend.left': 'Bend Left',
-    'text.progress': 'Text Animation',
-    'textShimmer.duration': 'Shimmer duration',
-    'textShimmer.shimmerWidth': 'Shimmer length',
-    'motionPath.progress': 'Path Progress',
+  const selectKey = (id: string, additive: boolean) => {
+    const key = keyId(track, id)
+    if (!additive) { onSelectionChange([key]); return }
+    const next = new Set(selectedKeys)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    onSelectionChange([...next])
   }
-  return map[id] ?? id
+  const onKeyDown = (event: ReactPointerEvent, id: string) => {
+    if (event.button !== 0) return
+    if (event.shiftKey || event.metaKey || event.ctrlKey) { event.preventDefault(); event.stopPropagation(); selectKey(id, true); return }
+    selectKey(id, false)
+    const start = track.keyframes.find(key => key.id === id)!
+    beginDrag(event, (dx, dy) => {
+      const target = graphKeyframeDragTarget(api, track.id, id, {
+        time: start.time + dx / pixelsPerSecond,
+        value: (start.value as number) - dy / height * span,
+        frameRate: timeline?.frameRate ?? api.getMeta().frameRate,
+        duration: timeline?.duration ?? api.getMeta().duration,
+      })
+      if (!target) return null
+      return { tracks: previewGraphKeyframeDrag(api, track.id, id, target, dragOptions), description: `${format(target.time)}s · ${format(target.value)}`, commit: () => { commitGraphKeyframeDrag(api, track.id, id, target, dragOptions) } }
+    })
+  }
+  const onHandleDown = (event: ReactPointerEvent, startId: string, endId: string, which: 1 | 2) => {
+    const a = track.keyframes.find(key => key.id === startId)!
+    const b = track.keyframes.find(key => key.id === endId)!
+    const bezier = graphEditableBezierCoords(a.easingOut ?? track.defaultEasing)
+    const offset = which === 1 ? 0 : 2
+    const point = project(a.time + bezier[offset]! * (b.time - a.time), (a.value as number) + bezier[offset + 1]! * ((b.value as number) - (a.value as number)))
+    beginDrag(event, (dx, dy) => {
+      const position = unproject({ x: point.x + dx, y: point.y + dy })
+      const next = graphEasingHandle(track, startId, endId, which, position.time, position.value)
+      if (!next) return null
+      return { tracks: previewGraphEasing(api, track.id, startId, endId, next), description: `${which === 1 ? 'Outgoing' : 'Incoming'} handle`, commit: () => { commitGraphEasing(api, track.id, startId, endId, next) } }
+    })
+  }
+  const nudgeKey = (event: React.KeyboardEvent, id: string) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectKey(id, event.shiftKey); return }
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+    event.preventDefault(); event.stopPropagation()
+    const start = track.keyframes.find(key => key.id === id)!
+    const step = event.shiftKey ? 10 : 1
+    const target = graphKeyframeDragTarget(api, track.id, id, {
+      time: start.time + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0) / (timeline?.frameRate ?? api.getMeta().frameRate),
+      value: (start.value as number) + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0) * span / 100,
+      frameRate: timeline?.frameRate ?? api.getMeta().frameRate, duration: timeline?.duration ?? api.getMeta().duration,
+    })
+    if (target) commitGraphKeyframeDrag(api, track.id, id, target, dragOptions)
+  }
+
+  return <svg ref={svgRef} viewBox={`0 0 ${width} ${GRAPH_HEIGHT}`} preserveAspectRatio="none" style={{ width: timeline ? width : '100%', height: GRAPH_HEIGHT, touchAction: 'none', overflow: 'hidden' }} className="block shrink-0 select-none" aria-label="Keyframe value graph" onPointerDown={event => { if (event.target === event.currentTarget) onSelectionChange([]) }}>
+    {[0, 0.5, 1].map((fraction) => {
+      const y = PADDING + fraction * height
+      return <g key={fraction} pointerEvents="none"><line x1={0} x2={width} y1={y} y2={y} stroke="var(--color-border)" strokeDasharray="3 4" /><text x={8} y={y - 5} fill="var(--color-text-dim)" fontSize={10}>{format(bounds.max - fraction * span)}</text></g>
+    })}
+    {segments.map(({ start: a, end: b, startSelected, endSelected }) => {
+      const bezier = graphEditableBezierCoords(a.easingOut ?? visibleTrack.defaultEasing)
+      const valueA = a.value as number, delta = (b.value as number) - valueA, dt = b.time - a.time
+      const p0 = project(a.time, valueA), p3 = project(b.time, b.value as number)
+      const p1 = project(a.time + bezier[0] * dt, valueA + bezier[1] * delta)
+      const p2 = project(a.time + bezier[2] * dt, valueA + bezier[3] * delta)
+      const easing = a.easingOut ?? visibleTrack.defaultEasing
+      const spring = typeof easing === 'object' && 'spring' in easing
+      const path = spring ? Array.from({ length: 65 }, (_, i) => { const p = project(a.time + dt * i / 64, valueA + delta * evaluator(easing)(i / 64)); return `${i ? 'L' : 'M'}${p.x},${p.y}` }).join(' ') : `M${p0.x},${p0.y} C${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`
+      return <g key={`${a.id}:${b.id}`} data-graph-segment={`${a.id}:${b.id}`}>
+        <path d={path} fill="none" stroke="var(--color-accent)" strokeWidth={2} pointerEvents="none" />
+        {([[1, p0, p1, startSelected], [2, p3, p2, endSelected]] as const).map(([which, anchor, control, show]) => {
+          if (!show) return null
+          // Zero-length tangents get a visible grip outside the keyframe hit area.
+          const distance = Math.hypot(control.x - anchor.x, control.y - anchor.y)
+          const grip = distance < 18 ? { x: anchor.x + (which === 1 ? 18 : -18), y: anchor.y } : control
+          const owner = which === 1 ? a : b
+          const name = `${which === 1 ? 'Outgoing' : 'Incoming'} easing handle at ${format(owner.time)} seconds`
+          return <g key={which}>
+            <line x1={anchor.x} y1={anchor.y} x2={grip.x} y2={grip.y} stroke="var(--color-accent)" strokeOpacity={0.65} pointerEvents="none" />
+            <circle cx={grip.x} cy={grip.y} r={11} fill="transparent" stroke="none" style={{ cursor: 'grab' }} role="button" tabIndex={0} aria-label={name} data-graph-handle={which} onPointerDown={event => onHandleDown(event, a.id, b.id, which)} onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+              event.preventDefault(); event.stopPropagation()
+              const amount = event.shiftKey ? 0.1 : 0.01
+              const next: [number, number, number, number] = [...bezier]
+              const offset = which === 1 ? 0 : 2
+              next[offset] = Math.max(0, Math.min(1, next[offset]! + (event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0)))
+              if (delta) next[offset + 1] = next[offset + 1]! + (event.key === 'ArrowUp' ? amount : event.key === 'ArrowDown' ? -amount : 0) * Math.sign(delta)
+              commitGraphEasing(api, track.id, a.id, b.id, next)
+            }}><title>{name}{spring ? ' · Drag to use a custom curve' : delta === 0 ? ' · Equal key values keep this segment flat' : ''}</title></circle>
+            <circle cx={grip.x} cy={grip.y} r={5} fill="var(--color-panel)" stroke="var(--color-accent)" strokeWidth={2} pointerEvents="none" />
+          </g>
+        })}
+      </g>
+    })}
+    {keys.map(key => {
+      const point = project(key.time, key.value as number), active = selected.has(keyId(track, key.id))
+      return <g key={key.id} role="button" tabIndex={0} aria-label={`Keyframe at ${format(key.time)} seconds, value ${format(key.value as number)}`} aria-pressed={active} data-graph-key={key.id} style={{ cursor: 'move' }} onPointerDown={event => onKeyDown(event, key.id)} onKeyDown={event => nudgeKey(event, key.id)}>
+        <circle cx={point.x} cy={point.y} r={9} fill="transparent" />
+        <rect x={point.x - 4} y={point.y - 4} width={8} height={8} transform={`rotate(45 ${point.x} ${point.y})`} fill={active ? 'var(--color-accent)' : 'var(--color-panel-raised)'} stroke={active ? 'var(--color-text)' : 'var(--color-text-dim)'} strokeWidth={active ? 1.5 : 1} pointerEvents="none" />
+        <title>{format(key.time)}s · {format(key.value as number)} · Drag to move</title>
+      </g>
+    })}
+    {!!readout && <text x={Math.max(60, Math.min(width - 120, project(timeline?.playhead ?? timeMin, 0).x + 12))} y={13} fill="var(--color-text)" fontSize={11} pointerEvents="none">{readout}</text>}
+    {!timeline && <g fill="var(--color-text-dim)" fontSize={10} pointerEvents="none"><text x={left} y={GRAPH_HEIGHT - 4}>{format(timeMin)}s</text><text x={width - 20} y={GRAPH_HEIGHT - 4} textAnchor="end">{format(timeMax)}s</text></g>}
+  </svg>
 }

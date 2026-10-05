@@ -8,18 +8,19 @@ import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { getAnimEngine, addKeyframe, findTrack } from '@/anim'
 import { useUI } from '@/state/ui'
 import { useInspectorAnimatedValues } from '@/ui/hooks/useAnimatedValues'
-import { KeyframeButton, KeyframeSliderRow } from '@/ui/fields'
+import { CheckboxField, KeyframeButton, KeyframeSliderRow } from '@/ui/fields'
 import { currentAnimationAuthorTime } from '@/ui/animationPlayhead'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { TextMotionPathEditor } from '@/ui/TextMotionPathEditor'
+import { nodeTransformPreviewStore } from '@/ui/nodeTransformPreviewStore'
 import { defaultLayerMotionPath, normalizeLayerMotionPath } from '@/anim/layerMotionPath'
 
 const control = 'w-full rounded-md border border-border bg-panel-raised px-2 py-1.5 text-[12px] text-text'
 export function CreateArrangementButton({ api }: { api: SceneAPI }) {
-  return <button type="button" className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text" title="Arrange selected layers in a grid, circle, path, or sphere" onClick={() => {
+  return <button type="button" className="hm-control-surface flex h-8 w-full items-center justify-center gap-2 rounded-md text-[12px] text-text hover:text-accent" title="Arrange selected layers in a grid, circle, path, or sphere" onClick={() => {
     const id = createArrangement(api, useUI.getState().selection, getLastSolvedLayout() ?? {}, getAnimEngine().getSnapshot())
     if (id) useUI.getState().setSelection([id])
-  }}><Grid2X2 size={12} />Arrangement</button>
+  }}><Grid2X2 size={14} />Add arrangement</button>
 }
 export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI }) {
   const [candidate, setCandidate] = useState('')
@@ -55,6 +56,9 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
       sliderMin={sliderMin} sliderMax={sliderMax} suffix={key === 'orbit' ? '°' : undefined}
       step={['columns', 'polygonPoints', 'shuffle', 'seed'].includes(key) ? 1 : 0.01} disabled={node.locked}
       onCommit={(value) => commit(key, value)}
+      onScrubPreview={(value) => nodeTransformPreviewStore.preview({ [node.id]: { arrangement: { [key]: value } } })}
+      onScrubCommit={(value) => { commit(key, value); nodeTransformPreviewStore.finish() }}
+      onScrubCancel={() => nodeTransformPreviewStore.clear()}
       keyframe={<KeyframeButton nodeId={node.id} propertyId={property} currentValue={node.locked ? null : live[key]} staggerable={false} />} />
   })
   const select = <K extends ArrangementChoice>(key: K, label: string, options: [Arrangement[K], string][]) => <div className="space-y-1 text-[11px] text-text-muted">
@@ -74,6 +78,9 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
       <button className="ml-auto" aria-label="Duplicate arrangement" title="Duplicate arrangement and its layers" onClick={() => { const id = duplicateArrangement(api, node.id); if (id) useUI.getState().setSelection([id]) }}><Copy size={14} /></button>
       <button disabled={node.locked || a.memberIds.some((id) => api.getNode(id)?.locked)} aria-label="Dissolve arrangement" title="Remove arrangement, retaining layers at their current positions" onClick={() => dissolveArrangement(api, node.id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)}><Unlink size={14} /></button>
     </div>
+    <label className="flex items-center justify-between text-[12px] text-text-muted">Show crosshair
+      <CheckboxField value={a.showCrosshair !== false} onCommit={showCrosshair => patch({ showCrosshair })} />
+    </label>
     {select('mode', 'Pattern', [['rectangular', 'Rectangular'], ['radial', 'Radial'], ['path', 'Path'], ['spherical', 'Spherical']])}
     {live.mode === 'rectangular' && fields(['columns', 'spacingX', 'spacingY'])}
     {live.mode === 'radial' && <>{fields(['radius', 'spread', 'orbit'])}<p className="text-[11px] text-text-dim">Orbit moves cards along the ring without changing its tilt. Animate 0° to 360° for one lap.</p></>}
@@ -94,12 +101,12 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
       {live.shape === 'custom' && !node.locked && <><div className="flex items-center justify-between text-[11px] text-text-muted">Path geometry<KeyframeButton nodeId={node.id} propertyId="arrangement.path" currentValue={live.path} staggerable={false} /></div><TextMotionPathEditor path={live.path} normalizePath={normalizeLayerMotionPath} unitLabel="pixels" startLabel="Start" endLabel="End" nudgeStep={4} maxPoints={64} helperText="Drag anchors and handles. Double-click the path to add a point. Use Z to shape the path in depth." onCommit={(path) => commit('path', normalizeLayerMotionPath({ ...live.path, ...path })!)} onReset={() => commit('path', defaultLayerMotionPath())} /></>}
     </>}
     <div className="space-y-2 border-t border-border pt-3">
-      <div className="text-[11px] font-medium text-text-muted">3D arrangement rotation</div>
+      <div className="text-[11px] font-medium text-text-muted">Arrangement rotation</div>
       {fields(['rotationX', 'rotationY', 'rotation'])}
       <p className="text-[11px] text-text-dim">Rotate the pattern around its center. Set the plane of the pattern. Use Orbit on radial arrangements to move cards around the ring.</p>
     </div>
-    {select('orientation', 'Card facing', [['forward', 'Follow arrangement'], ['center', 'Face center'], ['outward', 'Face outward'], ['screen', 'Face camera'], ...(live.mode === 'path' ? [['path', 'Follow path'] as [Arrangement['orientation'], string]] : [])])}
-    <p className="text-[11px] text-text-dim">{live.orientation === 'screen' ? 'Cards stay facing the active camera as the arrangement rotates.' : 'Choose how cards turn as they travel around the arrangement.'}</p>
+    {select('orientation', 'Card facing', [['forward', 'Follow arrangement'], ['center', 'Face center'], ['outward', 'Face outward'], ['screen', 'Face camera'], ['fixed', 'Keep orientation'], ...(live.mode === 'path' ? [['path', 'Follow path'] as [Arrangement['orientation'], string]] : [])])}
+    <p className="text-[11px] text-text-dim">{live.orientation === 'screen' ? 'Cards stay facing the active camera as the arrangement rotates.' : live.orientation === 'fixed' ? 'Cards keep their own XYZ orientation in world space. The pattern can rotate; the camera can view them from any angle.' : 'Choose how cards turn as they travel around the arrangement.'}</p>
     {fields(['opacity'])}
     <details className="space-y-2" open><summary className="cursor-pointer text-[11px] font-medium text-text-muted">Scale and depth</summary>
       {select('scaleMode', 'Scale by position', [['off', 'Off'], ['linear', 'Linear'], ['ripple', 'Ripple']])}

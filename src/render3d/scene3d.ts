@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Euler, Matrix4, Vector3 } from 'three'
+import { sortArrangementPlanes } from './arrangementPaintOrder'
 import { animatedArrangement } from '@/scene/arrangement'
 import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
 import { resolveFlowConnections, intersectFlowConnection } from './flowConnections'
@@ -1083,16 +1084,24 @@ export function buildWorldPlanes(
       nextInherited.scaleX = len3(nextInherited.basisX)
       nextInherited.scaleY = len3(nextInherited.basisY)
     }
-    if (arrangement?.orientation === 'screen') {
+    if (arrangement?.orientation === 'screen' || arrangement?.orientation === 'fixed') {
       const centerPoint = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, z: 0 }
       const center = mapPoint(nextInherited, centerPoint)
-      const basis = cameraBasis(camera)
-      const angle = rotation * Math.PI / 180
-      nextInherited.basisX = mul3(add3(mul3(basis.right, Math.cos(angle)), mul3(basis.down, Math.sin(angle))), nextInherited.scaleX)
-      nextInherited.basisY = mul3(add3(mul3(basis.right, -Math.sin(angle)), mul3(basis.down, Math.cos(angle))), nextInherited.scaleY)
-      // Positive extrusion depth stays behind the front face. Preserve the
-      // third-axis scale as well, so whole solid assets face the camera intact.
-      nextInherited.basisZ = mul3(basis.forward, len3(nextInherited.basisZ))
+      if (arrangement.orientation === 'fixed') {
+        // Ignore controller/pattern orientation, retaining the card's own
+        // authored XYZ rotation. Positions and scales still follow the rig.
+        const scaleZ = len3(nextInherited.basisZ)
+        nextInherited.basisX = rotateEuler({ x: nextInherited.scaleX, y: 0, z: 0 }, rotationX, rotationY, rotation)
+        nextInherited.basisY = rotateEuler({ x: 0, y: nextInherited.scaleY, z: 0 }, rotationX, rotationY, rotation)
+        nextInherited.basisZ = rotateEuler({ x: 0, y: 0, z: scaleZ }, rotationX, rotationY, rotation)
+      } else {
+        const basis = cameraBasis(camera)
+        const angle = rotation * Math.PI / 180
+        nextInherited.basisX = mul3(add3(mul3(basis.right, Math.cos(angle)), mul3(basis.down, Math.sin(angle))), nextInherited.scaleX)
+        nextInherited.basisY = mul3(add3(mul3(basis.right, -Math.sin(angle)), mul3(basis.down, Math.cos(angle))), nextInherited.scaleY)
+        // Keep extrusion behind the front face, carrying the complete asset.
+        nextInherited.basisZ = mul3(basis.forward, len3(nextInherited.basisZ))
+      }
       nextInherited.origin = add3(nextInherited.origin, sub3(center, mapPoint(nextInherited, centerPoint)))
     }
     return nextInherited
@@ -1387,7 +1396,7 @@ export function buildWorldPlanes(
       ),
     )
   }
-  return planes
+  return sortArrangementPlanes(planes, context.nodesById)
 }
 
 function layerHasBendDeformation(node: Node): boolean {
@@ -1443,7 +1452,8 @@ export function hitTestPlanes(
     const overlay = plane.alwaysOnTop
     // Rendering uses deterministic paint order with depth testing disabled so
     // transparent layer planes compose like the DOM renderer. Traverse the
-    // same list front-to-back and keep the first hit in each compositing band;
+    // same list (including depth-sorted arrangement cards) front-to-back and
+    // keep the first hit in each compositing band;
     // authored 3D depth remains available on the winning hit for controls/DOF.
     const best = overlay ? bestOverlay : bestScene
     // Ordinary design planes retain their authored paint order. Solids also

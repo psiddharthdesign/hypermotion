@@ -239,6 +239,9 @@ export function mergeTransformPreviews(
     merged[nodeId] = {
       ...base,
       ...preview,
+      ...(base?.arrangement || preview.arrangement
+        ? { arrangement: { ...base?.arrangement, ...preview.arrangement } }
+        : {}),
       ...(base?.effectBlur || preview.effectBlur
         ? {
             effectBlur: {

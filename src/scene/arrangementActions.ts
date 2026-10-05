@@ -9,6 +9,40 @@ import { createNullResolver, setNullParent } from './nullObject'
 import { buildWorldPlanes, resolveCamera3D } from '@/render3d/scene3d'
 import { UNDOABLE_GESTURE_ORIGIN } from './undo'
 
+/** Repair older duplicates that copied a controller link but omitted its slot. */
+export function repairArrangementMembership(api: SceneAPI): number {
+  const rootOf = (id: string): string | null => {
+    const seen = new Set<string>()
+    let node = api.getNode(id)
+    while (node && !seen.has(node.id)) {
+      seen.add(node.id)
+      if (!node.parent) return node.id
+      node = api.getNode(node.parent)
+    }
+    return null
+  }
+  const additions = new Map<string, string[]>()
+  for (const id of api.getAllNodeIds()) {
+    const member = api.getNode(id)
+    if (!member?.transformParent || ['arrangement', 'null', 'camera', 'audio'].includes(member.kind)) continue
+    const owner = api.getNode(member.transformParent.nodeId)
+    if (owner?.kind !== 'arrangement' || !owner.arrangement || owner.arrangement.memberIds.includes(id)) continue
+    if (rootOf(id) !== rootOf(owner.id)) continue
+    const list = additions.get(owner.id) ?? []
+    list.push(id)
+    additions.set(owner.id, list)
+  }
+  let count = 0
+  if (additions.size) api.doc.transact(() => {
+    for (const [id, memberIds] of additions) {
+      const owner = api.getNode(id)!
+      api.setNodeProperty(id, 'arrangement', { ...owner.arrangement!, memberIds: [...owner.arrangement!.memberIds, ...memberIds] })
+      count += memberIds.length
+    }
+  }, 'arrangement-membership-repair')
+  return count
+}
+
 export function arrangementMemberCandidates(api: SceneAPI, memberIds: readonly string[] = []): Node[] {
   const eligibleNodes = eligible(api, api.getAllNodeIds().filter((id) => id !== api.getRoot()), false)
   const related = (first: string, second: string) => {

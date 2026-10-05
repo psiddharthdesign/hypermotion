@@ -1,5 +1,4 @@
-import { ArrangementSection } from '@/ui/ArrangementSection'
-import { NullParentSection } from '@/ui/NullParentSection'
+import { ArrangementSection, CreateArrangementButton } from '@/ui/ArrangementSection'
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
@@ -431,6 +430,10 @@ export function Inspector() {
               },
             }}
           >
+            {mode === 'properties' && singleNode?.kind !== 'arrangement' && singleNode?.kind !== 'camera' && singleNode?.kind !== 'audio' && <section className="space-y-2 border-b border-border pb-3" aria-label="Add arrangement">
+              <CreateArrangementButton api={api} />
+              <p className="text-[11px] text-text-muted">Arrange selected layers, or start with blue squares.</p>
+            </section>}
             {mode === 'transitions' ? (<TransitionsPanel />) : mode === 'animate' ? (
               <PresetsPanel />
             ) : showScene ? (
@@ -4035,6 +4038,73 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       }
     }
   }
+  // Keep authored controller offsets editable without exposing a second rotation
+  // system for new arrangements. Never rewrite existing keys or compose Euler
+  // angles by addition: the two saved rotations can be noncommutative.
+  const hasExistingControllerRotation = node.kind === 'arrangement' && (
+    node.transform.rotationX !== 0 || node.transform.rotationY !== 0 || node.transform.rotation !== 0 ||
+    api.getTracksForNode(node.id).some(track => ['transform.rotationX', 'transform.rotationY', 'transform.rotation'].includes(track.propertyId))
+  )
+  const transformRotationControls = <>
+        <KeyframeSliderRow
+          label="Rotate X"
+          value={liveRotX}
+          onCommit={(v) => patchTransform({ rotationX: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationX: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationX"
+              currentValue={liveRotX}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate Y"
+          value={liveRotY}
+          onCommit={(v) => patchTransform({ rotationY: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationY: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationY"
+              currentValue={liveRotY}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate Z"
+          value={liveRot}
+          onCommit={(v) => patchTransform({ rotation: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotation: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotation: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotation"
+              currentValue={liveRot}
+            />
+          }
+        />
+  </>
+
   return (
     <div className="space-y-4">
       {node.kind === 'camera' && (
@@ -4130,7 +4200,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       )}
 
       <ArrangementSection node={node} api={api} />
-      {node.kind !== 'arrangement' && api.getNode(node.transformParent?.nodeId ?? '')?.kind !== 'arrangement' && <NullParentSection node={node} api={api} />}
 
       {node.kind !== 'audio' && node.kind !== 'null' && node.kind !== 'arrangement' && <PositionSection node={node} api={api} />}
 
@@ -4381,63 +4450,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           }
         />
-        <KeyframeSliderRow
-          label="Rotate X"
-          value={liveRotX}
-          onCommit={(v) => patchTransform({ rotationX: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotationX: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationX"
-              currentValue={liveRotX}
-            />
-          }
-        />
-        <KeyframeSliderRow
-          label="Rotate Y"
-          value={liveRotY}
-          onCommit={(v) => patchTransform({ rotationY: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotationY: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationY"
-              currentValue={liveRotY}
-            />
-          }
-        />
-        <KeyframeSliderRow
-          label="Rotate Z"
-          value={liveRot}
-          onCommit={(v) => patchTransform({ rotation: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotation: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotation: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotation"
-              currentValue={liveRot}
-            />
-          }
-        />
+        {node.kind !== 'arrangement' ? transformRotationControls : hasExistingControllerRotation ? (
+          <InspectorDisclosure storageKey="arrangement-controller-rotation" title="Existing controller rotation">
+            <p className="text-[11px] text-text-muted">These saved offsets apply before the arrangement rotation. Use the arrangement rotation above for new animation.</p>
+            {transformRotationControls}
+          </InspectorDisclosure>
+        ) : null}
         <ScalePairField
           nodeId={node.id}
           scaleX={liveSX}

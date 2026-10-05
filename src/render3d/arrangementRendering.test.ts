@@ -100,6 +100,45 @@ describe('Arrangement rendering with native isometric assets', () => {
     }
   })
 
+  it('keeps member descendants attached through controller and pattern XYZ rotation', () => {
+    const { api, group, solid, target, layout, planes } = fixture()
+    const baseGroup = matrix(planes().find(plane => plane.nodeId === group)!)
+    const relativeChild = baseGroup.clone().invert().multiply(matrix(planes().find(plane => plane.nodeId === solid)!))
+    const controller = createArrangement(api, [group, target], layout)!
+    const owner = api.getNode(controller)!
+    for (const orientation of ['forward', 'screen', 'fixed'] as const) {
+      api.setNodeProperty(controller, 'arrangement', { ...owner.arrangement!, orientation, rotationX: 173.8, rotation: -91.5 })
+      for (const angle of [0, 0.1, 25, 90, 180, 270, 360]) {
+        const current = planes({ [controller]: { rotationX: angle, rotationY: angle / 2, rotation: -angle / 3 } })
+        const member = current.find(plane => plane.nodeId === group)!
+        const child = current.find(plane => plane.nodeId === solid)!
+        expectMatrix(matrix(child), matrix(member).multiply(relativeChild))
+        expect(api.getNode(group)!.transformParent?.nodeId).toBe(controller)
+        expect(api.getNode(solid)!.parent).toBe(group)
+      }
+    }
+  })
+
+  it('keeps fixed cards in world orientation while the pattern and camera rotate', () => {
+    const { api, group, target, layout, resolved } = fixture()
+    const controller = createArrangement(api, [group, target], layout)!
+    const owner = api.getNode(controller)!
+    api.setNodeProperty(controller, 'arrangement', { ...owner.arrangement!, mode: 'radial', orientation: 'fixed', radius: 200 })
+    const member = api.getNode(group)!
+    api.setNodeProperty(group, 'transform', { ...member.transform, rotation: 15 })
+    const expectedRight = new Vector3(Math.cos(Math.PI / 12), Math.sin(Math.PI / 12), 0)
+    let previousCenter: Vector3 | undefined
+    for (const angle of [0, 30, 90, 180]) {
+      const animation = { [controller]: { arrangement: { rotationX: angle, rotationY: angle / 2, orbit: angle } } }
+      const camera = { ...resolved, rotation: { x: angle, y: angle / 3, z: angle / 2 } }
+      const plane = buildWorldPlanes(api, layout, animation, camera).find(item => item.nodeId === group)!
+      expectVector(plane.right, expectedRight)
+      expectVector(plane.normal, { x: 0, y: 0, z: 1 })
+      if (previousCenter) expect(vector(plane.center).distanceTo(previousCenter)).toBeGreaterThan(1)
+      previousCenter = vector(plane.center)
+    }
+  })
+
   it('picks arranged solid surfaces and sheared flat cards at their actual local coordinates', () => {
     const { api, group, solid, target, layout, resolved, planes } = fixture()
     const controller = createArrangement(api, [group, target], layout)!

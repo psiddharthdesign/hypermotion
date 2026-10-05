@@ -298,6 +298,8 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
   const faceEditing = useUI(state => state.solidFaceEditing && !state.playing && state.tool === 'select')
   const selectedConnectionIds = useMemo(() => { void props.sceneVersion; return props.selectedIds.filter(id => props.api.getNode(id)?.connection) }, [props.api, props.selectedIds, props.sceneVersion])
   const sceneAnimated = useAnimatedValues(animationIds)
+  const scenePreviews = useNodeTransformPreviews(animationIds)
+  const arrangementScrubbing = Object.values(scenePreviews).some(value => !!value.arrangement)
   const geometryPreviewNodeIds = useSyncExternalStore(
     nodeGeometryPreviewStore.subscribe,
     nodeGeometryPreviewStore.getActiveNodeIdsSnapshot,
@@ -422,7 +424,7 @@ const AnimatedThreeSceneViewport = memo(function AnimatedThreeSceneViewport({
         }
         hiddenNodeIds={hiddenGeometryTextIds}
         editorGridSpacing={exporting ? null : editorGridSpacing}
-        interactiveCameraPreview={!!cameraPreview}
+        interactiveCameraPreview={!!cameraPreview || arrangementScrubbing}
         playhead={playbackPlayhead}
       />
       {showSelectionOverlay &&

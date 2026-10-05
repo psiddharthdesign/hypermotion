@@ -26,6 +26,14 @@ async function setup() {
 }
 afterEach(() => getAnimEngine().pause())
 describe('native arrangements', () => {
+  it('saves and restores fixed card facing without turning slot axes with the pattern', () => {
+    const settings = normalizeArrangement({ ...defaultArrangement('radial'), memberIds: ['card'], orientation: 'fixed', rotationX: 65, rotationY: 35, rotation: 20 })!
+    expect(normalizeArrangement(JSON.parse(JSON.stringify(settings)))?.orientation).toBe('fixed')
+    const slot = arrangementSlots(settings).get('card')!
+    expect(new Vector3(1, 0, 0).transformDirection(slot.matrix).distanceTo(new Vector3(1, 0, 0))).toBeLessThan(1e-8)
+    expect(Math.abs(slot.position.z)).toBeGreaterThan(1)
+  })
+
   it('excludes attached flow lines from member selection without changing their endpoints', async () => {
     const { api, root, ids, controller } = await setup()
     const flow = api.createNode('vector', root, { connection: { ...DEFAULT_FLOW_CONNECTION, sourceId: ids[0]!, targetId: ids[1]! } })

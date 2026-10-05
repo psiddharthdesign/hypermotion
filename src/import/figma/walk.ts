@@ -25,6 +25,7 @@ import {
 import { figmaToText } from './textMap'
 import { figmaToVectorDocument, sanitizeFigmaSvg } from './vectorMap'
 import type {
+  FigmaCapturedFill,
   FigmaCapturedFrame,
   FigmaCapturedNode,
   FigmaCapturedEffect,
@@ -69,17 +70,7 @@ export function importFigmaPayload(
     // ignored and the new frame flows somewhere unexpected. Free-canvas
     // mode lets us drop the import where we want and have it stay there.
     ensureFreeCanvasRoot(api, parentId)
-    for (const node of payload.nodes) {
-      const id = walk(
-        node,
-        api,
-        parentId,
-        payload.assets,
-        null,
-        payload.version,
-      )
-      if (id) created.push(id)
-    }
+    created.push(...walkChildren(payload.nodes, api, parentId, payload.assets, null, payload.version))
     if (created.length > 0) {
       centerImportOnArtboard(api, created)
       recenterCameraOnArtboard(api)
@@ -263,7 +254,135 @@ export function parseFigmaPayload(text: string): FigmaPayload | null {
 // Node-by-node walk
 // ---------------------------------------------------------------------------
 
+/** Keep masking and paint order separate from the authored layout order. */
 function walk(
+  node: FigmaCapturedNode,
+  api: SceneAPI,
+  parentId: NodeId,
+  assets: Record<string, string>,
+  parentLayoutMode: FigmaCapturedFrame['layoutMode'] | null,
+  payloadVersion: FigmaPayload['version'],
+): NodeId | null {
+  const source = node.isMask && node.maskType === 'VECTOR' ? vectorMaskCapture(node) : node
+  let id: NodeId | null
+  if (source.isMask && (source.maskType === 'LUMINANCE' || 'children' in source)) {
+    let svg = sanitizeFigmaSvg(source.maskSvg ?? (source.type === 'VECTOR' ? source.svg : ''), `mask-${source.id}`)
+    if (!svg) throw new Error(`Could not import mask "${source.name}". Copy it again using the updated Figma plugin.`)
+    if (source.maskType === 'VECTOR') svg = opaqueVectorMaskSvg(svg)
+    const width = Math.max(1, source.width), height = Math.max(1, source.height)
+    // Inline the sanitized SVG inside an SVG luminance mask. The visible white
+    // rect turns luminance into alpha before the native mask renderer samples it.
+    const alphaSvg = source.maskType !== 'LUMINANCE' ? svg : `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><mask id="hm-luminance" mask-type="luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}">${svg}</mask></defs><rect width="${width}" height="${height}" fill="white" mask="url(#hm-luminance)"/></svg>`
+    id = api.createNode('image', parentId, {
+      name: source.name || 'Mask', visible: source.visible, locked: source.locked,
+      transform: figmaToTransform(source, parentLayoutMode),
+      size: { width, height }, position: 'absolute', fit: 'fill',
+      appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 0, effects: [] },
+      src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(alphaSvg)}`,
+    })
+  } else id = walkContent(source, api, parentId, assets, parentLayoutMode, payloadVersion)
+  if (id && node.isMask) {
+    api.setNodeProperty(id, 'isMask', true)
+    api.setNodeProperty(id, 'maskMode', 'alpha')
+  }
+  return id
+}
+
+/** Normalize exported vector-mask paint while retaining paths and strokes.
+ * Figma excludes hidden paints from exported SVG. Keep `none` regions empty,
+ * and remove opacity/effects so the remaining painted regions are silhouettes.
+ */
+function opaqueVectorMaskSvg(svg: string): string {
+  return svg.replace(/<[^>]+>/g, tag => {
+    if (/^<\/image\s*>/i.test(tag)) return ''
+    if (/^<\//.test(tag)) return tag
+    let out = tag.replace(/\s(?:opacity|fill-opacity|stroke-opacity|filter)\s*=\s*("[^"]*"|'[^']*')/gi, '')
+    out = out.replace(/\s(fill|stroke)\s*=\s*(["'])(.*?)\2/gi, (_match, key: string, quote: string, value: string) => ` ${key}=${quote}${value.trim() === 'none' ? 'none' : 'white'}${quote}`)
+    out = out.replace(/\sstyle\s*=\s*(["'])(.*?)\1/gi, (_match, quote: string, style: string) => {
+      const entries = style.split(';').map(part => part.trim()).filter(Boolean).flatMap(part => {
+        const colon = part.indexOf(':')
+        const key = part.slice(0, colon).trim().toLowerCase(), value = part.slice(colon + 1).trim()
+        if (['opacity', 'fill-opacity', 'stroke-opacity', 'filter'].includes(key)) return []
+        return [key === 'fill' || key === 'stroke' ? `${key}:${value === 'none' ? 'none' : 'white'}` : part]
+      })
+      return ` style=${quote}${entries.join(';')}${quote}`
+    })
+    // Image paint in a VECTOR mask uses the image rectangle, not pixel alpha.
+    if (/^<image\b/i.test(out)) out = out.replace(/^<image\b/i, '<rect').replace(/\s(?:href|xlink:href)\s*=\s*("[^"]*"|'[^']*')/gi, '').replace(/\s*\/?>(?![\s\S])/, ' fill="white"/>')
+    return out
+  })
+}
+
+function vectorMaskCapture(node: FigmaCapturedNode): FigmaCapturedNode {
+  const opaque = (paints: FigmaCapturedFill[]): FigmaCapturedFill[] => paints.filter(paint => paint.visible).map(() => ({ type: 'SOLID', color: { r: 1, g: 1, b: 1 }, opacity: 1, visible: true }))
+  const source = { ...node, opacity: 1, effects: [], fills: opaque(node.fills), strokes: opaque(node.strokes) }
+  if ('children' in source) source.children = source.children.map(vectorMaskCapture)
+  if (source.type === 'VECTOR' && source.vectorNetwork) source.vectorNetwork = {
+    ...source.vectorNetwork,
+    regions: source.vectorNetwork.regions.map(region => ({ ...region, ...(region.fills ? { fills: opaque(region.fills) } : {}) })),
+  }
+  return source
+}
+
+function walkChildren(
+  children: FigmaCapturedNode[],
+  api: SceneAPI,
+  parentId: NodeId,
+  assets: Record<string, string>,
+  parentLayoutMode: FigmaCapturedFrame['layoutMode'] | null,
+  payloadVersion: FigmaPayload['version'],
+): NodeId[] {
+  const created: NodeId[] = []
+  const hasMasks = children.some(child => child.isMask)
+  const add = (child: FigmaCapturedNode, parent: NodeId, index: number, fixed = hasMasks) => {
+    const id = walk(child, api, parent, assets, fixed ? 'NONE' : parentLayoutMode, payloadVersion)
+    if (id) {
+      // Figma children are back-to-front; native child index 0 is frontmost.
+      // Explicit sibling z-index keeps the original flow/layout order intact.
+      api.setNodeProperty(id, 'zIndex', index)
+      if (fixed) {
+        api.setNodeProperty(id, 'position', 'absolute')
+        if ('size' in api.getNode(id)!) api.setNodeProperty(id, 'size', { width: child.width, height: child.height })
+      }
+    }
+    return id
+  }
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!
+    if (!child.isMask) {
+      const id = add(child, parentId, index)
+      if (id) created.push(id)
+      continue
+    }
+    let end = index + 1
+    while (end < children.length && !children[end]!.isMask) end++
+    const members = children.slice(index, end)
+    const x = Math.min(...members.map(member => member.relativeTransform?.[0][2] ?? member.x))
+    const y = Math.min(...members.map(member => member.relativeTransform?.[1][2] ?? member.y))
+    const width = Math.max(1, ...members.map(member => (member.relativeTransform?.[0][2] ?? member.x) + member.width - x))
+    const height = Math.max(1, ...members.map(member => (member.relativeTransform?.[1][2] ?? member.y) + member.height - y))
+    const group = api.createNode('frame', parentId, {
+      name: `${child.name || 'Mask'} group`, position: 'absolute', zIndex: index,
+      size: { width, height }, clipsContent: false,
+      appearance: { opacity: 1, fill: null, stroke: null, cornerRadius: 0, effects: [] },
+    })
+    api.setNodeProperty(group, 'transform', { ...api.getNode(group)!.transform, x, y })
+    // Native alpha-mask ownership runs toward earlier array entries. Put the
+    // mask last in an isolated scope without changing the content paint order.
+    for (const [memberIndex, member] of [...members.slice(1), child].entries()) {
+      const id = add(member, group, memberIndex, true)
+      if (id) {
+        const transform = api.getNode(id)!.transform
+        api.setNodeProperty(id, 'transform', { ...transform, x: transform.x - x, y: transform.y - y })
+      }
+    }
+    created.push(group)
+    index = end - 1
+  }
+  return created
+}
+
+function walkContent(
   node: FigmaCapturedNode,
   api: SceneAPI,
   parentId: NodeId,
@@ -450,9 +569,7 @@ function createFrame(
     node.layoutMode === 'GRID'
       ? node.layoutMode
       : 'NONE'
-  for (const child of node.children) {
-    walk(child, api, id, assets, childLayoutMode, payloadVersion)
-  }
+  walkChildren(node.children, api, id, assets, childLayoutMode, payloadVersion)
   return id
 }
 
