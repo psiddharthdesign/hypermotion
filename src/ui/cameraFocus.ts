@@ -2,7 +2,28 @@
 import type { AnimatedValue } from '@/anim/engine'
 import type { SolvedLayout } from '@/layout'
 import type { CameraNode, Node, SceneAPI } from '@/scene'
-import { buildWorldPlanes, cameraSpaceDepth, hitTestPlanes, projectWorldPoint, resolveCamera3D, viewportPointToRay, type ResolvedCamera3D } from '@/render3d/scene3d'
+import { buildWorldPlanes, cameraSpaceDepth, focusPlanePose, hitTestPlanes, projectWorldPoint, resolveCamera3D, viewportPointToRay, type ResolvedCamera3D } from '@/render3d/scene3d'
+
+/** Align an independent guide with the current lens, resolving Object targets at the playhead. */
+export function alignedFocusPlanePose(api: SceneAPI, camera: CameraNode, layout: SolvedLayout | null, animated: Record<string, AnimatedValue>) {
+  const viewport = api.getMeta().canvas
+  const cameraAnim = animated[camera.id]
+  let resolved = resolveCamera3D(camera, cameraAnim, viewport)
+  if (camera.focusMode === 'target' && camera.focusTargetNodeId && layout) {
+    const target = buildWorldPlanes(api, layout, animated, resolved, { independentNodes: true })
+      .find(plane => plane.nodeId === camera.focusTargetNodeId)
+    if (target) resolved = resolveCamera3D(camera, cameraAnim, viewport, target.center)
+  }
+  // Point is a screen mask, with no meaningful plane to copy. Start at the
+  // camera's look-at depth. Realign an existing spatial pose at its view depth.
+  if (camera.focusMode === 'screen' || camera.focusMode === 'spatial') {
+    resolved = resolveCamera3D({ ...camera, focusMode: 'plane' }, {
+      ...cameraAnim,
+      focusDistance: camera.focusMode === 'screen' ? 0 : resolved.focusDistance,
+    }, viewport)
+  }
+  return focusPlanePose(resolved)
+}
 
 function paintedFocusPlanes(api: SceneAPI, layout: SolvedLayout, animated: Record<string, AnimatedValue>, resolved: ResolvedCamera3D) {
   const planes = buildWorldPlanes(api, layout, animated, resolved)

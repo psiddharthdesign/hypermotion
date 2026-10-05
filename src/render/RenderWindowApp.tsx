@@ -501,7 +501,7 @@ function RenderCanvas({
     cameraAnim,
     { width: canvasWidth, height: canvasHeight },
   )
-  const cameraFocalLength = cameraDomProjection.focalLength
+  const cameraPerspective = cameraDomProjection.perspective
   const cameraScaleFromZ = cameraDomProjection.scale
   const cameraTransform = cameraDomProjection.transform
 
@@ -648,7 +648,7 @@ function RenderCanvas({
           overflow: 'hidden',
           background: 'var(--color-canvas-fallback)',
           borderRadius: Math.max(0, sceneCorner),
-          perspective: cameraFocalLength,
+          perspective: cameraPerspective,
           perspectiveOrigin: 'center center',
         }}
       >

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as Y from 'yjs'
+import { normalizeTransformMatrix, normalizeTransformParent } from './nullObject'
 
-const REMOVED_NODE_KINDS = new Set(['primitive3d', 'null'])
+const REMOVED_NODE_KINDS = new Set(['primitive3d'])
 
 /**
- * Remove retired standalone GPU objects and experimental Null controllers.
+ * Remove retired standalone GPU objects and malformed experimental Null stubs.
  * This runs on raw Yjs data before the typed scene reader sees it,
  * so old autosaves and .hype files cannot surface an unsupported node kind.
+ * Native Nulls, arrangements, and their authored bindings remain supported.
  *
  * The literal kind intentionally lives only in this compatibility cleanup;
  * it is not part of the public scene model or authoring API.
@@ -18,6 +20,12 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
   if (!(nodesValue instanceof Y.Map)) return []
 
   const nodes = nodesValue as Y.Map<Y.Map<unknown>>
+  const referencedControllers = new Set<string>()
+  for (const [nodeId, node] of nodes.entries()) {
+    if (!(node instanceof Y.Map)) continue
+    const parent = normalizeTransformParent(node.get('transformParent'))
+    if (parent && parent.nodeId !== nodeId) referencedControllers.add(parent.nodeId)
+  }
   const removedNodeIds = new Set<string>()
   const visitRemovedSubtree = (nodeId: string) => {
     if (removedNodeIds.has(nodeId)) return
@@ -32,14 +40,29 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
   for (const [nodeId, node] of nodes.entries()) {
     if (
       node instanceof Y.Map &&
-      REMOVED_NODE_KINDS.has(String(node.get('kind')))
+      (REMOVED_NODE_KINDS.has(String(node.get('kind'))) ||
+        (node.get('kind') === 'null' &&
+          node.get('position') !== 'absolute' &&
+          !hasAuthoredTransform(node.get('transform')) &&
+          !referencedControllers.has(nodeId)))
     ) {
       visitRemovedSubtree(nodeId)
     }
   }
+  const invalidParent = (node: Y.Map<unknown>) => {
+    const value = node.get('transformParent')
+    if (value == null) return false
+    const parent = normalizeTransformParent(value)
+    const controller = parent ? nodes.get(parent.nodeId) : undefined
+    return !parent || parent.nodeId === node.get('id') ||
+      removedNodeIds.has(parent.nodeId) || !(controller instanceof Y.Map) ||
+      (controller.get('kind') !== 'null' && controller.get('kind') !== 'arrangement')
+  }
+  const invalidOffset = (node: Y.Map<unknown>) =>
+    node.get('transformOffset') != null && !normalizeTransformMatrix(node.get('transformOffset'))
   const hasRetiredFields = [...nodes.values()].some((node) =>
     node instanceof Y.Map &&
-    ['transformParent', 'transformOffset', 'positionMode'].some((key) => node.has(key)),
+    (node.has('positionMode') || invalidParent(node) || invalidOffset(node)),
   )
   if (removedNodeIds.size === 0 && !hasRetiredFields) return []
 
@@ -50,8 +73,8 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
       if (node.get('kind') === 'camera' && node.get('positionMode') === 'free') {
         restoreOrbitCoordinates(scene, node, nodeId)
       }
-      node.delete('transformParent')
-      node.delete('transformOffset')
+      if (invalidParent(node) || node.get('transformParent') == null) node.delete('transformParent')
+      if (invalidOffset(node) || node.get('transformOffset') == null) node.delete('transformOffset')
       node.delete('positionMode')
 
       if (removedNodeIds.has(String(node.get('focusTargetNodeId') ?? ''))) {
@@ -107,9 +130,16 @@ export function removeLegacy3DObjects(doc: Y.Doc): string[] {
   return [...removedNodeIds]
 }
 
+function hasAuthoredTransform(value: unknown): boolean {
+  return isRecord(value) &&
+    ['x', 'y', 'rotation', 'scaleX', 'scaleY'].every((key) =>
+      typeof value[key] === 'number' && Number.isFinite(value[key]),
+    )
+}
+
 /** Restore the target/dolly coordinate convention, including translation keys.
- * Controller influence is deliberately discarded; authored layer/camera
- * rotations remain. Only previously converted cameras enter this migration.
+ * Supported bindings and authored rotations remain intact. Only cameras
+ * explicitly stored in the retired free-position mode enter this migration.
  */
 function restoreOrbitCoordinates(scene: Y.Map<unknown>, node: Y.Map<unknown>, nodeId: string) {
   const transform = node.get('transform')

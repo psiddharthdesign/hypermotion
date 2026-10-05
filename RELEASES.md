@@ -5,6 +5,38 @@ entry below for each corresponding tag.
 
 ## Unreleased
 
+### Isometric asset builder (first version)
+
+- Add orthographic cameras with four isometric presets, Option/Alt + 1–4
+  shortcuts, uniform animated zoom, and selectable composition grids.
+- Restore the independent Focus plane mode, XYZ position, Tilt X/Y, distance,
+  and canvas handles in perspective and isometric views.
+- Give rectangles and complete ellipses editable 3D depth, side colors,
+  depth keyframes, and selection from their visible sides.
+- Add editable Block, Platform, and Server stack assets to the Assets tab.
+- Pull selected solid faces to change depth or dimensions, including cylinder
+  diameter and height, with Shift 10×, undo, and keyframe support.
+- Add optional world-grid snapping and per-asset overlap protection for canvas
+  movement, face extension, and single-selection XYZ positioning.
+- Keep rounded solid walls and face-edit outlines smooth when resizing.
+- Connect two assets with automatically attached straight or elbow flow lines;
+  animate pulses and keyframe line width, speed, and phase.
+- Create Float and Spin cycles as ordinary editable keyframes, with explicit
+  confirmation before replacing existing animation on the chosen axis.
+- This first version uses simple shaded sides. World-plane drawing,
+  drawing new face regions, cast shadows, and depth-of-field blur for solid silhouettes
+  remain follow-up work. See [isometric assets](docs/isometric-assets.md).
+
+### Native arrangements
+
+- Restore Arrangement beside Scene layers, including blue square defaults,
+  rectangular, radial, path, and spherical patterns, and collapsible member groups.
+- Animate XYZ pattern rotation and radial Orbit independently, with Face camera
+  and other card-facing modes in perspective and orthographic views.
+- Preserve individual layer animation, effects, membership, and native scene
+  files; support isometric solid members and their attached flow connections.
+- Hide an Arrangement without overwriting its members' saved visibility.
+
 ### Camera effects and export quality
 
 - Add a keyframeable Vignette effect with amount, size, and feather controls.

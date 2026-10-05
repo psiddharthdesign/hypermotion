@@ -1,6 +1,10 @@
+import { CameraEffectCard } from './CameraEffectCard'
+import { ArrangementSection, CreateArrangementButton } from '@/ui/ArrangementSection'
+import { CameraFieldContext } from './fields/CameraFieldContext'
 import { setBeamRange } from '@/anim/beamTimingTrack'
 import { beamDuration } from '@/scene/borderBeam'
 // SPDX-License-Identifier: Apache-2.0
+import { createSolidInspectorPositionConstraint, isSolidPositionPatch, type SolidInspectorPositionConstraint } from './solidInspectorPosition'
 
 import { BendWaveFields } from './BendWaveFields'
 import { BorderBeamFields } from './BorderBeamFields'
@@ -32,9 +36,7 @@ import { useProjectAPI, type ProjectAPI } from '@/project'
 import { useUI } from '@/state/ui'
 import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
 import {
-  MAX_CAMERA_SCROLL_SENSITIVITY,
   MAX_LAYER_Z_INDEX,
-  MIN_CAMERA_SCROLL_SENSITIVITY,
   MIN_LAYER_Z_INDEX,
   MAX_LAYER_BLUR_PX,
   DEFAULT_BEND_DEFORMATION,
@@ -108,7 +110,8 @@ import {
   readMediaFileAsDataUrl,
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
-import { nearestLayerFocus } from '@/ui/cameraFocus'
+import { alignedFocusPlanePose, nearestLayerFocus } from '@/ui/cameraFocus'
+import { FocusPlaneDistanceField } from '@/ui/FocusPlaneDistanceField'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
 import { pivotPreservingTransformPatch } from '@/ui/pivotTransform'
@@ -186,7 +189,6 @@ import {
   resetInstanceComponentProperty,
   setComponentSourceProperty,
   setInstanceComponentProperty,
-  setLockedRecursive,
   updateComponentInteraction,
   updateComponentPropertyDefinition,
   upsertComponentVariant,
@@ -370,6 +372,8 @@ export function Inspector() {
   return (
     <aside
       data-inspector-root="1"
+      data-camera-inspector={singleNode?.kind === 'camera' && mode === 'properties' ? '1' : undefined}
+      data-properties-inspector={mode === 'properties' ? '1' : undefined}
       aria-label="Inspector"
       className="relative flex shrink-0 flex-col border-l border-border bg-panel"
       style={{ width }}
@@ -419,14 +423,20 @@ export function Inspector() {
               },
             }}
           >
+            {mode === 'properties' && singleNode?.kind !== 'arrangement' && singleNode?.kind !== 'camera' && singleNode?.kind !== 'audio' && <section className="space-y-2 border-b border-border pb-3" aria-label="Add advanced layout">
+              <CreateArrangementButton api={api} />
+              <p className="text-[11px] text-text-muted">Arrange selected layers, or start with blue squares.</p>
+            </section>}
             {mode === 'transitions' ? (<TransitionsPanel />) : mode === 'animate' ? (
               <PresetsPanel />
             ) : showScene ? (
-              <SceneDetails api={api} project={project} />
+              <CameraFieldContext.Provider value={true}><SceneDetails api={api} project={project} /></CameraFieldContext.Provider>
             ) : multiNodes && multiNodes.length > 1 ? (
-              <MultiNodeDetails nodes={multiNodes} api={api} />
+              <CameraFieldContext.Provider value={true}><MultiNodeDetails nodes={multiNodes} api={api} /></CameraFieldContext.Provider>
             ) : singleNode ? (
-              <NodeDetails node={singleNode} api={api} />
+              <CameraFieldContext.Provider value={true}>
+                <NodeDetails key={singleNode.id} node={singleNode} api={api} />
+              </CameraFieldContext.Provider>
             ) : null}
           </motion.div>
         </AnimatePresence>
@@ -519,6 +529,7 @@ function InspectorContext({
 }
 
 function humanizeNodeKind(kind: Node['kind']): string {
+  if (kind === 'arrangement') return 'Advanced layout'
   return kind
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -532,6 +543,10 @@ function formatInspectorSizeAxis(value: Size['width']): string {
 
 function inspectorIconForNode(node: Node): AppIconName {
   switch (node.kind) {
+    case 'arrangement':
+      return 'grid'
+    case 'null':
+      return 'null'
     case 'camera':
       return 'camera'
     case 'text':
@@ -755,6 +770,7 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
             allowEmpty={false}
           />
         </FieldRow>
+        <div className="grid grid-cols-2 gap-3">
         <KeyframeSliderRow
           label="Width"
           value={meta.canvas.width}
@@ -773,6 +789,7 @@ function SceneDetails({ api, project }: { api: SceneAPI; project: ProjectAPI }) 
           step={1}
           suffix="px"
         />
+        </div>
         <KeyframeSliderRow
           label="Duration"
           value={activeScene?.duration ?? meta.duration}
@@ -1211,8 +1228,6 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
   }
 
   // Shared values across the selection — `mixed` means they disagree.
-  const cVisible = common(liveNodes, (n) => n.visible)
-  const cLocked = common(liveNodes, (n) => n.locked)
   const cZIndex = common(liveNodes, (n) => n.zIndex)
 
   const cX = common(liveNodes, (n) => n.transform.x)
@@ -1291,32 +1306,7 @@ function MultiNodeDetails({ nodes, api }: { nodes: Node[]; api: SceneAPI }) {
         </div>
       </div>
 
-      <Section title="Node">
-        <FieldRow label="Visible">
-          <MixedCell mixed={cVisible.mixed}>
-            <CheckboxField
-              value={cVisible.value}
-              onCommit={(v) => {
-                for (const n of nodes)
-                  api.setNodeProperty(n.id, 'visible', v)
-              }}
-            />
-          </MixedCell>
-        </FieldRow>
-        <FieldRow label="Locked">
-          <MixedCell mixed={cLocked.mixed}>
-            <CheckboxField
-              value={cLocked.value}
-              onCommit={(v) => {
-                // Cascade to descendants for each selected subtree — same
-                // rationale as the Layers panel toggle: a lock on a
-                // container implies its children are locked too.
-                for (const n of nodes) setLockedRecursive(api, n.id, v)
-              }}
-            />
-          </MixedCell>
-        </FieldRow>
-      </Section>
+
 
       {allCanSetZIndex ? (
         <Section title="Layout position">
@@ -2975,7 +2965,7 @@ function MultiLayoutSection({
           stored padding while the mode is None, but do not expose a control
           that has no predictable effect on that mode. */}
       {!c.mode.mixed && c.mode.value !== 'none' ? (
-        (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+        <div className="grid grid-cols-2 gap-3">{(['top', 'right', 'bottom', 'left'] as const).map((side) => (
           <KeyframeSliderRow
             key={side}
             label={`Padding ${side.charAt(0).toUpperCase()}`}
@@ -3022,7 +3012,7 @@ function MultiLayoutSection({
               />
             }
           />
-        ))
+        ))}</div>
       ) : null}
     </Section>
   )
@@ -3145,6 +3135,9 @@ function pivotPresetForTransform(transform: Transform): PivotPreset {
 
 function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
   const version = useSceneVersion()
+  const [activeCameraEffect, setActiveCameraEffect] = useState<string | null>(null)
+  const solidPositionScrub = useRef<{ nodeId: NodeId; constraint: SolidInspectorPositionConstraint | null } | null>(null)
+  useEffect(() => { solidPositionScrub.current = null }, [node.id])
   const focusPickingCameraId = useUI((state) => state.focusPickingCameraId)
   const setFocusPickingCameraId = useUI(
     (state) => state.setFocusPickingCameraId,
@@ -3209,18 +3202,22 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       : node.appearance.fill
   const cursorInstance = isCursorInstance(api, node)
   const supportsMotionPath =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
     node.kind !== 'audio' &&
-    !cursorInstance
+    !cursorInstance &&
+    !node.connection
   const motionPath =
     supportsMotionPath ? normalizeLayerMotionPath(node.motionPath) : null
   const liveMotionPathProgress =
     anim?.motionPathProgress ?? motionPath?.progress ?? 0
   const supportsBend =
+    (node.kind !== 'null' && node.kind !== 'arrangement') &&
     node.id !== api.getRoot() &&
     node.kind !== 'camera' &&
-    node.kind !== 'audio'
+    node.kind !== 'audio' &&
+    !node.connection
   const bend = supportsBend
     ? normalizeLayerDeformation(node.deformation)
     : null
@@ -3296,10 +3293,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     node.kind === 'camera' ? anim?.blurLevel ?? node.blurLevel ?? 1 : 1
   const liveFieldOfView =
     node.kind === 'camera' ? anim?.fieldOfView ?? node.fieldOfView ?? 35 : 35
-  const cameraScrollSensitivity =
-    node.kind === 'camera'
-      ? normalizeCameraScrollSensitivity(node.scrollSensitivity)
-      : 1
   const liveNearClip =
     node.kind === 'camera' ? anim?.nearClip ?? node.nearClip ?? 1 : 1
   const liveFarClip =
@@ -3353,7 +3346,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       .map((id) => api.getNode(id))
       .filter(
         (candidate): candidate is Node =>
-          !!candidate && candidate.kind !== 'camera' && candidate.id !== node.id,
+          !!candidate &&
+          candidate.kind !== 'camera' &&
+          candidate.kind !== 'audio' &&
+          candidate.kind !== 'null' &&
+          candidate.kind !== 'arrangement' &&
+          !candidate.connection &&
+          candidate.id !== node.id,
       )
       .map((candidate) => ({
         value: candidate.id,
@@ -3436,7 +3435,14 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       stampToActiveTracksForPatch(api, node.id, ui.playhead, group, patch)
     }
   }
-  const patchTransform = (patch: Partial<Transform>) => {
+  const patchTransform = (patch: Partial<Transform>, fromScrub = false) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      const constraint = fromScrub && solidPositionScrub.current?.nodeId === node.id
+        ? solidPositionScrub.current.constraint
+        : createSolidInspectorPositionConstraint(api, node.id)
+      patch = constraint?.commit(patch) ?? patch
+    }
+    solidPositionScrub.current = null
     // Read the FRESHEST transform from the api at call time, not from
     // the React closure's `node.transform` snapshot. Two back-to-back
     // calls (e.g. the linked Scale axes calling onCommitX + onCommitY
@@ -3584,10 +3590,16 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }, UNDOABLE_GESTURE_ORIGIN)
   }
   const previewNodeVisual = (patch: AnimatedValue) => {
+    if (node.kind !== 'camera' && isSolidPositionPatch(patch)) {
+      if (solidPositionScrub.current?.nodeId !== node.id) {
+        solidPositionScrub.current = { nodeId: node.id, constraint: createSolidInspectorPositionConstraint(api, node.id) }
+      }
+      patch = solidPositionScrub.current.constraint?.preview(patch) ?? patch
+    }
     nodeTransformPreviewStore.preview({ [node.id]: patch })
   }
   const commitTransformScrub = (patch: Partial<Transform>) => {
-    patchTransform(patch)
+    patchTransform(patch, true)
     nodeTransformPreviewStore.finish()
   }
   const commitAppearanceScrub = (patch: Partial<Appearance>) => {
@@ -3600,7 +3612,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     patchEllipseArc(patch)
     nodeTransformPreviewStore.finish()
   }
-  const cancelNodeVisualPreview = () => nodeTransformPreviewStore.clear()
+  const cancelNodeVisualPreview = () => {
+    solidPositionScrub.current = null
+    nodeTransformPreviewStore.clear()
+  }
   const patchSize = (patch: Partial<Size>) => {
     const current = api.getNode(node.id)
     if (!current || !('size' in current)) return
@@ -3723,6 +3738,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         | 'focusWorldX'
         | 'focusWorldY'
         | 'focusWorldZ'
+        | 'focusPlaneRotationX'
+        | 'focusPlaneRotationY'
+        | 'focusPlaneRotationZ'
+        | 'focusPlaneX'
+        | 'focusPlaneY'
+        | 'focusPlaneZ'
+        | 'focusPlaneInitialized'
         | 'focusRadius'
         | 'focusFalloff'
         | 'focusTargetNodeId'
@@ -3787,6 +3809,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     }
     if (patch.focusWorldZ !== undefined) {
       api.setNodeProperty(node.id, 'focusWorldZ', patch.focusWorldZ)
+    }
+    for (const field of ['focusPlaneX', 'focusPlaneY', 'focusPlaneZ', 'focusPlaneRotationX', 'focusPlaneRotationY', 'focusPlaneRotationZ', 'focusPlaneInitialized'] as const) {
+      if (patch[field] !== undefined) api.setNodeProperty(node.id, field, patch[field])
     }
     if (patch.focusRadius !== undefined) {
       api.setNodeProperty(node.id, 'focusRadius', patch.focusRadius)
@@ -3927,6 +3952,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     if (node.kind !== 'camera') return
     cameraPreviewStore.clear(node.id)
   }
+  const currentAlignedFocusPlanePose = () => {
+    if (node.kind !== 'camera') return {}
+    const snapshot = getAnimEngine().getSnapshot()
+    return alignedFocusPlanePose(api, node, getLastSolvedLayout(), {
+      ...snapshot, [node.id]: { ...snapshot[node.id], ...anim },
+    })
+  }
   const pivotPreset = node.kind === 'camera' ? 'center' : pivotPresetForTransform(node.transform)
   const patchLayout = (patch: Partial<Layout>) => {
     if (!('layout' in node)) return
@@ -3958,6 +3990,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       if (isAutoLayout) {
         api.doc.transact(() => {
           for (const child of api.getChildren(node.id)) {
+            if ((child.kind === 'null' || child.kind === 'arrangement')) continue
             if (child.position !== 'flow') {
               api.setNodeProperty(child.id, 'position', 'flow')
             }
@@ -3973,9 +4006,86 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       }
     }
   }
+  // Keep authored controller offsets editable without exposing a second rotation
+  // system for new arrangements. Never rewrite existing keys or compose Euler
+  // angles by addition: the two saved rotations can be noncommutative.
+  const hasExistingControllerRotation = node.kind === 'arrangement' && (
+    node.transform.rotationX !== 0 || node.transform.rotationY !== 0 || node.transform.rotation !== 0 ||
+    api.getTracksForNode(node.id).some(track => ['transform.rotationX', 'transform.rotationY', 'transform.rotation'].includes(track.propertyId))
+  )
+  const transformRotationControls = <>
+        <KeyframeSliderRow
+          label="Rotate X"
+          value={liveRotX}
+          onCommit={(v) => patchTransform({ rotationX: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationX: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationX"
+              currentValue={liveRotX}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate Y"
+          value={liveRotY}
+          onCommit={(v) => patchTransform({ rotationY: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotationY: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotationY"
+              currentValue={liveRotY}
+            />
+          }
+        />
+        <KeyframeSliderRow
+          label="Rotate Z"
+          value={liveRot}
+          onCommit={(v) => patchTransform({ rotation: v })}
+          onScrubPreview={(v) => previewNodeVisual({ rotation: v })}
+          onScrubCommit={(v) => commitTransformScrub({ rotation: v })}
+          onScrubCancel={cancelNodeVisualPreview}
+          sliderMin={ROTATION_SLIDER_MIN}
+          sliderMax={ROTATION_SLIDER_MAX}
+          step={1}
+          suffix="°"
+          keyframe={
+            <KeyframeButton
+              nodeId={node.id}
+              propertyId="transform.rotation"
+              currentValue={liveRot}
+            />
+          }
+        />
+  </>
+
   return (
     <div className="space-y-4">
-      <Section title="Node">
+      {node.kind === 'camera' && (
+        <Section title="Camera view">
+          <FieldRow label="Projection">
+            <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
+              ariaLabel="Camera projection"
+              options={[{ value: 'perspective', label: 'Perspective' }, ...(node.projection === 'orthographic' ? [{ value: 'orthographic', label: 'Orthographic (saved camera)' }] : [])]}
+              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection as CameraNode['projection']), UNDOABLE_GESTURE_ORIGIN)} />
+          </FieldRow>
+        </Section>
+      )}
+      {node.kind !== 'camera' && <Section title="Node">
         <FieldRow label="Name">
           <TextField
             value={node.name}
@@ -3983,29 +4093,8 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             allowEmpty={false}
           />
         </FieldRow>
-        <FieldRow label="Kind">
-          <span className="pr-1.5 text-[12px] text-text">
-            {node.kind}
-          </span>
-        </FieldRow>
-        <FieldRow label="Id">
-          <span className="pr-1.5 font-mono text-[11px] text-text-muted">
-            {node.id.slice(0, 8)}…
-          </span>
-        </FieldRow>
-        <FieldRow label="Visible">
-          <CheckboxField
-            value={node.visible}
-            onCommit={(v) => api.setNodeProperty(node.id, 'visible', v)}
-          />
-        </FieldRow>
-        <FieldRow label="Locked">
-          <CheckboxField
-            value={node.locked}
-            onCommit={(v) => setLockedRecursive(api, node.id, v)}
-          />
-        </FieldRow>
-        {node.kind === 'instance' && (
+      </Section>}
+      {node.kind === 'instance' && <Section title="Layer stacking">
           <FieldRow label="Always on top">
             <CheckboxField
               value={node.alwaysOnTop}
@@ -4014,8 +4103,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           </FieldRow>
-        )}
-      </Section>
+      </Section>}
 
       {node.kind === 'audio' && (
         <>
@@ -4034,12 +4122,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         <ExposeComponentPropertiesSection node={node} api={api} />
       )}
 
-      {node.kind !== 'audio' && <PositionSection node={node} api={api} />}
+      <ArrangementSection node={node} api={api} />
+
+      {node.kind !== 'audio' && node.kind !== 'null' && node.kind !== 'arrangement' && <PositionSection node={node} api={api} />}
 
       {node.kind === 'camera' && (
         <>
-          <CameraViewportControlsHint />
-
           <Section
             title="Camera Position"
             action={
@@ -4107,18 +4195,6 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               }
             />
-            <FieldRow label="Scroll intensity" layout="compound">
-              <SliderField
-                value={Math.round(cameraScrollSensitivity * 100)}
-                onCommit={(percent) =>
-                  patchCamera({ scrollSensitivity: percent / 100 })
-                }
-                min={MIN_CAMERA_SCROLL_SENSITIVITY * 100}
-                max={MAX_CAMERA_SCROLL_SENSITIVITY * 100}
-                step={5}
-                suffix="%"
-              />
-            </FieldRow>
           </Section>
 
           <Section
@@ -4205,6 +4281,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </>
       )}
 
+
       {supportsMotionPath && (
         <MotionPathSection
           nodeId={node.id}
@@ -4216,10 +4293,10 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         />
       )}
 
-      {node.kind !== 'camera' && node.kind !== 'audio' && (
+      {node.kind !== 'camera' && node.kind !== 'audio' && !node.connection && (
       <Section title="Transform">
         {/* See multi-select branch above for rationale. */}
-        <AlignTools api={api} selection={[node.id]} />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && <AlignTools api={api} selection={[node.id]} />}
         <KeyframeSliderRow
           label="Position X"
           value={liveX}
@@ -4277,63 +4354,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           }
         />
-        <KeyframeSliderRow
-          label="Rotate X"
-          value={liveRotX}
-          onCommit={(v) => patchTransform({ rotationX: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotationX: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotationX: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationX"
-              currentValue={liveRotX}
-            />
-          }
-        />
-        <KeyframeSliderRow
-          label="Rotate Y"
-          value={liveRotY}
-          onCommit={(v) => patchTransform({ rotationY: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotationY: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotationY: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotationY"
-              currentValue={liveRotY}
-            />
-          }
-        />
-        <KeyframeSliderRow
-          label="Rotate Z"
-          value={liveRot}
-          onCommit={(v) => patchTransform({ rotation: v })}
-          onScrubPreview={(v) => previewNodeVisual({ rotation: v })}
-          onScrubCommit={(v) => commitTransformScrub({ rotation: v })}
-          onScrubCancel={cancelNodeVisualPreview}
-          sliderMin={ROTATION_SLIDER_MIN}
-          sliderMax={ROTATION_SLIDER_MAX}
-          step={1}
-          suffix="°"
-          keyframe={
-            <KeyframeButton
-              nodeId={node.id}
-              propertyId="transform.rotation"
-              currentValue={liveRot}
-            />
-          }
-        />
+        {node.kind !== 'arrangement' ? transformRotationControls : hasExistingControllerRotation ? (
+          <InspectorDisclosure storageKey="arrangement-controller-rotation" title="Existing controller rotation">
+            <p className="text-[11px] text-text-muted">These saved offsets apply before the arrangement rotation. Use the arrangement rotation above for new animation.</p>
+            {transformRotationControls}
+          </InspectorDisclosure>
+        ) : null}
         <ScalePairField
           nodeId={node.id}
           scaleX={liveSX}
@@ -4351,6 +4377,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           }
           onScrubCancel={cancelNodeVisualPreview}
         />
+        {(node.kind !== 'null' && node.kind !== 'arrangement') && (
         <InspectorDisclosure
           storageKey="advanced-transform"
           title="Advanced transform"
@@ -4499,6 +4526,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             }
           />
         </InspectorDisclosure>
+        )}
       </Section>
       )}
 
@@ -4969,12 +4997,12 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
         </Section>
       )}
 
-      {'size' in node && node.kind !== 'audio' && (
+      {'size' in node && node.kind !== 'audio' && !node.connection && (
         <Section
           title={`Size · W ${formatInspectorSizeAxis(liveWidth ?? node.size.width)} × H ${formatInspectorSizeAxis(liveHeight ?? node.size.height)}`}
         >
           <FieldRow
-            label="Width"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter X" : "Width"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -4992,7 +5020,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             />
           </FieldRow>
           <FieldRow
-            label="Height"
+            label={node.kind === 'ellipse' && node.extrusion ? "Diameter Y" : "Height"}
             keyframe={
               <KeyframeButton
                 nodeId={node.id}
@@ -5011,6 +5039,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           </FieldRow>
         </Section>
       )}
+
 
       {node.kind === 'text' && (
         <TypographySection node={node} api={api} />
@@ -5048,7 +5077,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
           apply to a viewpoint. A camera-specific section with
           projection + a future "enabled" toggle slots in here when we
           expand the camera feature surface. */}
-      {node.kind !== 'camera' && node.kind !== 'audio' ? (
+      {node.kind !== 'camera' && node.kind !== 'audio' && (node.kind !== 'null' && node.kind !== 'arrangement') ? (
         <Section title="Appearance">
           <KeyframeSliderRow
             label="Opacity"
@@ -5071,6 +5100,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               />
             }
           />
+          {!node.connection && <>
           <FieldRow
             label="Blend"
             keyframe={
@@ -5266,16 +5296,17 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
               }
             />
           ) : null}
+          </>}
         </Section>
       ) : (
         <>{/* camera path emits its own sections below */}</>
       )}
 
-      {node.kind === 'vector' ? (
+      {node.kind === 'vector' && !node.connection ? (
         <VectorSection node={node} api={api} />
       ) : null}
 
-      {node.kind !== 'camera' && (
+      {node.kind !== 'camera' && node.kind !== 'null' && node.kind !== 'arrangement' && !node.connection && (
         <EffectsSection
           nodeId={node.id}
           value={node.appearance.effects ?? []}
@@ -5292,7 +5323,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {node.kind === 'camera' && (
         <>
           <Section title="Lens">
-            <KeyframeSliderRow
+            {node.projection !== 'orthographic' && <KeyframeSliderRow
               label="Field of View"
               value={liveFieldOfView}
               onCommit={(v) =>
@@ -5321,7 +5352,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                   variant="boxed"
                 />
               }
-            />
+            />}
             <KeyframeSliderRow
               label="Clip start"
               value={liveNearClip}
@@ -5387,26 +5418,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               }
             />
-            <FillField
-              label="Background"
-              value={node.background ?? null}
-              onCommit={(fill) => api.setNodeProperty(node.id, 'background', fill)}
-            />
           </Section>
 
-          <Section title="Depth of Field">
-            <SectionToggleRow
-              label="Enable"
-              value={node.depthOfField ?? false}
-              onCommit={(depthOfField) =>
-                patchCamera({
-                  depthOfField,
-                  ...(depthOfField && (node.aperture ?? 0) <= 0
-                    ? { aperture: 1 }
-                    : {}),
-                })
-              }
-            />
+          <CameraBackgroundSection node={node} api={api} />
+          <Section title="Camera effects">
+          <CameraEffectCard label="Depth of field" kind="depth" enabled={node.depthOfField ?? false}
+            open={activeCameraEffect === 'depth'} onOpen={() => setActiveCameraEffect('depth')} onClose={() => setActiveCameraEffect(null)}
+            onEnabledChange={(depthOfField) => patchCamera({ depthOfField, ...(depthOfField && (node.aperture ?? 0) <= 0 ? { aperture: 1 } : {}) })}>
             {node.depthOfField ? (
               <>
                 <FieldRow label="Focus mode" layout="compound">
@@ -5416,8 +5434,21 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       { value: 'plane', label: 'Distance' },
                       { value: 'screen', label: 'Point' },
                       { value: 'target', label: 'Object' },
+                      { value: 'spatial', label: 'Focus plane' },
                     ]}
                     onCommit={(focusMode) => {
+                      setFocusPickingCameraId(null)
+                      if (focusMode === 'spatial' && node.focusMode !== 'spatial') {
+                        const pose = node.focusPlaneInitialized ? {} : currentAlignedFocusPlanePose()
+                        api.doc.transact(() => patchCamera({
+                          focusMode,
+                          focusTargetNodeId: null,
+                          showFocusPlane: true,
+                          ...pose,
+                          focusPlaneInitialized: true,
+                        }), UNDOABLE_GESTURE_ORIGIN)
+                        return
+                      }
                       const targetId =
                         focusMode === 'target'
                           ? node.focusTargetNodeId ??
@@ -5432,22 +5463,24 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
                 <p className="text-[11px] leading-relaxed text-text-muted">
                   {node.focusMode === 'plane'
-                    ? 'Layers at the focus distance are sharp. Layers nearer or farther away blur with depth.'
+                    ? 'Surfaces at this distance are sharp. Focus changes continuously across tilted surfaces.'
+                    : node.focusMode === 'spatial'
+                      ? 'Move and tilt a focus plane anywhere in the scene. Surfaces become sharp as they cross it.'
                     : node.focusMode === 'target'
                       ? 'Focus follows the target layer’s depth as it moves.'
                       : 'Point keeps a screen area sharp. Use Distance or Object to focus by 3D depth.'}
                 </p>
-                <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
+                {node.focusMode === 'plane' ? <button type="button" className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text" disabled={node.locked}
                   title="Set the focus distance to the nearest layer in view at the current playhead"
                   onClick={() => {
                     const layout = getLastSolvedLayout()
                     if (!layout) return
                     const nearest = nearestLayerFocus(api, node, layout, getAnimEngine().getSnapshot())
                     if (nearest) api.doc.transact(() => patchCamera({ focusMode: 'plane', focusDistance: nearest.distance, focusTargetNodeId: null }), UNDOABLE_GESTURE_ORIGIN)
-                  }}>Focus nearest layer</button>
+                  }}>Focus nearest layer</button> : null}
 
                 {node.focusMode === 'plane' ? (
-                  <FieldRow label="Focus point">
+                  <FieldRow label="Sample depth">
                     <button
                       type="button"
                       disabled={node.locked}
@@ -5460,7 +5493,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                           : 'border-border bg-app-bg text-text-muted hover:border-border-strong hover:text-text',
                       ].join(' ')}
                     >
-                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Pick focus point'}
+                      {focusPickingCameraId === node.id ? 'Cancel picking' : 'Sample surface depth'}
                     </button>
                   </FieldRow>
                 ) : null}
@@ -5482,7 +5515,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       width="w-full"
                     />
                   </FieldRow>
-                ) : (
+                ) : node.focusMode !== 'spatial' ? (
                   <KeyframeSliderRow
                     label="Focus distance"
                     value={liveFocusDistance}
@@ -5518,7 +5551,47 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                       />
                     }
                   />
-                )}
+                ) : null}
+
+                {node.focusMode === 'spatial' ? (
+                  <>
+                    <FocusPlaneDistanceField camera={node} cameraAnim={anim} viewport={api.getMeta().canvas}
+                      onCommit={patch => api.doc.transact(() => patchCamera(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onPreview={previewCameraProperties}
+                      onScrubCommit={patch => api.doc.transact(() => commitCameraPropertiesScrub(patch), UNDOABLE_GESTURE_ORIGIN)}
+                      onCancel={cancelCameraPropertiesPreview} />
+                    <button type="button" disabled={node.locked}
+                      className="w-full rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text"
+                      onClick={() => api.doc.transact(() => patchCamera({
+                        ...currentAlignedFocusPlanePose(),
+                        focusPlaneInitialized: true,
+                        showFocusPlane: true,
+                      }), UNDOABLE_GESTURE_ORIGIN)}>
+                      Align plane with camera
+                    </button>
+                    {([
+                      ['focusPlaneX', 'Position X', 'px'],
+                      ['focusPlaneY', 'Position Y', 'px'],
+                      ['focusPlaneZ', 'Position Z', 'px'],
+                      ['focusPlaneRotationX', 'Tilt X', '°'],
+                      ['focusPlaneRotationY', 'Tilt Y', '°'],
+                      ['focusPlaneRotationZ', 'Rotate Z', '°'],
+                    ] as const).map(([field, label, suffix]) => {
+                      const value = anim?.[field] ?? node[field] ?? 0
+                      return <KeyframeSliderRow key={field} label={label} value={value}
+                        onCommit={(v) => patchCamera({ [field]: v })}
+                        onScrubPreview={(v) => previewCameraProperties({ [field]: v })}
+                        onScrubCommit={(v) => commitCameraPropertiesScrub({ [field]: v })}
+                        onScrubCancel={cancelCameraPropertiesPreview}
+                        adaptiveSpan={suffix === '°' ? 180 : 2000} step={suffix === '°' ? 0.1 : 1} suffix={suffix}
+                        keyframe={<KeyframeButton nodeId={node.id} propertyId={`camera.${field}`} currentValue={value} />}
+                      />
+                    })}
+                    <p className="text-[11px] leading-relaxed text-text-muted">
+                      Drag the plane handle to move it across the view. Drag its depth handle to move it nearer or farther away.
+                    </p>
+                  </>
+                ) : null}
 
                 {node.focusMode === 'screen' ? (
                   <>
@@ -5698,6 +5771,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 <div className="!mt-4 border-t border-border pt-3 text-[11px] font-medium uppercase tracking-wide text-text-dim">
                   Aperture
                 </div>
+                <div className="grid grid-cols-2 gap-3">
                 <KeyframeSliderRow
                   label="F-Stop"
                   value={liveFStop}
@@ -5813,6 +5887,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                </div>
                 <KeyframeSliderRow
                   label="Max blur"
                   value={Math.max(0, Math.min(128, liveBlurLevel))}
@@ -5843,6 +5918,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                <div className="grid grid-cols-2 gap-3">
                 <FieldRow label="Preview quality" layout="compound">
                   <SelectField<CameraNode['dofPreviewQuality']>
                     value={node.dofPreviewQuality ?? 'balanced'}
@@ -5889,6 +5965,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                     />
                   }
                 />
+                </div>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
                   Preview controls live smoothness. Export samples controls the
                   final rendered bokeh quality.
@@ -5899,15 +5976,11 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 Enable depth of field to configure focus, aperture and quality.
               </p>
             )}
-          </Section>
-          <Section title="Post Effects">
-            <SectionToggleRow
-              label="Chromatic aberration"
-              value={node.chromaticAberrationEnabled ?? false}
-              onCommit={(chromaticAberrationEnabled) =>
-                patchCamera({ chromaticAberrationEnabled })
-              }
-            />
+          </CameraEffectCard>
+
+            <CameraEffectCard label="Chromatic aberration" kind="chromatic" enabled={node.chromaticAberrationEnabled ?? false}
+              open={activeCameraEffect === 'chromatic'} onOpen={() => setActiveCameraEffect('chromatic')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(chromaticAberrationEnabled) => patchCamera({ chromaticAberrationEnabled })}>
             {node.chromaticAberrationEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -5978,14 +6051,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <SectionToggleRow
-              label="Bloom"
-              value={node.bloomEnabled ?? false}
-              onCommit={(bloomEnabled) => patchCamera({ bloomEnabled })}
-            />
+
+            <CameraEffectCard label="Bloom" kind="bloom" enabled={node.bloomEnabled ?? false}
+              open={activeCameraEffect === 'bloom'} onOpen={() => setActiveCameraEffect('bloom')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(bloomEnabled) => patchCamera({ bloomEnabled })}>
             {node.bloomEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6086,14 +6158,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <SectionToggleRow
-              label="Vignette"
-              value={node.vignetteEnabled ?? false}
-              onCommit={(vignetteEnabled) => patchCamera({ vignetteEnabled })}
-            />
+
+            <CameraEffectCard label="Vignette" kind="vignette" enabled={node.vignetteEnabled ?? false}
+              open={activeCameraEffect === 'vignette'} onOpen={() => setActiveCameraEffect('vignette')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(vignetteEnabled) => patchCamera({ vignetteEnabled })}>
             {node.vignetteEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6117,14 +6188,13 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 })}
               </>
             ) : null}
+            </CameraEffectCard>
 
-            <div className="border-t border-border" />
 
-            <SectionToggleRow
-              label="VHS tape"
-              value={node.vhsEnabled ?? false}
-              onCommit={(vhsEnabled) => patchCamera({ vhsEnabled })}
-            />
+
+            <CameraEffectCard label="VHS tape" kind="vhs" enabled={node.vhsEnabled ?? false}
+              open={activeCameraEffect === 'vhs'} onOpen={() => setActiveCameraEffect('vhs')} onClose={() => setActiveCameraEffect(null)}
+              onEnabledChange={(vhsEnabled) => patchCamera({ vhsEnabled })}>
             {node.vhsEnabled ? (
               <>
                 <p className="px-2 text-[10px] leading-4 text-text-dim">
@@ -6261,8 +6331,9 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
                 />
               </>
             ) : null}
+            </CameraEffectCard>
           </Section>
-          <CameraAnimationActions node={node} api={api} />
+          <CameraViewportControlsHint orthographic={node.projection === 'orthographic'} />
         </>
       )}
     </div>
@@ -6387,12 +6458,12 @@ function MotionPathSection({
   )
 }
 
-function CameraViewportControlsHint() {
+function CameraViewportControlsHint({ orthographic = false }: { orthographic?: boolean }) {
   const recording = useUI((state) => state.recording)
   const controls = [
     { shortcut: 'MMB / Option-drag', action: 'Orbit' },
     { shortcut: 'Shift+MMB / Shift-scroll', action: 'Pan' },
-    { shortcut: 'Ctrl+MMB / Scroll', action: 'Dolly' },
+    { shortcut: 'Ctrl+MMB / Scroll', action: orthographic ? 'Zoom' : 'Dolly' },
     { shortcut: 'Cmd/Ctrl-scroll', action: 'Canvas zoom' },
   ] as const
 
@@ -6441,6 +6512,15 @@ function CameraViewportControlsHint() {
   )
 }
 
+function CameraBackgroundSection({ node, api }: { node: CameraNode; api: SceneAPI }) {
+  const previousFill = useRef(node.background ?? { kind: 'solid' as const, color: '#ffffff' })
+  useEffect(() => { if (node.background) previousFill.current = node.background }, [node.background])
+  return <Section title="Background" action={<CheckboxField ariaLabel="Enable camera background" value={!!node.background}
+    onCommit={enabled => api.setNodeProperty(node.id, 'background', enabled ? previousFill.current : null)} />}>
+    {node.background ? <FillField label="" value={node.background} onCommit={fill => api.setNodeProperty(node.id, 'background', fill)} /> : null}
+  </Section>
+}
+
 function CameraSectionResetButton({
   label,
   title,
@@ -6456,9 +6536,9 @@ function CameraSectionResetButton({
       aria-label={label}
       title={title}
       onClick={onClick}
-      className="rounded border border-border bg-panel px-1.5 py-1 text-[10px] font-medium text-text-muted hover:border-border-strong hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="flex h-6 w-8 items-center justify-center rounded text-text-muted hover:bg-control hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
-      Reset scene
+      <img src="./camera-inspector/reset.svg" alt="" />
     </button>
   )
 }
@@ -6469,28 +6549,6 @@ function CameraSectionResetButton({
  * keyframe their values, so keeping the old non-keyframing "Reset transform"
  * button here would expose two conflicting reset behaviors.
  */
-function CameraAnimationActions({ node, api }: { node: Node; api: SceneAPI }) {
-  const tracks = api.getTracksForNode(node.id)
-  if (tracks.length === 0) return null
-  return (
-    <div className="mt-2 flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={() => {
-          api.doc.transact(() => {
-            for (const t of tracks) removeTrack(api, t.id)
-          })
-        }}
-        title="Remove every animation track on the camera. Static transform stays."
-        className="rounded border border-border bg-panel px-2 py-1.5 text-[11px] text-text-muted hover:border-border-strong hover:text-text"
-      >
-        Clear animation ({tracks.length}{' '}
-        {tracks.length === 1 ? 'track' : 'tracks'})
-      </button>
-    </div>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Uniform Scale — single percent field used for cameras. Anamorphic
 // camera scaling (X ≠ Y) isn't physically meaningful, and a single
@@ -10616,7 +10674,7 @@ function LayoutSection({
         </>
       ) : null}
       {layout.mode !== 'none'
-        ? (['top', 'right', 'bottom', 'left'] as const).map((side) => (
+        ? <div className="grid grid-cols-2 gap-3">{(['top', 'right', 'bottom', 'left'] as const).map((side) => (
             <KeyframeSliderRow
               key={side}
               label={`Padding ${side.charAt(0).toUpperCase()}`}
@@ -10654,7 +10712,7 @@ function LayoutSection({
                 />
               }
             />
-          ))
+          ))}</div>
         : null}
     </Section>
   )
@@ -10871,16 +10929,7 @@ function AlignStretchIcon() {
   )
 }
 
-/**
- * SliderField — Framer's "32 ─────●─" pattern. Numeric input on the
- * left (compact, ~64px), accent-filled range track on the right.
- *
- * Implementation note: we use a native <input type="range"> for
- * accessibility and free keyboard support, but skin it heavily so it
- * matches the rest of the dark inspector. The fill below the thumb
- * is painted via a CSS linear-gradient on the track background — no
- * custom SVG, no JS-driven width math.
- */
+/** Shared numeric scrub presentation for formerly bounded slider fields. */
 function SliderField({
   value,
   onCommit,
@@ -10898,41 +10947,7 @@ function SliderField({
   suffix?: string
   disabled?: boolean
 }) {
-  // Visual fill: percentage of the way from min to max. Capped to the
-  // track range so a value > max (rare but possible from animated
-  // properties) still paints the track 100%.
-  const pct = Math.max(0, Math.min(1, (value - min) / Math.max(1, max - min)))
-  const fillPercent = Math.round(pct * 100)
-  return (
-    <div
-      className={[
-        'flex w-full items-center gap-2',
-        disabled ? 'pointer-events-none opacity-50' : '',
-      ].join(' ')}
-    >
-      <NumberField
-        value={value}
-        onCommit={onCommit}
-        min={min}
-        max={max}
-        step={step}
-        suffix={suffix}
-        width="w-16"
-      />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onCommit(Number(e.currentTarget.value))}
-        className="hyper-slider h-1.5 flex-1 cursor-pointer appearance-none rounded-full"
-        style={{
-          background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${fillPercent}%, var(--color-border) ${fillPercent}%, var(--color-border) 100%)`,
-        }}
-      />
-    </div>
-  )
+  return <NumberField value={value} onCommit={onCommit} min={min} max={max} step={step} suffix={suffix} disabled={disabled} width="w-full" />
 }
 
 // ---------------------------------------------------------------------------

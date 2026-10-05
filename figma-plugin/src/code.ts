@@ -145,6 +145,11 @@ interface CapturedNodeBase {
   name: string
   visible: boolean
   locked: boolean
+  /** Figma masks apply to following siblings until the next mask. */
+  isMask?: boolean
+  maskType?: 'ALPHA' | 'VECTOR' | 'LUMINANCE'
+  /** Exact source for container masks and luminance-to-alpha conversion. */
+  maskSvg?: string
   opacity: number
   x: number
   y: number
@@ -472,6 +477,15 @@ async function captureNode(
       break
   }
 
+  if (captured?.isMask && (captured.maskType === 'LUMINANCE' || 'children' in captured)) {
+    // Simple alpha masks stay editable. Container masks need their complete
+    // subtree, and luminance also depends on paint colors, so preserve SVG.
+    captured.maskSvg = sanitizeSvgForTransport(await withTimeout(
+      node.exportAsync({ format: 'SVG_STRING', svgOutlineText: true, svgIdAttribute: true }),
+      VECTOR_EXPORT_TIMEOUT_MS,
+      `Mask export for "${node.name}"`,
+    ))
+  }
   return captured
 }
 
@@ -989,6 +1003,8 @@ async function captureBase(
     maxWidth?: number | null
     minHeight?: number | null
     maxHeight?: number | null
+    isMask?: boolean
+    maskType?: 'ALPHA' | 'VECTOR' | 'LUMINANCE'
     opacity?: number
     blendMode?: BlendMode
     effects?: ReadonlyArray<Effect> | symbol
@@ -1028,6 +1044,7 @@ async function captureBase(
     name: node.name,
     visible: node.visible,
     locked: node.locked,
+    ...(geo.isMask ? { isMask: true, maskType: geo.maskType ?? 'ALPHA' } : {}),
     opacity: typeof geo.opacity === 'number' ? geo.opacity : 1,
     x: relativeTransform?.[0][2] ?? node.x,
     y: relativeTransform?.[1][2] ?? node.y,

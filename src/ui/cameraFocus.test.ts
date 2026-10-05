@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { getAnimEngine } from '@/anim'
 import { solveLayout, yogaReady } from '@/layout/engine'
 import { createSceneAPI } from '@/scene/doc'
+import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
 import type { SceneAPI } from '@/scene'
-import { buildWorldPlanes, cameraSpaceDepth, depthBlurAmount, projectWorldPoint, resolveCamera3D } from '@/render3d/scene3d'
-import { nearestLayerFocus, pickLayerFocus } from './cameraFocus'
+import { buildWorldPlanes, cameraBasis, cameraSpaceDepth, depthBlurAmount, projectWorldPoint, resolveCamera3D } from '@/render3d/scene3d'
+import { alignedFocusPlanePose, nearestLayerFocus, pickLayerFocus } from './cameraFocus'
 
 afterEach(() => getAnimEngine().pause())
 
@@ -16,6 +17,76 @@ function addCard(api: SceneAPI, root: string, x: number, z = 0) {
   api.setNodeProperty(id, 'appearance', { ...node.appearance, fill: { kind: 'solid', color: '#3B82F6' } })
   return id
 }
+
+function expectVectorClose(actual: { x: number; y: number; z: number }, expected: { x: number; y: number; z: number }) {
+  expect(actual.x).toBeCloseTo(expected.x)
+  expect(actual.y).toBeCloseTo(expected.y)
+  expect(actual.z).toBeCloseTo(expected.z)
+}
+
+describe('align an independent focus plane', () => {
+  it('starts at the animated Object target, including a target inside a flattened group', async () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null, { size: { width: 960, height: 540 } })
+    const group = api.createNode('frame', root, { position: 'absolute', size: { width: 960, height: 540 } })
+    const card = addCard(api, group, 448)
+    api.setTrack({ id: 'target-depth', nodeId: card, propertyId: 'transform.z', defaultEasing: 'linear', keyframes: [{ id: 'a', time: 0, value: 0 }, { id: 'b', time: 1, value: 320 }] })
+    const camera = {
+      ...api.getActiveCamera()!, focusMode: 'target' as const, focusTargetNodeId: card,
+      focusWorldX: -400, focusWorldY: -300, focusWorldZ: -2000,
+    }
+    const layout = solveLayout(await yogaReady, api, root, api.getMeta().canvas)
+    const engine = getAnimEngine(); engine.attach(api); engine.seek(0.75)
+    const animated = engine.getSnapshot()
+    const initial = resolveCamera3D(camera, animated[camera.id], api.getMeta().canvas)
+    const target = buildWorldPlanes(api, layout, animated, initial, { independentNodes: true }).find(plane => plane.nodeId === card)!
+    expect(target.center.z).toBeCloseTo(240)
+
+    const pose = alignedFocusPlanePose(api, camera, layout, animated)
+    const spatial = resolveCamera3D({ ...camera, focusMode: 'spatial', ...pose }, animated[camera.id], api.getMeta().canvas)
+    expectVectorClose(spatial.focusWorld, target.center)
+    expectVectorClose(spatial.focusPlaneNormal, cameraBasis(initial).forward)
+    expect(spatial.focusDistance).toBeCloseTo(cameraSpaceDepth(target.center, initial))
+    expect(spatial.focusDistance).toBeGreaterThan(initial.focusDistance)
+  })
+
+  it('starts Point mode at the look-at depth even when its stored world coordinates are behind the camera', () => {
+    const api = createSceneAPI()
+    api.createNode('frame', null, { size: { width: 960, height: 540 } })
+    const camera = { ...api.getActiveCamera()!, focusMode: 'screen' as const, focusDistance: 12 }
+    const animated = { [camera.id]: { z: 250, rotationX: 24, rotationY: -32, focusWorldX: 9000, focusWorldY: 8000, focusWorldZ: -20000, focusDistance: 5 } }
+    const resolved = resolveCamera3D(camera, animated[camera.id], api.getMeta().canvas)
+    expect(resolved.focusDistance).toBeLessThan(resolved.nearClip)
+
+    const pose = alignedFocusPlanePose(api, camera, null, animated)
+    const spatial = resolveCamera3D({ ...camera, focusMode: 'spatial', ...pose }, animated[camera.id], api.getMeta().canvas)
+    expectVectorClose(spatial.focusWorld, resolved.pointOfInterest)
+    expectVectorClose(spatial.focusPlaneNormal, cameraBasis(resolved).forward)
+    expect(spatial.focusDistance).toBeCloseTo(cameraSpaceDepth(resolved.pointOfInterest, resolved))
+    expect(spatial.focusDistance).toBeGreaterThan(100)
+  })
+
+  it.each(ISOMETRIC_CAMERA_VIEWS)('aligns the focus plane with $label at the animated distance without changing the camera', ({ rotation }) => {
+    const api = createSceneAPI()
+    api.createNode('frame', null, { size: { width: 960, height: 540 } })
+    const camera = { ...api.getActiveCamera()!, projection: 'orthographic' as const, focusMode: 'plane' as const,
+      transform: { ...api.getActiveCamera()!.transform, ...rotation },
+    }
+    const animated = { [camera.id]: { x: 560, y: 210, z: -70, rotation: rotation.rotation + 12, scaleX: 0.5, scaleY: 0.5, focusDistance: 620 } }
+    const resolved = resolveCamera3D(camera, animated[camera.id], api.getMeta().canvas)
+    const pose = alignedFocusPlanePose(api, camera, null, animated)
+    const spatial = resolveCamera3D({ ...camera, focusMode: 'spatial', ...pose }, animated[camera.id], api.getMeta().canvas)
+    expectVectorClose(spatial.focusWorld, resolved.focusWorld)
+    expectVectorClose(spatial.focusPlaneNormal, cameraBasis(resolved).forward)
+    expectVectorClose(spatial.focusPlaneRight, cameraBasis(resolved).right)
+    expectVectorClose(spatial.focusPlaneDown, cameraBasis(resolved).down)
+    expect(spatial.focusDistance).toBeCloseTo(620)
+    expectVectorClose(spatial.position, resolved.position)
+    expect(spatial.zoomX).toBe(resolved.zoomX)
+    expect(spatial.zoomY).toBe(resolved.zoomY)
+    api.doc.destroy()
+  })
+})
 
 describe('distance focus on animated layers', () => {
   it('uses animated world depth, sharpening the nearest card and blurring farther cards', async () => {

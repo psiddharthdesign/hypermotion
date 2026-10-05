@@ -7,7 +7,7 @@ import {
   updateDepthOfFieldShader,
 } from './depthOfFieldShader'
 
-const TEXT_SEGMENT_SHADER_KEY = 'hypermotion-text-segment-v3'
+const TEXT_SEGMENT_SHADER_KEY = 'hypermotion-text-segment-depth-v4'
 
 type MaterialCompileHook = THREE.MeshBasicMaterial['onBeforeCompile']
 
@@ -29,6 +29,9 @@ interface TextSegmentShaderInstallation {
 export function installTextSegmentMaterialShader(
   material: THREE.MeshBasicMaterial,
 ): void {
+  // A base-shader Fast Refresh can invalidate its schema independently of
+  // this wrapper. Reinstall it before deciding whether the wrapper is current.
+  installDepthOfFieldShader(material)
   const current = material.userData
     .hyperMotionTextSegmentShader as TextSegmentShaderInstallation | undefined
   if (
@@ -71,7 +74,8 @@ export function installTextSegmentMaterialShader(
  * Updates the shared camera/focus/kernel uniforms used by a batched segment
  * material, then ensures the per-segment shader layer is installed. Set
  * `blurPx` to the greatest lens blur carried by the batch so the shared DOF
- * enabled flag represents every segment; individual radii come from the
+ * enabled flag represents every segment. Distance focus instead uses the
+ * shared depthFocus plane at each fragment; Point/legacy focus uses the
  * `hmDofBlur` geometry attribute.
  */
 export function updateTextSegmentMaterialShader(
@@ -110,15 +114,18 @@ varying float vHmDofBlur;
 varying vec4 vHmUvBounds;`,
   )
     .replace(
-      'float hmLocalBlur = mix( hmDofMinBlur, hmDofBlur, hmFocusBlend );',
-      `float hmEffectBlur = max( vHmEffectBlur, 0.0 );
-  float hmLensBlur = hmDofEnabled > 0.5
+      'float hmLensBlur = mix( hmDofMinBlur, hmDofBlur, hmFocusBlend );',
+      `float hmLensBlur = hmDofEnabled > 0.5
     ? mix(
         hmDofMinBlur,
         max( vHmDofBlur, hmDofMinBlur ),
         hmFocusBlend
       )
-    : 0.0;
+    : 0.0;`,
+    )
+    .replace(
+      'float hmLocalBlur = hmLensBlur;',
+      `float hmEffectBlur = max( vHmEffectBlur, 0.0 );
   float hmLocalBlur = max( hmEffectBlur, hmLensBlur );`,
     )
     .replace(

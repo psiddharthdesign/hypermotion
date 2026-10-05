@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { arrangementLayerOwner, layerPanelChildren, layerPanelParent } from '@/ui/arrangementLayerTree'
+import { dropLayersIntoArrangement, layerDragSelection } from '@/ui/arrangementLayerDrop'
+import { removeArrangementMember, repairArrangementMembership } from '@/scene/arrangementActions'
 
 import {
   memo,
@@ -66,8 +69,11 @@ const ASSET_LIBRARY_ENABLED = false
  * tree is shallow in practice and native DnD is fine at this size.
  */
 export function LayersPanel() {
-  useSceneVersion()
+  const sceneVersion = useSceneVersion()
   const api = useSceneAPI()
+  useEffect(() => {
+    repairArrangementMembership(api)
+  }, [api, sceneVersion])
   const project = useProjectAPI()
   const rootId = api.getRoot()
   const root = rootId ? api.getNode(rootId) : null
@@ -228,7 +234,9 @@ export function LayersPanel() {
           />
           {root ? (
             <>
-              <PanelSectionLabel label="Scene layers" />
+              <div className="flex items-center justify-between pr-3">
+                <PanelSectionLabel label="Scene layers" />
+              </div>
               <Row node={root} depth={0} rootId={rootId} />
             </>
           ) : (
@@ -321,10 +329,10 @@ function ComponentsPanel({ onViewAll }: { onViewAll: () => void }) {
   const components = listComponents(api)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
         <span className="text-[11px] font-medium text-text-muted">
-          Asset library
+          Components
         </span>
         <div className="flex items-center gap-1">
           <span
@@ -938,7 +946,7 @@ function LayerSelectionReveal({
     while (current) {
       const node = api.getNode(current)
       if (!node) break
-      const parent: string | null = node.parent
+      const parent: string | null = layerPanelParent(api, node)
       if (parent && layersCollapsed.has(parent)) {
         toggleLayerCollapsed(parent)
       }
@@ -981,7 +989,7 @@ const Row = memo(function LayerRow({
   // large imported Figma tree.
   const selected = useUI((s) => s.selection.includes(node.id))
   const isComponentNode = node.kind === 'component' || node.kind === 'instance'
-  const children = api.getChildren(node.id).filter((child) => child.kind !== 'audio')
+  const children = layerPanelChildren(api, node)
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(node.name)
@@ -994,7 +1002,7 @@ const Row = memo(function LayerRow({
   // through their component definition — dropping a foreign node inside
   // would break the instance contract, so we skip them too. Root is a
   // frame so it qualifies automatically.
-  const isContainer = node.kind === 'frame' || node.kind === 'component'
+  const isContainer = node.kind === 'frame' || node.kind === 'component' || node.kind === 'arrangement'
 
   const commitName = () => {
     const name = draftName.trim()
@@ -1010,6 +1018,7 @@ const Row = memo(function LayerRow({
       return
     }
     e.dataTransfer.setData('text/hyper-motion-node', node.id)
+    e.dataTransfer.setData('application/hyper-motion-nodes', JSON.stringify(layerDragSelection(api, node.id, useUI.getState().selection)))
     e.dataTransfer.effectAllowed = 'move'
   }
 
@@ -1023,7 +1032,7 @@ const Row = memo(function LayerRow({
     // Three zones on containers, two on leaves. Root has a special case:
     // it's the artboard and only accepts drop-into (siblings of root
     // don't exist).
-    if (isRoot) {
+    if (isRoot || node.kind === 'arrangement') {
       setDropEdge('into')
     } else if (isContainer) {
       if (ratio < 0.25) setDropEdge('above')
@@ -1037,36 +1046,43 @@ const Row = memo(function LayerRow({
   const onDragLeave = () => setDropEdge(null)
 
   const onDrop = (e: DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
     const srcId = e.dataTransfer.getData('text/hyper-motion-node')
+    let payload: string[] = [srcId]
+    try {
+      const value: unknown = JSON.parse(e.dataTransfer.getData('application/hyper-motion-nodes'))
+      if (Array.isArray(value)) payload = value.filter((id): id is string => typeof id === 'string')
+    } catch { /* Older single-layer drag payload. */ }
+    const ids = layerDragSelection(api, srcId, payload).filter(id => id !== node.id && !isDescendant(api, node.id, id))
     const edge = dropEdge
     setDropEdge(null)
-    if (!srcId || srcId === node.id) return
-    // Guard against cycles — can't drop a node into its own descendant.
-    if (isDescendant(api, node.id, srcId)) return
-
-    if (edge === 'into') {
-      // Drop as a new child of this node. appendChild reparents and
-      // positions at the end of the children array, which matches the
-      // visual reading order (bottom = frontmost).
-      reparentPreservingVisualPosition(api, srcId, node.id)
+    if (!ids.length || !edge || node.locked) return
+    const targetArrangement = node.kind === 'arrangement' ? node : edge !== 'into' ? arrangementLayerOwner(api, node) : null
+    if (targetArrangement) {
+      const layout = getLastSolvedLayout()
+      if (!layout) return
+      const attached = dropLayersIntoArrangement(api, node.id, ids, edge, layout, getAnimEngine().getSnapshot())
+      if (attached.length) {
+        useUI.getState().setSelection(attached)
+        if (useUI.getState().layersCollapsed.has(targetArrangement.id)) useUI.getState().toggleLayerCollapsed(targetArrangement.id)
+      }
       return
     }
-
-    // Sibling drop (above / below). For this path we need the target to
-    // have a parent — root is handled above via 'into' only.
-    if (!node.parent) return
-    const parentId = node.parent
-    const siblings = api.getChildren(parentId).map((c) => c.id)
-    const targetIdx = siblings.indexOf(node.id)
-    if (targetIdx < 0) return
-    const insertIdx = edge === 'above' ? targetIdx : targetIdx + 1
-    // appendChild reparents; then moveChild positions within new parent.
-    reparentPreservingVisualPosition(api, srcId, parentId)
-    // After appendChild, srcId is at the end of siblings. Re-query to
-    // account for the fact that it may already have been in this parent.
-    const nextSiblings = api.getChildren(parentId).map((c) => c.id)
-    const clampedIdx = Math.min(insertIdx, nextSiblings.length - 1)
-    api.moveChild(parentId, srcId, clampedIdx)
+    api.doc.transact(() => {
+      let insertion = edge !== 'into' && node.parent ? api.getChildren(node.parent).findIndex(child => child.id === node.id) + (edge === 'below' ? 1 : 0) : 0
+      for (const id of ids) {
+        const source = api.getNode(id)
+        const owner = source && arrangementLayerOwner(api, source)
+        if (source?.locked || owner?.locked) continue
+        if (owner) removeArrangementMember(api, owner.id, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+        if (edge === 'into') reparentPreservingVisualPosition(api, id, node.id)
+        else if (node.parent) {
+          reparentPreservingVisualPosition(api, id, node.parent)
+          api.moveChild(node.parent, id, Math.min(insertion++, api.getChildren(node.parent).length - 1))
+        }
+      }
+    }, UNDOABLE_GESTURE_ORIGIN)
   }
 
   return (
@@ -1146,7 +1162,7 @@ const Row = memo(function LayerRow({
             : '',
         ].join(' ')}
         style={{
-          paddingLeft: 8 + depth * 12,
+          paddingLeft: 8 + depth * 16,
           contentVisibility: 'auto',
           containIntrinsicSize: '0 24px',
           ...(selected && isComponentNode
@@ -1161,6 +1177,8 @@ const Row = memo(function LayerRow({
               toggleLayerCollapsed(node.id)
             }}
             title={collapsed ? 'Expand' : 'Collapse'}
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
+            aria-expanded={!collapsed}
             className="flex h-3 w-3 shrink-0 items-center justify-center text-[9px] text-text-dim hover:text-text"
           >
             {collapsed ? '▸' : '▾'}
@@ -1229,11 +1247,25 @@ const Row = memo(function LayerRow({
             Show
           </button>
         ) : null}
+        {!isRoot && <button
+          type="button"
+          aria-label={`Delete ${node.name}`}
+          title="Delete layer"
+          disabled={node.locked || !!arrangementLayerOwner(api, node)?.locked}
+          onClick={(event) => {
+            event.stopPropagation()
+            const deletion = buildNodeContextMenu(api, [node.id]).find(item => item.kind !== 'separator' && 'label' in item && item.label === 'Delete')
+            if (deletion && 'onClick' in deletion) deletion.onClick?.()
+          }}
+          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-dim opacity-0 transition-colors hover:bg-panel-raised hover:text-red-500 group-hover:opacity-100 group-focus-within:opacity-100 disabled:opacity-30"
+        ><AppIcon name="trash" size={11} /></button>}
         <IconToggle
           active={node.visible}
           onClick={(e) => {
             e.stopPropagation()
-            api.setNodeProperty(node.id, 'visible', !node.visible)
+            api.doc.transact(() => {
+              api.setNodeProperty(node.id, 'visible', !node.visible)
+            }, UNDOABLE_GESTURE_ORIGIN)
           }}
           title={
             node.visible
@@ -1250,17 +1282,20 @@ const Row = memo(function LayerRow({
             // Cascade to descendants. A lock on a container implies its
             // children are locked too — otherwise the lock is meaningless
             // (you could still drag the inner badge of a "locked" card).
-            setLockedRecursive(api, node.id, !node.locked)
+            api.doc.transact(() => {
+              setLockedRecursive(api, node.id, !node.locked)
+              if (node.kind === 'arrangement') for (const member of children) setLockedRecursive(api, member.id, !node.locked)
+            }, UNDOABLE_GESTURE_ORIGIN)
           }}
           title={node.locked ? 'Unlock (cascades to children)' : 'Lock (cascades to children)'}
         >
           {node.locked ? <LockClosedIcon /> : <LockOpenIcon />}
         </IconToggle>
       </div>
-      {!collapsed &&
-        children.map((c) => (
-          <Row key={c.id} node={c} depth={depth + 1} rootId={rootId} />
-        ))}
+      {!collapsed && hasChildren && <div className="relative" data-layer-children={node.id}>
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-l border-border" style={{ left: 13 + depth * 16 }} />
+        {children.map(c => <Row key={c.id} node={c} depth={depth + 1} rootId={rootId} />)}
+      </div>}
     </>
   )
 })
@@ -1395,6 +1430,8 @@ function MaskGlyph() {
 }
 
 const KIND_ICONS: Record<NodeKind, AppIconName> = {
+  null: 'null',
+  arrangement: 'grid',
   frame: 'frame',
   rect: 'square',
   ellipse: 'circle',
@@ -1476,7 +1513,8 @@ function collectVisibleIds(
   const walk = (id: string) => {
     out.push(id)
     if (collapsed.has(id)) return
-    for (const child of api.getChildren(id)) walk(child.id)
+    const node = api.getNode(id)
+    if (node) for (const child of layerPanelChildren(api, node)) walk(child.id)
   }
   walk(rootId)
   return out
@@ -1602,9 +1640,11 @@ function filterDescendants(
   const set = new Set(ids)
   return ids.filter((id) => {
     let n = api.getNode(id)
-    while (n && n.parent) {
-      if (set.has(n.parent)) return false
-      n = api.getNode(n.parent)
+    while (n) {
+      const parent = layerPanelParent(api, n)
+      if (!parent) break
+      if (set.has(parent)) return false
+      n = api.getNode(parent)
     }
     return true
   })

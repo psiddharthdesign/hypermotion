@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Continuous focus plane regression</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      // Set this before importing scene/UI modules: this fixture must never
+      // open or write the editor's persisted project.
+      const url = new URL(location.href)
+      url.searchParams.set('render-window', '1')
+      history.replaceState(null, '', url)
+      await import('./focus-plane.tsx')
+    </script>
+  </body>
+</html>

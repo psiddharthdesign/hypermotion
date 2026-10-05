@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
+import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { createArrangement, dissolveArrangement } from '@/scene/arrangementActions'
+
+import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { getAnimEngine } from '@/anim'
+import { detachNullDependents } from '@/scene/nullObject'
+
+import { duplicateSelection } from '@/ui/duplicateSelection'
+import { instantiateComponent } from '@/ui/actions'
 
 import type { NodeId } from '@/scene'
 import type { SceneAPI } from '@/scene/doc'
@@ -6,7 +15,6 @@ import type { ContextMenuItem } from '@/state/ui'
 import { useUI } from '@/state/ui'
 import {
   createComponentFromSelection,
-  instantiateComponent,
   ungroupFrame,
   applyMaskToSelection,
   wrapInAutoLayout,
@@ -21,10 +29,7 @@ import {
  * reaches for dozens of times per session. More specialized commands
  * live in the Inspector.
  *
- * Duplicate is wired to the same logic as Cmd+D, but via a module
- * import from the keyboard-shortcuts hook would be circular. For MVP
- * we express it as a scene-graph clone locally. If the duplicate
- * behavior diverges, pull it into a shared helper.
+ * Duplicate shares the same selection action as Cmd+D.
  */
 export function buildNodeContextMenu(
   api: SceneAPI,
@@ -40,7 +45,7 @@ export function buildNodeContextMenu(
       (n) =>
         n!.parent === nodes[0]!.parent &&
         n!.parent !== null &&
-        n!.kind !== 'camera',
+        n!.kind !== 'camera' && n!.kind !== 'null' && n!.kind !== 'arrangement',
     )
   const singleFrame =
     ids.length === 1 && nodes[0] && nodes[0].kind === 'frame'
@@ -48,6 +53,13 @@ export function buildNodeContextMenu(
       : null
 
   const items: ContextMenuItem[] = []
+  if (nodes.some((node) => node.id !== api.getRoot() && !['camera', 'audio', 'null', 'arrangement'].includes(node.kind))) items.push({
+    label: 'Create advanced layout',
+    onClick: () => {
+      const id = createArrangement(api, ids, getLastSolvedLayout() ?? {}, getAnimEngine().getSnapshot())
+      if (id) useUI.getState().setSelection([id])
+    },
+  })
 
   items.push({
     label: 'Wrap in group',
@@ -151,11 +163,7 @@ export function buildNodeContextMenu(
     label: 'Duplicate',
     shortcut: '⌘D',
     onClick: () => {
-      const newIds: NodeId[] = []
-      for (const id of ids) {
-        const dup = duplicateForContextMenu(api, id)
-        if (dup) newIds.push(dup)
-      }
+      const newIds = duplicateSelection(api, ids)
       if (newIds.length > 0) useUI.getState().setSelection(newIds)
     },
   })
@@ -167,53 +175,15 @@ export function buildNodeContextMenu(
     onClick: () => {
       for (const id of ids) {
         const node = api.getNode(id)
-        if (node && node.parent) api.deleteNode(id)
+        if (node && node.parent) api.doc.transact(() => {
+          if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+          if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+          else api.deleteNode(id)
+        }, UNDOABLE_GESTURE_ORIGIN)
       }
       useUI.getState().clearSelection()
     },
   })
 
   return items
-}
-
-/**
- * Subtree clone used by the context menu's Duplicate action.
- *
- * The keyboard shortcut has a similar helper (private to that module).
- * Keeping a second copy here is deliberate: the menu's action surface
- * is stable even if the keyboard hook is rearranged. When both share
- * the same behavior we can hoist them into `actions.ts`.
- */
-function duplicateForContextMenu(api: SceneAPI, id: NodeId): NodeId | null {
-  const original = api.getNode(id)
-  if (!original || !original.parent) return null
-  if (original.kind === 'component') return instantiateComponent(api, original.id)
-
-  const cloneSubtree = (srcId: NodeId, parent: NodeId): NodeId => {
-    const src = api.getNode(srcId)
-    if (!src) return parent
-    const { id: _i, parent: _p, children: _c, ...rest } = src
-    void _i
-    void _p
-    void _c
-    const newId = api.createNode(src.kind, parent, {
-      ...rest,
-      name: src.name + ' copy',
-    } as Partial<typeof src>)
-    for (const child of api.getChildren(srcId)) {
-      cloneSubtree(child.id, newId)
-    }
-    return newId
-  }
-
-  const newId = cloneSubtree(id, original.parent)
-  const copy = api.getNode(newId)
-  if (copy) {
-    api.setNodeProperty(newId, 'transform', {
-      ...copy.transform,
-      x: copy.transform.x + 16,
-      y: copy.transform.y + 16,
-    })
-  }
-  return newId
 }

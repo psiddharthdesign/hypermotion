@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { NumberField } from './NumberField'
+import { EyedropperIcon } from './EyedropperIcon'
 import { TextField } from './TextField'
 import { hexToOklch, oklchToHex, parsePickerColor } from './colorConvert'
 
@@ -71,7 +72,7 @@ export function ColorField({
         aria-label="Pick color from screen"
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border bg-panel text-text-muted hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <EyedropperGlyph />
+        <EyedropperIcon />
       </button>
       <button
         type="button"
@@ -97,28 +98,6 @@ export function ColorField({
         />
       )}
     </div>
-  )
-}
-
-function EyedropperGlyph() {
-  return (
-    <svg
-      width={14}
-      height={14}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m2 22 1-1h3l9-9" />
-      <path d="M3 21v-3l9-9" />
-      <path d="m15 6 3.4-3.4a2.1 2.1 0 0 1 3 3L18 9" />
-      <path d="m9 12 6 6" />
-      <path d="m12 9 6 6" />
-    </svg>
   )
 }
 

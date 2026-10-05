@@ -72,6 +72,14 @@ describe('animated snapshot selection', () => {
     expect(corner).not.toBe(opacity)
   })
 
+  it('previews one arrangement axis without dropping the animated orbit or other axes', () => {
+    const base = { controller: { arrangement: { orbit: 125, rotationX: 20, rotationY: 35 } } }
+    const merged = mergeTransformPreviews(base, { controller: { arrangement: { rotationX: 42.5 } } })
+    expect(merged.controller?.arrangement).toEqual({ orbit: 125, rotationX: 42.5, rotationY: 35 })
+    expect(base.controller.arrangement.rotationX).toBe(20)
+    expect(mergeTransformPreviews(base, {})).toBe(base)
+  })
+
   it('deep-merges one scrubbed effect without erasing other blur tracks', () => {
     expect(
       mergeTransformPreviews(

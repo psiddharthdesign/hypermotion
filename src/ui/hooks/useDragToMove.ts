@@ -5,6 +5,7 @@ import { useSceneAPI } from '@/scene'
 import type { NodeId } from '@/scene'
 import { useUI } from '@/state/ui'
 import { canMoveChildOnCanvas } from '@/ui/canvasMove'
+import { createSolidMoveConstraint } from '@/ui/solidMoveConstraint'
 import {
   getAnimEngine,
   recordKeyframesForPatch,
@@ -117,6 +118,7 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
         latest: { x: tx0, y: ty0 },
         moved: false,
       }
+      const placementConstraint = createSolidMoveConstraint(api, nodeId)
       const el = e.currentTarget as HTMLElement
       el.setPointerCapture(e.pointerId)
 
@@ -129,10 +131,8 @@ export function useDragToMove(nodeId: NodeId, isRoot: boolean) {
         const dy = (ev.clientY - d.startY) / zoom
         if (!d.moved && Math.hypot(dx, dy) < 2) return
         d.moved = true
-        d.latest = {
-          x: d.tx0 + dx,
-          y: d.ty0 + dy,
-        }
+        const allowed = placementConstraint?.({ x: dx, y: dy }, ev.altKey) ?? { x: dx, y: dy }
+        d.latest = { x: d.tx0 + allowed.x, y: d.ty0 + allowed.y }
         nodeTransformPreviewStore.preview({ [nodeId]: d.latest })
       }
 

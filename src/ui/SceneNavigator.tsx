@@ -9,7 +9,7 @@ import {
   type DragEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, Upload, Eye, EyeOff, Scissors } from 'lucide-react'
+import { Download, Upload, Eye, EyeOff, Scissors, ChevronDown, ChevronUp } from 'lucide-react'
 import { getAnimEngine } from '@/anim'
 import { sceneSplitTime } from '@/project/splitScene'
 import type { ProjectAPI } from '@/project'
@@ -57,6 +57,14 @@ export function SceneNavigator() {
   const showToast = useToast((state) => state.show)
   const [dropTarget, setDropTarget] = useState<{ id: string; side: 'before' | 'after' } | null>(null)
   const [transferBusy, setTransferBusy] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('hypermotion:scene-navigator-collapsed') === 'true' } catch { return false }
+  })
+  const toggleCollapsed = () => setCollapsed(previous => {
+    const next = !previous
+    try { localStorage.setItem('hypermotion:scene-navigator-collapsed', String(next)) } catch { /* Optional UI preference. */ }
+    return next
+  })
   const [sceneStripFade, setSceneStripFade] = useState({
     left: false,
     right: false,
@@ -109,7 +117,7 @@ export function SceneNavigator() {
       resizeObserver.observe(viewport.firstElementChild)
     }
     return () => resizeObserver.disconnect()
-  }, [items.length, updateSceneStripFade])
+  }, [items.length, collapsed, updateSceneStripFade])
 
   // Hydrate the editor-only selection from the document's persisted active
   // composition after IndexedDB/file loading. This does not pick a different
@@ -363,7 +371,17 @@ export function SceneNavigator() {
       aria-label="Scenes"
       className="pointer-events-none absolute inset-x-0 top-3 z-50 flex justify-center px-3"
     >
-      <div className="hm-popover-surface pointer-events-auto flex max-w-full items-center gap-1.5 border border-border p-1.5 backdrop-blur-xl">
+      {collapsed ? <button type="button" onClick={toggleCollapsed}
+        aria-expanded={false} aria-label="Expand Scene and Master navigator"
+        className="hm-popover-surface pointer-events-auto flex h-8 items-center gap-2 border border-border px-3 text-[11px] text-text-muted hover:text-text">
+        {timelineScope === 'sequence' ? 'Master' : `Scene · ${Math.max(1, items.findIndex(item => item.id === selectedItemId) + 1)}`}
+        <ChevronDown size={14} />
+      </button> : <div className="hm-popover-surface pointer-events-auto flex max-w-full items-center gap-1.5 border border-border p-1.5 backdrop-blur-xl">
+        <button type="button" onClick={toggleCollapsed} aria-expanded={true}
+          aria-label="Collapse Scene and Master navigator" title="Collapse Scene and Master navigator"
+          className="flex h-8 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-control hover:text-text">
+          <ChevronUp size={14} />
+        </button>
         <div className="grid h-10 shrink-0 grid-cols-2 gap-0.5 rounded-[var(--radius-panel)] bg-control p-1 shadow-[var(--shadow-control)]">
           <ScopeButton
             active={timelineScope === 'scene'}
@@ -531,7 +549,7 @@ export function SceneNavigator() {
         >
           <Download size={16} strokeWidth={1.75} />
         </button>
-      </div>
+      </div>}
     </section>
   )
 }

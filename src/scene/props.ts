@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ARRANGEMENT_CHOICES, ARRANGEMENT_NUMBERS } from '@/scene/arrangement'
 
 import type {
   EffectBlurPropertyId,
@@ -42,6 +43,11 @@ export interface PropertyDescriptor {
 type StaticPropertyId = Exclude<PropertyId, EffectBlurPropertyId | EffectBeamRangePropertyId>
 
 export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
+  ...Object.fromEntries(Object.entries(ARRANGEMENT_NUMBERS).map(([key, value]) => [
+    `arrangement.${key}`, { id: `arrangement.${key}`, group: 'transform', label: value.label, layoutAffecting: false, interpolation: key === 'columns' || key === 'polygonPoints' || key === 'shuffle' || key === 'seed' ? 'discrete' : 'numeric', defaultValue: value.value },
+  ])) as Record<`arrangement.${import('@/scene/arrangement').ArrangementNumber}`, PropertyDescriptor>,
+  ...Object.fromEntries(Object.entries(ARRANGEMENT_CHOICES).map(([key, spec]) => [`arrangement.${key}`, { id: `arrangement.${key}`, group: 'transform', label: spec.label, layoutAffecting: false, interpolation: 'discrete', defaultValue: spec.value }])) as Record<`arrangement.${import('@/scene/arrangement').ArrangementChoice}`, PropertyDescriptor>,
+  'arrangement.path': { id: 'arrangement.path', group: 'transform', label: 'Arrangement path', layoutAffecting: false, interpolation: 'path', defaultValue: null },
   // transform group — applied after layout, no relayout needed
   'transform.x': {
     id: 'transform.x', group: 'transform', label: 'X',
@@ -85,6 +91,22 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   },
   'transform.anchorZ': {
     id: 'transform.anchorZ', group: 'transform', label: 'Anchor Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'connection.width': {
+    id: 'connection.width', group: 'transform', label: 'Connection width',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 4,
+  },
+  'connection.flowSpeed': {
+    id: 'connection.flowSpeed', group: 'transform', label: 'Flow speed',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 120,
+  },
+  'connection.flowPhase': {
+    id: 'connection.flowPhase', group: 'transform', label: 'Flow phase',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'extrusion.depth': {
+    id: 'extrusion.depth', group: 'transform', label: 'Extrusion depth',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
   },
   'motionPath.progress': {
@@ -226,6 +248,30 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
   'camera.focusWorldZ': {
     id: 'camera.focusWorldZ', group: 'camera', label: 'Focus Z',
     layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneX': {
+    id: 'camera.focusPlaneX', group: 'camera', label: 'Focus Plane X',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneY': {
+    id: 'camera.focusPlaneY', group: 'camera', label: 'Focus Plane Y',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneZ': {
+    id: 'camera.focusPlaneZ', group: 'camera', label: 'Focus Plane Z',
+    layoutAffecting: false, interpolation: 'numeric', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationX': {
+    id: 'camera.focusPlaneRotationX', group: 'camera', label: 'Focus Plane Rotate X',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationY': {
+    id: 'camera.focusPlaneRotationY', group: 'camera', label: 'Focus Plane Rotate Y',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
+  },
+  'camera.focusPlaneRotationZ': {
+    id: 'camera.focusPlaneRotationZ', group: 'camera', label: 'Focus Plane Rotate Z',
+    layoutAffecting: false, interpolation: 'angle', defaultValue: 0,
   },
   'camera.focusRadius': {
     id: 'camera.focusRadius', group: 'camera', label: 'Focus Radius',

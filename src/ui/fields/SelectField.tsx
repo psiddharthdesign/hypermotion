@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { SquircleSurface } from './SquircleSurface'
+import { useContext } from 'react'
+import { CameraFieldContext } from './CameraFieldContext'
 
 /**
  * Native <select> styled to match the rest of the Inspector.
@@ -41,6 +43,7 @@ export function SelectField<T extends string>({
   width?: string
   ariaLabel?: string
 }) {
+  const cameraField = useContext(CameraFieldContext)
   // Framer-style: solid dark fill, no border, accent ring on focus.
   // Native chevron from the OS still sits at the right edge.
   const className = [width, 'hm-control-surface hm-control-compact h-7'].join(' ')
@@ -53,7 +56,7 @@ export function SelectField<T extends string>({
       <select
         value={value}
         onChange={(e) => onCommit(e.target.value as T)}
-        className="h-full w-full cursor-pointer bg-transparent pl-3 pr-2 text-[12px] text-text outline-none"
+        className={`h-full w-full cursor-pointer bg-transparent pl-3 pr-2 text-[12px] text-text outline-none ${cameraField ? 'appearance-none' : ''}`}
         aria-label={ariaLabel}
       >
         {options
@@ -72,6 +75,7 @@ export function SelectField<T extends string>({
               </optgroup>
             ))}
       </select>
+      {cameraField && <img src="./camera-inspector/chevron.svg" alt="" className="pointer-events-none absolute right-2 top-[11px]" />}
     </SquircleSurface>
   )
 }

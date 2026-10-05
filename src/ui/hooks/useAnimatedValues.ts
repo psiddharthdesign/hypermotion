@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createNullResolver, hasNullTransform } from '@/scene/nullObject'
+
 import { hasAnimatedBeam } from '@/scene/borderBeam'
 import { useMemo, useSyncExternalStore } from 'react'
 import { subscribePlaybackReadout } from './playbackReadoutSubscription'
@@ -34,6 +36,9 @@ import {
  * from the engine internals.
  */
 export interface AnimatedValue {
+  arrangement?: import('@/scene/arrangement').ArrangementAnimation
+  /** World-space controller delta, resolved after keyframes. */
+  parentMatrix?: number[]
   x?: number
   y?: number
   /** Z depth on the camera's optical axis. 0 = focal plane. */
@@ -77,6 +82,11 @@ export interface AnimatedValue {
   /** Uneased position between the active text animation's authored keys. */
   textTimelineProgress?: number
   textAnimation?: TextAnimationConfig
+  connectionWidth?: number
+  connectionFlowSpeed?: number
+  connectionFlowDistance?: number
+  connectionFlowPhase?: number
+  extrusionDepth?: number
   motionPathProgress?: number
   bendWaveAmplitude?: number
   bendWaveFrequency?: number
@@ -113,6 +123,12 @@ export interface AnimatedValue {
   focusWorldX?: number
   focusWorldY?: number
   focusWorldZ?: number
+  focusPlaneX?: number
+  focusPlaneY?: number
+  focusPlaneZ?: number
+  focusPlaneRotationX?: number
+  focusPlaneRotationY?: number
+  focusPlaneRotationZ?: number
   focusRadius?: number
   focusFalloff?: number
   pointOfInterestX?: number
@@ -223,6 +239,9 @@ export function mergeTransformPreviews(
     merged[nodeId] = {
       ...base,
       ...preview,
+      ...(base?.arrangement || preview.arrangement
+        ? { arrangement: { ...base?.arrangement, ...preview.arrangement } }
+        : {}),
       ...(base?.effectBlur || preview.effectBlur
         ? {
             effectBlur: {
@@ -323,6 +342,29 @@ export function useAnimatedValues(
   readoutFrameRate?: number,
 ): Record<NodeId, AnimatedValue> {
   const engine = getAnimEngine()
+  const api = engine.getSceneAPI()
+  const sceneVersion = useSyncExternalStore(
+    api?.subscribe ?? (() => () => {}),
+    () => api?.getVersion() ?? 0,
+    () => api?.getVersion() ?? 0,
+  )
+  const dependencyIds = useMemo(() => {
+    void sceneVersion
+    const ids = new Set(nodeIds)
+    for (const id of ids) {
+      const parent = api?.getNode(id)?.transformParent?.nodeId
+      if (parent) ids.add(parent)
+    }
+    return [...ids]
+  }, [api, sceneVersion, nodeIds])
+  const controllerNodes = useMemo(() => {
+    const nodes = new Map<NodeId, import('@/scene/types').Node>()
+    for (const id of dependencyIds) {
+      const node = api?.getNode(id)
+      if (node && ((node.kind === 'null' || node.kind === 'arrangement') || hasNullTransform(node))) nodes.set(id, node)
+    }
+    return nodes
+  }, [api, dependencyIds])
   const subscribe = useMemo(
     () => readoutFrameRate
       ? (listener: () => void) => subscribePlaybackReadout({
@@ -335,8 +377,8 @@ export function useAnimatedValues(
     [engine, readoutFrameRate],
   )
   const selectSnapshot = useMemo(
-    () => createAnimatedSnapshotSelector(nodeIds),
-    [nodeIds],
+    () => createAnimatedSnapshotSelector(dependencyIds),
+    [dependencyIds],
   )
   const getSelectedSnapshot = useMemo(
     () => () => selectSnapshot(engine.getSnapshot()),
@@ -347,10 +389,21 @@ export function useAnimatedValues(
     getSelectedSnapshot,
     getSelectedSnapshot,
   )
-  const previewValues = useNodeTransformPreviews(nodeIds)
+  const previewValues = useNodeTransformPreviews(dependencyIds)
   return useMemo(
-    () => mergeTransformPreviews(engineValues, previewValues),
-    [engineValues, previewValues],
+    () => {
+      const merged = mergeTransformPreviews(engineValues, previewValues)
+      if (!api) return merged
+      const resolver = createNullResolver((id) => controllerNodes.get(id), merged)
+      let result = merged
+      for (const [id, node] of controllerNodes) {
+        if (!hasNullTransform(node)) continue
+        if (result === merged) result = { ...merged }
+        result[id] = { ...merged[id], parentMatrix: resolver.delta(node).toArray() }
+      }
+      return result
+    },
+    [api, controllerNodes, engineValues, previewValues],
   )
 }
 

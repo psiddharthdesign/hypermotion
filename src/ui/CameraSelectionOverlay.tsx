@@ -39,6 +39,7 @@ import {
 } from '@/ui/nodeTransformPreviewStore'
 import { nodeGeometryPreviewStore } from '@/ui/nodeGeometryPreviewStore'
 import { nodeGeometryPreviewRect } from '@/ui/nodeGeometryPreviewRect'
+import { createSolidMoveConstraint } from './solidMoveConstraint'
 
 export interface CameraSelectionOverlayProps {
   api: SceneAPI
@@ -113,7 +114,7 @@ export function CameraSelectionOverlay({
       new Set(
         selectedIds.filter((id) => {
           const node = planeBuildContext.nodesById.get(id)
-          return id !== rootId && node?.kind !== 'camera'
+          return id !== rootId && node?.kind !== 'camera' && !node?.connection
         }),
       ),
     [planeBuildContext, rootId, selectedIds],
@@ -233,6 +234,7 @@ export function CameraSelectionOverlay({
         moved: false,
       }
 
+      const placementConstraint = createSolidMoveConstraint(api, singleNode.id, previewSolved, animated, resolvedCamera)
       const element = event.currentTarget
       element.setPointerCapture(event.pointerId)
 
@@ -266,10 +268,9 @@ export function CameraSelectionOverlay({
         if (!currentLocal) return
 
         move.moved = true
-        move.latest = {
-          x: move.tx0 + currentLocal.x - move.startLocal.x,
-          y: move.ty0 + currentLocal.y - move.startLocal.y,
-        }
+        const requested = { x: currentLocal.x - move.startLocal.x, y: currentLocal.y - move.startLocal.y }
+        const allowed = placementConstraint?.(requested, moveEvent.altKey) ?? requested
+        move.latest = { x: move.tx0 + allowed.x, y: move.ty0 + allowed.y }
         nodeTransformPreviewStore.preview({
           [singleNode.id]: move.latest,
         })
@@ -338,6 +339,7 @@ export function CameraSelectionOverlay({
       animated,
       clientToViewport,
       resolvedCamera,
+      previewSolved,
       singleNode,
       singlePlane,
       viewport,

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cameraWheelStartZ,
+  cameraScaleFromWheel,
   cameraZFromWheel,
   normalizedWheelDeltaY,
 } from '@/ui/cameraWheel'
@@ -175,5 +176,39 @@ describe('camera wheel dolly', () => {
       pageHeight: 900,
     })
     expect(blockedFartherZ).toBe(currentZ)
+  })
+})
+
+describe('orthographic camera wheel zoom', () => {
+  const input = { currentScaleX: 1, currentScaleY: 1, deltaY: -12, deltaMode: 0, pageHeight: 900 }
+
+  it('changes the view extent with the same apparent zoom response as perspective', () => {
+    const next = cameraScaleFromWheel(input)
+    expect(1 / next.scaleX).toBeCloseTo(visibleScale(cameraZFromWheel({ ...input, currentZ: 0, focalLength: 1000 })))
+    expect(next.scaleY).toBe(next.scaleX)
+    expect(next).not.toHaveProperty('z')
+  })
+
+  it('uses the displayed X zoom uniformly and responds to sensitivity despite legacy Y values', () => {
+    const next = cameraScaleFromWheel({ ...input, currentScaleX: 0.5, currentScaleY: 1, scrollSensitivity: 0.5 })
+    expect(next.scaleX).toBeCloseTo(0.5 * Math.exp(-12 * 0.00125 * 0.5))
+    expect(next.scaleY).toBe(next.scaleX)
+  })
+
+  it.each([0, Number.NaN, 0.00001, 100000])('does not let hidden Y scale %s constrain zoom', (currentScaleY) => {
+    const next = cameraScaleFromWheel({ ...input, currentScaleX: 0.5, currentScaleY })
+    expect(next.scaleX).toBeCloseTo(0.5 * Math.exp(-12 * 0.00125))
+    expect(next.scaleY).toBe(next.scaleX)
+    const zoomOut = cameraScaleFromWheel({ ...input, currentScaleX: 0.5, currentScaleY, deltaY: 12 })
+    expect(zoomOut.scaleX).toBeGreaterThan(0.5)
+    expect(zoomOut.scaleY).toBe(zoomOut.scaleX)
+  })
+
+  it('stops at safe zoom limits and recovers from older extreme values without jumping', () => {
+    expect(cameraScaleFromWheel({ ...input, currentScaleX: 0.001, currentScaleY: 0.001 }).scaleX).toBe(0.001)
+    const recover = cameraScaleFromWheel({ ...input, currentScaleX: 2000, currentScaleY: 2000 })
+    expect(recover.scaleX).toBeCloseTo(2000 * Math.exp(-12 * 0.00125))
+    expect(cameraScaleFromWheel({ ...input, currentScaleX: 2000, currentScaleY: 2000, deltaY: 12 }).scaleX).toBe(2000)
+    expect(cameraScaleFromWheel({ ...input, currentScaleX: Number.NaN, currentScaleY: 0 }).scaleX).toBeGreaterThan(0)
   })
 })

@@ -80,6 +80,50 @@ describe('removed standalone 3D objects', () => {
     expect(targetApi.getNode('cube-child')).toBeNull()
     expect(targetApi.getNode('root')?.children).toEqual(['title', 'shader'])
   })
+  it('preserves native controllers, bindings, and detached offsets during legacy cleanup', () => {
+    const api = createSceneAPI()
+    const root = api.createNode('frame', null)
+    const controller = api.createNode('null', root)
+    const arrangement = api.createNode('arrangement', root)
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    const offset = [...identity]
+    offset[12] = 120
+    const connected = api.createNode('rect', root, {
+      transformParent: { nodeId: controller, inverseBind: identity },
+      transformOffset: offset,
+    })
+    const arranged = api.createNode('rect', root, {
+      transformParent: { nodeId: arrangement, inverseBind: identity },
+    })
+    const detached = api.createNode('rect', root, { transformOffset: offset })
+    api.setTrack({ id: 'native-motion', nodeId: controller, propertyId: 'transform.x', defaultEasing: 'linear', keyframes: [{ id: 'native-key', time: 0, value: 80 }] })
+    const nodes = api.doc.getMap('scene').get('nodes') as Y.Map<Y.Map<unknown>>
+    nodes.set('retired', rawNode('retired', 'primitive3d', root))
+
+    expect(removeLegacy3DObjects(api.doc)).toEqual(['retired'])
+    expect(api.getNode(controller)?.kind).toBe('null')
+    expect(api.getNode(arrangement)?.kind).toBe('arrangement')
+    expect(api.getNode(connected)?.transformParent).toEqual({ nodeId: controller, inverseBind: identity })
+    expect(api.getNode(connected)?.transformOffset).toEqual(offset)
+    expect(api.getNode(arranged)?.transformParent).toEqual({ nodeId: arrangement, inverseBind: identity })
+    expect(api.getNode(detached)?.transformOffset).toEqual(offset)
+    expect(api.getTrack('native-motion')).not.toBeNull()
+    const snapshot = sceneToBytes(api.doc)
+    expect(removeLegacy3DObjects(api.doc)).toEqual([])
+    expect(sceneToBytes(api.doc)).toEqual(snapshot)
+  })
+
+  it('retains a minimally authored controller when a valid binding identifies its use', () => {
+    const doc = legacyObjectDocument()
+    const nodes = doc.getMap('scene').get('nodes') as Y.Map<Y.Map<unknown>>
+    nodes.set('controller', rawNode('controller', 'null', 'root'))
+    nodes.get('title')!.set('transformParent', {
+      nodeId: 'controller', inverseBind: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    })
+    expect(removeLegacy3DObjects(doc)).toEqual(['cube', 'cube-child'])
+    expect(nodes.has('controller')).toBe(true)
+    expect(nodes.get('title')!.has('transformParent')).toBe(true)
+  })
 })
 
 function legacyObjectDocument(): Y.Doc {

@@ -4,7 +4,10 @@ import type {
   PaperShaderParams,
   PaperShaderType,
 } from '@/scene/paperShaders'
+import type { FlowConnection } from '@/scene/flowConnection'
+import type { Extrusion } from '@/scene/extrusion'
 import type { LayerMotionPath } from '@/anim/layerMotionPath'
+import type { CameraCompositionGuide } from '@/scene/cameraCompositionGuide'
 
 export type {
   PaperShaderCategory,
@@ -536,12 +539,22 @@ export interface BendDeformation {
 
 export type LayerDeformation = BendDeformation
 
+/** A transform-only link, independent of the layout tree. Matrices are column-major. */
+export interface TransformParent {
+  nodeId: NodeId
+  inverseBind: number[]
+}
+
 interface NodeBase {
+  arrangement?: import('@/scene/arrangement').Arrangement | null
   id: NodeId
   name: string
   parent: NodeId | null
   children: NodeId[]
   transform: Transform
+  transformParent?: TransformParent | null
+  /** Retains the current pose when changing or removing a transform parent. */
+  transformOffset?: number[] | null
   appearance: Appearance
   visible: boolean
   locked: boolean
@@ -565,6 +578,8 @@ interface NodeBase {
    * view, or export output.
    */
   workspaceOnly?: boolean
+  /** Opt-in placement guard; an enabled ancestor protects all its solid parts. */
+  preventOverlap?: boolean
   /** Original timeline origin retained by procedural effects after a scene split. */
   proceduralTimeOffset?: number
   /**
@@ -581,6 +596,10 @@ interface NodeBase {
    * animation engine resolves it into the normal transform snapshot so
    * renderers do not need kind-specific path logic.
    */
+  /** Opt-in solid depth for rectangles and ellipses; absent preserves flat layers. */
+  /** Automatic attached path settings; valid on vector layers only. */
+  connection?: FlowConnection
+  extrusion?: Extrusion
   motionPath?: LayerMotionPath | null
   /** Optional non-destructive layer deformation evaluated by the GPU renderer. */
   deformation?: LayerDeformation | null
@@ -615,6 +634,14 @@ export interface FrameNode extends NodeBase {
    * default. See {@link LayoutGuide} for the per-entry shape.
    */
   layoutGuides: LayoutGuide[]
+}
+
+export interface ArrangementNode extends NodeBase {
+  kind: 'arrangement'
+}
+
+export interface NullNode extends NodeBase {
+  kind: 'null'
 }
 
 export interface RectNode extends NodeBase {
@@ -1004,8 +1031,10 @@ export function normalizeCameraScrollSensitivity(value: unknown): number {
 
 export interface CameraNode extends NodeBase {
   kind: 'camera'
-  /** Camera lens model. Legacy scenes read as '2d'; modern camera view uses perspective. */
-  projection: '2d' | 'perspective'
+  /** Static editor overlay. Guides are excluded from rendered exports. */
+  compositionGuide: CameraCompositionGuide
+  /** Lens projection. Legacy '2d' retains perspective; orthographic has parallel rays. */
+  projection: '2d' | 'perspective' | 'orthographic'
   /**
    * Whether the camera is enabled. Only the scene's active camera is
    * actually used for rendering; this flag lets users temporarily
@@ -1054,7 +1083,7 @@ export interface CameraNode extends NodeBase {
   /** Enables camera depth-of-field blur. */
   depthOfField: boolean
   /** Camera focus behavior. Screen focus is the editor default. */
-  focusMode: 'plane' | 'target' | 'screen'
+  focusMode: 'plane' | 'target' | 'screen' | 'spatial'
   /** Camera-viewport point used by screen-focus mode and as picker metadata. */
   focusX: number
   focusY: number
@@ -1062,6 +1091,16 @@ export interface CameraNode extends NodeBase {
   focusWorldX: number
   focusWorldY: number
   focusWorldZ: number
+  /** Independent focus-plane position in world canvas units. */
+  focusPlaneX: number
+  focusPlaneY: number
+  focusPlaneZ: number
+  /** Whether the independent plane has an authored pose to preserve. */
+  focusPlaneInitialized: boolean
+  /** Independent world-space focus-plane Euler rotation in degrees. */
+  focusPlaneRotationX: number
+  focusPlaneRotationY: number
+  focusPlaneRotationZ: number
   /** Target node used by target-focus mode. Null when no target is bound. */
   focusTargetNodeId: NodeId | null
   /** Z-depth plane that remains sharp, in canvas depth units. */
@@ -1188,6 +1227,8 @@ export interface InstanceNode extends NodeBase {
 }
 
 export type Node =
+  | NullNode
+  | ArrangementNode
   | FrameNode
   | RectNode
   | EllipseNode
@@ -1327,6 +1368,7 @@ export type EffectBlurPropertyId =
 export type EffectBeamRangePropertyId = `appearance.effects.${string}.beamRange`
 
 export type PropertyId =
+  | import('@/scene/arrangement').ArrangementPropertyId
   // transform group — post-layout, cheap
   | 'transform.x'
   | 'transform.y'
@@ -1340,6 +1382,10 @@ export type PropertyId =
   | 'transform.anchorY'
   | 'transform.anchorZ'
   // generic layer motion path — resolves into post-layout transform values
+  | 'connection.width'
+  | 'connection.flowSpeed'
+  | 'connection.flowPhase'
+  | 'extrusion.depth'
   | 'motionPath.progress'
   // non-destructive layer deformation — post-layout, GPU evaluated
   | 'deformation.bend.waveAmplitude'
@@ -1376,6 +1422,12 @@ export type PropertyId =
   | 'camera.focusWorldX'
   | 'camera.focusWorldY'
   | 'camera.focusWorldZ'
+  | 'camera.focusPlaneX'
+  | 'camera.focusPlaneY'
+  | 'camera.focusPlaneZ'
+  | 'camera.focusPlaneRotationX'
+  | 'camera.focusPlaneRotationY'
+  | 'camera.focusPlaneRotationZ'
   | 'camera.focusRadius'
   | 'camera.focusFalloff'
   | 'camera.pointOfInterestX'
@@ -1488,6 +1540,7 @@ export interface KeyframeEasingPreset {
  * track's PropertyId. Validated at the anim-engine boundary.
  */
 export type KeyframeValue =
+  | import('@/anim/layerMotionPath').LayerMotionPath
   | number
   | string
   | VariantSelection

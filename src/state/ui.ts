@@ -181,6 +181,10 @@ export interface ContextMenuState {
 
 interface UIState {
   tool: Tool
+  /** Transient direct editing of selected 3D solid faces. */
+  solidFaceEditing: boolean
+  solidGridSnapEnabled: boolean
+  solidGridSize: number
   selection: string[]
   /**
    * Anchor for Shift+click range selection. This is the node that a
@@ -340,6 +344,9 @@ interface UIState {
   focusPickingCameraId: string | null
 
   setTool: (tool: Tool) => void
+  setSolidFaceEditing: (enabled: boolean) => void
+  setSolidGridSnapEnabled: (enabled: boolean) => void
+  setSolidGridSize: (size: number) => void
   setSelection: (ids: string[]) => void
   toggleInSelection: (id: string, additive: boolean) => void
   /**
@@ -547,6 +554,9 @@ const MAX_ZOOM = 16
 
 export const useUI = create<UIState>((set) => ({
   tool: 'select',
+  solidFaceEditing: false,
+  solidGridSnapEnabled: false,
+  solidGridSize: 32,
   selection: [],
   selectionAnchor: null,
   panels: { scenes: true, layers: true, inspector: true, timeline: true },
@@ -635,7 +645,10 @@ export const useUI = create<UIState>((set) => ({
   rulerLabels: readStoredRulerLabels(),
   focusPickingCameraId: null,
 
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) => set({ tool, solidFaceEditing: false }),
+  setSolidGridSnapEnabled: (enabled) => set({ solidGridSnapEnabled: enabled }),
+  setSolidGridSize: (size) => set({ solidGridSize: Number.isFinite(size) ? Math.min(1024, Math.max(1, size)) : 32 }),
+  setSolidFaceEditing: (enabled) => set({ solidFaceEditing: enabled, ...(enabled ? { tool: 'select', playing: false, editingTextId: null, editingVectorId: null, focusPickingCameraId: null } : {}) }),
   // Layer-selection actions clear `selectedTrackId`. Reasoning: if the
   // user just clicked a layer (in canvas / layers panel / timeline node
   // header), they're no longer "in track-edit mode," so a follow-up
@@ -643,6 +656,7 @@ export const useUI = create<UIState>((set) => ({
   setSelection: (ids) =>
     set((s) => ({
       selection: ids,
+      solidFaceEditing: false,
       selectionAnchor: ids[ids.length - 1] ?? null,
       selectedTrackId: null,
       inspectorMode: 'properties',
@@ -713,7 +727,7 @@ export const useUI = create<UIState>((set) => ({
   togglePanel: (key) =>
     set((s) => ({ panels: { ...s.panels, [key]: !s.panels[key] } })),
   setPlayhead: (t) => set({ playhead: t }),
-  setPlaying: (p) => set({ playing: p }),
+  setPlaying: (p) => set({ playing: p, ...(p ? { solidFaceEditing: false } : {}) }),
   setInspectorMode: (mode) => set({ inspectorMode: mode }),
   setView: (patch) => set((s) => ({ view: { ...s.view, ...patch } })),
   setComponentEditId: (id) =>

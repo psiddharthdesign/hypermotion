@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { keyframeValuesForPatch } from '@/anim/recordKeyframes'
+import { defaultArrangement } from '@/scene/arrangement'
 
 describe('recordKeyframes fill values', () => {
   it('stores a solid fill as an interpolatable color string', () => {
@@ -95,6 +96,23 @@ describe('recordKeyframes inspector coverage', () => {
       { propertyId: 'deformation.bend.captureLength', value: 480 },
       { propertyId: 'deformation.bend.lightAzimuth', value: 135 },
       { propertyId: 'deformation.bend.roughness', value: 0.6 },
+    ])
+  })
+})
+
+
+describe('recordKeyframes arrangement coverage', () => {
+  it('records numeric, facing and path edits while keeping membership static', () => {
+    const path = defaultArrangement('path').path
+    expect(keyframeValuesForPatch('arrangement', {
+      orbit: 180, radius: 320, rotationX: 60, orientation: 'screen',
+      path, memberIds: ['card'], version: 1,
+    })).toEqual([
+      { propertyId: 'arrangement.orbit', value: 180 },
+      { propertyId: 'arrangement.radius', value: 320 },
+      { propertyId: 'arrangement.rotationX', value: 60 },
+      { propertyId: 'arrangement.orientation', value: 'screen' },
+      { propertyId: 'arrangement.path', value: path },
     ])
   })
 })

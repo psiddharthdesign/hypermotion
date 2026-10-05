@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
+import { dissolveArrangement } from '@/scene/arrangementActions'
+
+import { detachNullDependents } from '@/scene/nullObject'
+
+import { duplicateSelection } from '@/ui/duplicateSelection'
 
 import { useEffect, useRef } from 'react'
 import * as Y from 'yjs'
@@ -50,7 +56,6 @@ import {
 } from '@/ui/hooks/workspacePasteRouting'
 import {
   deleteCameraSafely,
-  duplicateCamera,
 } from '@/ui/cameraActions'
 import { useProjectAPI } from '@/project'
 import {
@@ -230,6 +235,7 @@ export function useKeyboardShortcuts() {
 
       if (inField) return
 
+
       // Undo / redo. Read the ref instead of a closed-over variable so
       // the manager's identity can swap (when `api` changes) without
       // also invalidating this handler's dep array.
@@ -378,13 +384,7 @@ export function useKeyboardShortcuts() {
         e.preventDefault()
         const sel = useUI.getState().selection
         if (sel.length === 0) return
-        const duplicates = sel
-          .map((id) =>
-            api.getNode(id)?.kind === 'camera'
-              ? duplicateCamera(api, id)
-              : duplicateNode(api, id),
-          )
-          .filter(Boolean) as NodeId[]
+        const duplicates = duplicateSelection(api, sel)
         if (duplicates.length > 0) setSelection(duplicates)
         return
       }
@@ -457,7 +457,8 @@ export function useKeyboardShortcuts() {
           if (!n) continue
           if (id === api.getRoot()) continue
           if (n.kind === 'camera') continue
-          api.deleteNode(id)
+          if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+          else api.deleteNode(id)
         }
         clearSelection()
         return
@@ -756,7 +757,11 @@ export function useKeyboardShortcuts() {
             }
             continue
           }
-          if (n.parent || n.workspaceOnly) api.deleteNode(id)
+          if (n.parent || n.workspaceOnly) api.doc.transact(() => {
+            if (api.getNode(id)?.kind === 'null') detachNullDependents(api, id, getAnimEngine().getSnapshot())
+            if (api.getNode(id)?.kind === 'arrangement') dissolveArrangement(api, id, getAnimEngine().getSnapshot(), getLastSolvedLayout() ?? undefined)
+            else api.deleteNode(id)
+          }, UNDOABLE_GESTURE_ORIGIN)
         }
         if (fallbackCameraId) setSelection([fallbackCameraId])
         else if (retainedCameraId) setSelection([retainedCameraId])
@@ -878,86 +883,6 @@ function createKeyboardCameraCutId(): string {
     return `cut_${crypto.randomUUID()}`
   }
   return `cut_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-/**
- * Duplicate a node + its subtree under the same parent, placing the
- * copy immediately after the original in the children list. Offsets
- * the copy by (+16, +16) in transform so it's visually distinct.
- *
- * Returns the new root-of-duplicated-subtree id.
- */
-function duplicateNode(
-  api: ReturnType<typeof useSceneAPI>,
-  id: NodeId,
-): NodeId | null {
-  const original = api.getNode(id)
-  if (!original || !original.parent) return null
-  if (original.kind === 'camera') return null
-  if (original.kind === 'component') return instantiateComponent(api, original.id)
-
-  const cloneSubtree = (src: SceneNode, parent: NodeId): NodeId => {
-    const newId = api.createNode(src.kind, parent, {
-      // Strip the id / parent / children — createNode provides fresh ones.
-      name: src.name + ' copy',
-      ...stripLinks(src),
-    } as Partial<SceneNode>)
-    // Carry the animation with the duplicate. Every track on the source
-    // node gets recreated against `newId` with fresh track + keyframe ids;
-    // timing, values, and easings are preserved byte-for-byte. Without
-    // this step Cmd+D produces a visually-identical copy that "forgets"
-    // how to animate — which is a trap when duplicating an auto-layout
-    // that already has IN/OUT presets applied.
-    for (const track of api.getTracksForNode(src.id)) {
-      api.setTrack({
-        id: genTrackId(),
-        nodeId: newId,
-        propertyId: track.propertyId,
-        defaultEasing: track.defaultEasing,
-        keyframes: track.keyframes.map((k) => ({ ...k, id: genTrackId() })),
-      })
-    }
-    for (const child of api.getChildren(src.id)) {
-      cloneSubtree(child, newId)
-    }
-    return newId
-  }
-
-  const newId = cloneSubtree(original, original.parent)
-  const copy = api.getNode(newId)
-  if (copy) {
-    // Only nudge the transform when the parent is 'none' (free canvas).
-    // Under flex / grid, Yoga decides the duplicate's position in flow;
-    // a transform offset would smear the copy off its assigned slot and
-    // visually break the layout. This matches Figma: Cmd+D inside an
-    // auto-layout frame appends a neighbor at its flow position; on the
-    // free canvas, it puts the copy (+16, +16) from the original.
-    const parentNode = api.getNode(original.parent)
-    const parentMode =
-      parentNode && 'layout' in parentNode ? parentNode.layout.mode : 'none'
-    if (parentMode === 'none') {
-      api.setNodeProperty(newId, 'transform', {
-        ...copy.transform,
-        x: copy.transform.x + 16,
-        y: copy.transform.y + 16,
-      })
-    } else {
-      // Zero the transform so the duplicate doesn't carry the original's
-      // drift into its flow slot. (An original created pre-wrap can have
-      // non-zero transform baked in from its mode='none' days.)
-      api.setNodeProperty(newId, 'transform', {
-        x: 0,
-        y: 0,
-        z: copy.transform.z,
-        rotation: copy.transform.rotation,
-        rotationX: copy.transform.rotationX,
-        rotationY: copy.transform.rotationY,
-        scaleX: copy.transform.scaleX,
-        scaleY: copy.transform.scaleY,
-      })
-    }
-  }
-  return newId
 }
 
 // ---------------------------------------------------------------------------
@@ -1413,6 +1338,7 @@ function canPastePropertyToNode(propertyId: PropertyId, node: SceneNode): boolea
       (effect, index) => effectStableId(effect, index) === effectId,
     )
   }
+  if (propertyId.startsWith('arrangement.')) return node.kind === 'arrangement'
   if (propertyId.startsWith('camera.')) return node.kind === 'camera'
   if (propertyId === 'text.progress') return node.kind === 'text'
   if (propertyId === 'variant') return node.kind === 'instance'
