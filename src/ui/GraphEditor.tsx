@@ -7,6 +7,7 @@ import type { SceneAPI } from '@/scene/doc'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
 import { evaluator, getAnimEngine } from '@/anim'
 import { useUI } from '@/state/ui'
+import { extendKeyframeSelection } from './keyframeSelection'
 import { graphValueBounds } from './graphEditorMath'
 import {
   commitGraphEasing,
@@ -170,18 +171,15 @@ function GraphSurface({ track, api, timeline, selectedKeys, onSelectionChange }:
     window.addEventListener('blur', cancel)
   }
 
-  const selectKey = (id: string, additive: boolean) => {
+  const selectKey = (id: string, additive: boolean, shift = false) => {
     const key = keyId(track, id)
     if (!additive) { onSelectionChange([key]); return }
-    const next = new Set(selectedKeys)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    onSelectionChange([...next])
+    onSelectionChange([...extendKeyframeSelection(selectedKeys, [key], shift)])
   }
   const onKeyDown = (event: ReactPointerEvent, id: string) => {
     if (event.button !== 0) return
-    if (event.shiftKey || event.metaKey || event.ctrlKey) { event.preventDefault(); event.stopPropagation(); selectKey(id, true); return }
-    selectKey(id, false)
+    if (event.shiftKey || event.metaKey || event.ctrlKey) { event.preventDefault(); event.stopPropagation(); selectKey(id, true, event.shiftKey); return }
+    if (!selectedKeys.includes(keyId(track, id))) selectKey(id, false)
     const start = track.keyframes.find(key => key.id === id)!
     beginDrag(event, (dx, dy) => {
       const target = graphKeyframeDragTarget(api, track.id, id, {
@@ -208,7 +206,7 @@ function GraphSurface({ track, api, timeline, selectedKeys, onSelectionChange }:
     })
   }
   const nudgeKey = (event: React.KeyboardEvent, id: string) => {
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectKey(id, event.shiftKey); return }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectKey(id, event.shiftKey || event.metaKey || event.ctrlKey, event.shiftKey); return }
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
     event.preventDefault(); event.stopPropagation()
     const start = track.keyframes.find(key => key.id === id)!
