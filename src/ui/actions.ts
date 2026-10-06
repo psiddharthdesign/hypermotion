@@ -227,6 +227,8 @@ export function wrapInGroup(api: SceneAPI, ids: NodeId[]): NodeId | null {
 /** Create one undoable mask group, with the mask below its content in Layers. */
 export function applyMaskToSelection(api: SceneAPI, ids: NodeId[]): NodeId[] {
   const nodes = ids.map(id => api.getNode(id)).filter((n): n is SceneNode => !!n && !!n.parent && n.kind !== 'camera')
+  // Arrangements are controllers, not maskable layer containers.
+  if (nodes.some(node => node.kind === 'arrangement')) return ids
   if (nodes.length === 1 && nodes[0]!.isMask) {
     api.setNodeProperty(nodes[0]!.id, 'isMask', false)
     return ids
@@ -243,7 +245,7 @@ export function applyMaskToSelection(api: SceneAPI, ids: NodeId[]): NodeId[] {
       if (!mask) continue
       const index = siblings.findIndex(n => n.id === mask.id)
       const targets = selected.length > 1 ? selected.slice(0, -1)
-        : [siblings[index - 1] ?? siblings[index + 1]].filter((n): n is SceneNode => !!n && !n.isMask)
+        : [siblings[index - 1] ?? siblings[index + 1]].filter((n): n is SceneNode => !!n && !n.isMask && n.kind !== 'arrangement')
       if (!targets.length) continue
       const parent = api.getNode(parentId)
       if (selected.length === 1 && mask.maskMode === 'alpha' && parent?.parent && siblings.at(-1)?.id === mask.id) {

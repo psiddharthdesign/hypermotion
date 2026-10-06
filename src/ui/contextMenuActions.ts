@@ -112,7 +112,7 @@ export function buildNodeContextMenu(
 
   // Masks are grouped with their content, below it in the Layers list.
   const allRoots = nodes.every((n) => n!.parent === null)
-  if (!allRoots) {
+  if (!allRoots && !nodes.some(node => node?.kind === 'arrangement')) {
     const singleAlreadyMask =
       ids.length === 1 && nodes[0]?.isMask === true
     items.push({

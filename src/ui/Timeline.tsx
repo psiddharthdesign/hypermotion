@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { Camera as CameraIcon, ChartSpline, Music2, Scissors, Wand2 } from 'lucide-react'
 import { useUI } from '@/state/ui'
+import { extendKeyframeSelection } from './keyframeSelection'
 import { canSplitMediaClip, splitMediaClip, trimMediaClipAtPlayhead } from './mediaClipActions'
 import { mediaClipRange } from '@/scene/mediaClip'
 import {
@@ -737,16 +738,12 @@ export function Timeline() {
     { x0: number; y0: number; x1: number; y1: number } | null
   >(null)
 
-  const toggleKf = useCallback((trackId: string, kfId: string) => {
-    setSelectedKfs((prev) => {
-      const next = new Set(prev)
-      const k = kfKey(trackId, kfId)
-      if (next.has(k)) next.delete(k)
-      else next.add(k)
-      return next
-    })
+  const toggleKf = useCallback((trackId: string, kfId: string, shift = false) => {
+    useUI.getState().setSelectedTrackIds([])
+    setSelectedKfs(prev => extendKeyframeSelection(prev, [kfKey(trackId, kfId)], shift))
   }, [])
   const replaceKfs = useCallback((keys: string[]) => {
+    useUI.getState().setSelectedTrackIds([])
     setSelectedKfs(new Set(keys))
   }, [])
   const selectGraphKeys = useCallback((keys: string[]) => {
@@ -2768,6 +2765,7 @@ export function Timeline() {
     }
     // Only respond to primary button. Right-click should not marquee.
     if (e.button !== 0) return
+    const extendSelection = e.shiftKey
     const right = rightRef.current
     if (!right) return
     // The visible playhead is intentionally pointer-transparent so a
@@ -2776,7 +2774,7 @@ export function Timeline() {
     // the gesture. Without this guard, the row scrub and marquee handlers
     // both run: the playhead moves, then every keyframe crossed by that
     // movement becomes selected.
-    if (isNearPlayheadClientX(e.clientX)) {
+    if (!extendSelection && isNearPlayheadClientX(e.clientX)) {
       onRulerPointerDown(e)
       return
     }
@@ -2870,7 +2868,7 @@ export function Timeline() {
         // Track-selection mode — for property grouping. Drop the
         // keyframe selection so we don't carry two competing axes.
         const ids = Array.from(hitTrackIds)
-        if (ev.shiftKey) {
+        if (extendSelection || ev.shiftKey) {
           const merged = new Set(ui.selectedTrackIds)
           for (const id of ids) merged.add(id)
           ui.setSelectedTrackIds(Array.from(merged))
@@ -2882,7 +2880,7 @@ export function Timeline() {
         // Default: keyframe-selection mode. Drop the track selection
         // so the next Delete / Cmd+G operates on keyframes, not
         // layers.
-        if (ev.shiftKey) {
+        if (extendSelection || ev.shiftKey) {
           setSelectedKfs((prev) => {
             const next = new Set(prev)
             for (const k of hitKfKeys) next.add(k)
@@ -3726,16 +3724,7 @@ export function Timeline() {
                           // to the group's keyframes if they share a
                           // single track.
                           if (e.shiftKey || e.metaKey || e.ctrlKey) {
-                            const allIn = memberKeys.every((key) =>
-                              selectedKfs.has(key),
-                            )
-                            const next = new Set(selectedKfs)
-                            if (allIn) {
-                              for (const key of memberKeys) next.delete(key)
-                            } else {
-                              for (const key of memberKeys) next.add(key)
-                            }
-                            replaceKfs([...next])
+                            replaceKfs([...extendKeyframeSelection(selectedKfs, memberKeys, e.shiftKey)])
                           } else {
                             replaceKfs(memberKeys)
                           }
@@ -7149,7 +7138,7 @@ function SegmentRow({
   nodeSelected?: boolean
   flatTracks: Track[]
   selectedKfs: Set<string>
-  toggleKf: (trackId: string, kfId: string) => void
+  toggleKf: (trackId: string, kfId: string, shift?: boolean) => void
   /** Replace the global keyframe selection with `keys`. Used on
    * bar-pointerdown to mark every keyframe of the clicked track as
    * selected so a subsequent Delete deletes the property's keyframes
@@ -7246,15 +7235,8 @@ function SegmentRow({
     // pure selection gestures.
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
       onFocus()
-      const trackKeys = kfs.map((k) => kfKey(track.id, k.id))
-      const allIn = trackKeys.every((k) => selectedKfs.has(k))
-      const next = new Set(selectedKfs)
-      if (allIn) {
-        for (const k of trackKeys) next.delete(k)
-      } else {
-        for (const k of trackKeys) next.add(k)
-      }
-      replaceKfs([...next])
+      const trackKeys = kfs.map(k => kfKey(track.id, k.id))
+      replaceKfs([...extendKeyframeSelection(selectedKfs, trackKeys, e.shiftKey)])
       return
     }
     onFocus()
@@ -7559,7 +7541,7 @@ function KeyframeDiamond({
   api: SceneAPI
   flatTracks: Track[]
   selectedKfs: Set<string>
-  toggleKf: (trackId: string, kfId: string) => void
+  toggleKf: (trackId: string, kfId: string, shift?: boolean) => void
   replaceKfs: (keys: string[]) => void
   kfGroupOf: Map<string, string>
   kfGroupKeys: Map<string, Set<string>>
@@ -7582,28 +7564,13 @@ function KeyframeDiamond({
     // Right-clicks fall through to onContextMenu; don't start a drag.
     if (e.button === 2) return
     e.stopPropagation()
-    // Shift / Cmd / Ctrl-click = toggle set membership, no drag. Matches
-    // Figma's layer-panel instinct users bring over from the canvas.
-    //
-    // For grouped keyframes (Cmd+G groups), toggle the WHOLE group as a
-    // unit — if any member is currently selected, remove them all; if
-    // none are, add them all. Without this, shift-clicking group B
-    // after grabbing group A only added one diamond instead of the
-    // whole sequence the user was trying to extend.
+    // Shift adds keys (or the complete manual group); Cmd/Ctrl toggles.
+    // A partially selected group is completed rather than removed.
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
       if (inGroup && groupMembers) {
-        const anyMemberSelected = [...groupMembers].some((k) =>
-          selectedKfs.has(k),
-        )
-        const next = new Set(selectedKfs)
-        if (anyMemberSelected) {
-          for (const k of groupMembers) next.delete(k)
-        } else {
-          for (const k of groupMembers) next.add(k)
-        }
-        replaceKfs([...next])
+        replaceKfs([...extendKeyframeSelection(selectedKfs, groupMembers, e.shiftKey)])
       } else {
-        toggleKf(trackId, kfId)
+        toggleKf(trackId, kfId, e.shiftKey)
       }
       return
     }
@@ -8643,16 +8610,8 @@ function StateDiamond({
     // treated as "add the missing members" — the state becomes fully
     // selected after the click.
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      setSelectedKfs((prev) => {
-        const next = new Set(prev)
-        const allIn = memberKeys.every((k) => prev.has(k))
-        if (allIn) {
-          for (const k of memberKeys) next.delete(k)
-        } else {
-          for (const k of memberKeys) next.add(k)
-        }
-        return next
-      })
+      useUI.getState().setSelectedTrackIds([])
+      setSelectedKfs(prev => extendKeyframeSelection(prev, memberKeys, e.shiftKey))
       return
     }
 
@@ -8987,14 +8946,7 @@ function GroupSpanBar({
     e.stopPropagation()
     e.preventDefault()
     if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      const allIn = memberKeys.every((key) => selectedKfs.has(key))
-      const next = new Set(selectedKfs)
-      if (allIn) {
-        for (const key of memberKeys) next.delete(key)
-      } else {
-        for (const key of memberKeys) next.add(key)
-      }
-      replaceKfs([...next])
+      replaceKfs([...extendKeyframeSelection(selectedKfs, memberKeys, e.shiftKey)])
       return
     }
     if (!allSelected) replaceKfs(memberKeys)

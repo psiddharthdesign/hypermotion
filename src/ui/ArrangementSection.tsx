@@ -50,7 +50,7 @@ export function ArrangementSection({ node, api }: { node: Node; api: SceneAPI })
     const sliderMax = pathScale ? 3 : key === 'progress' ? 1 : Math.min(key === 'focusTarget' ? a.memberIds.length : spec.max, Math.max(1, spec.value * 3, Math.abs(live[key]) * 2, spec.max > 100 ? 360 : spec.max))
     return <KeyframeSliderRow key={key} label={spec.label} value={live[key]} min={spec.min} max={key === 'focusTarget' ? a.memberIds.length : spec.max}
       sliderMin={sliderMin} sliderMax={sliderMax} suffix={key === 'orbit' ? '°' : undefined}
-      step={['columns', 'polygonPoints', 'shuffle', 'seed'].includes(key) ? 1 : 0.01} disabled={node.locked}
+      step={['scaleFront', 'scaleBack', 'scaleFalloff', 'rippleFocus', 'depthAnchor', 'pathScaleX', 'pathScaleY', 'trimStart', 'trimEnd', 'progress', 'pathSpread', 'opacity', 'focusTarget'].includes(key) ? 0.01 : 1} disabled={node.locked}
       onCommit={(value) => commit(key, value)}
       onScrubPreview={(value) => nodeTransformPreviewStore.preview({ [node.id]: { arrangement: { [key]: value } } })}
       onScrubCommit={(value) => { commit(key, value); nodeTransformPreviewStore.finish() }}
