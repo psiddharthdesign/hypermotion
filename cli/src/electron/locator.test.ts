@@ -56,6 +56,21 @@ test('locator accepts a HYPERMOTION_APP_PATH symlink to the app binary', async (
   }
 })
 
+test('locator accepts a HYPERMOTION_APP_PATH binary with trailing slash', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-binary-slash-'))
+  const appPath = path.join(dir, 'hyper-motion')
+
+  try {
+    fs.writeFileSync(appPath, '')
+
+    await withEnvVar('HYPERMOTION_APP_PATH', `${appPath}${path.sep}`, async () => {
+      assert.equal(await locateDesktopApp(), appPath)
+    })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('locator accepts a HYPERMOTION_APP_PATH macOS app bundle', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-locator-bundle-'))
   const bundlePath = path.join(dir, 'hyper-motion.app')
