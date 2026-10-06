@@ -362,14 +362,14 @@ test('render_scene creates missing output directories before rendering', async (
 
 test('render_scene normalizes padded format and quality values', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-normalize-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.webm')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const formatArg = process.argv.find((arg) => arg === '--format=webm');",
       "const qualityArg = process.argv.find((arg) => arg === '--quality=4k');",
@@ -402,14 +402,14 @@ test('render_scene normalizes padded format and quality values', async () => {
 
 test('render_scene normalizes padded output paths', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hypermotion-render-output-normalize-'))
-  const appPath = path.join(dir, 'fake-app.mjs')
+  const appPath = path.join(dir, 'fake-app.cjs')
   const outputPath = path.join(dir, 'out.mp4')
 
   fs.writeFileSync(
     appPath,
     [
       '#!/usr/bin/env node',
-      "const fs = await import('node:fs');",
+      "const fs = require('node:fs');",
       "const outArg = process.argv.find((arg) => arg.startsWith('--out='));",
       "const out = outArg?.slice('--out='.length);",
       `if (out !== ${JSON.stringify(outputPath)}) process.exit(2);`,
