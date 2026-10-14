@@ -38,6 +38,15 @@ behind the top surface. Choose another preset or use **Alt/Option+1** (Front lef
 **Alt/Option+4** (Back right). Shortcuts affect the camera currently shown in
 the viewport and do not run while typing in fields. View changes support undo.
 
+### Use with flat 2D layers
+
+The isometric camera works with ordinary 2D layers such as frames, shapes, text,
+and images. Select a camera and apply an isometric view; no extrusion, 3D asset,
+or isometric element extension is needed. Layers stay flat. The camera changes
+their view and uses their existing depth for ordering, so objects on the same
+plane do not gain visible sides or height automatically. Use the isometric grid
+guide to help place flat artwork along the projected axes.
+
 Zoom and pan stay unchanged when switching views. Use **Zoom** or the scroll
 wheel to change size, Shift-scroll to pan, and Option-drag to orbit freely.
 Choose a preset again to restore its exact isometric angle. Auto Key records
