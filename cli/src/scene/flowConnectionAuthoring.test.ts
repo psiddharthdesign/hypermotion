@@ -57,13 +57,19 @@ test('CLI preserves connections and keys through inspection, rebuilding, patchin
   doc.destroy()
 })
 
-test('CLI patch creation supports connection vectors without enabling arbitrary vector authoring', () => {
+test('CLI patch creation supports connected and standalone editable vectors', () => {
   const bytes = applyScenePatch(fixture(), [{ op: 'createNode', node: { id: 'wire-two', kind: 'vector', parent: 'root', connection: { sourceId: 'asset-b', targetId: 'asset-a', routing: 'straight' } } }])
   assert.deepEqual(node(bytes, 'wire-two').connection, { ...defaults, sourceId: 'asset-b', targetId: 'asset-a', routing: 'straight' })
   assert.ok((node(bytes, 'root').children as string[]).includes('wire-two'))
   assert.deepEqual(validateScene(bytes).errors, [])
-  assert.throws(() => applyScenePatch(bytes, [{ op: 'createNode', node: { id: 'unconnected', kind: 'vector', parent: 'root' } }]), /unsupported kind: vector/)
-  assert.throws(() => fixture({ sourceId: 'asset-a', targetId: 'asset-a' }), /unsupported kind: vector/)
+  const standalone = applyScenePatch(bytes, [{ op: 'createNode', node: {
+    id: 'shape', kind: 'vector', parent: 'root', size: { width: 100, height: 80 },
+    viewBox: { x: 0, y: 0, width: 100, height: 80 },
+    vector: { version: 1, items: [{ id: 'path', transform: [1, 0, 0, 1, 0, 0], geometry: { kind: 'path', commands: [] }, fills: [], strokes: [], opacity: 1, blendMode: 'normal', visible: true }] },
+  } }])
+  assert.equal(node(standalone, 'shape').importFidelity, 'editable')
+  assert.deepEqual(node(standalone, 'shape').viewBox, { x: 0, y: 0, width: 100, height: 80 })
+  assert.deepEqual(validateScene(standalone).errors, [])
 })
 
 test('CLI both patch forms normalize complete connection settings and can clear them', () => {

@@ -54,6 +54,8 @@ export interface SceneJson {
   nodes?: Record<string, NodeJson>
   tracks?: Record<string, TrackJson>
   sections?: Record<string, SectionJson>
+  /** Persistent editor state such as track groups and stagger sets. */
+  uiState?: JsonObject
 }
 
 export interface SceneMetaJson {
@@ -133,7 +135,6 @@ export const NODE_KINDS = [
   'arrangement',
   'frame',
   'rect',
-  // Authoring vector layers currently requires an attached connection.
   'vector',
   'ellipse',
   'text',
@@ -290,6 +291,13 @@ export interface NodeJson {
   extrusion?: { depth?: number; sideColor?: string } | null
   /** Attached route on a vector layer; endpoint ids are the declared node ids. */
   connection?: FlowConnectionJson | null
+  /** Editable native vector document (version 1); geometry, paints, transforms per item. */
+  vector?: JsonObject
+  /** Intrinsic vector coordinate space. */
+  viewBox?: { x: number; y: number; width: number; height: number }
+  trimOffset?: number
+  source?: JsonObject
+  importFidelity?: 'editable' | 'preserved' | 'raster-fallback'
   transform?: {
     x: number
     y: number
@@ -657,6 +665,7 @@ export const PROPERTY_IDS = [
   'appearance.cornerRadii.bl',
   'appearance.fill',
   'vector.fill',
+  'vector.stroke',
   'vector.geometry',
   'bend.tl',
   'bend.tr',
@@ -994,6 +1003,7 @@ export const PATCH_OPERATION_TYPES = [
   'deleteTrack',
   'setSection',
   'deleteSection',
+  'setUiState',
 ] as const satisfies readonly PatchOperation['op'][]
 
 export type PatchOperationType = (typeof PATCH_OPERATION_TYPES)[number]
@@ -1012,6 +1022,7 @@ export type PatchOperation =
   | { op: 'deleteTrack'; trackId: string }
   | { op: 'setSection'; section: SectionJson }
   | { op: 'deleteSection'; sectionId: string }
+  | { op: 'setUiState'; key: string; value: JsonValue }
 
 type LayoutMode = NonNullable<LayoutJson['mode']>
 type FlexDirection = NonNullable<LayoutJson['direction']>
@@ -1594,6 +1605,15 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       y.set('textAlign', node.textAlign ?? 'start')
       y.set('color', node.color ?? '#0a0a0c')
     }
+    if (node.kind === 'vector') {
+      y.set('vector', node.vector ?? { version: 1, items: [] })
+      y.set('viewBox', node.viewBox ?? { x: 0, y: 0, width: 100, height: 100 })
+      y.set('trimStart', node.trimStart ?? 0)
+      y.set('trimEnd', node.trimEnd ?? 1)
+      y.set('trimOffset', node.trimOffset ?? 0)
+      if (node.source !== undefined) y.set('source', node.source)
+      y.set('importFidelity', node.importFidelity ?? 'editable')
+    }
     if (node.kind === 'camera') {
       const centerX = metaIn.canvas.width / 2
       const centerY = metaIn.canvas.height / 2
@@ -1778,7 +1798,11 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
   // Seed an empty uiState map so the desktop app's ensureMap reads
   // back stable shape (groups, collapse flags, etc. are empty for a
   // freshly-built scene).
-  scene.set('uiState', new Y.Map<unknown>())
+  const uiState = new Y.Map<unknown>()
+  for (const [key, value] of Object.entries(json.uiState ?? {})) {
+    uiState.set(key, value)
+  }
+  scene.set('uiState', uiState)
 
   return Y.encodeStateAsUpdate(doc)
 }
@@ -2785,10 +2809,10 @@ function isNodeKind(value: unknown): value is NodeKindJson | 'vector' {
   )
 }
 
-function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown, connection?: unknown): void {
-  // Attached connections need no SVG payload. Other vector creation remains
-  // unsupported; existing imported vectors may still be read and patched.
-  if (kind === 'primitive3d' || (kind === 'vector' && !normalizeFlowConnection(connection))) {
+function assertNodeKindCanBeAuthored(nodeId: unknown, kind: unknown, _connection?: unknown): void {
+  // Legacy primitive3d payloads are intentionally retired. Editable vectors
+  // are authored from their native vector document fields, with optional flow routing.
+  if (kind === 'primitive3d') {
     throw new Error(
       `node ${String(nodeId)} has unsupported kind: ${String(kind)}`,
     )
@@ -3235,6 +3259,9 @@ function applyPatchOperation(scene: Y.Map<unknown>, op: PatchOperation): void {
     case 'deleteSection':
       ensureMap(scene, 'sections').delete(op.sectionId)
       return
+    case 'setUiState':
+      ensureMap(scene, 'uiState').set(op.key, op.value)
+      return
   }
 }
 
@@ -3263,6 +3290,13 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     'deformation',
     'extrusion',
     'connection',
+    'vector',
+    'viewBox',
+    'trimStart',
+    'trimEnd',
+    'trimOffset',
+    'source',
+    'importFidelity',
   ])
   y.set('id', node.id)
   y.set('kind', node.kind)
@@ -3299,6 +3333,16 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   const extrusion = normalizeExtrusion(node.extrusion)
   if (extrusion) y.set('extrusion', extrusion)
   if (node.kind === 'vector') {
+    for (const key of ['vector', 'viewBox', 'trimStart', 'trimEnd', 'trimOffset', 'source', 'importFidelity']) {
+      handledKeys.add(key)
+    }
+    y.set('vector', node.vector ?? { version: 1, items: [] })
+    y.set('viewBox', node.viewBox ?? { x: 0, y: 0, width: 100, height: 100 })
+    y.set('trimStart', node.trimStart ?? 0)
+    y.set('trimEnd', node.trimEnd ?? 1)
+    y.set('trimOffset', node.trimOffset ?? 0)
+    if (node.source !== undefined) y.set('source', node.source)
+    y.set('importFidelity', node.importFidelity ?? 'editable')
     const connection = normalizeFlowConnection(node.connection)
     if (connection) y.set('connection', connection)
   }

@@ -56,6 +56,17 @@ type CapabilitiesPayload = {
   readonly mcpTools: readonly McpToolName[]
   readonly nodeKinds: typeof NODE_KINDS
   readonly patchOperations: typeof PATCH_OPERATION_TYPES
+  readonly authoringSupport: {
+    readonly editableVectorDocuments: boolean
+    readonly vectorFlowConnections: boolean
+    readonly persistentStaggerAndTimelineUiState: boolean
+    readonly isometricCameraAndGuides: boolean
+    readonly extrudedRectanglesAndEllipses: boolean
+    readonly arrangementsAndTransformControllers: boolean
+    readonly motionPathsAndDeformation: boolean
+    readonly compositionsAndSequences: boolean
+    readonly effectTrackProperties: readonly ['appearance.effects.<effectId>.blur', 'appearance.effects.<effectId>.beamRange']
+  }
   readonly validation: {
     readonly structuralSceneValidation: boolean
   }
@@ -118,6 +129,20 @@ export async function handleGetCapabilities(args: McpToolArgs = {}): Promise<Cal
     mcpTools: MCP_TOOLS,
     nodeKinds: NODE_KINDS,
     patchOperations: PATCH_OPERATION_TYPES,
+    authoringSupport: {
+      editableVectorDocuments: true,
+      vectorFlowConnections: true,
+      persistentStaggerAndTimelineUiState: true,
+      isometricCameraAndGuides: true,
+      extrudedRectanglesAndEllipses: true,
+      arrangementsAndTransformControllers: true,
+      motionPathsAndDeformation: true,
+      compositionsAndSequences: true,
+      effectTrackProperties: [
+        'appearance.effects.<effectId>.blur',
+        'appearance.effects.<effectId>.beamRange',
+      ],
+    },
     validation: {
       structuralSceneValidation: true,
     },
