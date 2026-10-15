@@ -62,17 +62,15 @@ claude mcp add -s user hypermotion -- hypermotion-mcp
 
 Then in Claude Code, the agent has access to:
 
-- **`doctor`** — check desktop app and CLI environment health.
-- **`get_capabilities`** — list supported formats, quality presets, patch operations, and scene features.
-- **`create_scene`** — build a `.hype` scene file from a JSON description.
-- **`info_scene`** — read `.hype` scene metadata.
-- **`inspect_scene`** — inspect a saved scene's structural contents.
-- **`patch_scene`** — create a patched copy of an existing scene.
-- **`validate_scene`** — validate a saved `.hype` scene's structure.
-- **`list_layers`**, **`get_layer`**, **`list_tracks`**, and **`list_cameras`** — query saved scene contents.
-- **`open_scene`** — open a saved scene in the desktop app.
-- **`render_scene`** — render to MP4 / WebM / GIF, optionally from a `.hype` scene path.
-- **`list_keyframeable_properties`** — list animatable property identifiers.
+- **Project health and discovery:** `doctor`, `get_capabilities`, `list_keyframeable_properties`.
+- **Create and export:** `create_scene`, `validate_scene`, `render_scene`, `open_scene`.
+- **Inspect and edit:** `info_scene`, `inspect_scene`, `patch_scene`, `list_layers`, `get_layer`, `list_tracks`, `list_cameras`, `list_scenes`, `get_sequence`.
+
+The [MCP tool reference in the main repo guide](https://github.com/psiddharthdesign/hypermotion/blob/main/AGENTS.md#tool-reference)
+documents all 16 tools, their required arguments, example calls, patch
+operations, and end-to-end authoring, editing, and sequence workflows. Use
+`get_capabilities` at runtime to discover the tools supported by the server
+you are connected to.
 
 ### Codex CLI
 

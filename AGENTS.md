@@ -127,26 +127,89 @@ The CLI ships an MCP server (`hypermotion-mcp`) that speaks the
 [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
 Any MCP-compatible agent can register it and call its tools.
 
-### Tools registered
+### Tool reference
 
-| Tool           | Status   | What it does                                                                  |
-|----------------|----------|-------------------------------------------------------------------------------|
-| `doctor`       | ✅ supported | Check desktop app and CLI environment health.                              |
-| `get_capabilities` | ✅ supported | List supported formats, quality presets, patch ops, and scene features. |
-| `create_scene` | ✅ supported | Build a `.hype` scene file from a JSON description. Authoring entrypoint.  |
-| `render_scene` | ✅ supported | Render the current desktop scene, or a provided `.hype` scene path, to MP4 / WebM / GIF. |
-| `info_scene`   | ✅ supported | Read a `.hype` file and return canvas, duration, layer/track/section counts. |
-| `inspect_scene` | ✅ supported | Inspect a saved scene's structural contents.                              |
-| `patch_scene`  | ✅ supported | Create a patched copy of an existing `.hype` scene.                        |
-| `validate_scene` | ✅ supported | Validate a `.hype` scene for structural consistency after agent edits.     |
-| `list_layers`  | ✅ supported | List layer nodes in a saved `.hype` scene.                                 |
-| `get_layer`    | ✅ supported | Return details for one layer in a saved `.hype` scene.                     |
-| `list_tracks`  | ✅ supported | List animation tracks in a saved `.hype` scene.                            |
-| `list_cameras` | ✅ supported | List cameras in a saved `.hype` scene.                                     |
-| `list_scenes`  | ✅ supported | List composition scenes, durations, camera ownership, and sequence usage.  |
-| `get_sequence` | ✅ supported | Inspect ordered sequence items, trims, transitions, and total runtime.      |
-| `open_scene`   | ✅ supported | Open a saved `.hype` scene in the desktop app.                             |
-| `list_keyframeable_properties` | ✅ supported | List property ids that can be animated with tracks/keyframes. |
+The MCP server currently registers 16 tools. The same list is returned by
+`get_capabilities`; call it when an agent needs to discover features at
+runtime. These examples show the JSON arguments an MCP client passes to a
+tool. Paths may be absolute or relative to the MCP server's working directory.
+
+| Tool | Arguments | Use |
+|---|---|---|
+| `doctor` | `{}` | Check the CLI, desktop app, scene format, rendering, and MCP setup. |
+| `get_capabilities` | `{}` | Discover node kinds, patch operations, render formats/qualities, sequence and camera support, and all registered MCP tools. |
+| `create_scene` | `{"output":"/tmp/intro.hype","scene":{...},"open":false}` | Create a `.hype` project from a `SceneJson` object or JSON string. `output` and `scene` are required; `open` defaults to `true`. Start with the scene schema and minimal example below. |
+| `info_scene` | `{"scene":"/tmp/intro.hype"}` | Read a compact summary: canvas, duration, frame rate, and layer/track/section/keyframe counts. |
+| `inspect_scene` | `{"scene":"/tmp/intro.hype"}` | Read the full editable scene graph, including metadata, nodes, tracks, sections, root, and active camera. Use when deciding what to patch. |
+| `patch_scene` | `{"scene":"/tmp/intro.hype","output":"/tmp/intro-updated.hype","patch":{"ops":[...]},"applyLive":false}` | Apply targeted edits. `scene` and `patch` are required. Omit `output` to overwrite the input file; `applyLive` defaults to `true`. Set it to `false` for file-only changes. |
+| `validate_scene` | `{"scene":"/tmp/intro-updated.hype"}` | Check structural consistency after creating or patching a scene. Read the returned issues and fix errors before rendering. |
+| `list_layers` | `{"scene":"/tmp/intro.hype"}` | List node id, name, kind, parent, children, and z-index. |
+| `get_layer` | `{"scene":"/tmp/intro.hype","nodeId":"title"}` | Return the full data for one node by its stable id. |
+| `list_tracks` | `{"scene":"/tmp/intro.hype","nodeId":"title"}` | List animation tracks. `nodeId` is optional; omit it to list every track. |
+| `list_cameras` | `{"scene":"/tmp/intro.hype"}` | List camera nodes and the active camera id. |
+| `list_scenes` | `{"scene":"/tmp/intro.hype"}` | List compositions in master-sequence order, including duration, work area, camera ownership/cuts, and sequence occurrence ids. Legacy projects appear as one synthetic composition. |
+| `get_sequence` | `{"scene":"/tmp/intro.hype"}` | Resolve frame-aligned master timing, work-area and occurrence-trim intersections, transitions, and total export duration. Legacy projects appear as one synthetic item. |
+| `open_scene` | `{"scene":"/tmp/intro.hype"}` | Open a saved `.hype` file in the desktop app. |
+| `render_scene` | `{"output":"/tmp/intro.mp4","scene":"/tmp/intro.hype","quality":"720p","fps":30}` | Render a saved project; `scene` is optional and omitted to render the project currently loaded in the desktop app. `output` is required; `format` is inferred from its extension unless supplied. `quality` defaults to `comp`; `fps` defaults to 60 and accepts 1–120. Formats: MP4, WebM, GIF. Qualities: `comp`, `720p`, `2k`, `4k`. |
+| `list_keyframeable_properties` | `{}` | Return property ids supported by ordinary animation tracks. |
+
+All file-query, create, patch, validate, open, and file-render calls take paths
+to `.hype` files. The three no-argument tools (`doctor`, `get_capabilities`,
+`list_keyframeable_properties`) accept an empty object. Tool schemas reject
+unexpected arguments.
+
+#### Typical workflows
+
+Create, validate, and render a new project:
+
+```json
+{
+  "output": "/tmp/hello.hype",
+  "open": false,
+  "scene": {
+    "meta": { "name": "Hello", "duration": 5, "frameRate": 60,
+      "canvas": { "width": 960, "height": 540 } },
+    "nodes": {
+      "root": { "id": "root", "kind": "frame", "parent": null,
+        "children": ["title"], "size": { "width": 960, "height": 540 },
+        "layout": { "mode": "flex", "direction": "column", "justify": "center", "align": "center" } },
+      "title": { "id": "title", "kind": "text", "parent": "root",
+        "text": "Hello, hyper-motion", "fontFamily": "Inter", "fontSize": 48, "fontWeight": 700 }
+    }
+  }
+}
+```
+
+Then call `validate_scene` with `{"scene":"/tmp/hello.hype"}` and
+`render_scene` with
+`{"scene":"/tmp/hello.hype","output":"/tmp/hello.mp4"}`. Use
+`info_scene` for a quick summary; use `inspect_scene`, `list_layers`,
+`get_layer`, `list_tracks`, or `list_cameras` for more detail.
+
+Patch an existing project safely by choosing a new output path, validating
+the result, then opening or rendering it:
+
+```json
+{
+  "scene": "/tmp/hello.hype",
+  "output": "/tmp/hello-patched.hype",
+  "applyLive": false,
+  "patch": { "ops": [
+    { "op": "setNodeProperty", "nodeId": "title", "key": "text", "value": "Updated title" }
+  ] }
+}
+```
+
+The `patch` value may be an operation array, an object with an `ops` array,
+or a JSON string. Supported operations are `setMeta`, `setRoot`,
+`setActiveCameraId`, `createNode`, `deleteNode`, `setNode`,
+`setNodeProperty`, `appendChild`, `moveChild`, `setTrack`, `deleteTrack`,
+`setSection`, and `deleteSection`. Check `get_capabilities` for the current
+operation list.
+
+For multi-composition projects, call `list_scenes` to inspect compositions
+and camera ownership, then `get_sequence` to verify the resolved, frame-aligned
+timeline and transitions before export.
 
 ### Claude Code
 
