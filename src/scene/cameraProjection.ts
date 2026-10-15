@@ -30,6 +30,32 @@ export const ISOMETRIC_CAMERA_VIEWS = [
   },
 ] as const
 
+/** Common orthographic and isometric viewpoints available in the inspector. */
+export const CAMERA_VIEW_PRESETS = [
+  { id: 'front', label: 'Front', rotation: { rotationX: 0, rotationY: 0, rotation: 0 } },
+  { id: 'back', label: 'Back', rotation: { rotationX: 0, rotationY: 180, rotation: 0 } },
+  { id: 'left', label: 'Left', rotation: { rotationX: 0, rotationY: -90, rotation: 0 } },
+  { id: 'right', label: 'Right', rotation: { rotationX: 0, rotationY: 90, rotation: 0 } },
+  { id: 'top', label: 'Top', rotation: { rotationX: 90, rotationY: 0, rotation: 0 } },
+  { id: 'bottom', label: 'Bottom', rotation: { rotationX: -90, rotationY: 0, rotation: 0 } },
+  ...ISOMETRIC_CAMERA_VIEWS,
+] as const
+
+export type CameraViewPresetId = typeof CAMERA_VIEW_PRESETS[number]['id']
+
+export function cameraViewPresetForRotation(rotation: {
+  rotationX: number
+  rotationY: number
+  rotation: number
+}): CameraViewPresetId | 'custom' {
+  const match = CAMERA_VIEW_PRESETS.find(view =>
+    Math.abs(view.rotation.rotationX - rotation.rotationX) < 0.01 &&
+    Math.abs(view.rotation.rotationY - rotation.rotationY) < 0.01 &&
+    Math.abs(view.rotation.rotation - rotation.rotation) < 0.01,
+  )
+  return match?.id ?? 'custom'
+}
+
 export type IsometricCameraViewId = typeof ISOMETRIC_CAMERA_VIEWS[number]['id']
 export const DEFAULT_ISOMETRIC_CAMERA_VIEW_ID: IsometricCameraViewId = ISOMETRIC_CAMERA_VIEWS[0].id
 
