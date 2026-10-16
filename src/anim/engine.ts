@@ -110,6 +110,8 @@ export interface AnimatedValue {
   fullRadius?: number
   /** Override for the node's `appearance.fill` solid color. */
   fill?: string
+  /** Override for text glyph color, independently from its appearance fill. */
+  textColor?: string
   /** Discrete override for `node.appearance.blendMode`. */
   blendMode?: BlendMode
   /** Per-effect blur overrides keyed by the effect row's stable id. */
@@ -829,6 +831,10 @@ function writeProperty(
   // doesn't drop it.
   if (id === 'appearance.fill') {
     if (typeof value === 'string') into.fill = value
+    return
+  }
+  if (id === 'color') {
+    if (typeof value === 'string') into.textColor = value
     return
   }
   if (id === 'vector.fill') {

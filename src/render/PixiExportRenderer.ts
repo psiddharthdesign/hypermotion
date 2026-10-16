@@ -779,7 +779,7 @@ export class PixiExportRenderer {
     animated: AnimatedValue,
     container: Container,
   ): void {
-    const textColor = animated.fill ?? node.color
+    const textColor = animated.textColor ?? animated.fill ?? node.color
     const c = parseColor(textColor)
     // Map our 'start' / 'center' / 'end' to Pixi's 'left' / 'center' / 'right'.
     const align: 'left' | 'center' | 'right' | 'justify' =

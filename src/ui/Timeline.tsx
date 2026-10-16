@@ -9124,6 +9124,7 @@ function humanProperty(id: string, nodeKind?: string): string {
     'appearance.cornerSmoothingEnabled': 'Squircle',
     'appearance.fullRadius': 'Full radius',
     'appearance.fill': 'Fill',
+    color: 'Text Color',
     'vector.fill': 'Vector Fill',
     'vector.geometry': 'Shape',
     'deformation.bend.waveAmplitude': 'Wave amplitude',
