@@ -3381,6 +3381,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     group:
       | 'transform'
       | 'appearance'
+      | 'text'
       | 'shape'
       | 'size'
       | 'camera'
@@ -5059,7 +5060,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
 
       {node.kind === 'text' && (
-        <TypographySection node={node} api={api} />
+        <TypographySection node={node} api={api} anim={anim} />
       )}
 
       {node.kind === 'image' && (
@@ -8554,9 +8555,11 @@ const FONT_WEIGHTS: { value: string; label: string }[] = [
 function TypographySection({
   node,
   api,
+  anim,
 }: {
   node: TextNode
   api: SceneAPI
+  anim?: AnimatedValue
 }) {
   // Normalize weight onto the nearest preset so the <select> has a
   // matching <option> to render. If a scene has an odd weight (say,
@@ -8864,18 +8867,33 @@ function TypographySection({
           }
         />
       </FieldRow>
-      <FieldRow label="Color">
-        <ColorField
-          value={node.color}
-          onCommit={(c) => {
-            // Text color is never null — clearing the color picker on a
-            // text node doesn't make sense (the glyphs would be
-            // invisible). Fall back to the current value if the user
-            // does clear it, so the UI behaves as "no-op" rather than
-            // breaking the text.
-            if (c) api.setNodeProperty(node.id, 'color', c)
-          }}
-        />
+      <FieldRow label="Color" layout="compound">
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <ColorField
+            value={anim?.textColor ?? node.color}
+            onCommit={(c) => {
+              // Text color is never null — clearing the color picker on a
+              // text node doesn't make sense (the glyphs would be
+              // invisible). Fall back to the current value if the user
+              // does clear it, so the UI behaves as "no-op" rather than
+              // breaking the text.
+              if (c) {
+                api.doc.transact(() => {
+                  const current = api.getNode(node.id)
+                  if (current?.kind === 'text') {
+                    api.setNodeProperty(node.id, 'color', c)
+                    stampForPatch('text', { color: c })
+                  }
+                }, UNDOABLE_GESTURE_ORIGIN)
+              }
+            }}
+          />
+          <KeyframeButton
+            nodeId={node.id}
+            propertyId="color"
+            currentValue={anim?.textColor ?? node.color}
+          />
+        </div>
       </FieldRow>
     </Section>
   )

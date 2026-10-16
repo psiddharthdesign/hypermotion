@@ -3165,7 +3165,7 @@ function textSegmentTextureSignature(
     textAlignVertical: node.textAlignVertical,
     textDecoration: node.textDecoration,
     textCase: node.textCase,
-    fill: anim?.fill ?? node.appearance.fill ?? node.color,
+    fill: anim?.textColor ?? anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.color : node.appearance.fill ?? node.color),
     effectGradient:
       config?.id === 'gradient-reveal'
         ? config.mode === 'in'
@@ -3178,7 +3178,7 @@ function textSegmentTextureSignature(
     blurPadding,
     atlasScale: Number(atlasScale.toFixed(3)),
     dynamicFrame,
-    shimmer: resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.fill ?? (node.appearance.fill?.kind === 'solid' ? node.appearance.fill.color : node.color), anim) : null,
+    shimmer: resolveTextShimmer(node, config) ? textShimmerFill(resolveTextShimmer(node, config)!, playhead, anim?.textColor ?? anim?.fill ?? node.color, anim) : null,
   })
 }
 
@@ -3893,10 +3893,10 @@ function paintTextSegmentAtlasCell(
     } else if (anim?.fill) {
       ctx.fillStyle = anim.fill
       ctx.fillRect(0, 0, rect.width, rect.height)
-    } else if (node.appearance.fill) {
+    } else if (node.appearance.fill && node.appearance.fill.kind !== 'solid') {
       paintFill(ctx, node.appearance.fill, rect.width, rect.height, true)
     } else {
-      ctx.fillStyle = node.color ?? '#111111'
+      ctx.fillStyle = anim?.textColor ?? node.color ?? '#111111'
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
     ctx.restore()
@@ -5034,9 +5034,17 @@ function paintNodeSource(
     return
   }
   const { cornerRadius, cornerRadii, cornerSmoothing } = resolveCornerAppearance(node.appearance, anim, w, h)
+  const effectiveFill: Fill | null =
+    node.kind === 'text' && anim?.textColor !== undefined
+      ? null
+      : node.kind === 'text' && anim?.fill === undefined && node.appearance.fill?.kind === 'solid'
+        ? null
+        : anim?.fill !== undefined
+          ? { kind: 'solid', color: anim.fill }
+          : node.appearance.fill
   const paintContent = () => {
     if (!(node.kind === 'text' && node.textShimmer)) {
-      paintFill(ctx, node.appearance.fill, w, h, node.kind === 'text')
+      paintFill(ctx, effectiveFill, w, h, node.kind === 'text')
     }
     if (node.kind === 'image' && node.src) paintImageNode(ctx, node, w, h)
     if (node.kind === 'shader') paintPaperShaderNode(ctx, node, w, h)
@@ -5471,7 +5479,7 @@ function paintAnimatedTextNode(
   )
   const fontSize = node.fontSize ?? 16
   const lineHeight = node.lineHeight ?? 1.2
-  ctx.fillStyle = anim?.fill ?? node.color ?? '#111111'
+  ctx.fillStyle = anim?.textColor ?? anim?.fill ?? node.color ?? '#111111'
   configureCanvasTextContext(ctx, node)
   const authoredTracking =
     Number.isFinite(node.letterSpacing) ? node.letterSpacing : 0
@@ -5563,7 +5571,7 @@ function paintAnimatedTextNode(
     const targetCtx = scratchCtx ?? ctx
     const targetX = scratchCtx ? 0 : x
     const targetY = scratchCtx ? alignedY - y : alignedY
-    targetCtx.fillStyle = anim?.fill ?? node.color ?? '#111111'
+    targetCtx.fillStyle = anim?.textColor ?? anim?.fill ?? node.color ?? '#111111'
     configureCanvasTextContext(targetCtx, node)
     const paintNumberLayer = (
       layerText: string,

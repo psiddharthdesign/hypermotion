@@ -1464,6 +1464,7 @@ export type PropertyId =
   | 'appearance.cornerSmoothingEnabled'
   | 'appearance.fullRadius'
   | 'appearance.fill'
+  | 'color'
   | 'appearance.blendMode'
   | EffectBlurPropertyId
   | EffectBeamRangePropertyId

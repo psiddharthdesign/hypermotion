@@ -421,6 +421,10 @@ export const PROPERTIES: Record<StaticPropertyId, PropertyDescriptor> = {
     id: 'appearance.fill', group: 'appearance', label: 'Fill',
     layoutAffecting: false, interpolation: 'color', defaultValue: 'oklch(0.8 0.05 250)',
   },
+  color: {
+    id: 'color', group: 'text', label: 'Text Color',
+    layoutAffecting: false, interpolation: 'color', defaultValue: '#0a0a0c',
+  },
   'vector.fill': {
     id: 'vector.fill', group: 'vector', label: 'Vector Fill',
     layoutAffecting: false, interpolation: 'paint',

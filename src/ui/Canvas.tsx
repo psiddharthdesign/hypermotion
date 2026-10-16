@@ -5059,7 +5059,11 @@ function VisualNodeView({
   // emits `anim.fill` when both endpoints were solid. We synthesise a
   // one-stop solid Fill so the rest of the paint pipeline stays uniform.
   const effectiveFill =
-    anim?.fill !== undefined
+    node.kind === 'text' && anim?.textColor !== undefined
+      ? null
+      : node.kind === 'text' && anim?.fill === undefined && node.appearance.fill?.kind === 'solid'
+        ? null
+      : anim?.fill !== undefined
       ? ({ kind: 'solid', color: anim.fill } as const)
       : node.appearance.fill
   const ellipseArc =
@@ -5878,10 +5882,10 @@ function TextGlyphs({
           WebkitTextFillColor: 'transparent',
           color: 'transparent',
         }
-      : { color: node.color }),
-    ...(textAnimation?.id === 'shimmer' ? { color: effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, background: undefined, WebkitTextFillColor: undefined } : {}),
+      : { color: anim?.textColor ?? node.color }),
+    ...(textAnimation?.id === 'shimmer' ? { color: effectiveFill?.kind === 'solid' ? effectiveFill.color : (anim?.textColor ?? node.color), background: undefined, WebkitTextFillColor: undefined } : {}),
     ...(node.textShimmer ? {
-      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : node.color, anim)),
+      backgroundImage: fillToCss(textShimmerFill(node.textShimmer, playhead, effectiveFill?.kind === 'solid' ? effectiveFill.color : (anim?.textColor ?? node.color), anim)),
       backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', color: 'transparent',
     } : {}),
     textAlign,
