@@ -185,6 +185,8 @@ interface UIState {
   solidFaceEditing: boolean
   solidGridSnapEnabled: boolean
   solidGridSize: number
+  compositionGuideStrength: number
+  compositionGridSpacingScale: number
   selection: string[]
   /**
    * Anchor for Shift+click range selection. This is the node that a
@@ -347,6 +349,8 @@ interface UIState {
   setSolidFaceEditing: (enabled: boolean) => void
   setSolidGridSnapEnabled: (enabled: boolean) => void
   setSolidGridSize: (size: number) => void
+  setCompositionGuideStrength: (strength: number) => void
+  setCompositionGridSpacingScale: (scale: number) => void
   setSelection: (ids: string[]) => void
   toggleInSelection: (id: string, additive: boolean) => void
   /**
@@ -555,8 +559,13 @@ const MAX_ZOOM = 16
 export const useUI = create<UIState>((set) => ({
   tool: 'select',
   solidFaceEditing: false,
-  solidGridSnapEnabled: false,
-  solidGridSize: 32,
+  solidGridSnapEnabled: (() => {
+    if (typeof window === 'undefined') return false
+    try { return window.localStorage.getItem('hyper-motion.solidGridSnapEnabled') === 'true' } catch { return false }
+  })(),
+  solidGridSize: readStoredNumber('hyper-motion.solidGridSize', 32),
+  compositionGuideStrength: readStoredNumber('hyper-motion.compositionGuideStrength', readStoredNumber('hyper-motion.isometricGridOpacity', 0.14)),
+  compositionGridSpacingScale: readStoredNumber('hyper-motion.compositionGridSpacingScale', readStoredNumber('hyper-motion.isometricGridSpacingScale', 1)),
   selection: [],
   selectionAnchor: null,
   panels: { scenes: true, layers: true, inspector: true, timeline: true },
@@ -646,8 +655,25 @@ export const useUI = create<UIState>((set) => ({
   focusPickingCameraId: null,
 
   setTool: (tool) => set({ tool, solidFaceEditing: false }),
-  setSolidGridSnapEnabled: (enabled) => set({ solidGridSnapEnabled: enabled }),
-  setSolidGridSize: (size) => set({ solidGridSize: Number.isFinite(size) ? Math.min(1024, Math.max(1, size)) : 32 }),
+  setSolidGridSnapEnabled: (enabled) => {
+    try { if (typeof window !== 'undefined') window.localStorage.setItem('hyper-motion.solidGridSnapEnabled', String(enabled)) } catch { /* best-effort */ }
+    set({ solidGridSnapEnabled: enabled })
+  },
+  setSolidGridSize: (size) => {
+    const value = Number.isFinite(size) ? Math.min(1024, Math.max(1, size)) : 32
+    writeStoredNumber('hyper-motion.solidGridSize', value)
+    set({ solidGridSize: value })
+  },
+  setCompositionGuideStrength: (strength) => {
+    const value = Number.isFinite(strength) ? Math.min(0.5, Math.max(0, strength)) : 0.14
+    writeStoredNumber('hyper-motion.compositionGuideStrength', value)
+    set({ compositionGuideStrength: value })
+  },
+  setCompositionGridSpacingScale: (scale) => {
+    const value = Number.isFinite(scale) ? Math.min(3, Math.max(0.5, scale)) : 1
+    writeStoredNumber('hyper-motion.compositionGridSpacingScale', value)
+    set({ compositionGridSpacingScale: value })
+  },
   setSolidFaceEditing: (enabled) => set({ solidFaceEditing: enabled, ...(enabled ? { tool: 'select', playing: false, editingTextId: null, editingVectorId: null, focusPickingCameraId: null } : {}) }),
   // Layer-selection actions clear `selectedTrackId`. Reasoning: if the
   // user just clicked a layer (in canvas / layers panel / timeline node
