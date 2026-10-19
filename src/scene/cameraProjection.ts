@@ -15,11 +15,6 @@ export const ISOMETRIC_CAMERA_ROTATION = {
 
 /** Four views above the XY ground plane; negative Z is height, positive Z is depth. */
 export const ISOMETRIC_CAMERA_VIEWS = [
-  { id: 'front-left', label: 'Front left', rotation: ISOMETRIC_CAMERA_ROTATION },
-  {
-    id: 'front-right', label: 'Front right',
-    rotation: { rotationX: ISOMETRIC_CAMERA_ROTATION.rotationX, rotationY: -45, rotation: -120 },
-  },
   {
     id: 'back-left', label: 'Back left',
     rotation: { rotationX: -ISOMETRIC_CAMERA_ROTATION.rotationX, rotationY: 45, rotation: 60 },
@@ -28,18 +23,15 @@ export const ISOMETRIC_CAMERA_VIEWS = [
     id: 'back-right', label: 'Back right',
     rotation: { rotationX: -ISOMETRIC_CAMERA_ROTATION.rotationX, rotationY: -45, rotation: -60 },
   },
+  { id: 'front-left', label: 'Front left', rotation: ISOMETRIC_CAMERA_ROTATION },
+  {
+    id: 'front-right', label: 'Front right',
+    rotation: { rotationX: ISOMETRIC_CAMERA_ROTATION.rotationX, rotationY: -45, rotation: -120 },
+  },
 ] as const
 
-/** Common orthographic and isometric viewpoints available in the inspector. */
-export const CAMERA_VIEW_PRESETS = [
-  { id: 'front', label: 'Front', rotation: { rotationX: 0, rotationY: 0, rotation: 0 } },
-  { id: 'back', label: 'Back', rotation: { rotationX: 0, rotationY: 180, rotation: 0 } },
-  { id: 'left', label: 'Left', rotation: { rotationX: 0, rotationY: -90, rotation: 0 } },
-  { id: 'right', label: 'Right', rotation: { rotationX: 0, rotationY: 90, rotation: 0 } },
-  { id: 'top', label: 'Top', rotation: { rotationX: 90, rotationY: 0, rotation: 0 } },
-  { id: 'bottom', label: 'Bottom', rotation: { rotationX: -90, rotationY: 0, rotation: 0 } },
-  ...ISOMETRIC_CAMERA_VIEWS,
-] as const
+/** Four isometric views above the XY composition plane. */
+export const CAMERA_VIEW_PRESETS = ISOMETRIC_CAMERA_VIEWS
 
 export type CameraViewPresetId = typeof CAMERA_VIEW_PRESETS[number]['id']
 
@@ -57,7 +49,7 @@ export function cameraViewPresetForRotation(rotation: {
 }
 
 export type IsometricCameraViewId = typeof ISOMETRIC_CAMERA_VIEWS[number]['id']
-export const DEFAULT_ISOMETRIC_CAMERA_VIEW_ID: IsometricCameraViewId = ISOMETRIC_CAMERA_VIEWS[0].id
+export const DEFAULT_ISOMETRIC_CAMERA_VIEW_ID: IsometricCameraViewId = 'back-left'
 
 /** Camera scale describes visible world extent: smaller values zoom in. */
 export function orthographicCameraZoom(scale: number): number {

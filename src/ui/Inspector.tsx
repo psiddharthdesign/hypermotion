@@ -113,6 +113,7 @@ import {
 import { alignedFocusPlanePose, nearestLayerFocus } from '@/ui/cameraFocus'
 import { CAMERA_VIEW_PRESETS, cameraViewPresetForRotation } from '@/scene/cameraProjection'
 import { applyCameraViewPreset } from '@/ui/cameraViewPreset'
+import { switchCameraProjection } from '@/ui/cameraProjectionState'
 import { FocusPlaneDistanceField } from '@/ui/FocusPlaneDistanceField'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
@@ -4084,21 +4085,24 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
             <div className="flex min-w-0 flex-1 gap-1">
               <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
                 ariaLabel="Camera projection"
-                width="min-w-0 flex-1"
+                width={node.projection === 'orthographic' ? 'min-w-0 flex-1' : 'w-full'}
                 options={[{ value: 'perspective', label: 'Perspective' }, { value: 'orthographic', label: 'Orthographic' }]}
-                onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection as CameraNode['projection']), UNDOABLE_GESTURE_ORIGIN)} />
-              <SelectField value={cameraViewPresetForRotation({ rotationX: liveRotX, rotationY: liveRotY, rotation: liveRot })}
-                ariaLabel="Camera view"
-                width="min-w-0 flex-1"
-                groups={[
-                  { label: 'Custom', options: [{ value: 'custom', label: 'Custom view' }] },
-                  { label: 'Orthographic', options: CAMERA_VIEW_PRESETS.slice(0, 6).map(view => ({ value: view.id, label: view.label })) },
-                  { label: 'Isometric', options: CAMERA_VIEW_PRESETS.slice(6).map(view => ({ value: view.id, label: view.label })) },
-                ]}
-                onCommit={viewId => {
-                  if (viewId === 'custom') return
-                  applyCameraViewPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, viewId as typeof CAMERA_VIEW_PRESETS[number]['id'])
+                onCommit={projection => {
+                  const time = currentAnimationAuthorTime()
+                  const recording = useUI.getState().recording
+                  if (projection === 'orthographic') applyCameraViewPreset(api, node.id, time, recording, 'back-left')
+                  else switchCameraProjection(api, node.id, 'perspective')
                 }} />
+              {node.projection === 'orthographic' && (
+                <SelectField value={cameraViewPresetForRotation({ rotationX: liveRotX, rotationY: liveRotY, rotation: liveRot })}
+                  ariaLabel="Camera view"
+                  width="min-w-0 flex-1"
+                  options={[{ value: 'custom', label: 'Custom view' }, ...CAMERA_VIEW_PRESETS.map(view => ({ value: view.id, label: view.label }))]}
+                  onCommit={viewId => {
+                    if (viewId === 'custom') return
+                    applyCameraViewPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, viewId)
+                  }} />
+              )}
             </div>
           </FieldRow>
         </Section>
