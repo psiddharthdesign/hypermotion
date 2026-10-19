@@ -749,6 +749,8 @@ export function Canvas() {
   const tool = useUI((s) => s.tool)
   const playing = useUI((s) => s.playing)
   const previewScope = useUI((s) => s.previewScope)
+  const compositionGuideStrength = useUI((s) => s.compositionGuideStrength)
+  const compositionGridSpacingScale = useUI((s) => s.compositionGridSpacingScale)
   const cameraViewByComposition = useUI(
     (s) => s.cameraViewByComposition,
   )
@@ -3790,7 +3792,14 @@ export function Canvas() {
           }}
         >
           {camera?.kind === 'camera' ? (
-            <CameraCompositionOverlay guide={camera.compositionGuide} width={canvasWidth} height={canvasHeight} zoom={view.zoom} />
+            <CameraCompositionOverlay
+              guide={camera.compositionGuide}
+              width={canvasWidth}
+              height={canvasHeight}
+              zoom={view.zoom}
+              guideStrength={compositionGuideStrength}
+              gridSpacingScale={compositionGridSpacingScale}
+            />
           ) : null}
           {solved ? (
             <NodeGeometryPreviewOverlay
