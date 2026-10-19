@@ -395,6 +395,7 @@ export interface NodeJson {
     }>
   }
   projection?: '2d' | 'perspective' | 'orthographic'
+  projectionPoses?: Partial<Record<'perspective' | 'orthographic', { transform: NodeJson['transform']; tracks: TrackJson[] }>>
   enabled?: boolean
   background?: FillJson | null
   /** Editor-only composition overlay; excluded from rendered output. */
@@ -1618,6 +1619,7 @@ export function buildSceneBytes(json: SceneJson): Uint8Array {
       const centerX = metaIn.canvas.width / 2
       const centerY = metaIn.canvas.height / 2
       y.set('projection', normalizeCameraProjection(node.projection))
+      if (node.projectionPoses) y.set('projectionPoses', node.projectionPoses)
       y.set('enabled', node.enabled ?? true)
       y.set('background', node.background ?? null)
       y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))
@@ -3479,6 +3481,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
   if (node.kind === 'camera') {
     for (const key of [
       'projection',
+      'projectionPoses',
       'enabled',
       'background',
       'compositionGuide',
@@ -3540,6 +3543,7 @@ function nodeToYMap(node: NodeJson, meta: SceneMeta = DEFAULT_META): Y.Map<unkno
     const centerX = meta.canvas.width / 2
     const centerY = meta.canvas.height / 2
     y.set('projection', normalizeCameraProjection(node.projection))
+    if (node.projectionPoses) y.set('projectionPoses', node.projectionPoses)
     y.set('enabled', node.enabled ?? true)
     y.set('background', node.background ?? null)
     y.set('compositionGuide', normalizeCameraCompositionGuide(node.compositionGuide))

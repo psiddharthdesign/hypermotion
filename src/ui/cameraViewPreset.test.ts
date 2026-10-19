@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { createSceneAPI } from '@/scene/doc'
-import { ISOMETRIC_CAMERA_ROTATION } from '@/scene/cameraProjection'
+import { ISOMETRIC_CAMERA_VIEWS } from '@/scene/cameraProjection'
 import { addKeyframe, findTrack } from '@/anim/tracks'
 import { applyIsometricCameraPreset, cameraZoomScale, toggleCameraZoomKeyframes } from './cameraViewPreset'
 
@@ -14,7 +14,7 @@ describe('isometric camera authoring', () => {
     const transform = { ...camera.transform, x: 123, y: 456, z: 321, scaleX: 0.5, scaleY: 0.5 }
     api.setNodeProperty(camera.id, 'transform', transform)
     applyIsometricCameraPreset(api, camera.id, 0, false)
-    expect(api.getActiveCamera()).toMatchObject({ projection: 'orthographic', compositionGuide: 'thirds', transform: { ...transform, ...ISOMETRIC_CAMERA_ROTATION } })
+    expect(api.getActiveCamera()).toMatchObject({ projection: 'orthographic', compositionGuide: 'thirds', transform: { ...transform, ...ISOMETRIC_CAMERA_VIEWS[0].rotation } })
     expect(api.getTracksForNode(camera.id)).toEqual([])
   })
 
@@ -23,7 +23,7 @@ describe('isometric camera authoring', () => {
     const camera = api.getActiveCamera()!
     applyIsometricCameraPreset(api, camera.id, 2, true)
     expect(api.getActiveCamera()!.compositionGuide).toBe('isometric')
-    for (const [key, value] of Object.entries(ISOMETRIC_CAMERA_ROTATION)) {
+    for (const [key, value] of Object.entries(ISOMETRIC_CAMERA_VIEWS[0].rotation)) {
       expect(api.getTracksForNode(camera.id).find(track => track.propertyId === `transform.${key}`)?.keyframes).toEqual([expect.objectContaining({ time: 2, value })])
     }
   })
@@ -33,7 +33,7 @@ describe('isometric camera authoring', () => {
     const camera = api.getActiveCamera()!
     addKeyframe(api, camera.id, 'transform.rotationX', 0, 10)
     applyIsometricCameraPreset(api, camera.id, 2, false)
-    expect(findTrack(api, camera.id, 'transform.rotationX')!.keyframes.map(key => [key.time, key.value])).toEqual([[0, 10], [2, ISOMETRIC_CAMERA_ROTATION.rotationX]])
+    expect(findTrack(api, camera.id, 'transform.rotationX')!.keyframes.map(key => [key.time, key.value])).toEqual([[0, 10], [2, ISOMETRIC_CAMERA_VIEWS[0].rotation.rotationX]])
   })
 
   it('keeps guides Off when switching between isometric directions', () => {

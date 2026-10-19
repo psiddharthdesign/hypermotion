@@ -1029,12 +1029,19 @@ export function normalizeCameraScrollSensitivity(value: unknown): number {
   )
 }
 
+export interface CameraProjectionPose {
+  transform: Transform
+  tracks: Track[]
+}
+
 export interface CameraNode extends NodeBase {
   kind: 'camera'
   /** Static editor overlay. Guides are excluded from rendered exports. */
   compositionGuide: CameraCompositionGuide
   /** Lens projection. Legacy '2d' retains perspective; orthographic has parallel rays. */
   projection: '2d' | 'perspective' | 'orthographic'
+  /** Keep the camera transform and transform animation separate for each projection mode. */
+  projectionPoses?: Partial<Record<'perspective' | 'orthographic', CameraProjectionPose>>
   /**
    * Whether the camera is enabled. Only the scene's active camera is
    * actually used for rendering; this flag lets users temporarily

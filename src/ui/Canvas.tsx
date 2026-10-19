@@ -3808,7 +3808,7 @@ export function Canvas() {
               represents). Visible when the user has Camera selected,
               so the panel doesn't gain extra noise during normal
               editing. */}
-          {camera && camera.kind === 'camera' && camera.visible ? (
+          {camera && camera.kind === 'camera' && camera.visible && camera.projection === '2d' ? (
             <CameraGizmo
               camera={camera}
               cameraAnim={liveCameraAnim}

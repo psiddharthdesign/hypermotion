@@ -11,6 +11,7 @@ import {
   type IsometricCameraViewId,
 } from '@/scene/cameraProjection'
 import { UNDOABLE_GESTURE_ORIGIN } from '@/scene/undo'
+import { switchCameraProjectionInTransaction } from '@/ui/cameraProjectionState'
 
 export function applyIsometricCameraPreset(api: SceneAPI, cameraId: string, time: number, recording: boolean, viewId: IsometricCameraViewId = DEFAULT_ISOMETRIC_CAMERA_VIEW_ID): void {
   applyCameraViewPreset(api, cameraId, time, recording, viewId)
@@ -22,8 +23,10 @@ export function applyCameraViewPreset(api: SceneAPI, cameraId: string, time: num
   const view = CAMERA_VIEW_PRESETS.find(candidate => candidate.id === viewId)!
   const rotation = view.rotation
   api.doc.transact(() => {
-    api.setNodeProperty(cameraId, 'projection', 'orthographic')
-    api.setNodeProperty(cameraId, 'transform', { ...camera.transform, ...rotation })
+    switchCameraProjectionInTransaction(api, cameraId, 'orthographic')
+    const currentCamera = api.getNode(cameraId)
+    if (currentCamera?.kind !== 'camera') return
+    api.setNodeProperty(cameraId, 'transform', { ...currentCamera.transform, ...rotation })
     if (ISOMETRIC_CAMERA_VIEWS.some(candidate => candidate.id === viewId) && camera.projection !== 'orthographic' && camera.compositionGuide === 'none') {
       api.setNodeProperty(cameraId, 'compositionGuide', 'isometric')
     }
