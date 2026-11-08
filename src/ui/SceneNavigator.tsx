@@ -471,7 +471,7 @@ export function SceneNavigator() {
                 disabled={transferBusy}
                 title="Add scene"
                 aria-label="Add scene"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-dashed border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] duration-150 ease-[var(--ease-ui-out)] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
               >
                 <AppIcon name="plus" size={16} />
               </button>
@@ -534,7 +534,7 @@ export function SceneNavigator() {
           disabled={transferBusy || items.length === 0}
           title="Export selected scene as .hype"
           aria-label="Export selected scene as .hype"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] duration-150 ease-[var(--ease-ui-out)] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
         >
           <Upload size={16} strokeWidth={1.75} />
         </button>
@@ -545,7 +545,7 @@ export function SceneNavigator() {
           disabled={transferBusy}
           title="Import scenes from .hype"
           aria-label="Import scenes from .hype"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-panel)] border border-border bg-control text-text-dim transition-[border-color,background-color,color,scale] duration-150 ease-[var(--ease-ui-out)] hover:border-accent hover:bg-accent-soft/30 hover:text-accent active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
         >
           <Download size={16} strokeWidth={1.75} />
         </button>
@@ -762,7 +762,7 @@ function ScopeButton({
       data-transport-toggle={transportSpace ? '1' : undefined}
       aria-pressed={active}
       className={[
-        'min-w-[50px] rounded-md px-2 text-[10px] font-semibold transition-[background-color,color,box-shadow,scale] active:scale-[0.96]',
+        'min-w-[50px] rounded-md px-2 text-[10px] font-semibold transition-[background-color,color,box-shadow,scale] duration-150 ease-[var(--ease-ui-out)] active:scale-[0.96]',
         active
           ? 'bg-panel-raised text-text shadow-sm'
           : 'text-text-dim hover:bg-panel-raised/55 hover:text-text-muted',

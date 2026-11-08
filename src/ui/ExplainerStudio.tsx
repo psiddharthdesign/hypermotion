@@ -793,13 +793,13 @@ function Toggle({
       <span
         aria-hidden
         className={[
-          'flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors duration-200 motion-reduce:transition-none',
+          'flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors duration-150 ease-[var(--ease-ui-out)] motion-reduce:transition-none',
           checked ? 'bg-accent' : 'bg-border-strong',
         ].join(' ')}
       >
         <span
           className={[
-            'h-3 w-3 rounded-full bg-white transition-transform duration-200 motion-reduce:transition-none',
+            'h-3 w-3 rounded-full bg-white transition-transform duration-150 ease-[var(--ease-ui-out)] motion-reduce:transition-none',
             checked ? 'translate-x-3' : 'translate-x-0',
           ].join(' ')}
         />

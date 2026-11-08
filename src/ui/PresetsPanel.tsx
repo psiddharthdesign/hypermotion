@@ -602,7 +602,7 @@ function AnimationAccordion({
       </button>
       <div
         className={[
-          'grid transition-[grid-template-rows] duration-200 ease-out',
+          'grid transition-[grid-template-rows] duration-250 ease-[var(--ease-ui-out)]',
           open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
         ].join(' ')}
         aria-hidden={!open}
@@ -2087,7 +2087,7 @@ function CompactSwitch({
     >
       <span
         className={[
-          'absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left]',
+          'absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150 ease-[var(--ease-ui-out)]',
           checked ? 'left-[18px]' : 'left-[2px]',
         ].join(' ')}
       />
@@ -2771,7 +2771,7 @@ function StaggerControls({
             // rather than 0, which made the thumb appear on the
             // wrong side at rest.
             className={[
-              'absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left]',
+              'absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150 ease-[var(--ease-ui-out)]',
               on ? 'left-[18px]' : 'left-[2px]',
             ].join(' ')}
           />

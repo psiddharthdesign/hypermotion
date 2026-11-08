@@ -7782,7 +7782,7 @@ function KeyframeDiamond({
         // ring, and carry a small halo. That reads as "selected" at a
         // glance even with a dozen keyframes on the row.
         className={
-          'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full transition-[width,height,box-shadow] ' +
+          'absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full transition-[width,height,box-shadow] duration-150 ease-[var(--ease-ui-out)] ' +
           (isSelected
             ? inStaggerSet
               ? 'z-[2] h-3 w-3 bg-white ring-2 ring-stagger shadow-[0_0_0_2px_var(--color-stagger-soft)]'

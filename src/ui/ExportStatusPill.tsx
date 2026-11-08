@@ -354,7 +354,7 @@ function Ring({
         strokeDasharray={c}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 150ms ease-out' }}
+        style={{ transition: 'stroke-dashoffset 150ms var(--ease-ui-out)' }}
       />
     </svg>
   )
