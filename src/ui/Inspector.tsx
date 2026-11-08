@@ -111,6 +111,9 @@ import {
   VIDEO_PLAYBACK_PROXY_WARNING,
 } from '@/ui/importMedia'
 import { alignedFocusPlanePose, nearestLayerFocus } from '@/ui/cameraFocus'
+import { CAMERA_VIEW_PRESETS, cameraViewPresetForRotation } from '@/scene/cameraProjection'
+import { applyCameraViewPreset } from '@/ui/cameraViewPreset'
+import { switchCameraProjection } from '@/ui/cameraProjectionState'
 import { FocusPlaneDistanceField } from '@/ui/FocusPlaneDistanceField'
 import { getLastSolvedLayout } from '@/ui/hooks/lastSolvedLayout'
 import { transformForAbsolutePosition } from '@/ui/positionMode'
@@ -3379,6 +3382,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
     group:
       | 'transform'
       | 'appearance'
+      | 'text'
       | 'shape'
       | 'size'
       | 'camera'
@@ -4078,10 +4082,28 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
       {node.kind === 'camera' && (
         <Section title="Camera view">
           <FieldRow label="Projection">
-            <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
-              ariaLabel="Camera projection"
-              options={[{ value: 'perspective', label: 'Perspective' }, ...(node.projection === 'orthographic' ? [{ value: 'orthographic', label: 'Orthographic (saved camera)' }] : [])]}
-              onCommit={projection => api.doc.transact(() => api.setNodeProperty(node.id, 'projection', projection as CameraNode['projection']), UNDOABLE_GESTURE_ORIGIN)} />
+            <div className="flex min-w-0 flex-1 gap-1">
+              <SelectField value={node.projection === 'orthographic' ? 'orthographic' : 'perspective'}
+                ariaLabel="Camera projection"
+                width={node.projection === 'orthographic' ? 'min-w-0 flex-1' : 'w-full'}
+                options={[{ value: 'perspective', label: 'Perspective' }, { value: 'orthographic', label: 'Orthographic' }]}
+                onCommit={projection => {
+                  const time = currentAnimationAuthorTime()
+                  const recording = useUI.getState().recording
+                  if (projection === 'orthographic') applyCameraViewPreset(api, node.id, time, recording, 'back-left')
+                  else switchCameraProjection(api, node.id, 'perspective')
+                }} />
+              {node.projection === 'orthographic' && (
+                <SelectField value={cameraViewPresetForRotation({ rotationX: liveRotX, rotationY: liveRotY, rotation: liveRot })}
+                  ariaLabel="Camera view"
+                  width="min-w-0 flex-1"
+                  options={[{ value: 'custom', label: 'Custom view' }, ...CAMERA_VIEW_PRESETS.map(view => ({ value: view.id, label: view.label }))]}
+                  onCommit={viewId => {
+                    if (viewId === 'custom') return
+                    applyCameraViewPreset(api, node.id, currentAnimationAuthorTime(), useUI.getState().recording, viewId)
+                  }} />
+              )}
+            </div>
           </FieldRow>
         </Section>
       )}
@@ -5042,7 +5064,7 @@ function NodeDetails({ node, api }: { node: Node; api: SceneAPI }) {
 
 
       {node.kind === 'text' && (
-        <TypographySection node={node} api={api} />
+        <TypographySection node={node} api={api} anim={anim} />
       )}
 
       {node.kind === 'image' && (
@@ -8537,9 +8559,11 @@ const FONT_WEIGHTS: { value: string; label: string }[] = [
 function TypographySection({
   node,
   api,
+  anim,
 }: {
   node: TextNode
   api: SceneAPI
+  anim?: AnimatedValue
 }) {
   // Normalize weight onto the nearest preset so the <select> has a
   // matching <option> to render. If a scene has an odd weight (say,
@@ -8847,18 +8871,33 @@ function TypographySection({
           }
         />
       </FieldRow>
-      <FieldRow label="Color">
-        <ColorField
-          value={node.color}
-          onCommit={(c) => {
-            // Text color is never null — clearing the color picker on a
-            // text node doesn't make sense (the glyphs would be
-            // invisible). Fall back to the current value if the user
-            // does clear it, so the UI behaves as "no-op" rather than
-            // breaking the text.
-            if (c) api.setNodeProperty(node.id, 'color', c)
-          }}
-        />
+      <FieldRow label="Color" layout="compound">
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <ColorField
+            value={anim?.textColor ?? node.color}
+            onCommit={(c) => {
+              // Text color is never null — clearing the color picker on a
+              // text node doesn't make sense (the glyphs would be
+              // invisible). Fall back to the current value if the user
+              // does clear it, so the UI behaves as "no-op" rather than
+              // breaking the text.
+              if (c) {
+                api.doc.transact(() => {
+                  const current = api.getNode(node.id)
+                  if (current?.kind === 'text') {
+                    api.setNodeProperty(node.id, 'color', c)
+                    stampForPatch('text', { color: c })
+                  }
+                }, UNDOABLE_GESTURE_ORIGIN)
+              }
+            }}
+          />
+          <KeyframeButton
+            nodeId={node.id}
+            propertyId="color"
+            currentValue={anim?.textColor ?? node.color}
+          />
+        </div>
       </FieldRow>
     </Section>
   )

@@ -333,6 +333,7 @@ export interface NodeBaseMutable {
   beatGrid: import('@/audio/beatSync').AudioBeatGrid | undefined
   // camera-kind fields — settable via Inspector on CameraNode.
   projection: CameraNode['projection']
+  projectionPoses: CameraNode['projectionPoses']
   compositionGuide: CameraNode['compositionGuide']
   /** Camera's viewport-wide background fill. Null = no fill. */
   background: Fill | null
@@ -979,6 +980,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // cameras (if any exist before migration) will read through
           // these so the render path never sees undefined.
           projection: normalizeCameraProjection(y.get('projection')),
+          projectionPoses: (y.get('projectionPoses') as CameraNode['projectionPoses'] | undefined) ?? undefined,
           compositionGuide: normalizeCameraCompositionGuide(y.get('compositionGuide')),
           enabled: (y.get('enabled') as boolean) ?? true,
           // Background fill predates v2 cameras → default null. The
@@ -1502,6 +1504,7 @@ export function createSceneAPI(doc: Y.Doc = new Y.Doc()): SceneAPI {
           // "camera x=100" pans the viewport right by 100px.
           const cp = props as Partial<CameraNode> | undefined
           y.set('projection', normalizeCameraProjection(cp?.projection))
+          if (cp?.projectionPoses) y.set('projectionPoses', cp.projectionPoses)
           y.set('compositionGuide', normalizeCameraCompositionGuide(cp?.compositionGuide))
           y.set('enabled', cp?.enabled ?? true)
           // Background defaults to null — the camera's viewport falls

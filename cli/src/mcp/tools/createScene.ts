@@ -68,6 +68,7 @@ type SceneSchemaProperty = {
 const KEYFRAMEABLE_PROPERTY_DESCRIPTION = [
   ...PROPERTY_IDS,
   'appearance.effects.<effectId>.blur',
+  'appearance.effects.<effectId>.beamRange',
 ].join(', ')
 
 const OUTPUT_PATH_PROPERTY: StringSchemaProperty = {
@@ -96,9 +97,11 @@ export const createSceneTool: Tool = {
     "composes a SceneJson object (frames with auto-layout, text nodes, animation " +
     "tracks with keyframes), passes it here, and gets a .hype file the desktop app " +
     "can open. Use this BEFORE render_scene when the scene doesn't already exist.\n\n" +
-    "SceneJson shape (top level): { meta?, root?, activeCameraId?, compositionScenes?, sequenceItems?, sequenceOrder?, activeCompositionId?, sequenceSchemaVersion?, cameraIds?, defaultCameraId?, cameraCuts?, nodes, tracks?, sections? }\n" +
-    "Each node: { id, kind: 'frame'|'rect'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
+    "SceneJson shape (top level): { meta?, root?, activeCameraId?, compositionScenes?, sequenceItems?, sequenceOrder?, activeCompositionId?, sequenceSchemaVersion?, cameraIds?, defaultCameraId?, cameraCuts?, nodes, tracks?, sections?, uiState? }\n" +
+    "Each node: { id, kind: 'null'|'arrangement'|'frame'|'rect'|'vector'|'ellipse'|'text'|'image'|'shader'|'video'|'audio'|'component'|'instance'|'camera', " +
     "parent: id|null, children?: id[], transform?, appearance?, size?, layout?, motionPath?, deformation?, ...kind-specific }\n" +
+    "Vector nodes accept editable vector documents in vector: { version: 1, items: [...] }, viewBox, trimStart, trimEnd, trimOffset, source, and importFidelity. Flow connections are optional. " +
+    "uiState may contain persistent trackGroups, kfGroups, kfGroupCollapsed, and staggerSets editor metadata. " +
     "Ellipse nodes can include arc: { startAngle, sweep, innerRadius } for pie and donut charts. " +
     "startAngle is expressed in degrees (0 points right and positive angles turn clockwise); sweep and innerRadius are ratios in 0..1. " +
     "Animate this geometry with shape.arcStart, shape.arcSweep, and shape.arcInnerRadius tracks.\n" +

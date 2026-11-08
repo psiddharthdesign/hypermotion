@@ -158,6 +158,14 @@ to `.hype` files. The three no-argument tools (`doctor`, `get_capabilities`,
 `list_keyframeable_properties`) accept an empty object. Tool schemas reject
 unexpected arguments.
 
+`get_capabilities` also reports authoring support for editable vector documents
+and flow connections, isometric cameras and guides, extruded rectangles and
+ellipses, arrangements, transform controllers, motion paths, deformation,
+compositions, sequences, persistent stagger/UI state, and dynamic effect tracks.
+The static keyframe list includes `vector.stroke`; effect tracks also accept
+`appearance.effects.<effectId>.blur` and
+`appearance.effects.<effectId>.beamRange`.
+
 #### Typical workflows
 
 Create, validate, and render a new project:
@@ -204,7 +212,7 @@ The `patch` value may be an operation array, an object with an `ops` array,
 or a JSON string. Supported operations are `setMeta`, `setRoot`,
 `setActiveCameraId`, `createNode`, `deleteNode`, `setNode`,
 `setNodeProperty`, `appendChild`, `moveChild`, `setTrack`, `deleteTrack`,
-`setSection`, and `deleteSection`. Check `get_capabilities` for the current
+`setSection`, `deleteSection`, and `setUiState`. Check `get_capabilities` for the current
 operation list.
 
 For multi-composition projects, call `list_scenes` to inspect compositions
@@ -275,6 +283,8 @@ Author from scratch (v0.1.2):
 - "Create a Hyper Motion scene with a card that fades in, and render it." ✅
 - "Build a 1080×1920 vertical scene with three buttons in a row using auto layout, save as `~/Desktop/buttons.hype`." ✅
 - "Make a calendar grid (5×7 cells, auto-layout) and animate each cell with a staggered fade-in." ✅
+- "Create an editable vector shape with a native vector document, then animate its fill and stroke." ✅ (`create_scene`)
+- "Preserve editable stagger sets when creating a scene, or update them in a saved scene." ✅ (`create_scene.uiState` or `patch_scene` with `setUiState`)
 
 Inspect a scene (v0.1.2):
 
@@ -638,7 +648,7 @@ appearance.opacity, appearance.cornerRadius, appearance.cornerSmoothing,
 appearance.cornerSmoothingEnabled, appearance.fullRadius, appearance.cornerRadii,
 appearance.cornerRadii.tl, appearance.cornerRadii.tr,
 appearance.cornerRadii.br, appearance.cornerRadii.bl, appearance.fill,
-vector.fill, vector.geometry,
+vector.fill, vector.stroke, vector.geometry,
 deformation.bend.angle, deformation.bend.factor, deformation.bend.captureLength,
 deformation.bend.captureDirectionX, deformation.bend.captureDirectionY, deformation.bend.captureDirectionZ,
 deformation.bend.upDirectionX, deformation.bend.upDirectionY, deformation.bend.upDirectionZ,

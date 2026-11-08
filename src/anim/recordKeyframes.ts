@@ -58,6 +58,8 @@ const APPEARANCE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   blendMode: 'appearance.blendMode',
 }
 
+const TEXT_PROP_IDS: Partial<Record<string, PropertyId>> = { color: 'color' }
+
 const SHAPE_PROP_IDS: Partial<Record<string, PropertyId>> = {
   startAngle: 'shape.arcStart',
   sweep: 'shape.arcSweep',
@@ -186,6 +188,7 @@ export type PatchGroup =
   | 'arrangement'
   | 'transform'
   | 'appearance'
+  | 'text'
   | 'shape'
   | 'size'
   | 'camera'
@@ -369,6 +372,8 @@ function propertyMapForGroup(
     ? TRANSFORM_PROP_IDS
     : group === 'appearance'
       ? APPEARANCE_PROP_IDS
+      : group === 'text'
+        ? TEXT_PROP_IDS
       : group === 'shape'
         ? SHAPE_PROP_IDS
       : group === 'size'

@@ -2045,14 +2045,14 @@ test('validateScene accepts app-native vector nodes used by built-in components'
   assert.deepEqual(result.errors, [])
 })
 
-test('JSON authoring rejects vector nodes until preserved payloads are supported', () => {
+test('JSON authoring supports editable vector nodes with native document defaults', () => {
   const scene = sampleScene()
   scene.nodes!.title!.kind = 'vector' as never
-
-  assert.throws(
-    () => buildSceneBytes(scene),
-    /node title has unsupported kind: vector/,
-  )
+  const data = inspectScene(buildSceneBytes(scene))
+  const title = (data.nodes as PlainSceneMap).title
+  assert.equal(title?.kind, 'vector')
+  assert.deepEqual(title?.vector, { version: 1, items: [] })
+  assert.deepEqual(title?.viewBox, { x: 0, y: 0, width: 100, height: 100 })
 })
 
 test('validateScene rejects malformed Mesh Gradient shader fields', () => {

@@ -19,7 +19,7 @@ type PatchInputData = z.infer<typeof PatchInput>
 export const patchSceneTool: Tool = {
   name: 'patch_scene',
   description:
-    'Apply targeted patch operations to a .hype scene. Supports setMeta, setRoot, setActiveCameraId, createNode, deleteNode, setNode, setNodeProperty, appendChild, moveChild, setTrack, deleteTrack, setSection, deleteSection.',
+    'Apply targeted patch operations to a .hype scene. Supports setMeta, setRoot, setActiveCameraId, createNode, deleteNode, setNode, setNodeProperty, appendChild, moveChild, setTrack, deleteTrack, setSection, deleteSection, setUiState.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -14,6 +14,7 @@ export function cameraCompositionGeometry(
   guide: CameraCompositionGuide,
   width: number,
   height: number,
+  gridSpacingScale = 1,
 ): CameraCompositionLine[] {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return []
 
@@ -34,13 +35,13 @@ export function cameraCompositionGeometry(
       { x1: width / 2, y1: height, x2: 0, y2: height / 2 },
       { x1: 0, y1: height / 2, x2: width / 2, y2: 0 },
     ]
-    case 'diamond-grid': return diamondGrid(width, height)
-    case 'isometric': return isometricGrid(width, height)
+    case 'diamond-grid': return diamondGrid(width, height, gridSpacingScale)
+    case 'isometric': return isometricGrid(width, height, gridSpacingScale)
     case 'golden-ratio': {
       const ratio = (Math.sqrt(5) - 1) / 2
       return grid([1 - ratio, ratio])
     }
-    case 'grid': return grid([1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6])
+    case 'grid': return evenlySpacedGrid(width, height, Math.max(1, Math.round(6 / clampSpacing(gridSpacingScale))))
     case 'safe-areas': return [0.05, 0.1].flatMap(inset => {
       const left = width * inset
       const top = height * inset
@@ -56,8 +57,8 @@ export function cameraCompositionGeometry(
   }
 }
 
-function isometricGrid(width: number, height: number): CameraCompositionLine[] {
-  const step = Math.max(Math.min(width, height) / 6, Math.max(width, height) / 40)
+function isometricGrid(width: number, height: number, spacingScale: number): CameraCompositionLine[] {
+  const step = Math.max(Math.min(width, height) / 6, Math.max(width, height) / 40) * 2 * clampSpacing(spacingScale)
   const slope = 1 / Math.sqrt(3)
   const lines: CameraCompositionLine[] = []
   const count = Math.ceil((height + slope * width) / (2 * step))
@@ -80,10 +81,10 @@ function isometricGrid(width: number, height: number): CameraCompositionLine[] {
   return lines
 }
 
-function diamondGrid(width: number, height: number): CameraCompositionLine[] {
+function diamondGrid(width: number, height: number, spacingScale: number): CameraCompositionLine[] {
   // Keep diamonds at 45 degrees in either aspect ratio. Limit density for
   // exceptionally narrow artboards so a guide cannot create unbounded work.
-  const spacing = Math.max(Math.min(width, height) / 3, Math.max(width, height) / 60)
+  const spacing = Math.max(Math.min(width, height) / 3, Math.max(width, height) / 60) * clampSpacing(spacingScale)
   const count = Math.ceil((width + height) / 2 / spacing)
   const lines: CameraCompositionLine[] = []
   for (const slope of [-1, 1]) {
@@ -108,4 +109,20 @@ function diamondGrid(width: number, height: number): CameraCompositionLine[] {
     }
   }
   return lines
+}
+
+function evenlySpacedGrid(width: number, height: number, divisions: number): CameraCompositionLine[] {
+  const lines: CameraCompositionLine[] = []
+  for (let index = 1; index < divisions; index += 1) {
+    const fraction = index / divisions
+    lines.push(
+      { x1: width * fraction, y1: 0, x2: width * fraction, y2: height },
+      { x1: 0, y1: height * fraction, x2: width, y2: height * fraction },
+    )
+  }
+  return lines
+}
+
+function clampSpacing(scale: number): number {
+  return Number.isFinite(scale) ? Math.min(3, Math.max(0.5, scale)) : 2
 }
