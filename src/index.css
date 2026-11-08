@@ -104,9 +104,9 @@
 
   /* Native-feeling radii. macOS chrome uses ~10px on bars,
      ~12-14px on sheets/popovers, ~6-8px on small controls. */
-  --radius-control: 8px;
+  --radius-control: 6px;
   --radius-compact: 6px;
-  --radius-panel: 12px;
+  --radius-panel: 10px;
   --radius-sheet: 16px;
   --radius-sm: 6px;
   --radius-md: 8px;
